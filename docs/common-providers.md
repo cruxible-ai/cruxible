@@ -28,7 +28,7 @@ Each common provider should have:
 - `load_tabular_artifact_bundle`: parse CSV, JSON, JSONL, NDJSON, and Excel files from a pinned artifact into provenance-rich generic tables.
 - `source_diff`: compare previous and current parsed table bundles by configured keys.
 - `document_to_markdown`: normalize text, Markdown, and simple HTML artifacts into Markdown.
-- `pdf_to_markdown`: convert a PDF artifact to Markdown using an available local or configured backend.
+- `pdf_to_markdown`: convert a PDF artifact to Markdown using `docling` for local layout-aware parsing, `pypdf` for lightweight local text extraction, or `firecrawl` for hosted parsing.
 - `extract_document_tables`: extract Markdown pipe tables into structured rows.
 - `resolve_entities_by_alias`: match generic source records to existing entities using alias fields.
 - `normalize_identifiers`: normalize common identifiers such as CVEs, GTIN/UPC/EAN, SKUs, slugs, dates, and CPE strings.
@@ -76,4 +76,3 @@ pinned artifact
   -> domain provider normalizes tables/documents into kit-specific objects
   -> workflow creates entities, relationships, candidates, or signals
 ```
-

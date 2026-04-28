@@ -10,7 +10,7 @@ import os
 import re
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
@@ -67,17 +67,17 @@ def pdf_to_markdown(
     """Convert a PDF to markdown through an explicit backend.
 
     Supported backends:
-    - ``pymupdf4llm``: local optional dependency for digital PDFs.
-    - ``pypdf``: local optional dependency, simple page text extraction.
+    - ``docling``: local document converter for layout-aware PDF parsing.
+    - ``pypdf``: local simple page text extraction.
     - ``firecrawl``: hosted Firecrawl document parser, requires a URL.
     """
     backend = str(
         input_payload.get("backend")
         or context.provider_config.get("backend")
-        or "pymupdf4llm"
+        or "docling"
     )
-    if backend == "pymupdf4llm":
-        return _pdf_to_markdown_pymupdf4llm(input_payload, context)
+    if backend == "docling":
+        return _pdf_to_markdown_docling(input_payload, context)
     if backend == "pypdf":
         return _pdf_to_markdown_pypdf(input_payload, context)
     if backend == "firecrawl":
@@ -146,18 +146,35 @@ def extract_document_tables(
     return {"tables": tables, "diagnostics": diagnostics}
 
 
-def _pdf_to_markdown_pymupdf4llm(
-    _input_payload: dict[str, Any],
+def _pdf_to_markdown_docling(
+    input_payload: dict[str, Any],
     context: ProviderContext,
 ) -> dict[str, Any]:
     path = _require_artifact_path(context, "pdf_to_markdown")
     module = _optional_import(
-        "pymupdf4llm",
-        "pymupdf4llm backend requires installing the optional pymupdf4llm package",
+        "docling.document_converter",
+        "docling backend requires installing the docling package",
     )
-    to_markdown = getattr(module, "to_markdown")
-    markdown = cast(str, to_markdown(str(path)))
-    return _document_result(markdown, path, backend="pymupdf4llm", context=context)
+    converter = module.DocumentConverter()
+    conversion_options: dict[str, Any] = {}
+    max_pages = input_payload.get("max_pages") or context.provider_config.get("max_pages")
+    if isinstance(max_pages, int):
+        conversion_options["max_num_pages"] = max_pages
+    max_file_size = (
+        input_payload.get("max_file_size")
+        or context.provider_config.get("max_file_size")
+    )
+    if isinstance(max_file_size, int):
+        conversion_options["max_file_size"] = max_file_size
+
+    result = converter.convert(path, **conversion_options)
+    document = getattr(result, "document", None)
+    if document is None:
+        raise ValueError("Docling PDF conversion did not return a document")
+    markdown = document.export_to_markdown()
+    if not isinstance(markdown, str):
+        raise ValueError("Docling PDF conversion did not return markdown text")
+    return _document_result(markdown, path, backend="docling", context=context)
 
 
 def _pdf_to_markdown_pypdf(
@@ -167,7 +184,7 @@ def _pdf_to_markdown_pypdf(
     path = _require_artifact_path(context, "pdf_to_markdown")
     module = _optional_import(
         "pypdf",
-        "pypdf backend requires installing the optional pypdf package",
+        "pypdf backend requires installing the pypdf package",
     )
     reader = module.PdfReader(str(path))
     pages: list[str] = []
