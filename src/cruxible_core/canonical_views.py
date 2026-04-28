@@ -256,7 +256,7 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
         workflows.append(
             WorkflowSummaryView(
                 name=workflow_name,
-                mode="canonical" if workflow.canonical else "governed",
+                mode=_workflow_mode(workflow.canonical, proposes, applies),
                 step_count=len(workflow.steps),
                 queries=sorted(set(queries)),
                 providers=sorted(set(providers)),
@@ -606,7 +606,9 @@ def render_workflow_pipeline_mermaid(view: WorkflowView) -> str:
         "  classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff",
         "",
     ]
-    order = _workflow_story_order(view)
+    order = [workflow for workflow in _workflow_story_order(view) if workflow.mode != "utility"]
+    if not order:
+        order = _workflow_story_order(view)
     canonical_nodes: list[str] = []
     governed_nodes: list[str] = []
     for index, workflow in enumerate(order, start=1):
@@ -1225,6 +1227,18 @@ def _workflow_provider_summary(
     )
 
 
+def _workflow_mode(
+    canonical: bool,
+    proposes: set[str],
+    applies: set[str],
+) -> str:
+    if canonical:
+        return "canonical"
+    if proposes or applies:
+        return "governed"
+    return "utility"
+
+
 def _workflow_story_order(view: WorkflowView) -> list[WorkflowSummaryView]:
     workflows_by_name = {workflow.name: workflow for workflow in view.workflows}
     adjacency: dict[str, set[str]] = {workflow.name: set() for workflow in view.workflows}
@@ -1269,7 +1283,8 @@ def _workflow_story_order(view: WorkflowView) -> list[WorkflowSummaryView]:
 
 
 def _workflow_story_sort_key(workflow: WorkflowSummaryView) -> tuple[int, str]:
-    return (0 if workflow.mode == "canonical" else 1, workflow.name)
+    order = {"canonical": 0, "governed": 1, "utility": 2}
+    return (order.get(workflow.mode, 3), workflow.name)
 
 
 def _workflow_story_label(workflow: WorkflowSummaryView) -> str:
@@ -1288,8 +1303,10 @@ def _workflow_pipeline_label(index: int, workflow: WorkflowSummaryView) -> str:
     summary = _workflow_pipeline_summary(workflow)
     if workflow.mode == "canonical":
         detail = "Canonical"
-    else:
+    elif workflow.mode == "governed":
         detail = "Governed proposal"
+    else:
+        detail = "Utility"
     return f"{index}. {summary}\n{detail}"
 
 
@@ -1324,6 +1341,8 @@ def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
         return "Canonical seed"
     if workflow.mode == "governed":
         return "Governed proposal"
+    if workflow.mode == "utility":
+        return "Utility"
     return _humanize_label(workflow.mode)
 
 
@@ -1339,12 +1358,17 @@ def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
         )
     )
     if context == "-":
-        return "None (seeds canonical state)"
+        if workflow.mode == "canonical":
+            return "None (seeds canonical state)"
+        return "None"
     return context
 
 
 def _workflow_table_result(workflow: WorkflowSummaryView) -> str:
     entities = _workflow_step_details(workflow, {"make_entities"})
+    if workflow.mode == "utility":
+        return _format_surface_groups((("Provider output", workflow.providers),))
+
     if workflow.mode == "canonical":
         relationships = sorted(
             set(workflow.proposes_relationships + workflow.applies_relationships)

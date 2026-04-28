@@ -98,6 +98,47 @@ def test_update_readme_default_sections_are_comprehension_views(
     assert "### Campaign" in updated
 
 
+def test_utility_workflows_stay_out_of_main_pipeline(
+    tmp_path: Path,
+    proposal_workflow_config_yaml: str,
+) -> None:
+    config_yaml = proposal_workflow_config_yaml.replace(
+        "\ntests:\n",
+        """
+  parse_campaign_notes:
+    contract_in: CampaignInput
+    steps:
+      - id: markdown
+        provider: campaign_recommendations
+        input:
+          campaign_id: $input.campaign_id
+          region: west
+        as: markdown
+    returns: markdown
+
+tests:
+""",
+    )
+    config = load_config_from_string(config_yaml)
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# Demo\n\n"
+        "<!-- CRUXIBLE:BEGIN workflow-pipeline -->\n"
+        "<!-- CRUXIBLE:END workflow-pipeline -->\n\n"
+        "<!-- CRUXIBLE:BEGIN workflow-summary -->\n"
+        "<!-- CRUXIBLE:END workflow-summary -->\n"
+    )
+
+    update_readme_file(readme, config, ("workflow-pipeline", "workflow-summary"))
+
+    updated = readme.read_text()
+    pipeline = updated.split("<!-- CRUXIBLE:END workflow-pipeline -->", 1)[0]
+    assert "Parse Campaign Notes" not in pipeline
+    assert "### 2. Parse Campaign Notes" in updated
+    assert "**Role:** Utility" in updated
+    assert "Provider output: Campaign Recommendations" in updated
+
+
 def test_load_config_for_rendering_composes_extends(tmp_path: Path) -> None:
     base = tmp_path / "base.yaml"
     overlay = tmp_path / "overlay.yaml"
