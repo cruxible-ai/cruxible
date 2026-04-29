@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
+from cruxible_core.config.property_validation import (
+    entity_properties_with_identity,
+    validate_property_payload,
+)
 from cruxible_core.config.schema import (
     CoreConfig,
     FeedbackProfileSchema,
@@ -22,7 +26,7 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
-from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, RelationshipInstance
 from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
@@ -79,17 +83,31 @@ def _normalize_feedback_record(
     )
 
     normalized_corrections = corrections or {}
-    confidence = normalized_corrections.get("confidence")
-    if confidence is not None:
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+    if action == "correct" and normalized_corrections:
+        rel_schema = config.get_relationship(target.relationship_type)
+        if rel_schema is None:
             raise DataValidationError(
-                f"corrections.confidence must be numeric (float). "
-                f"Got {confidence!r}. "
-                f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
+                f"relationship '{target.relationship_type}' not found in config"
             )
-    normalized_corrections = {
-        key: value for key, value in normalized_corrections.items() if key != "_provenance"
-    }
+        validation = validate_property_payload(
+            config,
+            rel_schema.properties,
+            normalized_corrections,
+            require_required=False,
+            strip_system_properties=True,
+        )
+        if validation.errors:
+            raise DataValidationError(
+                "feedback corrections failed property validation",
+                errors=validation.errors,
+            )
+        normalized_corrections = validation.properties
+    else:
+        normalized_corrections = {
+            key: value
+            for key, value in normalized_corrections.items()
+            if key not in USER_STRIPPED_PROPERTIES
+        }
     normalized_scope_hints = dict(scope_hints or {})
 
     if group_override:
@@ -136,6 +154,7 @@ def _normalize_feedback_record(
 
     decision_context = _build_decision_context(receipt)
     context_snapshot = _build_context_snapshot(
+        config=config,
         graph=graph,
         profile=profile,
         target=target,
@@ -235,6 +254,7 @@ def _build_decision_context(receipt: Receipt) -> dict[str, Any]:
 
 def _build_context_snapshot(
     *,
+    config: CoreConfig,
     graph,
     profile: FeedbackProfileSchema | None,
     target: RelationshipInstance,
@@ -258,10 +278,24 @@ def _build_context_snapshot(
     if profile is not None:
         for path in profile.scope_keys.values():
             side, _, prop_name = path.partition(".")
-            if side == "FROM" and from_entity is not None and prop_name in from_entity.properties:
-                from_props[prop_name] = from_entity.properties[prop_name]
-            elif side == "TO" and to_entity is not None and prop_name in to_entity.properties:
-                to_props[prop_name] = to_entity.properties[prop_name]
+            if side == "FROM" and from_entity is not None:
+                props = entity_properties_with_identity(
+                    config,
+                    from_entity.entity_type,
+                    from_entity.entity_id,
+                    from_entity.properties,
+                )
+                if prop_name in props:
+                    from_props[prop_name] = props[prop_name]
+            elif side == "TO" and to_entity is not None:
+                props = entity_properties_with_identity(
+                    config,
+                    to_entity.entity_type,
+                    to_entity.entity_id,
+                    to_entity.properties,
+                )
+                if prop_name in props:
+                    to_props[prop_name] = props[prop_name]
             elif (
                 side == "EDGE"
                 and relationship is not None

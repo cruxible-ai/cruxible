@@ -130,8 +130,8 @@ class TestIngestEntities:
         with pytest.raises(DataValidationError, match="No primary key"):
             ingest_entities(config, graph, "Thing", df)
 
-    def test_extra_columns_stored(self, config: CoreConfig, graph: EntityGraph):
-        """Columns not in schema are stored as properties anyway."""
+    def test_extra_columns_rejected(self, config: CoreConfig, graph: EntityGraph):
+        """Columns not in schema are rejected by strict write validation."""
         df = pl.DataFrame(
             {
                 "vehicle_id": ["V-1"],
@@ -141,9 +141,9 @@ class TestIngestEntities:
                 "custom_field": ["extra"],
             }
         )
-        ingest_entities(config, graph, "Vehicle", df)
-        vehicle = graph.get_entity("Vehicle", "V-1")
-        assert vehicle.properties["custom_field"] == "extra"
+        with pytest.raises(DataValidationError) as exc_info:
+            ingest_entities(config, graph, "Vehicle", df)
+        assert any("unexpected property 'custom_field'" in e for e in exc_info.value.errors)
 
     def test_empty_dataframe(self, config: CoreConfig, graph: EntityGraph):
         df = pl.DataFrame({"vehicle_id": [], "year": [], "make": [], "model": []}).cast(
@@ -297,6 +297,75 @@ class TestIngestRelationships:
         assert rel is not None
         assert rel.properties["confidence"] == 0.99
 
+    def test_upsert_partial_relationship_payload_preserves_existing_properties(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+        vehicles_df,
+        parts_df,
+    ):
+        ingest_entities(config, graph, "Vehicle", vehicles_df)
+        ingest_entities(config, graph, "Part", parts_df)
+        first_df = pl.DataFrame(
+            {
+                "part_number": ["BP-1234"],
+                "vehicle_id": ["V-CIVIC"],
+                "verified": [True],
+                "confidence": [0.95],
+            }
+        )
+        ingest_relationships(config, graph, "fits", first_df, "part_number", "vehicle_id")
+
+        patch_df = pl.DataFrame(
+            {
+                "part_number": ["BP-1234"],
+                "vehicle_id": ["V-CIVIC"],
+                "verified": [False],
+            }
+        )
+        added, updated = ingest_relationships(
+            config, graph, "fits", patch_df, "part_number", "vehicle_id"
+        )
+
+        assert added == 0
+        assert updated == 1
+        rel = graph.get_relationship("Part", "BP-1234", "Vehicle", "V-CIVIC", "fits")
+        assert rel is not None
+        assert rel.properties["verified"] is False
+        assert rel.properties["confidence"] == 0.95
+
+    def test_invalid_relationship_update_does_not_change_existing_edge(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+        vehicles_df,
+        parts_df,
+    ):
+        ingest_entities(config, graph, "Vehicle", vehicles_df)
+        ingest_entities(config, graph, "Part", parts_df)
+        first_df = pl.DataFrame(
+            {
+                "part_number": ["BP-1234"],
+                "vehicle_id": ["V-CIVIC"],
+                "confidence": [0.95],
+            }
+        )
+        ingest_relationships(config, graph, "fits", first_df, "part_number", "vehicle_id")
+
+        invalid_df = pl.DataFrame(
+            {
+                "part_number": ["BP-1234"],
+                "vehicle_id": ["V-CIVIC"],
+                "confidence": ["high"],
+            }
+        )
+        with pytest.raises(DataValidationError, match="must be a float"):
+            ingest_relationships(config, graph, "fits", invalid_df, "part_number", "vehicle_id")
+
+        rel = graph.get_relationship("Part", "BP-1234", "Vehicle", "V-CIVIC", "fits")
+        assert rel is not None
+        assert rel.properties["confidence"] == 0.95
+
     def test_string_confidence_rejected(
         self,
         config: CoreConfig,
@@ -304,7 +373,7 @@ class TestIngestRelationships:
         vehicles_df,
         parts_df,
     ):
-        """String confidence values are rejected with suggested numeric mappings."""
+        """String confidence values are rejected by the normal float property schema."""
         ingest_entities(config, graph, "Vehicle", vehicles_df)
         ingest_entities(config, graph, "Part", parts_df)
         df = pl.DataFrame(
@@ -314,9 +383,9 @@ class TestIngestRelationships:
                 "confidence": ["high"],
             }
         )
-        with pytest.raises(DataValidationError, match="confidence must be numeric") as exc_info:
+        with pytest.raises(DataValidationError, match="must be a float") as exc_info:
             ingest_relationships(config, graph, "fits", df, "part_number", "vehicle_id")
-        assert "Suggested:" in str(exc_info.value)
+        assert "Row 1" in str(exc_info.value)
 
     def test_bool_confidence_rejected(
         self,
@@ -335,17 +404,17 @@ class TestIngestRelationships:
                 "confidence": [True],
             }
         )
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
+        with pytest.raises(DataValidationError, match="must be a float"):
             ingest_relationships(config, graph, "fits", df, "part_number", "vehicle_id")
 
-    def test_numeric_confidence_accepted(
+    def test_declared_float_property_accepted(
         self,
         config: CoreConfig,
         graph: EntityGraph,
         vehicles_df,
         parts_df,
     ):
-        """Valid numeric confidence values are accepted."""
+        """Declared float properties are accepted like any other domain field."""
         ingest_entities(config, graph, "Vehicle", vehicles_df)
         ingest_entities(config, graph, "Part", parts_df)
         df = pl.DataFrame(

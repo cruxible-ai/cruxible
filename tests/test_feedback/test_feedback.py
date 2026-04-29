@@ -12,7 +12,7 @@ from cruxible_core.config.schema import (
     RelationshipSchema,
     TraversalStep,
 )
-from cruxible_core.errors import DataValidationError, RelationshipAmbiguityError
+from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -286,45 +286,20 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "agent_rejected"
 
-    def test_correct_string_confidence_rejected(
+    def test_correct_user_review_status_stripped(
         self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """Corrections with string confidence are rejected at applier level."""
+        """System-owned review metadata is not accepted from user corrections."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
             target=target,
-            corrections={"confidence": "high"},
-        )
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
-            apply_feedback(graph, fb)
-
-    def test_correct_bool_confidence_rejected(
-        self, graph: EntityGraph, target: RelationshipInstance
-    ):
-        """Corrections with bool confidence are rejected."""
-        fb = FeedbackRecord(
-            receipt_id="RCP-test",
-            action="correct",
-            target=target,
-            corrections={"confidence": True},
-        )
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
-            apply_feedback(graph, fb)
-
-    def test_correct_numeric_confidence_accepted(
-        self, graph: EntityGraph, target: RelationshipInstance
-    ):
-        """Corrections with valid numeric confidence are accepted."""
-        fb = FeedbackRecord(
-            receipt_id="RCP-test",
-            action="correct",
-            target=target,
-            corrections={"confidence": 0.95},
+            corrections={"review_status": "human_rejected", "fitment_notes": "checked"},
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["confidence"] == 0.95
+        assert rel.properties["review_status"] == "human_approved"
+        assert rel.properties["fitment_notes"] == "checked"
 
     def test_approve_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
         """Feedback actions update _provenance with modification fields."""

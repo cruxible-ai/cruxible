@@ -728,122 +728,131 @@ class TestMatchesFilter:
 
 
 class TestEvaluateConstraint:
-    def test_target_property_equals_param(self):
+    def test_target_property_equals_param(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"vehicle_id": "V-CIVIC"},
         )
         assert _evaluate_constraint(
+            config,
             "target.vehicle_id == $vehicle_id",
             entity,
             {"vehicle_id": "V-CIVIC"},
         )
 
-    def test_target_property_not_equals_param(self):
+    def test_target_property_not_equals_param(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"vehicle_id": "V-ACCORD"},
         )
         assert not _evaluate_constraint(
+            config,
             "target.vehicle_id == $vehicle_id",
             entity,
             {"vehicle_id": "V-CIVIC"},
         )
 
-    def test_not_equals_operator(self):
+    def test_not_equals_operator(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"vehicle_id": "V-ACCORD"},
         )
         assert _evaluate_constraint(
+            config,
             "target.vehicle_id != $vehicle_id",
             entity,
             {"vehicle_id": "V-CIVIC"},
         )
 
-    def test_literal_comparison(self):
+    def test_literal_comparison(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Part",
             entity_id="P-1",
             properties={"category": "brakes"},
         )
         assert _evaluate_constraint(
+            config,
             "target.category == brakes",
             entity,
             {},
         )
 
-    def test_numeric_literal(self):
+    def test_numeric_literal(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"year": 2024},
         )
         assert _evaluate_constraint(
+            config,
             "target.year == 2024",
             entity,
             {},
         )
 
-    def test_ordered_numeric_literal(self):
+    def test_ordered_numeric_literal(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"year": 2024},
         )
         assert _evaluate_constraint(
+            config,
             "target.year >= 2024",
             entity,
             {},
         )
 
-    def test_ordered_param_comparison(self):
+    def test_ordered_param_comparison(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"year": 2024},
         )
         assert _evaluate_constraint(
+            config,
             "target.year > $min_year",
             entity,
             {"min_year": 2023},
         )
 
-    def test_missing_property_returns_false(self):
+    def test_missing_property_returns_false(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={},
         )
         assert not _evaluate_constraint(
+            config,
             "target.vehicle_id == $vehicle_id",
             entity,
             {"vehicle_id": "V-CIVIC"},
         )
 
-    def test_missing_param_returns_false(self):
+    def test_missing_param_returns_false(self, config: CoreConfig):
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"vehicle_id": "V-CIVIC"},
         )
         assert not _evaluate_constraint(
+            config,
             "target.vehicle_id == $missing_param",
             entity,
             {},
         )
 
-    def test_unknown_format_passes(self):
+    def test_unknown_format_passes(self, config: CoreConfig):
         """Unknown constraint formats are permissive (don't filter)."""
         entity = EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={},
         )
-        assert _evaluate_constraint("some_weird_expression", entity, {})
+        assert _evaluate_constraint(config, "some_weird_expression", entity, {})
 
 
 # ---------------------------------------------------------------------------

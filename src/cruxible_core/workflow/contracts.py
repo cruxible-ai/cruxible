@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from datetime import date, datetime
 from typing import Any, Callable
 
-from cruxible_core.config.schema import CoreConfig, PropertySchema
+from cruxible_core.config.property_validation import normalize_value
+from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
 
 
@@ -38,7 +37,7 @@ def validate_contract_payload(
             required_missing.append(field_name)
             continue
         try:
-            normalized[field_name] = _normalize_value(payload[field_name], field_schema)
+            normalized[field_name] = normalize_value(payload[field_name], field_schema, config)
         except ValueError as exc:
             errors.append(f"field '{field_name}': {exc}")
 
@@ -66,59 +65,3 @@ def validate_contract_payload(
 def query_execution_error(message: str) -> QueryExecutionError:
     """Factory used by runtime validation helpers."""
     return QueryExecutionError(message)
-
-
-def _normalize_value(value: Any, schema: PropertySchema) -> Any:
-    """Normalize a value to the property-schema contract type."""
-    type_name = schema.type
-
-    if value is None:
-        if schema.optional:
-            return None
-        raise ValueError("value may not be null")
-
-    if schema.enum is not None and value not in schema.enum:
-        allowed = ", ".join(str(item) for item in schema.enum)
-        raise ValueError(f"value must be one of: {allowed}")
-
-    if type_name == "string":
-        if not isinstance(value, str):
-            raise ValueError("must be a string")
-        return value
-
-    if type_name == "int":
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError("must be an int")
-        return value
-
-    if type_name == "float":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("must be a float")
-        return float(value)
-
-    if type_name == "bool":
-        if not isinstance(value, bool):
-            raise ValueError("must be a bool")
-        return value
-
-    if type_name == "date":
-        if isinstance(value, datetime):
-            return value.date().isoformat()
-        if isinstance(value, date):
-            return value.isoformat()
-        if isinstance(value, str):
-            try:
-                date.fromisoformat(value)
-            except ValueError as exc:
-                raise ValueError("must be an ISO date string (YYYY-MM-DD)") from exc
-            return value
-        raise ValueError("must be an ISO date string")
-
-    if type_name == "json":
-        try:
-            json.dumps(value, sort_keys=True)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("must be JSON-serializable") from exc
-        return value
-
-    raise ValueError(f"unsupported contract type '{type_name}'")

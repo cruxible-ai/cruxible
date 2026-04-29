@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.config.property_validation import (
+    entity_properties_with_identity,
+    entity_with_identity_properties,
+)
 from cruxible_core.errors import (
     EntityNotFoundError,
     QueryExecutionError,
@@ -109,14 +113,17 @@ def execute_query(
         )
         steps_executed += 1
 
-    result_dicts = [e.model_dump() for e in current_entities]
+    result_entities = [
+        entity_with_identity_properties(config, entity) for entity in current_entities
+    ]
+    result_dicts = [e.model_dump() for e in result_entities]
     builder.record_results(result_dicts, parent_ids=current_parent_ids)
     receipt = builder.build(result_dicts)
 
     return QueryResult(
         query_name=query_name,
         parameters=params,
-        results=current_entities,
+        results=result_entities,
         steps_executed=steps_executed,
         receipt=receipt,
         policy_summary=policy_summary,
@@ -259,7 +266,13 @@ def _execute_step(
                 # Apply target entity filter (blocks subtree on failure)
                 if step.target_filter:
                     passed = matches_exact_filter(
-                        neighbor.properties, step.target_filter
+                        entity_properties_with_identity(
+                            config,
+                            neighbor.entity_type,
+                            neighbor.entity_id,
+                            neighbor.properties,
+                        ),
+                        step.target_filter,
                     )
                     if builder is not None and traversal_id is not None:
                         builder.record_filter(
@@ -273,6 +286,7 @@ def _execute_step(
                 # Apply constraint (blocks subtree on failure)
                 if step.constraint:
                     passed = _evaluate_constraint(
+                        config,
                         step.constraint,
                         neighbor,
                         params,
@@ -323,6 +337,7 @@ def _execute_step(
                     policy_to_entity = entity
 
                 if rel_policies and _policy_should_suppress(
+                    config=config,
                     policies=rel_policies,
                     from_entity=policy_from_entity,
                     to_entity=policy_to_entity,
@@ -435,6 +450,7 @@ def _policy_expired(expires_at: str | None) -> bool:
 
 def _policy_should_suppress(
     *,
+    config: CoreConfig,
     policies: list[Any],
     from_entity: EntityInstance,
     to_entity: EntityInstance,
@@ -446,9 +462,15 @@ def _policy_should_suppress(
 ) -> bool:
     """Apply query-side suppress policies to one traversed edge."""
     for policy in policies:
-        if not matches_exact_filter(from_entity.properties, policy.match.from_match):
+        from_props = entity_properties_with_identity(
+            config, from_entity.entity_type, from_entity.entity_id, from_entity.properties
+        )
+        to_props = entity_properties_with_identity(
+            config, to_entity.entity_type, to_entity.entity_id, to_entity.properties
+        )
+        if not matches_exact_filter(from_props, policy.match.from_match):
             continue
-        if not matches_exact_filter(to_entity.properties, policy.match.to):
+        if not matches_exact_filter(to_props, policy.match.to):
             continue
         if not matches_exact_filter(edge_props, policy.match.edge):
             continue
@@ -475,6 +497,7 @@ _CONSTRAINT_RE = re.compile(
 
 
 def _evaluate_constraint(
+    config: CoreConfig,
     constraint: str,
     target_entity: EntityInstance,
     params: dict[str, Any],
@@ -496,7 +519,9 @@ def _evaluate_constraint(
     rhs = rhs.strip()
 
     if side == "target":
-        lhs_value = target_entity.properties.get(prop)
+        lhs_value = entity_properties_with_identity(
+            config, target_entity.entity_type, target_entity.entity_id, target_entity.properties
+        ).get(prop)
     else:
         return True  # 'source' not supported in collection mode
 

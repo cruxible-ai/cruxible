@@ -24,6 +24,7 @@ from cruxible_core.errors import (
     IngestionError,
     RelationshipNotFoundError,
 )
+from cruxible_core.graph.operations import validate_entity, validate_relationship
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, make_provenance
 
 if TYPE_CHECKING:
@@ -69,18 +70,28 @@ def ingest_entities(
             f"ID column '{id_column}' not found in DataFrame (columns: {df.columns})"
         )
 
-    added = 0
-    for row in df.iter_rows(named=True):
+    errors: list[str] = []
+    pending: list[EntityInstance] = []
+    for row_idx, row in enumerate(df.iter_rows(named=True), start=1):
         entity_id = str(row[id_column])
         properties = {k: v for k, v in row.items() if k != id_column}
+        try:
+            validated = validate_entity(config, graph, entity_type, entity_id, properties)
+        except DataValidationError as exc:
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
+            errors.append(f"Row {row_idx}: {detail}")
+            continue
+        pending.append(validated.entity)
 
-        graph.add_entity(
-            EntityInstance(
-                entity_type=entity_type,
-                entity_id=entity_id,
-                properties=properties,
-            )
+    if errors:
+        raise DataValidationError(
+            f"Entity validation failed for '{entity_type}'",
+            errors=errors,
         )
+
+    added = 0
+    for entity in pending:
+        graph.add_entity(entity)
         added += 1
 
     return added
@@ -192,31 +203,25 @@ def ingest_relationships(
 
         batch_seen.add(key)
         properties = {k: v for k, v in row.items() if k not in key_cols}
-
-        # Strip system-owned _provenance from input (prevent spoofing)
-        properties.pop("_provenance", None)
-
-        # Reserved property: confidence must be numeric (not bool, not string)
-        confidence = properties.get("confidence")
-        if confidence is not None:
-            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-                errors.append(
-                    f"Row {row_idx}: confidence must be numeric (float). "
-                    f"Got {confidence!r}. "
-                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-                )
-                continue
+        try:
+            validated = validate_relationship(
+                config,
+                graph,
+                rel_schema.from_entity,
+                from_id,
+                relationship_type,
+                rel_schema.to_entity,
+                to_id,
+                properties,
+            )
+        except DataValidationError as exc:
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
+            errors.append(f"Row {row_idx}: {detail}")
+            continue
 
         pending.append(
             (
-                RelationshipInstance(
-                    relationship_type=relationship_type,
-                    from_type=rel_schema.from_entity,
-                    from_id=from_id,
-                    to_type=rel_schema.to_entity,
-                    to_id=to_id,
-                    properties=properties,
-                ),
+                validated.relationship,
                 is_update,
             )
         )
@@ -294,18 +299,22 @@ def ingest_from_mapping(
 
     if mapping.is_entity:
         assert mapping.entity_type is not None, "entity mapping must have entity_type"
-        count = ingest_entities(config, graph, mapping.entity_type, df, id_column=mapping.id_column)
+        assert mapping.id_column is not None, "entity mapping must have id_column"
+        id_column = mapping.column_map.get(mapping.id_column, mapping.id_column)
+        count = ingest_entities(config, graph, mapping.entity_type, df, id_column=id_column)
         return (count, 0)
     assert mapping.relationship_type is not None, "relationship mapping must have relationship_type"
     assert mapping.from_column is not None, "relationship mapping must have from_column"
     assert mapping.to_column is not None, "relationship mapping must have to_column"
+    from_column = mapping.column_map.get(mapping.from_column, mapping.from_column)
+    to_column = mapping.column_map.get(mapping.to_column, mapping.to_column)
     return ingest_relationships(
         config,
         graph,
         mapping.relationship_type,
         df,
-        from_column=mapping.from_column,
-        to_column=mapping.to_column,
+        from_column=from_column,
+        to_column=to_column,
         source_ref=mapping_name,
     )
 

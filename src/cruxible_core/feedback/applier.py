@@ -12,8 +12,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.errors import DataValidationError, RelationshipAmbiguityError
+from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES
 
 if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
@@ -118,17 +119,10 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
         )
 
     if feedback.action == "correct":
-        # Defensive: validate confidence in corrections
-        confidence = feedback.corrections.get("confidence")
-        if confidence is not None:
-            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-                raise DataValidationError(
-                    f"corrections.confidence must be numeric (float). "
-                    f"Got {confidence!r}. "
-                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-                )
-        # Strip _provenance from corrections (prevent spoofing)
-        updates = {k: v for k, v in feedback.corrections.items() if k != "_provenance"}
+        # Strip system-owned properties from corrections (prevent spoofing).
+        updates = {
+            k: v for k, v in feedback.corrections.items() if k not in USER_STRIPPED_PROPERTIES
+        }
         updates["review_status"] = f"{prefix}_approved"
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         if prov:

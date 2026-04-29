@@ -11,15 +11,20 @@ no errors — preserving batch atomicity). CLI validates and applies one at a ti
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, make_provenance
+from cruxible_core.graph.types import (
+    SYSTEM_OWNED_PROPERTIES,
+    EntityInstance,
+    RelationshipInstance,
+    make_provenance,
+)
 
 
 @dataclass
@@ -55,10 +60,25 @@ def validate_entity(
         raise DataValidationError("entity_id must not be empty")
 
     is_update = graph.has_entity(entity_type, entity_id)
+    entity_schema = config.entity_types[entity_type]
+    validation = validate_property_payload(
+        config,
+        entity_schema.properties,
+        properties or {},
+        require_required=not is_update,
+        primary_key_name=entity_schema.get_primary_key(),
+        entity_id=entity_id,
+        strip_system_properties=True,
+    )
+    if validation.errors:
+        raise DataValidationError(
+            f"Entity '{entity_type}:{entity_id}' property validation failed",
+            errors=validation.errors,
+        )
     entity = EntityInstance(
         entity_type=entity_type,
         entity_id=entity_id,
-        properties=properties or {},
+        properties=validation.properties,
     )
     return ValidatedEntity(entity=entity, is_update=is_update)
 
@@ -75,8 +95,8 @@ def validate_relationship(
 ) -> ValidatedRelationship:
     """Validate a relationship against config and graph state.
 
-    Handles confidence coercion, provenance stripping, direction checks,
-    and endpoint existence checks.
+    Handles property schema checks, system metadata stripping, direction
+    checks, and endpoint existence checks.
 
     Raises DataValidationError on failure.
     """
@@ -109,32 +129,22 @@ def validate_relationship(
     if graph.get_entity(to_type, to_id) is None:
         raise DataValidationError(f"entity {to_type}:{to_id} not found")
 
-    # Confidence: reject bools, coerce strings to float, reject non-finite
-    confidence = props.get("confidence")
-    if confidence is not None:
-        if isinstance(confidence, bool):
-            raise DataValidationError(
-                f"confidence must be numeric (float). "
-                f"Got {confidence!r}. "
-                f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-            )
-        if not isinstance(confidence, (int, float)):
-            try:
-                confidence = float(confidence)
-            except (ValueError, TypeError):
-                raise DataValidationError(
-                    f"confidence must be numeric (float). "
-                    f"Got {confidence!r}. "
-                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-                )
-        if not math.isfinite(confidence):
-            raise DataValidationError(f"confidence must be a finite number. Got {confidence!r}.")
-        props["confidence"] = confidence
-
-    # Strip system-owned _provenance from user input
-    props = {k: v for k, v in props.items() if k != "_provenance"}
-
-    is_update = graph.has_relationship(from_type, from_id, to_type, to_id, relationship)
+    existing_rel = graph.get_relationship(from_type, from_id, to_type, to_id, relationship)
+    is_update = existing_rel is not None
+    validation_source = dict(existing_rel.properties) if existing_rel is not None else {}
+    validation_source.update(props)
+    validation = validate_property_payload(
+        config,
+        rel_schema.properties,
+        validation_source,
+        require_required=True,
+        strip_system_properties=True,
+    )
+    if validation.errors:
+        raise DataValidationError(
+            f"Relationship '{relationship}' property validation failed",
+            errors=validation.errors,
+        )
 
     rel = RelationshipInstance(
         relationship_type=relationship,
@@ -142,14 +152,21 @@ def validate_relationship(
         from_id=from_id,
         to_type=to_type,
         to_id=to_id,
-        properties=props,
+        properties=validation.properties,
     )
     return ValidatedRelationship(relationship=rel, is_update=is_update)
 
 
 def apply_entity(graph: EntityGraph, validated: ValidatedEntity) -> None:
     """Apply a validated entity to the graph (add or update)."""
-    graph.add_entity(validated.entity)
+    if validated.is_update:
+        graph.update_entity_properties(
+            validated.entity.entity_type,
+            validated.entity.entity_id,
+            dict(validated.entity.properties),
+        )
+    else:
+        graph.add_entity(validated.entity)
 
 
 def apply_relationship(
@@ -174,12 +191,17 @@ def apply_relationship(
         )
         replace_props = dict(rel.properties)
         if existing_rel:
-            old_prov = existing_rel.properties.get("_provenance")
-            if old_prov:
-                prov = dict(old_prov)
-                prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
-                prov["last_modified_by"] = source
-                replace_props["_provenance"] = prov
+            for key in SYSTEM_OWNED_PROPERTIES:
+                old_value = existing_rel.properties.get(key)
+                if old_value is None:
+                    continue
+                if key == "_provenance":
+                    prov = dict(old_value)
+                    prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
+                    prov["last_modified_by"] = source
+                    replace_props[key] = prov
+                else:
+                    replace_props[key] = old_value
         graph.replace_edge_properties(
             rel.from_type,
             rel.from_id,

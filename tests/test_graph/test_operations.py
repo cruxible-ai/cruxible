@@ -36,6 +36,9 @@ relationships:
     properties:
       confidence:
         type: float
+      note:
+        type: string
+        optional: true
 """
 
 
@@ -69,6 +72,7 @@ class TestValidateEntity:
         result = validate_entity(config, graph, "Vehicle", "V2", {"vehicle_id": "V2"})
         assert result.entity.entity_type == "Vehicle"
         assert result.entity.entity_id == "V2"
+        assert "vehicle_id" not in result.entity.properties
         assert result.is_update is False
 
     def test_valid_update_entity(self, config, graph):
@@ -112,7 +116,7 @@ class TestValidateRelationship:
             validate_relationship(config, graph, "Part", "P1", "fits", "Vehicle", "MISSING")
 
     def test_confidence_bool_rejected(self, config, graph):
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
+        with pytest.raises(DataValidationError, match="must be a float"):
             validate_relationship(
                 config,
                 graph,
@@ -125,21 +129,20 @@ class TestValidateRelationship:
             )
 
     def test_confidence_string_coerced(self, config, graph):
-        result = validate_relationship(
-            config,
-            graph,
-            "Part",
-            "P1",
-            "fits",
-            "Vehicle",
-            "V1",
-            {"confidence": "0.75"},
-        )
-        assert result.relationship.properties["confidence"] == 0.75
-        assert isinstance(result.relationship.properties["confidence"], float)
+        with pytest.raises(DataValidationError, match="must be a float"):
+            validate_relationship(
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
+                {"confidence": "0.75"},
+            )
 
     def test_confidence_non_numeric_rejected(self, config, graph):
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
+        with pytest.raises(DataValidationError, match="must be a float"):
             validate_relationship(
                 config,
                 graph,
@@ -149,32 +152,6 @@ class TestValidateRelationship:
                 "Vehicle",
                 "V1",
                 {"confidence": "high"},
-            )
-
-    def test_confidence_non_finite_rejected(self, config, graph):
-        with pytest.raises(DataValidationError, match="confidence must be a finite"):
-            validate_relationship(
-                config,
-                graph,
-                "Part",
-                "P1",
-                "fits",
-                "Vehicle",
-                "V1",
-                {"confidence": float("inf")},
-            )
-
-    def test_confidence_nan_rejected(self, config, graph):
-        with pytest.raises(DataValidationError, match="confidence must be a finite"):
-            validate_relationship(
-                config,
-                graph,
-                "Part",
-                "P1",
-                "fits",
-                "Vehicle",
-                "V1",
-                {"confidence": float("nan")},
             )
 
     def test_provenance_stripped(self, config, graph):
@@ -194,6 +171,86 @@ class TestValidateRelationship:
         with pytest.raises(DataValidationError, match="not found in config"):
             validate_relationship(config, graph, "Part", "P1", "no_such_rel", "Vehicle", "V1")
 
+    def test_new_relationship_missing_required_property_rejected(self, config, graph):
+        with pytest.raises(DataValidationError, match="missing required property 'confidence'"):
+            validate_relationship(
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
+                {"note": "partial insert"},
+            )
+
+    def test_update_relationship_merges_and_validates_full_payload(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
+                properties={
+                    "confidence": 0.5,
+                    "_provenance": make_provenance("ingest", "fitments"),
+                    "review_status": "human_approved",
+                },
+            )
+        )
+
+        validated = validate_relationship(
+            config,
+            graph,
+            "Part",
+            "P1",
+            "fits",
+            "Vehicle",
+            "V1",
+            {"note": "verified manually"},
+        )
+
+        assert validated.is_update is True
+        assert validated.relationship.properties == {
+            "confidence": 0.5,
+            "note": "verified manually",
+        }
+        apply_relationship(graph, validated, "cli_add", "add-relationship")
+        rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
+        assert rel is not None
+        assert rel.properties["confidence"] == 0.5
+        assert rel.properties["note"] == "verified manually"
+        assert rel.properties["review_status"] == "human_approved"
+
+    def test_invalid_relationship_update_leaves_existing_edge_unchanged(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
+                properties={"confidence": 0.5},
+            )
+        )
+
+        with pytest.raises(DataValidationError, match="value may not be null"):
+            validate_relationship(
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
+                {"confidence": None},
+            )
+
+        rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
+        assert rel is not None
+        assert rel.properties == {"confidence": 0.5}
+
 
 # ---------------------------------------------------------------------------
 # apply_entity
@@ -208,11 +265,15 @@ class TestApplyEntity:
 
     def test_apply_update(self, config, graph):
         validated = validate_entity(
-            config, graph, "Vehicle", "V1", {"vehicle_id": "V1", "extra": "x"}
+            config, graph, "Vehicle", "V1", {"vehicle_id": "V1"}
         )
         apply_entity(graph, validated)
         entity = graph.get_entity("Vehicle", "V1")
-        assert entity.properties["extra"] == "x"
+        assert "vehicle_id" in entity.properties
+
+    def test_unknown_property_rejected(self, config, graph):
+        with pytest.raises(DataValidationError, match="unexpected property 'extra'"):
+            validate_entity(config, graph, "Vehicle", "V1", {"extra": "x"})
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +292,7 @@ class TestApplyRelationship:
             "fits",
             "Vehicle",
             "V1",
+            {"confidence": 0.9},
         )
         apply_relationship(graph, validated, "mcp_add", "cruxible_add_relationship")
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
@@ -295,6 +357,7 @@ class TestApplyRelationship:
             "fits",
             "Vehicle",
             "V1",
+            {"confidence": 0.9},
         )
         apply_relationship(graph, validated, "cli_add", "add-relationship")
         rel = graph.get_relationship("Part", "P2", "Vehicle", "V1", "fits")

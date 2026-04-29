@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from cruxible_core.config.property_validation import entity_properties_with_identity
 from cruxible_core.config.schema import MatchingSchema
 from cruxible_core.errors import (
     ConfigError,
@@ -641,9 +642,15 @@ def _apply_workflow_policies(
         for policy in policies:
             if from_entity is None or to_entity is None:
                 continue
-            if not matches_exact_filter(from_entity.properties, policy.match.from_match):
+            from_props = entity_properties_with_identity(
+                config, from_entity.entity_type, from_entity.entity_id, from_entity.properties
+            )
+            to_props = entity_properties_with_identity(
+                config, to_entity.entity_type, to_entity.entity_id, to_entity.properties
+            )
+            if not matches_exact_filter(from_props, policy.match.from_match):
                 continue
-            if not matches_exact_filter(to_entity.properties, policy.match.to):
+            if not matches_exact_filter(to_props, policy.match.to):
                 continue
             if not matches_exact_filter(member.properties, policy.match.edge):
                 continue
@@ -813,6 +820,7 @@ def service_resolve_group(
             skipped_existing: list[dict[str, str]] = []
             applied_tuples: list[dict[str, str]] = []
             validation_failures = 0
+            validation_errors: list[str] = []
 
             for m in members:
                 # 5a. Count-based existence check
@@ -841,7 +849,7 @@ def service_resolve_group(
 
                 # 5b. Validate
                 try:
-                    validate_relationship(
+                    validated = validate_relationship(
                         config,
                         graph,
                         m.from_type,
@@ -851,7 +859,7 @@ def service_resolve_group(
                         m.to_id,
                         m.properties,
                     )
-                except DataValidationError:
+                except DataValidationError as exc:
                     ctx.builder.record_validation(
                         passed=False,
                         detail={
@@ -861,6 +869,11 @@ def service_resolve_group(
                     )
                     edges_skipped += 1
                     validation_failures += 1
+                    detail = "; ".join(exc.errors) if exc.errors else str(exc)
+                    validation_errors.append(
+                        f"{m.from_type}:{m.from_id} -[{m.relationship_type}]-> "
+                        f"{m.to_type}:{m.to_id}: {detail}"
+                    )
                     continue
 
                 ctx.builder.record_validation(
@@ -878,7 +891,7 @@ def service_resolve_group(
                         relationship_type=m.relationship_type,
                         to_type=m.to_type,
                         to_id=m.to_id,
-                        properties=m.properties,
+                        properties=validated.relationship.properties,
                     )
                 )
                 applied_tuples.append(
@@ -896,6 +909,11 @@ def service_resolve_group(
             if not is_retry:
                 # 7a. First attempt: create resolution
                 if not valid_inputs and not skipped_existing:
+                    if validation_errors:
+                        raise DataValidationError(
+                            "Cannot approve group: candidate validation failed",
+                            errors=validation_errors,
+                        )
                     raise ConfigError("Cannot approve: no creatable edges")
 
                 # Inherit trust from prior confirmed approval

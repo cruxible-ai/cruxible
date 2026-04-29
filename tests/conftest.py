@@ -107,7 +107,7 @@ workflows:
       - id: lift
         provider: lift_predictor
         input:
-          sku: $steps.context.results[0].properties.sku
+          sku: $steps.context.results[0].entity_id
           category: $steps.context.results[0].properties.category
           start_date: $input.start_date
           end_date: $input.end_date
@@ -168,6 +168,10 @@ relationships:
   - name: recommended_for
     from: Campaign
     to: Product
+    properties:
+      reason:
+        type: string
+        optional: true
     matching:
       integrations:
         catalog:
@@ -223,7 +227,7 @@ workflows:
       - id: recommend
         provider: campaign_recommendations
         input:
-          campaign_id: $steps.campaign.results[0].properties.campaign_id
+          campaign_id: $steps.campaign.results[0].entity_id
           region: $steps.campaign.results[0].properties.region
         as: recommendations
       - id: candidates
@@ -231,7 +235,7 @@ workflows:
           relationship_type: recommended_for
           items: $steps.recommendations.items
           from_type: Campaign
-          from_id: $steps.campaign.results[0].properties.campaign_id
+          from_id: $steps.campaign.results[0].entity_id
           to_type: Product
           to_id: $item.product_sku
           properties:
@@ -241,7 +245,7 @@ workflows:
         map_signals:
           integration: catalog
           items: $steps.recommendations.items
-          from_id: $steps.campaign.results[0].properties.campaign_id
+          from_id: $steps.campaign.results[0].entity_id
           to_id: $item.product_sku
           evidence: $item.reason
           enum:

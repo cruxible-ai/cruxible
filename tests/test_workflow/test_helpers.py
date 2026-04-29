@@ -13,6 +13,7 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     EntityTypeSchema,
+    EnumSchema,
     PropertySchema,
     ProviderSchema,
 )
@@ -113,6 +114,34 @@ class TestContractValidation:
         )
 
         assert payload["members"][0]["from_id"] == "A"
+
+    def test_contract_fields_support_enum_ref(self) -> None:
+        config = _base_config(
+            enums={"status": EnumSchema(values=["open", "closed"])},
+            contracts={
+                "Input": ContractSchema(
+                    fields={"status": PropertySchema(type="string", enum_ref="status")}
+                )
+            },
+        )
+
+        payload = validate_contract_payload(
+            config,
+            "Input",
+            {"status": "open"},
+            subject="Workflow input",
+            error_factory=ConfigError,
+        )
+        assert payload["status"] == "open"
+
+        with pytest.raises(ConfigError, match="value must be one of: open, closed"):
+            validate_contract_payload(
+                config,
+                "Input",
+                {"status": "pending"},
+                subject="Workflow input",
+                error_factory=ConfigError,
+            )
 
 
 class TestProviderRegistry:

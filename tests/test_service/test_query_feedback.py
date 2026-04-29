@@ -155,16 +155,18 @@ class TestFeedback:
         assert rel is not None
         assert rel.properties.get("review_status") == "human_approved"
 
-    def test_validates_confidence(self, populated_instance: CruxibleInstance) -> None:
+    def test_validates_correction_property_schema(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
         receipt_id = self._run_query(populated_instance)
-        with pytest.raises(DataValidationError, match="corrections.confidence"):
+        with pytest.raises(DataValidationError, match="must be a bool"):
             service_feedback(
                 populated_instance,
                 receipt_id=receipt_id,
                 action="correct",
                 source="human",
                 target=_edge_target(),
-                corrections={"confidence": True},
+                corrections={"verified": "yes"},
             )
 
     def test_strips_provenance(self, populated_instance: CruxibleInstance) -> None:
@@ -175,7 +177,7 @@ class TestFeedback:
             action="correct",
             source="human",
             target=_edge_target(),
-            corrections={"_provenance": {"spoofed": True}, "confidence": 0.9},
+            corrections={"_provenance": {"spoofed": True}, "source": "catalog"},
         )
         assert result.applied is True
 

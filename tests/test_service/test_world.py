@@ -658,7 +658,20 @@ def test_load_config_with_extends_remains_single_file(tmp_path: Path) -> None:
 def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     root = tmp_path / "owned-case-model"
     root.mkdir()
-    (root / "config.yaml").write_text(WORLD_MODEL_YAML)
+    (root / "config.yaml").write_text(
+        WORLD_MODEL_YAML
+        + """
+  - name: follow_up
+    from: Case
+    to: Case
+    properties:
+      reason:
+        type: string
+      note:
+        type: string
+        optional: true
+"""
+    )
     instance = CruxibleInstance.init(root, "config.yaml")
     instance.set_upstream_metadata(
         UpstreamMetadata(
@@ -734,6 +747,34 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     assert preview.create_count == 1
     assert graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
 
+    update_preview = _apply_relationship_set(
+        instance,
+        graph,
+        "wf",
+        "step_edges_patch",
+        {
+            "relationship_type": "follow_up",
+            "relationships": [
+                {
+                    "relationship_type": "follow_up",
+                    "from_type": "Case",
+                    "from_id": "CASE-A",
+                    "to_type": "Case",
+                    "to_id": "CASE-B",
+                    "properties": {"note": "still watching"},
+                }
+            ],
+        },
+        receipt_builder,
+        persist_writes=False,
+        parent_id=None,
+    )
+    assert update_preview.update_count == 1
+    rel = graph.get_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
+    assert rel is not None
+    assert rel.properties["reason"] == "watch"
+    assert rel.properties["note"] == "still watching"
+
 
 def _case(case_id: str, title: str) -> EntityInstance:
     return EntityInstance(
@@ -755,6 +796,10 @@ def _write_overlay_config(root: Path) -> None:
                 "  - name: follow_up",
                 "    from: Case",
                 "    to: Case",
+                "    properties:",
+                "      reason:",
+                "        type: string",
+                "        optional: true",
             ]
         )
         + "\n"

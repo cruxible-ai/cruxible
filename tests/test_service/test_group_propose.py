@@ -15,7 +15,7 @@ from cruxible_core.config.schema import (
     IntegrationGuardrailSchema,
     MatchingSchema,
 )
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
@@ -123,6 +123,9 @@ relationships:
         default: false
       source:
         type: string
+        optional: true
+      raw_score:
+        type: float
         optional: true
     matching:
       integrations:
@@ -987,6 +990,32 @@ class TestPendingBuckets:
         assert [(member.from_id, member.to_id) for member in members] == [
             ("BP-1002", "V-2024-ACCORD")
         ]
+
+    def test_resolve_unknown_candidate_property_surfaces_validation_error(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        _seed_fitment_entities(matching_instance)
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            [
+                _member(
+                    "BP-1001",
+                    "V-2024-CIVIC",
+                    signals=_all_support_signals(),
+                    properties={"not_declared": "x"},
+                )
+            ],
+            thesis_facts={"rule_id": "bad_property", "rule_version": 1},
+        )
+
+        with pytest.raises(DataValidationError, match="unexpected property 'not_declared'"):
+            service_resolve_group(
+                matching_instance,
+                result.group_id,
+                "approve",
+                expected_pending_version=1,
+            )
 
     def test_rule_version_bump_creates_fresh_bucket_without_prior(
         self, matching_instance: CruxibleInstance

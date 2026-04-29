@@ -73,6 +73,12 @@ class RelationshipInstance(BaseModel):
 REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "agent_rejected"})
 """Edge review_status values that indicate rejection."""
 
+SYSTEM_OWNED_PROPERTIES: frozenset[str] = frozenset({"_provenance", "review_status"})
+"""Graph property keys written by Cruxible system paths, not user/domain writes."""
+
+USER_STRIPPED_PROPERTIES: frozenset[str] = SYSTEM_OWNED_PROPERTIES
+"""System-owned keys stripped from user/domain write payloads."""
+
 
 def make_provenance(source: str, source_ref: str) -> dict[str, str]:
     """Create a provenance metadata dict for edge creation."""

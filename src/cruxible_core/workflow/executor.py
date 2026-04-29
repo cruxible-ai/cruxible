@@ -11,9 +11,18 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import ConfigError, DataValidationError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.operations import (
+    apply_relationship,
+    validate_entity,
+    validate_relationship,
+)
+from cruxible_core.graph.types import (
+    SYSTEM_OWNED_PROPERTIES,
+    EntityInstance,
+    RelationshipInstance,
+)
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import evaluate_comparison
@@ -128,6 +137,7 @@ def execute_workflow(
         if compiled_step.kind == "list_entities":
             assert compiled_step.list_entities_spec is not None
             entity_list = _list_entities(
+                config,
                 graph,
                 compiled_step.step_id,
                 compiled_step.list_entities_spec,
@@ -538,6 +548,7 @@ def _resolve_property_filter(
 
 
 def _list_entities(
+    config: CoreConfig,
     graph: EntityGraph,
     step_id: str,
     spec,
@@ -554,6 +565,7 @@ def _list_entities(
     result = read_list_entities(
         graph,
         spec.entity_type,
+        config=config,
         property_filter=property_filter or None,
         limit=limit,
     )
@@ -1033,10 +1045,35 @@ def _apply_entity_set(
     from cruxible_core.service._ownership import check_type_ownership
 
     check_type_ownership(instance, entity_types=[entity_set.entity_type])
+    config = instance.load_config()
     create_count = 0
     update_count = 0
     noop_count = 0
+    validated_entities = []
+    errors: list[str] = []
     for entity in entity_set.entities:
+        try:
+            validated = validate_entity(
+                config,
+                graph,
+                entity_set.entity_type,
+                entity.entity_id,
+                entity.properties,
+            )
+        except DataValidationError as exc:
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
+            errors.append(f"{entity_set.entity_type}:{entity.entity_id}: {detail}")
+            continue
+        validated_entities.append(validated)
+
+    if errors:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' entity property validation failed: "
+            + "; ".join(errors)
+        )
+
+    for validated in validated_entities:
+        entity = validated.entity
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
         if existing is None:
             create_count += 1
@@ -1091,18 +1128,42 @@ def _apply_relationship_set(
     from cruxible_core.service._ownership import check_type_ownership
 
     check_type_ownership(instance, relationship_types=[relationship_set.relationship_type])
+    config = instance.load_config()
     create_count = 0
     update_count = 0
     noop_count = 0
+    validated_relationships = []
+    errors: list[str] = []
     for rel in relationship_set.relationships:
-        new_properties = dict(rel.properties)
-        new_properties.setdefault(
-            "_provenance",
-            {
-                "source": "workflow_apply",
-                "source_ref": f"workflow:{workflow_name}:{step_id}",
-            },
+        try:
+            validated = validate_relationship(
+                config,
+                graph,
+                rel.from_type,
+                rel.from_id,
+                relationship_set.relationship_type,
+                rel.to_type,
+                rel.to_id,
+                rel.properties,
+            )
+        except DataValidationError as exc:
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
+            errors.append(
+                f"{rel.from_type}:{rel.from_id}-[{relationship_set.relationship_type}]->"
+                f"{rel.to_type}:{rel.to_id}: {detail}"
+            )
+            continue
+        validated_relationships.append(validated)
+
+    if errors:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' relationship property validation failed: "
+            + "; ".join(errors)
         )
+
+    source_ref = f"workflow:{workflow_name}:{step_id}"
+    for validated in validated_relationships:
+        rel = validated.relationship
         existing = graph.get_relationship(
             rel.from_type,
             rel.from_id,
@@ -1112,7 +1173,7 @@ def _apply_relationship_set(
         )
         if existing is None:
             create_count += 1
-            graph.add_relationship(rel.model_copy(update={"properties": new_properties}))
+            apply_relationship(graph, validated, "workflow_apply", source_ref)
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,
@@ -1122,18 +1183,16 @@ def _apply_relationship_set(
                     relationship_set.relationship_type,
                     is_update=False,
                     parent_id=parent_id,
-                )
-            continue
-        if existing.properties != new_properties:
-            update_count += 1
-            graph.replace_edge_properties(
-                rel.from_type,
-                rel.from_id,
-                rel.to_type,
-                rel.to_id,
-                relationship_set.relationship_type,
-                new_properties,
             )
+            continue
+        existing_domain_properties = {
+            key: value
+            for key, value in existing.properties.items()
+            if key not in SYSTEM_OWNED_PROPERTIES
+        }
+        if existing_domain_properties != rel.properties:
+            update_count += 1
+            apply_relationship(graph, validated, "workflow_apply", source_ref)
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,
