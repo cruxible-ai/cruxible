@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from cruxible_core.config.property_validation import (
+    entity_properties_with_identity,
+    entity_with_identity_properties,
+)
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -60,11 +64,27 @@ def list_entities(
     graph: EntityGraph,
     entity_type: str,
     *,
+    config: CoreConfig | None = None,
     property_filter: dict[str, Any] | None = None,
     limit: int | None = None,
 ) -> ReadListResult:
     """List entities of a type with shared limit/filter semantics."""
-    entities = graph.list_entities(entity_type, property_filter=property_filter)
+    if config is None:
+        entities = graph.list_entities(entity_type, property_filter=property_filter)
+    else:
+        entities = [
+            entity_with_identity_properties(config, entity)
+            for entity in graph.list_entities(entity_type)
+        ]
+        if property_filter:
+            entities = [
+                entity
+                for entity in entities
+                if all(
+                    entity.properties.get(key) == value
+                    for key, value in property_filter.items()
+                )
+            ]
     items = entities[:limit] if limit is not None else entities
     return ReadListResult(items=items, total=len(entities))
 
@@ -92,9 +112,14 @@ def get_entity(
     graph: EntityGraph,
     entity_type: str,
     entity_id: str,
+    *,
+    config: CoreConfig | None = None,
 ) -> EntityInstance | None:
     """Look up a specific entity by type and ID."""
-    return graph.get_entity(entity_type, entity_id)
+    entity = graph.get_entity(entity_type, entity_id)
+    if entity is None or config is None:
+        return entity
+    return entity_with_identity_properties(config, entity)
 
 
 def get_relationship(
@@ -136,6 +161,7 @@ def inspect_entity(
     entity_type: str,
     entity_id: str,
     *,
+    config: CoreConfig | None = None,
     direction: Literal["incoming", "outgoing", "both"] = "both",
     relationship_type: str | None = None,
     limit: int | None = None,
@@ -160,15 +186,29 @@ def inspect_entity(
             relationship_type=str(row["relationship_type"]),
             edge_key=row.get("edge_key"),
             properties=dict(row.get("properties", {})),
-            entity=row["entity"],
+            entity=(
+                entity_with_identity_properties(config, row["entity"])
+                if config is not None
+                else row["entity"]
+            ),
         )
         for row in neighbor_rows
     ]
+    entity_props = (
+        entity_properties_with_identity(
+            config,
+            entity.entity_type,
+            entity.entity_id,
+            entity.properties,
+        )
+        if config is not None
+        else dict(entity.properties)
+    )
     return ReadInspectEntity(
         found=True,
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
-        properties=dict(entity.properties),
+        properties=entity_props,
         neighbors=neighbors,
         total_neighbors=total_neighbors,
     )
@@ -178,10 +218,14 @@ def sample_entities(
     graph: EntityGraph,
     entity_type: str,
     *,
+    config: CoreConfig | None = None,
     limit: int = 5,
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
-    return cast(list[EntityInstance], list_entities(graph, entity_type, limit=limit).items)
+    return cast(
+        list[EntityInstance],
+        list_entities(graph, entity_type, config=config, limit=limit).items,
+    )
 
 
 def graph_stats(

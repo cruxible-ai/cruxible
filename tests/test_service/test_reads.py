@@ -8,10 +8,11 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, ReceiptNotFoundError, RelationshipAmbiguityError
-from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
     service_add_constraint,
     service_add_decision_policy,
+    service_add_entities,
     service_get_entity,
     service_get_receipt,
     service_get_relationship,
@@ -414,6 +415,32 @@ class TestGetEntity:
         assert entity.entity_id == "V-2024-CIVIC-EX"
         assert entity.properties["make"] == "Honda"
 
+    def test_get_entity_exposes_derived_primary_key(
+        self, initialized_instance: CruxibleInstance
+    ) -> None:
+        service_add_entities(
+            initialized_instance,
+            [
+                EntityInstance(
+                    entity_type="Vehicle",
+                    entity_id="V-1",
+                    properties={
+                        "vehicle_id": "V-1",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                )
+            ],
+        )
+        raw = initialized_instance.load_graph().get_entity("Vehicle", "V-1")
+        assert raw is not None
+        assert "vehicle_id" not in raw.properties
+
+        entity = service_get_entity(initialized_instance, "Vehicle", "V-1")
+        assert entity is not None
+        assert entity.properties["vehicle_id"] == "V-1"
+
     def test_not_found(self, populated_instance: CruxibleInstance) -> None:
         entity = service_get_entity(populated_instance, "Vehicle", "NONEXISTENT")
         assert entity is None
@@ -422,6 +449,7 @@ class TestGetEntity:
         result = service_inspect_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX")
 
         assert result.found is True
+        assert result.properties["vehicle_id"] == "V-2024-CIVIC-EX"
         assert result.total_neighbors == 2
         assert {neighbor.relationship_type for neighbor in result.neighbors} == {"fits"}
         assert {neighbor.direction for neighbor in result.neighbors} == {"incoming"}
@@ -531,6 +559,35 @@ class TestList:
         assert result.total == 1
         assert len(result.items) == 1
         assert result.items[0].entity_id == "V-2024-CIVIC-EX"
+
+    def test_entities_primary_key_property_filter(
+        self, initialized_instance: CruxibleInstance
+    ) -> None:
+        service_add_entities(
+            initialized_instance,
+            [
+                EntityInstance(
+                    entity_type="Vehicle",
+                    entity_id="V-1",
+                    properties={
+                        "vehicle_id": "V-1",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                )
+            ],
+        )
+
+        result = service_list(
+            initialized_instance,
+            "entities",
+            entity_type="Vehicle",
+            property_filter={"vehicle_id": "V-1"},
+        )
+
+        assert result.total == 1
+        assert result.items[0].properties["vehicle_id"] == "V-1"
 
     def test_edges(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(populated_instance, "edges")

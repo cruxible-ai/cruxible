@@ -516,6 +516,15 @@ class TestWorkflowExecutor:
     def test_execute_workflow_list_entities_matches_service_list(
         self, workflow_instance: CruxibleInstance
     ) -> None:
+        graph = workflow_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="SKU-123",
+                properties={"category": "soda", "base_margin": 0.2},
+            )
+        )
+        workflow_instance.save_graph(graph)
         config = workflow_instance.load_config()
         config.contracts["PromoInput"].fields["category"] = PropertySchema(
             type="string",
@@ -527,7 +536,7 @@ class TestWorkflowExecutor:
                 id="products",
                 list_entities={
                     "entity_type": "Product",
-                    "property_filter": {"category": "$input.category"},
+                    "property_filter": {"sku": "$input.sku"},
                     "limit": 5,
                 },
                 **{"as": "products"},
@@ -551,11 +560,12 @@ class TestWorkflowExecutor:
             workflow_instance,
             "entities",
             entity_type="Product",
-            property_filter={"category": "soda"},
+            property_filter={"sku": "SKU-123"},
             limit=5,
         )
 
         assert result.step_outputs["products"]["total"] == listed.total
+        assert result.step_outputs["products"]["items"][0]["properties"]["sku"] == "SKU-123"
         assert result.step_outputs["products"]["items"] == [
             item.model_dump(mode="python") for item in listed.items
         ]

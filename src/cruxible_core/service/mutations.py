@@ -130,7 +130,8 @@ def service_add_relationships(
     """Add or update relationships in the graph (batch upsert).
 
     Validates all relationships first, then applies atomically.
-    New edges get provenance stamped. Updated edges preserve existing provenance.
+    New edges get provenance stamped. Updated edges merge domain properties and
+    preserve existing system review metadata.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
     check_type_ownership(

@@ -118,8 +118,9 @@ def service_sample(
     limit: int = 5,
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
+    config = instance.load_config()
     graph = instance.load_graph()
-    return read_sample_entities(graph, entity_type, limit=limit)
+    return read_sample_entities(graph, entity_type, config=config, limit=limit)
 
 
 def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
@@ -141,8 +142,9 @@ def service_get_entity(
     entity_id: str,
 ) -> EntityInstance | None:
     """Look up a specific entity by type and ID."""
+    config = instance.load_config()
     graph = instance.load_graph()
-    return read_get_entity(graph, entity_type, entity_id)
+    return read_get_entity(graph, entity_type, entity_id, config=config)
 
 
 def service_inspect_entity(
@@ -155,11 +157,13 @@ def service_inspect_entity(
     limit: int | None = None,
 ) -> InspectEntityResult:
     """Look up an entity and its immediate neighbors."""
+    config = instance.load_config()
     graph = instance.load_graph()
     result = read_inspect_entity(
         graph,
         entity_type,
         entity_id,
+        config=config,
         direction=direction,
         relationship_type=relationship_type,
         limit=limit,
@@ -254,10 +258,12 @@ def service_list(
     if resource == "entities":
         if not entity_type:
             raise ConfigError("entity_type is required when listing entities")
+        config = instance.load_config()
         graph = instance.load_graph()
         result = read_list_entities(
             graph,
             entity_type,
+            config=config,
             property_filter=property_filter,
             limit=limit,
         )
