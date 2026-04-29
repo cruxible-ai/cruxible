@@ -61,6 +61,46 @@ graph LR
 
 **Legend:** Blue = reference layer (upstream, read-only) | Green = fork (internal) | Solid lines = deterministic | Dashed red lines = governed (proposal/review)
 
+### Entity Types
+
+| Entity | Layer | Description | Key Properties |
+|---|---|---|---|
+| **Court** | reference | Federal or state court identified by CourtListener court ID. | `court_id` (PK), `name`, `jurisdiction`, `level`, `circuit`, `state` |
+| **Judge** | reference | Judge identified by CourtListener person ID. | `judge_id` (PK), `name`, `court_id`, `active` |
+| **Docket** | reference | Court docket (case filing) identified by CourtListener docket ID. | `docket_id` (PK), `case_name`, `docket_number`, `court_id`, `date_filed`, `nature_of_suit` |
+| **Opinion** | reference | Published judicial opinion from CourtListener. | `opinion_id` (PK), `case_name`, `citation`, `date_filed`, `type` (lead/concurrence/dissent/per_curiam), `summary` |
+| **Filing** | reference | Docket entry or filing event from CourtListener. | `filing_id` (PK), `docket_id`, `description`, `date_filed`, `filing_type` (motion/order/brief/notice) |
+| **Statute** | reference | Federal or state statute, regulation, or constitutional provision. | `statute_id` (PK), `title`, `citation`, `jurisdiction`, `category` (statute/regulation/constitutional/doctrine) |
+| **Matter** | fork | Active or historical legal matter tracked by the firm. | `matter_id` (PK), `title`, `status` (active/resolved/settled/dismissed), `jurisdiction`, `court_id` |
+| **Client** | fork | Firm client associated with one or more matters. | `client_id` (PK), `name`, `industry` |
+| **Attorney** | fork | Firm attorney assigned to matters. | `attorney_id` (PK), `name`, `practice_area_id`, `seniority` (partner/associate/counsel/paralegal) |
+| **PracticeArea** | fork | Practice area or specialization within the firm. | `practice_area_id` (PK), `name` |
+| **Position** | fork | Specific legal argument or position taken in a matter. | `position_id` (PK), `matter_id`, `description`, `type` (claim/defense/counterclaim), `status` (active/prevailed/rejected) |
+| **Deadline** | fork | Filing deadline or response obligation tied to a matter. | `deadline_id` (PK), `matter_id`, `description`, `due_date`, `type` (filing/response/discovery/hearing), `status` |
+| **CaseOutcome** | fork | Resolved case result recording what happened in court. | `outcome_id` (PK), `matter_id`, `result` (won/lost/settled/dismissed), `date_resolved`, `court_id`, `judge_id` |
+
+### Relationships
+
+| Relationship | Source | Target | Type | Description |
+|---|---|---|---|---|
+| `docket_in_court` | Docket | Court | deterministic | Docket-to-court assignment from CourtListener metadata. |
+| `opinion_on_docket` | Opinion | Docket | deterministic | Opinion issued on a specific docket. |
+| `filed_on_docket` | Filing | Docket | deterministic | Filing event on a specific docket. |
+| `decided_by` | Opinion | Judge | deterministic | Opinion authored or decided by a specific judge. |
+| `interprets` | Opinion | Statute | deterministic | Opinion interprets, applies, or construes a statute. Properties: `treatment` (applied/construed/distinguished/overruled). |
+| `cites` | Opinion | Opinion | deterministic | Opinion cites another opinion as authority. Properties: `depth` (1=discussed, 2=cited, 3=mentioned). |
+| `matter_for_client` | Matter | Client | deterministic | Matter belongs to a client. |
+| `matter_assigned_to` | Matter | Attorney | deterministic | Matter is assigned to an attorney. |
+| `matter_in_practice_area` | Matter | PracticeArea | deterministic | Matter falls within a practice area. |
+| `matter_has_position` | Matter | Position | deterministic | Matter includes a specific legal position or argument. |
+| `matter_has_deadline` | Matter | Deadline | deterministic | Matter has a filing deadline or response obligation. |
+| `outcome_of_matter` | CaseOutcome | Matter | deterministic | Case outcome resolves a matter. |
+| `outcome_resolved_position` | CaseOutcome | Position | deterministic | Case outcome resolved a specific position. Properties: `role`, `prevailed`, `weight` (adopted/distinguished/rejected), `notes`. |
+| `matter_turns_on_statute` | Matter | Statute | governed | Matter's legal scope depends on this statute or doctrine. |
+| `opinion_affects_matter` | Opinion | Matter | governed | A new opinion materially affects a tracked matter. Properties: `impact_level` (binding/persuasive/distinguishable), `urgency`. |
+| `opinion_supports_position` | Opinion | Position | governed | An opinion supports, distinguishes, or weakens a tracked legal position. Properties: `relationship_to_position`, `authority_weight`. |
+| `filing_requires_response` | Filing | Matter | governed | A filing creates a response obligation or deadline for a tracked matter. Properties: `response_type`, `deadline_date`. |
+
 ## Case Outcomes and the Compounding Loop
 
 A firm's fork accumulates institutional knowledge through two complementary mechanisms:

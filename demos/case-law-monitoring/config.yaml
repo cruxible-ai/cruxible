@@ -26,6 +26,7 @@ entity_types:
       date_closed: {type: string, optional: true}
       jurisdiction: {type: string, optional: true}
       court_id: {type: string, optional: true}
+      docket_id: {type: string, optional: true}
 
   Client:
     description: Firm client associated with one or more matters.
@@ -651,6 +652,7 @@ contracts:
   MatterStatuteInput:
     fields:
       matters: {type: json}
+      statutes: {type: json}
 
   MatterStatuteResults:
     fields:
@@ -662,6 +664,7 @@ contracts:
       opinions: {type: json}
       matters: {type: json}
       matter_statutes: {type: json}
+      opinion_statutes: {type: json}
 
   OpinionImpactResults:
     fields:
@@ -672,6 +675,8 @@ contracts:
     fields:
       opinions: {type: json}
       positions: {type: json}
+      matter_statutes: {type: json}
+      opinion_statutes: {type: json}
 
   PositionAuthorityResults:
     fields:
@@ -694,12 +699,12 @@ artifacts:
   firm_case_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:placeholder
+    sha256: sha256:aa65cbf91c76ee35317f5bf2f68abd2a5528ff2ee50b1ba2767365300027d6a2
 
   case_outcome_bundle:
     kind: directory
     uri: ./data/outcomes
-    sha256: sha256:placeholder
+    sha256: sha256:7e214b77524c114849cdfb794bd2f88fca176174558d03cb43d1398b52e6df06
 
 # ─── Providers ────────────────────────────────────────────────────────
 
@@ -739,7 +744,7 @@ providers:
     contract_out: MatterStatuteResults
     ref: cruxible_core.demo_providers.case_law.extract_matter_statutes
     version: "1.0.0"
-    deterministic: false
+    deterministic: true
     runtime: python
 
   assess_opinion_matter_impact:
@@ -751,7 +756,7 @@ providers:
     contract_out: OpinionImpactResults
     ref: cruxible_core.demo_providers.case_law.assess_opinion_matter_impact
     version: "1.0.0"
-    deterministic: false
+    deterministic: true
     runtime: python
 
   assess_position_authority:
@@ -763,7 +768,7 @@ providers:
     contract_out: PositionAuthorityResults
     ref: cruxible_core.demo_providers.case_law.assess_position_authority
     version: "1.0.0"
-    deterministic: false
+    deterministic: true
     runtime: python
 
   classify_filing_obligation:
@@ -775,7 +780,7 @@ providers:
     contract_out: FilingObligationResults
     ref: cruxible_core.demo_providers.case_law.classify_filing_obligation
     version: "1.0.0"
-    deterministic: false
+    deterministic: true
     runtime: python
 
 # ─── Workflows ────────────────────────────────────────────────────────
@@ -806,6 +811,7 @@ workflows:
             date_opened: $item.date_opened
             jurisdiction: $item.jurisdiction
             court_id: $item.court_id
+            docket_id: $item.docket_id
         as: matters
 
       - id: clients
@@ -1036,7 +1042,8 @@ workflows:
       - id: extraction
         provider: extract_matter_statutes
         input:
-          matters: $steps.matters
+          matters: $steps.matters.items
+          statutes: $steps.statutes.items
         as: extraction
 
       - id: candidates
@@ -1094,12 +1101,18 @@ workflows:
           relationship_type: matter_turns_on_statute
         as: matter_statutes
 
+      - id: opinion_statutes
+        list_relationships:
+          relationship_type: interprets
+        as: opinion_statutes
+
       - id: assessment
         provider: assess_opinion_matter_impact
         input:
-          opinions: $steps.opinions
-          matters: $steps.matters
-          matter_statutes: $steps.matter_statutes
+          opinions: $steps.opinions.items
+          matters: $steps.matters.items
+          matter_statutes: $steps.matter_statutes.items
+          opinion_statutes: $steps.opinion_statutes.items
         as: assessment
 
       - id: candidates
@@ -1110,6 +1123,9 @@ workflows:
           from_id: $item.opinion_id
           to_type: Matter
           to_id: $item.matter_id
+          properties:
+            impact_level: $item.impact_level
+            urgency: $item.urgency
         as: candidates
 
       - id: impact_signals
@@ -1166,11 +1182,23 @@ workflows:
           entity_type: Position
         as: positions
 
+      - id: matter_statutes
+        list_relationships:
+          relationship_type: matter_turns_on_statute
+        as: matter_statutes
+
+      - id: opinion_statutes
+        list_relationships:
+          relationship_type: interprets
+        as: opinion_statutes
+
       - id: assessment
         provider: assess_position_authority
         input:
-          opinions: $steps.opinions
-          positions: $steps.positions
+          opinions: $steps.opinions.items
+          positions: $steps.positions.items
+          matter_statutes: $steps.matter_statutes.items
+          opinion_statutes: $steps.opinion_statutes.items
         as: assessment
 
       - id: candidates
@@ -1181,6 +1209,9 @@ workflows:
           from_id: $item.opinion_id
           to_type: Position
           to_id: $item.position_id
+          properties:
+            relationship_to_position: $item.relationship_to_position
+            authority_weight: $item.authority_weight
         as: candidates
 
       - id: signals
@@ -1226,8 +1257,8 @@ workflows:
       - id: classification
         provider: classify_filing_obligation
         input:
-          filings: $steps.filings
-          matters: $steps.matters
+          filings: $steps.filings.items
+          matters: $steps.matters.items
         as: classification
 
       - id: candidates
@@ -1238,6 +1269,9 @@ workflows:
           from_id: $item.filing_id
           to_type: Matter
           to_id: $item.matter_id
+          properties:
+            response_type: $item.response_type
+            deadline_date: $item.deadline_date
         as: candidates
 
       - id: obligation_signals

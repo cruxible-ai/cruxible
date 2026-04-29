@@ -65,6 +65,38 @@ graph LR
 
 **Legend:** Blue = reference layer (upstream, read-only) | Green = fork (internal) | Solid lines = deterministic | Dashed red lines = governed (proposal/review)
 
+### Entity Types
+
+| Entity | Layer | Description | Key Properties |
+|---|---|---|---|
+| **Vendor** | reference | Vendor or software publisher, identified by CPE vendor string. | `vendor_id` (PK), `name` |
+| **Product** | reference | Product identified by CPE vendor and product strings. | `product_id` (PK), `product_name`, `cpe_vendor`, `cpe_product`, `cpe_part` |
+| **Vulnerability** | reference | Public vulnerability record from CISA KEV catalog. | `cve_id` (PK), `description`, `cvss_score`, `epss_score`, `kev_due_date`, `known_ransomware_use` |
+| **Asset** | fork | Internal asset from CMDB, cloud inventory, or endpoint tooling. | `asset_id` (PK), `hostname`, `asset_type`, `criticality`, `environment`, `internet_exposed` |
+| **BusinessService** | fork | Internal business or technical service depending on assets. | `service_id` (PK), `name`, `tier` |
+| **Owner** | fork | Team or person responsible for an asset or service. | `owner_id` (PK), `name`, `team`, `email` |
+| **CompensatingControl** | fork | Control that can reduce or block exploitability. | `control_id` (PK), `name`, `control_type`, `status` |
+| **Exception** | fork | Approved patch or remediation exception. | `exception_id` (PK), `reason`, `review_due_at`, `status` |
+| **PatchWindow** | fork | Operational patching schedule or change window. | `patch_window_id` (PK), `cadence`, `next_window_at`, `freeze_status` |
+
+### Relationships
+
+| Relationship | Source | Target | Type | Description |
+|---|---|---|---|---|
+| `product_from_vendor` | Product | Vendor | deterministic | Product-to-vendor mapping from CPE structure. |
+| `vulnerability_affects_product` | Vulnerability | Product | deterministic | Public mapping from vulnerability to affected product, with `affected_versions` ranges from NVD. |
+| `service_depends_on_asset` | BusinessService | Asset | deterministic | Internal dependency mapping from services to assets. |
+| `asset_owned_by` | Asset | Owner | deterministic | Ownership or routing mapping for assets. |
+| `asset_has_control` | Asset | CompensatingControl | deterministic | Internal mapping from assets to compensating controls. |
+| `asset_has_exception` | Asset | Exception | deterministic | Internal mapping from assets to approved exceptions. |
+| `asset_patch_window` | Asset | PatchWindow | deterministic | Internal patching schedule mapping. |
+| `asset_runs_product` | Asset | Product | governed | Fuzzy match from internal software names to CPE product IDs. Properties: `installed_version`, `evidence_source`. |
+| `asset_affected_by_vulnerability` | Asset | Vulnerability | governed | Judgment that an asset is actually affected by a vulnerability. Properties: `product_id`, `installed_version`, `rationale`. |
+| `asset_exposed_to_vulnerability` | Asset | Vulnerability | governed | Judgment that the asset is materially exposed and should drive action. Properties: `priority`, `due_by`, `rationale`. |
+| `service_impacted_by_vulnerability` | BusinessService | Vulnerability | governed | Judgment that a business service is impacted through its asset dependencies. Properties: `blast_radius`, `rationale`. |
+| `asset_patch_exception_for` | Asset | Vulnerability | governed | Judgment that an exception currently waives remediation for a vulnerability. Properties: `exception_id`, `review_due_at`. |
+| `control_reduces_exposure_to` | CompensatingControl | Vulnerability | governed | Judgment that a control materially reduces exploitability for a vulnerability class. Properties: `validation_basis`, `expires_at`. |
+
 ## Governed Relationships
 
 Each governed relationship has a `matching` block, integrations that provide signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.

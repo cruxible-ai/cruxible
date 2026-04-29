@@ -249,7 +249,7 @@ artifacts:
   public_courtlistener_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:placeholder
+    sha256: sha256:64674ef41190df6b010b082808a5936d1637ecbe7f6463e0337ce03e99dd914f
 
 providers:
   load_public_courtlistener_rows:
