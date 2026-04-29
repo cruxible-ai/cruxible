@@ -14,6 +14,7 @@ from typing import Any
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.types import SYSTEM_OWNED_PROPERTIES
 
 
 def validate_config(config: CoreConfig) -> list[str]:
@@ -95,11 +96,55 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
 
         for i, step in enumerate(query.traversal):
             for rel_name in step.relationship_types:
-                if config.resolve_relationship_reference(rel_name) is None:
+                resolved = config.resolve_relationship_reference(rel_name)
+                if resolved is None:
                     errors.append(
                         f"Named query '{query_name}' step {i}: relationship "
                         f"'{rel_name}' not defined in relationships"
                     )
+                    continue
+
+                rel, is_reverse = resolved
+                effective_direction = (
+                    _flip_direction(step.direction) if is_reverse else step.direction
+                )
+                if step.filter:
+                    allowed_edge_props = set(rel.properties) | SYSTEM_OWNED_PROPERTIES
+                    for prop_name in step.filter:
+                        if prop_name not in allowed_edge_props:
+                            errors.append(
+                                f"Named query '{query_name}' step {i}: filter references "
+                                f"unknown property '{prop_name}' on relationship '{rel.name}'"
+                            )
+                if step.target_filter:
+                    target_types = _target_entity_types_for_step(rel, effective_direction)
+                    for target_type in target_types:
+                        entity = config.get_entity_type(target_type)
+                        if entity is None:
+                            continue
+                        for prop_name in step.target_filter:
+                            if prop_name not in entity.properties:
+                                errors.append(
+                                    f"Named query '{query_name}' step {i}: target_filter "
+                                    f"references unknown property '{prop_name}' on "
+                                    f"entity type '{target_type}'"
+                                )
+
+
+def _flip_direction(direction: str) -> str:
+    if direction == "incoming":
+        return "outgoing"
+    if direction == "outgoing":
+        return "incoming"
+    return direction
+
+
+def _target_entity_types_for_step(rel: Any, direction: str) -> set[str]:
+    if direction == "outgoing":
+        return {rel.to_entity}
+    if direction == "incoming":
+        return {rel.from_entity}
+    return {rel.from_entity, rel.to_entity}
 
 
 def _validate_constraints(
@@ -386,7 +431,7 @@ def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:
 def _validate_ingestion(config: CoreConfig, errors: list[str]) -> None:
     """Check that ingestion mappings reference valid entity/relationship types."""
     entity_names = set(config.entity_types.keys())
-    rel_names = {rel.name for rel in config.relationships}
+    relationships = {rel.name: rel for rel in config.relationships}
 
     for mapping_name, mapping in config.ingestion.items():
         if mapping.is_entity:
@@ -395,12 +440,46 @@ def _validate_ingestion(config: CoreConfig, errors: list[str]) -> None:
                     f"Ingestion mapping '{mapping_name}': entity_type "
                     f"'{mapping.entity_type}' not defined in entity_types"
                 )
+                continue
+            assert mapping.entity_type is not None
+            entity = config.entity_types[mapping.entity_type]
+            allowed_targets = set(entity.properties) | {mapping.id_column or ""}
+            allowed_targets.update(SYSTEM_OWNED_PROPERTIES)
+            for source, target in mapping.column_map.items():
+                if target not in allowed_targets:
+                    errors.append(
+                        f"Ingestion mapping '{mapping_name}': column_map target "
+                        f"'{target}' from source '{source}' is not a property on "
+                        f"entity type '{mapping.entity_type}'"
+                    )
         elif mapping.is_relationship:
-            if mapping.relationship_type not in rel_names:
+            rel = relationships.get(mapping.relationship_type or "")
+            if rel is None:
                 errors.append(
                     f"Ingestion mapping '{mapping_name}': relationship_type "
                     f"'{mapping.relationship_type}' not defined in relationships"
                 )
+                continue
+            mapped_from_column = mapping.column_map.get(
+                mapping.from_column or "", mapping.from_column or ""
+            )
+            mapped_to_column = mapping.column_map.get(
+                mapping.to_column or "", mapping.to_column or ""
+            )
+            allowed_targets = set(rel.properties) | {
+                mapping.from_column or "",
+                mapping.to_column or "",
+                mapped_from_column,
+                mapped_to_column,
+            }
+            allowed_targets.update(SYSTEM_OWNED_PROPERTIES)
+            for source, target in mapping.column_map.items():
+                if target not in allowed_targets:
+                    errors.append(
+                        f"Ingestion mapping '{mapping_name}': column_map target "
+                        f"'{target}' from source '{source}' is not a property on "
+                        f"relationship '{mapping.relationship_type}'"
+                    )
 
 
 def _validate_matching_integrations(config: CoreConfig, errors: list[str]) -> None:

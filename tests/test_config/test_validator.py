@@ -39,14 +39,25 @@ def _minimal_config(**overrides) -> CoreConfig:
         name="test",
         entity_types={
             "A": EntityTypeSchema(
-                properties={"id": PropertySchema(type="string", primary_key=True)}
+                properties={
+                    "id": PropertySchema(type="string", primary_key=True),
+                    "status": PropertySchema(type="string", optional=True),
+                }
             ),
             "B": EntityTypeSchema(
-                properties={"id": PropertySchema(type="string", primary_key=True)}
+                properties={
+                    "id": PropertySchema(type="string", primary_key=True),
+                    "status": PropertySchema(type="string", optional=True),
+                }
             ),
         },
         relationships=[
-            RelationshipSchema(name="links", from_entity="A", to_entity="B"),
+            RelationshipSchema(
+                name="links",
+                from_entity="A",
+                to_entity="B",
+                properties={"score": PropertySchema(type="float", optional=True)},
+            ),
         ],
     )
     defaults.update(overrides)
@@ -186,6 +197,54 @@ class TestValidateNamedQueries:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("nonexistent" in e for e in exc_info.value.errors)
+
+    def test_invalid_traversal_filter_property(self):
+        config = _minimal_config(
+            named_queries={
+                "bad": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[TraversalStep(relationship="links", filter={"scroe": 1})],
+                    returns="list[B]",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("filter" in e and "scroe" in e for e in exc_info.value.errors)
+
+    def test_invalid_traversal_target_filter_property(self):
+        config = _minimal_config(
+            named_queries={
+                "bad": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[
+                        TraversalStep(relationship="links", target_filter={"statuz": "open"})
+                    ],
+                    returns="list[B]",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("target_filter" in e and "statuz" in e for e in exc_info.value.errors)
+
+    def test_valid_traversal_filters(self):
+        config = _minimal_config(
+            named_queries={
+                "find_open_b": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[
+                        TraversalStep(
+                            relationship="links",
+                            filter={"score": 0.9},
+                            target_filter={"status": "open"},
+                        )
+                    ],
+                    returns="list[B]",
+                )
+            }
+        )
+        validate_config(config)
 
 
 class TestValidateLoopOneControls:
@@ -387,6 +446,48 @@ class TestValidateIngestion:
                     relationship_type="links",
                     from_column="a_id",
                     to_column="b_id",
+                ),
+            }
+        )
+        validate_config(config)
+
+    def test_invalid_entity_column_map_target(self):
+        config = _minimal_config(
+            ingestion={
+                "items": IngestionMapping(
+                    entity_type="A",
+                    id_column="id",
+                    column_map={"STATE": "statuz"},
+                ),
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("column_map target 'statuz'" in e for e in exc_info.value.errors)
+
+    def test_invalid_relationship_column_map_target(self):
+        config = _minimal_config(
+            ingestion={
+                "edges": IngestionMapping(
+                    relationship_type="links",
+                    from_column="A_ID",
+                    to_column="B_ID",
+                    column_map={"WEIGHT": "weight"},
+                ),
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("column_map target 'weight'" in e for e in exc_info.value.errors)
+
+    def test_relationship_column_map_allows_renamed_endpoints(self):
+        config = _minimal_config(
+            ingestion={
+                "edges": IngestionMapping(
+                    relationship_type="links",
+                    from_column="A_ID",
+                    to_column="B_ID",
+                    column_map={"A_ID": "a_id", "B_ID": "b_id", "SCORE": "score"},
                 ),
             }
         )
