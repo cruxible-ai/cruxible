@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from cruxible_core.config.property_validation import enum_values
 from cruxible_core.config.schema import CoreConfig, ProviderSchema, WorkflowStepSchema
 from cruxible_core.group.types import CandidateGroup, GroupResolution
 from cruxible_core.mermaid import (
@@ -119,6 +120,37 @@ class QuerySummaryView:
 class QueryView:
     query_count: int
     queries: list[QuerySummaryView] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PropertySchemaView:
+    name: str
+    type: str
+    primary_key: bool
+    optional: bool
+    default: Any | None
+    enum_ref: str | None
+    enum_values: list[str] | None
+    description: str | None
+
+
+@dataclass(frozen=True)
+class SchemaCatalogTypeView:
+    name: str
+    kind: str
+    description: str | None
+    properties: list[PropertySchemaView] = field(default_factory=list)
+    from_entity: str | None = None
+    to_entity: str | None = None
+    mode: str | None = None
+
+
+@dataclass(frozen=True)
+class SchemaCatalogView:
+    enum_count: int
+    entity_types: list[SchemaCatalogTypeView] = field(default_factory=list)
+    relationships: list[SchemaCatalogTypeView] = field(default_factory=list)
+    contracts: list[SchemaCatalogTypeView] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -322,6 +354,55 @@ def build_query_view(
             )
         )
     return QueryView(query_count=len(queries), queries=queries)
+
+
+def build_schema_catalog_view(config: CoreConfig) -> SchemaCatalogView:
+    """Build a property-schema catalog for README/wiki reference rendering."""
+    entity_types = [
+        SchemaCatalogTypeView(
+            name=name,
+            kind="entity",
+            description=schema.description,
+            properties=[
+                _property_schema_view(config, prop_name, prop)
+                for prop_name, prop in schema.properties.items()
+            ],
+        )
+        for name, schema in sorted(config.entity_types.items())
+    ]
+    relationships = [
+        SchemaCatalogTypeView(
+            name=relationship.name,
+            kind="relationship",
+            description=relationship.description,
+            from_entity=relationship.from_entity,
+            to_entity=relationship.to_entity,
+            mode="governed" if relationship.matching is not None else "deterministic",
+            properties=[
+                _property_schema_view(config, prop_name, prop)
+                for prop_name, prop in relationship.properties.items()
+            ],
+        )
+        for relationship in sorted(config.relationships, key=lambda item: item.name)
+    ]
+    contracts = [
+        SchemaCatalogTypeView(
+            name=name,
+            kind="contract",
+            description=contract.description,
+            properties=[
+                _property_schema_view(config, field_name, field_schema)
+                for field_name, field_schema in contract.fields.items()
+            ],
+        )
+        for name, contract in sorted(config.contracts.items())
+    ]
+    return SchemaCatalogView(
+        enum_count=len(config.enums),
+        entity_types=entity_types,
+        relationships=relationships,
+        contracts=contracts,
+    )
 
 
 def build_governance_view(
@@ -967,6 +1048,17 @@ def render_query_catalog_markdown(view: QueryView) -> str:
                 ),
             ]
         )
+    return "\n".join(lines)
+
+
+def render_schema_catalog_markdown(view: SchemaCatalogView) -> str:
+    """Render entity, relationship, and contract property schemas."""
+    lines: list[str] = []
+    lines.extend(_render_schema_catalog_group("Entity Types", view.entity_types))
+    lines.append("")
+    lines.extend(_render_schema_catalog_group("Relationships", view.relationships))
+    lines.append("")
+    lines.extend(_render_schema_catalog_group("Contracts", view.contracts))
     return "\n".join(lines)
 
 
@@ -1887,6 +1979,73 @@ def _humanize_traversal_summary(value: str) -> str:
     if details:
         return f"{relationship_label} ({direction}, {details})"
     return f"{relationship_label} ({direction})"
+
+
+def _property_schema_view(config: CoreConfig, name: str, prop: Any) -> PropertySchemaView:
+    return PropertySchemaView(
+        name=name,
+        type=prop.type,
+        primary_key=prop.primary_key,
+        optional=prop.optional,
+        default=prop.default,
+        enum_ref=prop.enum_ref,
+        enum_values=enum_values(config, prop),
+        description=prop.description,
+    )
+
+
+def _render_schema_catalog_group(
+    title: str,
+    entries: list[SchemaCatalogTypeView],
+) -> list[str]:
+    lines = [f"### {title}", ""]
+    if not entries:
+        lines.append("No configured entries.")
+        return lines
+    for entry in entries:
+        lines.append(f"#### `{entry.name}`")
+        if entry.kind == "relationship" and entry.from_entity and entry.to_entity:
+            mode = f" ({entry.mode})" if entry.mode else ""
+            lines.append(f"- Scope: `{entry.from_entity}` -> `{entry.to_entity}`{mode}")
+        if entry.description:
+            lines.append(f"- Description: {entry.description.strip()}")
+        if entry.properties:
+            lines.append(
+                _markdown_table(
+                    ("Property", "Type", "Flags", "Enum", "Default", "Description"),
+                    [_property_schema_row(prop) for prop in entry.properties],
+                )
+            )
+        else:
+            lines.append("No declared properties.")
+        lines.append("")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _property_schema_row(prop: PropertySchemaView) -> tuple[str, ...]:
+    flags: list[str] = []
+    if prop.primary_key:
+        flags.append("primary key")
+    if prop.optional:
+        flags.append("optional")
+    enum_label = "-"
+    if prop.enum_ref is not None:
+        values = ", ".join(prop.enum_values or [])
+        enum_label = f"`{prop.enum_ref}`"
+        if values:
+            enum_label = f"{enum_label}: {values}"
+    elif prop.enum_values is not None:
+        enum_label = ", ".join(prop.enum_values)
+    return (
+        f"`{prop.name}`",
+        prop.type,
+        ", ".join(flags) or "-",
+        enum_label,
+        "-" if prop.default is None else f"`{prop.default}`",
+        prop.description or "-",
+    )
 
 
 def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:

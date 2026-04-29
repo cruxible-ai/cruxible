@@ -14,6 +14,7 @@ from cruxible_core.canonical_views import (
     build_ontology_view,
     build_overview_view,
     build_query_view,
+    build_schema_catalog_view,
     build_workflow_view,
     render_governed_relationship_table_markdown,
     render_integration_catalog_markdown,
@@ -25,6 +26,7 @@ from cruxible_core.canonical_views import (
     render_query_map_mermaid,
     render_query_mermaid,
     render_query_mermaid_blocks,
+    render_schema_catalog_markdown,
     render_workflow_dependency_mermaid,
     render_workflow_mermaid,
     render_workflow_pipeline_mermaid,
@@ -125,6 +127,10 @@ def _render_query_catalog(config: CoreConfig) -> str:
     )
 
 
+def _render_schema_catalog(config: CoreConfig) -> str:
+    return _as_rendered_text(render_schema_catalog_markdown(build_schema_catalog_view(config)))
+
+
 def _render_queries_readme(config: CoreConfig) -> str:
     blocks = render_query_mermaid_blocks(build_query_view(config, query_infos=[]))
     return _render_titled_mermaid_blocks(blocks)
@@ -213,6 +219,12 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         _render_query_catalog,
         fenced=False,
     ),
+    "schema-catalog": ViewSpec(
+        "schema-catalog",
+        "Schema Catalog",
+        _render_schema_catalog,
+        fenced=False,
+    ),
     "quality-rules": ViewSpec(
         "quality-rules",
         "Quality Rules",
@@ -235,6 +247,7 @@ DEFAULT_VIEW_ORDER = (
     "integration-catalog",
     "query-map",
     "query-catalog",
+    "schema-catalog",
     "quality-rules",
     "learning-loops",
 )

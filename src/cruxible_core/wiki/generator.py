@@ -13,6 +13,7 @@ from typing import Any, Literal
 from cruxible_core.composition_ownership import (
     resolve_composition_for_instance,
 )
+from cruxible_core.config.property_validation import enum_values
 from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
@@ -212,6 +213,17 @@ class _WikiGenerator:
             pages[self._provider_path(provider_name)] = self._render_provider_page(
                 provider_name,
                 provider_schema,
+            )
+
+        for entity_type, entity_schema in sorted(self.config.entity_types.items()):
+            pages[self._entity_type_path(entity_type)] = self._render_entity_type_page(
+                entity_type,
+                entity_schema,
+            )
+
+        for relationship in sorted(self.config.relationships, key=lambda item: item.name):
+            pages[self._relationship_type_path(relationship.name)] = (
+                self._render_relationship_type_page(relationship)
             )
 
         return {
@@ -563,6 +575,12 @@ class _WikiGenerator:
 
     def _provider_path(self, provider_name: str) -> Path:
         return Path("reference") / "providers" / f"{_slugify(provider_name)}.md"
+
+    def _entity_type_path(self, entity_type: str) -> Path:
+        return Path("reference") / "entity-types" / f"{_slugify(entity_type)}.md"
+
+    def _relationship_type_path(self, relationship_type: str) -> Path:
+        return Path("reference") / "relationship-types" / f"{_slugify(relationship_type)}.md"
 
     def _manual_sidecar_path(self, relative_path: Path) -> Path:
         return Path("manual") / relative_path
@@ -1653,7 +1671,7 @@ class _WikiGenerator:
                 "they persist those changes."
             )
             lines.append("")
-        rows = [
+        rows: list[tuple[str, ...]] = [
             (
                 step.id,
                 self._workflow_step_action(step, current_path),
@@ -1994,18 +2012,7 @@ class _WikiGenerator:
         if contract is not None and contract.fields:
             if contract.description:
                 lines.append(contract.description.strip())
-            for field_name, field_schema in contract.fields.items():
-                parts = [f"**{field_name}**", f"({field_schema.type})"]
-                if field_schema.optional:
-                    parts.append("*optional*")
-                if field_schema.default is not None:
-                    parts.append(f"default: {field_schema.default}")
-                if field_schema.enum is not None:
-                    parts.append(f"one of: {', '.join(field_schema.enum)}")
-                line = f"- {' '.join(parts)}"
-                if field_schema.description:
-                    line += f" — {field_schema.description.strip()}"
-                lines.append(line)
+            lines.extend(_render_property_schema_lines(contract.fields, self.config))
         else:
             lines.append("- No fields required.")
         lines.append("")
@@ -2026,6 +2033,32 @@ class _WikiGenerator:
         if schema.artifact:
             lines.append(f"- Artifact: {schema.artifact}")
         lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _render_entity_type_page(self, entity_type: str, schema: EntityTypeSchema) -> str:
+        lines = [f"# Entity Type: {entity_type}", ""]
+        if schema.description:
+            lines.extend([schema.description.strip(), ""])
+        lines.extend(_render_property_schema_section("Properties", schema.properties, self.config))
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _render_relationship_type_page(self, schema: RelationshipSchema) -> str:
+        mode = "governed" if schema.matching is not None else "deterministic"
+        lines = [f"# Relationship Type: {schema.name}", ""]
+        if schema.description:
+            lines.extend([schema.description.strip(), ""])
+        lines.extend(
+            [
+                "## Summary",
+                f"- Scope: {schema.from_entity} -> {schema.to_entity}",
+                f"- Mode: {mode}",
+                f"- Cardinality: {schema.cardinality}",
+            ]
+        )
+        if schema.reverse_name:
+            lines.append(f"- Reverse name: {schema.reverse_name}")
+        lines.append("")
+        lines.extend(_render_property_schema_section("Properties", schema.properties, self.config))
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_pending_review_page(self, rendered_subjects: set[SubjectRef]) -> str:
@@ -2514,6 +2547,44 @@ def _humanize(value: str) -> str:
     return value.replace("_", " ").replace("-", " ").strip().title()
 
 
+def _render_property_schema_section(
+    title: str,
+    fields: dict[str, Any],
+    config: CoreConfig,
+) -> list[str]:
+    lines = [f"## {title}", ""]
+    if fields:
+        lines.extend(_render_property_schema_lines(fields, config))
+    else:
+        lines.append("- No fields required.")
+    lines.append("")
+    return lines
+
+
+def _render_property_schema_lines(fields: dict[str, Any], config: CoreConfig) -> list[str]:
+    lines: list[str] = []
+    for field_name, field_schema in fields.items():
+        parts = [f"**{field_name}**", f"({field_schema.type})"]
+        if field_schema.primary_key:
+            parts.append("*primary key*")
+        if field_schema.optional:
+            parts.append("*optional*")
+        if field_schema.default is not None:
+            parts.append(f"default: {field_schema.default}")
+        if field_schema.enum_ref is not None:
+            values = enum_values(config, field_schema) or []
+            parts.append(f"enum_ref: {field_schema.enum_ref}")
+            if values:
+                parts.append(f"one of: {', '.join(values)}")
+        elif field_schema.enum is not None:
+            parts.append(f"one of: {', '.join(field_schema.enum)}")
+        line = f"- {' '.join(parts)}"
+        if field_schema.description:
+            line += f" — {field_schema.description.strip()}"
+        lines.append(line)
+    return lines
+
+
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip()).strip("-").lower()
     return slug or "item"
@@ -2557,8 +2628,8 @@ def _shorten_common_edge_labels(labels: list[str]) -> list[str]:
         return labels
 
     prefix_length = 0
-    for words in zip(*word_lists):
-        if len(set(words)) != 1:
+    for column_words in zip(*word_lists):
+        if len(set(column_words)) != 1:
             break
         prefix_length += 1
 

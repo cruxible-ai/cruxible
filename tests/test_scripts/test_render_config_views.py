@@ -79,6 +79,9 @@ def test_update_readme_default_sections_are_comprehension_views(
         "<!-- CRUXIBLE:BEGIN query-catalog -->\n"
         "<!-- CRUXIBLE:END query-catalog -->\n"
         "\n\n"
+        "<!-- CRUXIBLE:BEGIN schema-catalog -->\n"
+        "<!-- CRUXIBLE:END schema-catalog -->\n"
+        "\n\n"
         "<!-- CRUXIBLE:BEGIN quality-rules -->\n"
         "<!-- CRUXIBLE:END quality-rules -->\n\n"
         "<!-- CRUXIBLE:BEGIN learning-loops -->\n"
@@ -106,6 +109,8 @@ def test_update_readme_default_sections_are_comprehension_views(
     assert "| Integration | Kind | Used By | Notes |" in updated
     assert "No configured constraints." in updated
     assert "No configured feedback profiles." in updated
+    assert "### Entity Types" in updated
+    assert "`Campaign`" in updated
     assert "query_entity_Campaign" in updated
     assert "### Campaign" in updated
 
@@ -385,6 +390,8 @@ workflows:
     assert "`unique_asset_hostname`" in rendered
     assert "`minimum_assets`" in rendered
     assert "`assets_have_products`" in rendered
+    assert "### Entity Types" in rendered
+    assert "`asset_id`" in rendered
     assert "#### `asset_remediated_vulnerability`" in rendered
     assert "#### `incident_exploited_vulnerability`" in rendered
     assert "##### `asset_remediated_resolution`" in rendered
