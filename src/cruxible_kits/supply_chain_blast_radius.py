@@ -28,18 +28,18 @@ def assess_incident_component_cascade(
     _raise_not_implemented("assess_incident_component_cascade")
 
 
+def assess_incident_assembly_cascade(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("assess_incident_assembly_cascade")
+
+
 def assess_incident_product_cascade(
     _input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
     _raise_not_implemented("assess_incident_product_cascade")
-
-
-def assess_shipment_risk(
-    _input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    _raise_not_implemented("assess_shipment_risk")
 
 
 def _raise_not_implemented(provider_name: str) -> NoReturn:

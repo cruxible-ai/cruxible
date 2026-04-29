@@ -6,10 +6,10 @@ description: >
   suppliers, components, assemblies (with recursive BOM hierarchy),
   products, and shipments. Incidents arrive as new entities
   and cascade through four staged governed-relationship workflows:
-  incident → supplier → component → product → at-risk shipment.
-  Assembly impact is derived from accepted supplier/component impacts
-  plus the deterministic BOM hierarchy, rather than stored as a governed
-  claim.
+  incident → supplier → component/direct assembly → product.
+  Shipment risk is a query/report surface over accepted product impact
+  plus deterministic shipment state, rather than a direct incident-shipment
+  edge.
   Each governed edge is rule-centric (the bucket signature
   carries rule_id + rule_version, not incident_id), so trust
   accumulates on rules across many incidents rather than starting fresh
@@ -156,28 +156,90 @@ entity_types:
 
 relationships:
   - name: supplier_supplies_component
-    description: A supplier provides a component. Properties capture lead time and active status.
+    description: A supplier can provide a component. Properties capture qualification, sourcing posture, capacity, and timing.
     from: Supplier
     to: Component
     properties:
       lead_time_days:
         type: int
         optional: true
+      qualification_status:
+        type: string
+        optional: true
+        enum: [qualified, conditional, expired, disqualified]
+      sourcing_role:
+        type: string
+        optional: true
+        enum: [primary, secondary, tertiary, emergency, inactive]
+      priority_rank:
+        type: int
+        optional: true
+      allocation_pct:
+        type: float
+        optional: true
+      activation_state:
+        type: string
+        optional: true
+        enum: [active, standby, constrained, unavailable]
+      capacity_units_per_week:
+        type: int
+        optional: true
+      effective_from:
+        type: date
+        optional: true
+      effective_to:
+        type: date
+        optional: true
+      last_verified_at:
+        type: date
+        optional: true
       active:
         type: bool
         optional: true
+        description: Deprecated coarse flag; prefer qualification_status and activation_state.
 
   - name: supplier_supplies_assembly
-    description: A supplier provides a buildable assembly directly.
+    description: A supplier can provide a buildable assembly directly. Properties capture qualification, sourcing posture, capacity, and timing.
     from: Supplier
     to: Assembly
     properties:
       lead_time_days:
         type: int
         optional: true
+      qualification_status:
+        type: string
+        optional: true
+        enum: [qualified, conditional, expired, disqualified]
+      sourcing_role:
+        type: string
+        optional: true
+        enum: [primary, secondary, tertiary, emergency, inactive]
+      priority_rank:
+        type: int
+        optional: true
+      allocation_pct:
+        type: float
+        optional: true
+      activation_state:
+        type: string
+        optional: true
+        enum: [active, standby, constrained, unavailable]
+      capacity_units_per_week:
+        type: int
+        optional: true
+      effective_from:
+        type: date
+        optional: true
+      effective_to:
+        type: date
+        optional: true
+      last_verified_at:
+        type: date
+        optional: true
       active:
         type: bool
         optional: true
+        description: Deprecated coarse flag; prefer qualification_status and activation_state.
 
   - name: component_part_of_assembly
     description: BOM edge linking a raw material or part into an assembly.
@@ -266,8 +328,32 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
+  - name: incident_impacts_assembly
+    description: Governed judgment that an incident impacts a directly supplied assembly via its impacted suppliers.
+    from: Incident
+    to: Assembly
+    properties:
+      impacted_supplier_id:
+        type: string
+        optional: true
+        description: Supplier impact that triggered the assembly cascade.
+      alternate_state:
+        type: string
+        optional: true
+        enum: [no_alternate, alternate_in_scope, alternate_active]
+        description: State of substitute supplier coverage at cascade time.
+      rationale:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        incident_assembly_cascade:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
+
   - name: incident_impacts_product
-    description: Governed judgment that an incident impacts a finished product through accepted component impacts, directly supplied assembly impacts, and the deterministic assembly BOM hierarchy.
+    description: Governed judgment that an incident impacts a finished product through accepted component impacts, accepted direct assembly impacts, and the deterministic assembly BOM hierarchy.
     from: Incident
     to: Product
     properties:
@@ -294,30 +380,10 @@ relationships:
       # leave always_review_on_unsure plus a decision_policy below.
       auto_resolve_when: all_support
 
-  - name: shipment_at_risk
-    description: Governed judgment that an in-flight shipment is at risk because it carries an impacted product.
-    from: Incident
-    to: Shipment
-    properties:
-      shipment_state:
-        type: string
-        optional: true
-        enum: [in_flight, delivered, pre_incident]
-        description: Computed shipment state relative to the incident at cascade time.
-      rationale:
-        type: string
-        optional: true
-    matching:
-      integrations:
-        shipment_risk_assessment:
-          role: required
-          always_review_on_unsure: true
-      auto_resolve_when: all_support
-
 # ─── Decision policies ───────────────────────────────────────────────
 #
-# Force product-impact and shipment-at-risk proposals to require
-# review even when bucket trust would otherwise allow auto-apply.
+# Force product-impact proposals to require review even when bucket
+# trust would otherwise allow auto-apply.
 # This is how we express "always human review for customer-facing
 # judgments" given the current MatchingSchema does not have a
 # `never_auto_resolve` option.
@@ -329,14 +395,6 @@ decision_policies:
     applies_to: workflow
     workflow_name: propose_incident_impacts_product
     relationship_type: incident_impacts_product
-    effect: require_review
-
-  - name: shipment_risk_always_review
-    description: Customer shipment risk must always be reviewed.
-    rationale: At-risk shipments reach customers; human approval required before action.
-    applies_to: workflow
-    workflow_name: propose_shipment_at_risk
-    relationship_type: shipment_at_risk
     effect: require_review
 
 # ─── Named queries ───────────────────────────────────────────────────
@@ -364,14 +422,23 @@ named_queries:
 
   incident_impacted_assemblies:
     description: >
-      Starting from an incident, derive assemblies exposed to accepted supplier
-      or component impacts by walking supplier_supplies_assembly,
-      component_part_of_assembly, and assembly_part_of_assembly.
-      This is a named query/view, not a governed relationship.
+      Starting from an incident, find assemblies judged impacted via direct
+      supplier-to-assembly cascade.
     entry_point: Incident
     returns: Assembly
     traversal:
-      - relationship: [incident_impacts_supplier, incident_impacts_component]
+      - relationship: incident_impacts_assembly
+        direction: outgoing
+
+  incident_exposed_assembly_context:
+    description: >
+      Starting from an incident, derive assembly context exposed by accepted
+      supplier, component, or direct assembly impacts through supply and BOM
+      structure. This is a query/view, not governed state.
+    entry_point: Incident
+    returns: Assembly
+    traversal:
+      - relationship: [incident_impacts_supplier, incident_impacts_component, incident_impacts_assembly]
         direction: outgoing
       - relationship: [supplier_supplies_assembly, component_part_of_assembly, assembly_part_of_assembly]
         direction: outgoing
@@ -388,17 +455,23 @@ named_queries:
         direction: outgoing
 
   incident_at_risk_shipments:
-    description: Starting from an incident, find at-risk in-flight shipments.
+    description: >
+      Starting from an incident, find in-flight shipments containing products
+      with accepted product-impact judgments.
     entry_point: Incident
     returns: Shipment
     traversal:
-      - relationship: shipment_at_risk
+      - relationship: incident_impacts_product
         direction: outgoing
+      - relationship: product_in_shipment
+        direction: outgoing
+        target_filter:
+          status: in_flight
 
   single_source_components_for_incident:
     description: >
       Starting from an incident, find impacted components that have only one
-      active supplier path. Surfaces the "no alternate active supplier"
+      viable supplier path. Surfaces the "no viable alternate supplier"
       enrichment for the operator summary.
     entry_point: Incident
     returns: Component
@@ -491,12 +564,22 @@ named_queries:
       - relationship: incident_impacts_product
         direction: incoming
 
+  assembly_impacting_incidents:
+    description: Starting from an assembly, find incidents judged to impact it directly.
+    entry_point: Assembly
+    returns: Incident
+    traversal:
+      - relationship: incident_impacts_assembly
+        direction: incoming
+
   shipment_risk_incidents:
-    description: Starting from a shipment, find incidents judged to put it at risk.
+    description: Starting from a shipment, find incidents impacting products in the shipment.
     entry_point: Shipment
     returns: Incident
     traversal:
-      - relationship: shipment_at_risk
+      - relationship: product_in_shipment
+        direction: incoming
+      - relationship: incident_impacts_product
         direction: incoming
 
 # ─── Quality checks ──────────────────────────────────────────────────
@@ -513,7 +596,7 @@ quality_checks:
 
   - name: critical_components_have_redundancy
     kind: cardinality
-    description: Critical components should have at least two active suppliers (single-source flag).
+    description: Critical components should have at least two supplier options (single-source flag).
     entity_type: Component
     relationship_type: supplier_supplies_component
     direction: incoming
@@ -559,24 +642,25 @@ integrations:
     contract: null
     notes: >
       Cascades from impacted suppliers through supplier_supplies_component
-      to components, downgrading the signal when an active alternate
-      supplier exists outside incident scope.
+      to components, downgrading the signal when a viable alternate
+      sourcing option exists outside incident scope.
+
+  incident_assembly_cascade:
+    kind: supplier_to_assembly_cascade
+    contract: null
+    notes: >
+      Cascades from impacted suppliers through supplier_supplies_assembly
+      to directly supplied assemblies, downgrading the signal when a viable
+      alternate sourcing option exists outside incident scope.
 
   incident_product_cascade:
     kind: bom_to_product_cascade
     contract: null
     notes: >
-      Rolls resolved impacted components and directly supplied assemblies
-      through supplier_supplies_assembly, component_part_of_assembly,
-      assembly_part_of_assembly, and assembly_part_of_product to finished
-      goods. Records discretized BOM depth in bom_depth_bucket.
-
-  shipment_risk_assessment:
-    kind: shipment_state_assessment
-    contract: null
-    notes: >
-      Assesses each in-flight shipment containing an impacted product
-      against shipment status and ship_date relative to incident.reported_at.
+      Rolls resolved impacted components and directly impacted assemblies
+      through component_part_of_assembly, assembly_part_of_assembly, and
+      assembly_part_of_product to finished goods. Records discretized BOM
+      depth in bom_depth_bucket.
 
 # ─── Contracts ───────────────────────────────────────────────────────
 
@@ -664,6 +748,15 @@ contracts:
               supplier_id: {type: string}
               component_id: {type: string}
               lead_time_days: {type: integer}
+              qualification_status: {type: string}
+              sourcing_role: {type: string}
+              priority_rank: {type: integer}
+              allocation_pct: {type: number}
+              activation_state: {type: string}
+              capacity_units_per_week: {type: integer}
+              effective_from: {type: string}
+              effective_to: {type: string}
+              last_verified_at: {type: string}
               active: {type: boolean}
       supplier_supplies_assembly:
         type: json
@@ -675,6 +768,15 @@ contracts:
               supplier_id: {type: string}
               assembly_id: {type: string}
               lead_time_days: {type: integer}
+              qualification_status: {type: string}
+              sourcing_role: {type: string}
+              priority_rank: {type: integer}
+              allocation_pct: {type: number}
+              activation_state: {type: string}
+              capacity_units_per_week: {type: integer}
+              effective_from: {type: string}
+              effective_to: {type: string}
+              last_verified_at: {type: string}
               active: {type: boolean}
       component_part_of_assembly:
         type: json
@@ -767,14 +869,39 @@ contracts:
               rationale: {type: string}
               verdict: {type: string}
 
-  IncidentProductCascadeInput:
-    description: Resolved component and supplier impacts plus assembly-aware BOM edges for product cascade.
+  IncidentAssemblyCascadeInput:
+    description: Resolved incident_impacts_supplier edges plus supplier_supplies_assembly context.
     fields:
-      impacted_component_edges:
-        type: json
       impacted_supplier_edges:
         type: json
       supplier_supplies_assembly_edges:
+        type: json
+      assemblies:
+        type: json
+
+  IncidentAssemblyCascadeResults:
+    description: Candidate (incident, directly supplied assembly) judgments with alternate_state and verdict.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              incident_id: {type: string}
+              assembly_id: {type: string}
+              impacted_supplier_id: {type: string}
+              alternate_state: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
+  IncidentProductCascadeInput:
+    description: Resolved component and direct assembly impacts plus assembly-aware BOM edges for product cascade.
+    fields:
+      impacted_component_edges:
+        type: json
+      impacted_assembly_edges:
         type: json
       component_part_of_assembly_edges:
         type: json
@@ -800,34 +927,6 @@ contracts:
               incident_id: {type: string}
               product_id: {type: string}
               bom_depth_bucket: {type: string}
-              rationale: {type: string}
-              verdict: {type: string}
-
-  ShipmentRiskAssessmentInput:
-    description: Resolved product impacts plus shipments and product_in_shipment edges.
-    fields:
-      impacted_product_edges:
-        type: json
-      shipments:
-        type: json
-      product_in_shipment_edges:
-        type: json
-      incidents:
-        type: json
-
-  ShipmentRiskAssessmentResults:
-    description: Candidate (incident, shipment) judgments with shipment_state and verdict.
-    fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              incident_id: {type: string}
-              shipment_id: {type: string}
-              shipment_state: {type: string}
               rationale: {type: string}
               verdict: {type: string}
 
@@ -874,7 +973,7 @@ providers:
 
   assess_incident_component_cascade:
     kind: function
-    description: Cascade impacted suppliers to components, downgrading where active alternates exist.
+    description: Cascade impacted suppliers to components, downgrading where viable alternate sourcing exists.
     contract_in: IncidentComponentCascadeInput
     contract_out: IncidentComponentCascadeResults
     ref: cruxible_kits.supply_chain_blast_radius.assess_incident_component_cascade
@@ -882,9 +981,19 @@ providers:
     deterministic: true
     runtime: python
 
+  assess_incident_assembly_cascade:
+    kind: function
+    description: Cascade impacted suppliers to directly supplied assemblies, downgrading where viable alternate sourcing exists.
+    contract_in: IncidentAssemblyCascadeInput
+    contract_out: IncidentAssemblyCascadeResults
+    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_assembly_cascade
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
   assess_incident_product_cascade:
     kind: function
-    description: Roll impacted components and directly supplied assemblies through assembly BOM hierarchy to finished products; records bom_depth_bucket.
+    description: Roll impacted components and directly impacted assemblies through assembly BOM hierarchy to finished products; records bom_depth_bucket.
     contract_in: IncidentProductCascadeInput
     contract_out: IncidentProductCascadeResults
     ref: cruxible_kits.supply_chain_blast_radius.assess_incident_product_cascade
@@ -892,19 +1001,9 @@ providers:
     deterministic: true
     runtime: python
 
-  assess_shipment_risk:
-    kind: function
-    description: Assess in-flight shipments containing impacted products against status and ship_date.
-    contract_in: ShipmentRiskAssessmentInput
-    contract_out: ShipmentRiskAssessmentResults
-    ref: cruxible_kits.supply_chain_blast_radius.assess_shipment_risk
-    version: "1.0.0"
-    deterministic: true
-    runtime: python
-
 # ─── Workflows ───────────────────────────────────────────────────────
 #
-# Five workflows: one canonical base loader plus four propose stages.
+# Five workflows: one canonical base loader plus four governed propose stages.
 # Each propose workflow is contract_in: EmptyInput and operates on
 # the current graph state (KEV pattern). Operators run them in order;
 # the skill orchestrates and pauses for human review between stages.
@@ -995,6 +1094,15 @@ workflows:
           to_id: $item.component_id
           properties:
             lead_time_days: $item.lead_time_days
+            qualification_status: $item.qualification_status
+            sourcing_role: $item.sourcing_role
+            priority_rank: $item.priority_rank
+            allocation_pct: $item.allocation_pct
+            activation_state: $item.activation_state
+            capacity_units_per_week: $item.capacity_units_per_week
+            effective_from: $item.effective_from
+            effective_to: $item.effective_to
+            last_verified_at: $item.last_verified_at
             active: $item.active
         as: supplies_edges
       - id: assembly_supply_edges
@@ -1007,6 +1115,15 @@ workflows:
           to_id: $item.assembly_id
           properties:
             lead_time_days: $item.lead_time_days
+            qualification_status: $item.qualification_status
+            sourcing_role: $item.sourcing_role
+            priority_rank: $item.priority_rank
+            allocation_pct: $item.allocation_pct
+            activation_state: $item.activation_state
+            capacity_units_per_week: $item.capacity_units_per_week
+            effective_from: $item.effective_from
+            effective_to: $item.effective_to
+            last_verified_at: $item.last_verified_at
             active: $item.active
         as: assembly_supply_edges
       - id: component_assembly_edges
@@ -1175,8 +1292,8 @@ workflows:
     description: >
       Cascade resolved incident_impacts_supplier edges through
       supplier_supplies_component to candidate component impacts.
-      Records alternate_state to capture whether alternate active
-      suppliers exist outside incident scope.
+      Records alternate_state to capture whether viable alternate
+      sourcing exists outside incident scope.
     contract_in: EmptyInput
     steps:
       - id: impacted_supplier_edges
@@ -1231,7 +1348,7 @@ workflows:
           signals_from: [signals]
           thesis_text: >
             Components are impacted via the supplier cascade,
-            adjusted for alternate active supplier coverage.
+            adjusted for alternate sourcing coverage.
           thesis_facts:
             rule_id: cascade_from_impacted_supplier_to_component
             rule_version: 1
@@ -1240,29 +1357,96 @@ workflows:
         as: proposal
     returns: proposal
 
-  # ── Stage 3: component/supplier → assembly BOM → product ───────────
+  # ── Stage 3: supplier → directly supplied assembly ─────────────────
+
+  propose_incident_impacts_assembly:
+    canonical: false
+    description: >
+      Cascade resolved incident_impacts_supplier edges through
+      supplier_supplies_assembly to candidate direct assembly impacts.
+      Records alternate_state to capture whether viable alternate
+      sourcing exists outside incident scope.
+    contract_in: EmptyInput
+    steps:
+      - id: impacted_supplier_edges
+        list_relationships:
+          relationship_type: incident_impacts_supplier
+        as: impacted_supplier_edges
+      - id: assembly_supply_edges
+        list_relationships:
+          relationship_type: supplier_supplies_assembly
+        as: assembly_supply_edges
+      - id: assemblies
+        list_entities:
+          entity_type: Assembly
+        as: assemblies
+      - id: assessments
+        provider: assess_incident_assembly_cascade
+        input:
+          impacted_supplier_edges: $steps.impacted_supplier_edges.items
+          supplier_supplies_assembly_edges: $steps.assembly_supply_edges.items
+          assemblies: $steps.assemblies.items
+        as: assessments
+      - id: candidates
+        make_candidates:
+          relationship_type: incident_impacts_assembly
+          items: $steps.assessments.items
+          from_type: Incident
+          from_id: $item.incident_id
+          to_type: Assembly
+          to_id: $item.assembly_id
+          properties:
+            impacted_supplier_id: $item.impacted_supplier_id
+            alternate_state: $item.alternate_state
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          integration: incident_assembly_cascade
+          items: $steps.assessments.items
+          from_id: $item.incident_id
+          to_id: $item.assembly_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: incident_impacts_assembly
+          candidates_from: candidates
+          signals_from: [signals]
+          thesis_text: >
+            Directly supplied assemblies are impacted via the supplier
+            cascade, adjusted for alternate sourcing coverage.
+          thesis_facts:
+            rule_id: cascade_from_impacted_supplier_to_direct_assembly
+            rule_version: 1
+            source: supplier_supplies_assembly_edges
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  # ── Stage 4: component/direct assembly → assembly BOM → product ─────
 
   propose_incident_impacts_product:
     canonical: false
     description: >
-      Roll resolved impacted components and directly supplied assemblies
-      through the assembly BOM hierarchy to finished products. Assemblies
-      are part of the deterministic BOM structure, but assembly impact
-      remains a derived view rather than a governed edge.
+      Roll resolved impacted components and directly impacted assemblies
+      through the assembly BOM hierarchy to finished products.
     contract_in: EmptyInput
     steps:
       - id: impacted_component_edges
         list_relationships:
           relationship_type: incident_impacts_component
         as: impacted_component_edges
-      - id: impacted_supplier_edges
+      - id: impacted_assembly_edges
         list_relationships:
-          relationship_type: incident_impacts_supplier
-        as: impacted_supplier_edges
-      - id: assembly_supply
-        list_relationships:
-          relationship_type: supplier_supplies_assembly
-        as: assembly_supply
+          relationship_type: incident_impacts_assembly
+        as: impacted_assembly_edges
       - id: component_assembly
         list_relationships:
           relationship_type: component_part_of_assembly
@@ -1287,8 +1471,7 @@ workflows:
         provider: assess_incident_product_cascade
         input:
           impacted_component_edges: $steps.impacted_component_edges.items
-          impacted_supplier_edges: $steps.impacted_supplier_edges.items
-          supplier_supplies_assembly_edges: $steps.assembly_supply.items
+          impacted_assembly_edges: $steps.impacted_assembly_edges.items
           component_part_of_assembly_edges: $steps.component_assembly.items
           assembly_part_of_assembly_edges: $steps.assembly_recursive.items
           assembly_part_of_product_edges: $steps.assembly_product.items
@@ -1328,86 +1511,11 @@ workflows:
           signals_from: [signals]
           thesis_text: >
             Products are impacted via component-to-assembly or
-            supplier-to-assembly BOM rollup.
+            direct-assembly BOM rollup.
           thesis_facts:
-            rule_id: cascade_from_impacted_supplier_or_component_to_product
+            rule_id: cascade_from_impacted_component_or_assembly_to_product
             rule_version: 1
             source: assembly_bom_traversal
-          proposed_by: agent
-        as: proposal
-    returns: proposal
-
-  # ── Stage 4: product → shipment ────────────────────────────────────
-
-  propose_shipment_at_risk:
-    canonical: false
-    description: >
-      Assess in-flight shipments containing impacted products against
-      status and ship_date relative to incident.reported_at.
-    contract_in: EmptyInput
-    steps:
-      - id: impacted_product_edges
-        list_relationships:
-          relationship_type: incident_impacts_product
-        as: impacted_product_edges
-      - id: shipments
-        list_entities:
-          entity_type: Shipment
-        as: shipments
-      - id: product_shipment_edges
-        list_relationships:
-          relationship_type: product_in_shipment
-        as: product_shipment_edges
-      - id: incidents
-        list_entities:
-          entity_type: Incident
-        as: incidents
-      - id: assessments
-        provider: assess_shipment_risk
-        input:
-          impacted_product_edges: $steps.impacted_product_edges.items
-          shipments: $steps.shipments.items
-          product_in_shipment_edges: $steps.product_shipment_edges.items
-          incidents: $steps.incidents.items
-        as: assessments
-      - id: candidates
-        make_candidates:
-          relationship_type: shipment_at_risk
-          items: $steps.assessments.items
-          from_type: Incident
-          from_id: $item.incident_id
-          to_type: Shipment
-          to_id: $item.shipment_id
-          properties:
-            shipment_state: $item.shipment_state
-            rationale: $item.rationale
-        as: candidates
-      - id: signals
-        map_signals:
-          integration: shipment_risk_assessment
-          items: $steps.assessments.items
-          from_id: $item.incident_id
-          to_id: $item.shipment_id
-          evidence: $item.rationale
-          enum:
-            path: verdict
-            map:
-              support: support
-              unsure: unsure
-              contradict: contradict
-        as: signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: shipment_at_risk
-          candidates_from: candidates
-          signals_from: [signals]
-          thesis_text: >
-            In-flight shipments containing impacted products are at
-            risk; delivered or pre-incident shipments are not.
-          thesis_facts:
-            rule_id: shipment_contains_impacted_product
-            rule_version: 1
-            source: in_flight_shipment_assessment
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1444,7 +1552,7 @@ feedback_profiles:
     version: 1
     reason_codes:
       alternate_supplier_active:
-        description: Component has an active alternate supplier outside incident scope; cascade should have stopped.
+        description: Component has a viable alternate supplier outside incident scope; cascade should have stopped.
         remediation_hint: provider_fix
         required_scope_keys: [component]
       component_decommissioned:
@@ -1458,6 +1566,31 @@ feedback_profiles:
     scope_keys:
       incident: FROM.incident_id
       component: TO.component_id
+      alternate_state: EDGE.alternate_state
+
+  incident_impacts_assembly:
+    version: 1
+    reason_codes:
+      alternate_supplier_active:
+        description: Assembly has a viable alternate supplier outside incident scope; cascade should have stopped.
+        remediation_hint: provider_fix
+        required_scope_keys: [assembly]
+      assembly_decommissioned:
+        description: Assembly is no longer in active use.
+        remediation_hint: quality_check
+        required_scope_keys: [assembly]
+      wrong_supplier_assembly_scope:
+        description: Rule matched the wrong directly supplied assembly for the impacted supplier.
+        remediation_hint: provider_fix
+        required_scope_keys: [assembly, impacted_supplier]
+      sourcing_plan_stale:
+        description: Supplier sourcing posture was stale at cascade time.
+        remediation_hint: provider_fix
+        required_scope_keys: [assembly, impacted_supplier]
+    scope_keys:
+      incident: FROM.incident_id
+      assembly: TO.assembly_id
+      impacted_supplier: EDGE.impacted_supplier_id
       alternate_state: EDGE.alternate_state
 
   incident_impacts_product:
@@ -1479,26 +1612,6 @@ feedback_profiles:
       incident: FROM.incident_id
       product: TO.product_id
       bom_depth_bucket: EDGE.bom_depth_bucket
-
-  shipment_at_risk:
-    version: 1
-    reason_codes:
-      already_delivered:
-        description: Shipment was already delivered when incident occurred.
-        remediation_hint: provider_fix
-        required_scope_keys: [shipment, shipment_state]
-      ships_before_incident:
-        description: Shipment ship_date predates incident; not actually at risk.
-        remediation_hint: provider_fix
-        required_scope_keys: [shipment, shipment_state]
-      alternate_source_shipment:
-        description: Shipment uses product variant from an alternate source not in incident scope.
-        remediation_hint: provider_fix
-        required_scope_keys: [shipment]
-    scope_keys:
-      incident: FROM.incident_id
-      shipment: TO.shipment_id
-      shipment_state: EDGE.shipment_state
 
 # ─── Outcome profiles (Loop 2) ───────────────────────────────────────
 #
@@ -1548,6 +1661,26 @@ outcome_profiles:
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
 
+  incident_assembly_resolution:
+    anchor_type: resolution
+    relationship_type: incident_impacts_assembly
+    version: 1
+    outcome_codes:
+      confirmed_assembly_constraint:
+        description: Later operations data confirmed assembly supply was constrained.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      assembly_unaffected:
+        description: The assembly remained unaffected despite the accepted impact judgment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+      missed_assembly_impact:
+        description: An assembly impact was discovered after the proposal chain ran.
+        remediation_hint: workflow_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
   incident_product_resolution:
     anchor_type: resolution
     relationship_type: incident_impacts_product
@@ -1568,26 +1701,6 @@ outcome_profiles:
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
 
-  shipment_risk_resolution:
-    anchor_type: resolution
-    relationship_type: shipment_at_risk
-    version: 1
-    outcome_codes:
-      confirmed_shipment_delay:
-        description: Shipment was delayed, held, shorted, or customer-impacting as predicted.
-        remediation_hint: trust_adjustment
-        required_scope_keys: [relationship_type]
-      shipment_unaffected:
-        description: Shipment completed normally despite the accepted risk judgment.
-        remediation_hint: require_review
-        required_scope_keys: [relationship_type]
-      missed_at_risk_shipment:
-        description: A shipment became customer-impacting but was not flagged by the chain.
-        remediation_hint: workflow_fix
-        required_scope_keys: [relationship_type]
-    scope_keys:
-      relationship_type: RESOLUTION.relationship_type
-
   impacted_assemblies_query:
     anchor_type: receipt
     surface_type: query
@@ -1595,11 +1708,11 @@ outcome_profiles:
     version: 1
     outcome_codes:
       missing_impacted_assembly:
-        description: Query omitted an assembly later confirmed to be exposed through the BOM.
+        description: Query omitted a directly supplied assembly later confirmed impacted.
         remediation_hint: graph_fix
         required_scope_keys: [query]
       false_positive_assembly:
-        description: Query returned an assembly later confirmed not to be exposed through the active BOM.
+        description: Query returned an assembly later confirmed not directly impacted.
         remediation_hint: graph_fix
         required_scope_keys: [query]
     scope_keys:

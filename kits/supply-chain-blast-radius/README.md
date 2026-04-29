@@ -5,7 +5,10 @@ a bounded, reviewable blast radius. The stable canonical backbone is suppliers,
 components, assemblies, products, and shipments. Incidents arrive as governed
 trigger state and cascade through staged proposal workflows:
 
-`incident -> supplier -> component/assembly -> product -> at-risk shipment`
+`incident -> supplier -> component/direct assembly -> product`
+
+Shipment risk is exposed as a query/report over accepted product impacts and
+deterministic shipment state, not as a direct incident-to-shipment edge.
 
 Governed edges are rule-centric: proposal bucket signatures carry `rule_id` and
 `rule_version`, not `incident_id`, so trust accumulates on reusable cascade rules
@@ -46,10 +49,10 @@ flowchart LR
   entity_Supplier -- "Supplier Supplies Component" --> entity_Component
 
   %% Governed proposal/review relationships
+  entity_Incident -. "Incident Impacts Assembly" .-> entity_Assembly
   entity_Incident -. "Incident Impacts Component" .-> entity_Component
   entity_Incident -. "Incident Impacts Product" .-> entity_Product
   entity_Incident -. "Incident Impacts Supplier" .-> entity_Supplier
-  entity_Incident -. "Shipment At Risk" .-> entity_Shipment
   linkStyle 0,1,2,3,4,5 stroke:#2c5f8a,stroke-width:2px
   linkStyle 6,7,8,9 stroke:#e74c3c,stroke-width:2px
 ```
@@ -73,15 +76,15 @@ flowchart LR
 
   workflow_pipeline_build_seed_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_incident_impacts_supplier["2. Assess supplier impact<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_component["3. Cascade to components<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_product["4. Cascade to products<br/>Governed proposal"]
-  workflow_pipeline_propose_shipment_at_risk["5. Flag at-risk shipments<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_assembly["3. Cascade to assemblies<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_component["4. Cascade to components<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_product["5. Cascade to products<br/>Governed proposal"]
   workflow_pipeline_build_seed_state --> workflow_pipeline_propose_incident_impacts_supplier
-  workflow_pipeline_propose_incident_impacts_supplier --> workflow_pipeline_propose_incident_impacts_component
+  workflow_pipeline_propose_incident_impacts_supplier --> workflow_pipeline_propose_incident_impacts_assembly
+  workflow_pipeline_propose_incident_impacts_assembly --> workflow_pipeline_propose_incident_impacts_component
   workflow_pipeline_propose_incident_impacts_component --> workflow_pipeline_propose_incident_impacts_product
-  workflow_pipeline_propose_incident_impacts_product --> workflow_pipeline_propose_shipment_at_risk
   class workflow_pipeline_build_seed_state canonicalWorkflow
-  class workflow_pipeline_propose_incident_impacts_supplier,workflow_pipeline_propose_incident_impacts_component,workflow_pipeline_propose_incident_impacts_product,workflow_pipeline_propose_shipment_at_risk governedWorkflow
+  class workflow_pipeline_propose_incident_impacts_supplier,workflow_pipeline_propose_incident_impacts_assembly,workflow_pipeline_propose_incident_impacts_component,workflow_pipeline_propose_incident_impacts_product governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -113,7 +116,21 @@ flowchart LR
 **Provider source**
 - Assess Incident Supplier Scope (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_supplier_scope`
 
-### 3. Propose Incident Impacts Component
+### 3. Propose Incident Impacts Assembly
+
+**Role:** Governed proposal
+
+**Input context**
+- Entity context: Assembly
+- Relationship context: Incident Impacts Supplier, Supplier Supplies Assembly
+
+**Result**
+- Proposed relationships: Incident Impacts Assembly
+
+**Provider source**
+- Assess Incident Assembly Cascade (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_assembly_cascade`
+
+### 4. Propose Incident Impacts Component
 
 **Role:** Governed proposal
 
@@ -127,33 +144,19 @@ flowchart LR
 **Provider source**
 - Assess Incident Component Cascade (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_component_cascade`
 
-### 4. Propose Incident Impacts Product
+### 5. Propose Incident Impacts Product
 
 **Role:** Governed proposal
 
 **Input context**
 - Entity context: Assembly, Product
-- Relationship context: Assembly Part Of Assembly, Assembly Part Of Product, Component Part Of Assembly, Incident Impacts Component, Incident Impacts Supplier, Supplier Supplies Assembly
+- Relationship context: Assembly Part Of Assembly, Assembly Part Of Product, Component Part Of Assembly, Incident Impacts Assembly, Incident Impacts Component
 
 **Result**
 - Proposed relationships: Incident Impacts Product
 
 **Provider source**
 - Assess Incident Product Cascade (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_incident_product_cascade`
-
-### 5. Propose Shipment At Risk
-
-**Role:** Governed proposal
-
-**Input context**
-- Entity context: Incident, Shipment
-- Relationship context: Incident Impacts Product, Product In Shipment
-
-**Result**
-- Proposed relationships: Shipment At Risk
-
-**Provider source**
-- Assess Shipment Risk (Python Function, v1.0.0); source: `src/cruxible_kits/supply_chain_blast_radius.py::assess_shipment_risk`
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -165,10 +168,10 @@ authored explanation around them.
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Incident Impacts Assembly | Incident -> Assembly | Workflow: Propose Incident Impacts Assembly | Incident Assembly Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Incident Assembly Resolution |
 | Incident Impacts Component | Incident -> Component | Workflow: Propose Incident Impacts Component | Incident Component Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Component Resolution |
 | Incident Impacts Product | Incident -> Product | Workflow: Propose Incident Impacts Product | Incident Product Cascade | All Support; prior trust: Trusted Only | Require Review: Product Impact Always Review | 3 reason codes | Incident Product Resolution |
 | Incident Impacts Supplier | Incident -> Supplier | Workflow: Propose Incident Impacts Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
-| Shipment At Risk | Incident -> Shipment | Workflow: Propose Shipment At Risk | Shipment Risk Assessment | All Support; prior trust: Trusted Only | Require Review: Shipment Risk Always Review | 3 reason codes | Shipment Risk Resolution |
 <!-- CRUXIBLE:END governance-table -->
 
 ### Integration Signal Notes
@@ -179,10 +182,10 @@ relationships that consume them.
 <!-- CRUXIBLE:BEGIN integration-catalog -->
 | Integration | Kind | Used By | Notes |
 | --- | --- | --- | --- |
-| `incident_component_cascade` | supplier_to_component_cascade | Incident Impacts Component | Cascades from impacted suppliers through supplier_supplies_component to components, downgrading the signal when an active alternate supplier exists outside incident scope. |
-| `incident_product_cascade` | bom_to_product_cascade | Incident Impacts Product | Rolls resolved impacted components and directly supplied assemblies through supplier_supplies_assembly, component_part_of_assembly, assembly_part_of_assembly, and assembly_part_of_product to finished goods. Records discretized BOM depth in bom_depth_bucket. |
+| `incident_assembly_cascade` | supplier_to_assembly_cascade | Incident Impacts Assembly | Cascades from impacted suppliers through supplier_supplies_assembly to directly supplied assemblies, downgrading the signal when a viable alternate sourcing option exists outside incident scope. |
+| `incident_component_cascade` | supplier_to_component_cascade | Incident Impacts Component | Cascades from impacted suppliers through supplier_supplies_component to components, downgrading the signal when a viable alternate sourcing option exists outside incident scope. |
+| `incident_product_cascade` | bom_to_product_cascade | Incident Impacts Product | Rolls resolved impacted components and directly impacted assemblies through component_part_of_assembly, assembly_part_of_assembly, and assembly_part_of_product to finished goods. Records discretized BOM depth in bom_depth_bucket. |
 | `incident_supplier_scope_match` | incident_scope_match | Incident Impacts Supplier | Matches incident scope (supplier\|geography) to suppliers via supplier_id or supplier.primary_geography. |
-| `shipment_risk_assessment` | shipment_state_assessment | Shipment At Risk | Assesses each in-flight shipment containing an impacted product against shipment status and ship_date relative to incident.reported_at. |
 <!-- CRUXIBLE:END integration-catalog -->
 
 ## Query Map
@@ -205,6 +208,7 @@ flowchart LR
   class query_entity_Assembly,query_entity_Component,query_entity_Incident,query_entity_Product,query_entity_Shipment,query_entity_Supplier queryEntity
   query_entity_Assembly --> query_entity_Assembly
   query_entity_Assembly --> query_entity_Component
+  query_entity_Assembly --> query_entity_Incident
   query_entity_Component --> query_entity_Assembly
   query_entity_Incident --> query_entity_Assembly
   query_entity_Incident --> query_entity_Component
@@ -235,6 +239,7 @@ harness, not by turning every useful traversal into a governed relationship.
 | --- | --- | --- | --- |
 | Assembly Child Assemblies | Assembly | Assembly Part Of Assembly (Incoming) | Starting from an assembly, find direct child assemblies. |
 | Assembly Child Components | Component | Component Part Of Assembly (Incoming) | Starting from an assembly, find direct child components. |
+| Assembly Impacting Incidents | Incident | Incident Impacts Assembly (Incoming) | Starting from an assembly, find incidents judged to impact it directly. |
 
 ### Component
 
@@ -246,12 +251,13 @@ harness, not by turning every useful traversal into a governed relationship.
 
 | Query | Returns | Traversal | Purpose |
 | --- | --- | --- | --- |
-| Incident At Risk Shipments | Shipment | Shipment At Risk (Outgoing) | Starting from an incident, find at-risk in-flight shipments. |
-| Incident Impacted Assemblies | Assembly | Incident Impacts Supplier \| Incident Impacts Component (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assemblies exposed to accepted supplier or component impacts by walking supplier_supplies_assembly, component_part_of_assembly, and assembly_part_of_assembly. This is a named query/view, not a governed relationship. |
+| Incident At Risk Shipments | Shipment | Incident Impacts Product (Outgoing) -> Product In Shipment (Outgoing) | Starting from an incident, find in-flight shipments containing products with accepted product-impact judgments. |
+| Incident Exposed Assembly Context | Assembly | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. |
+| Incident Impacted Assemblies | Assembly | Incident Impacts Assembly (Outgoing) | Starting from an incident, find assemblies judged impacted via direct supplier-to-assembly cascade. |
 | Incident Impacted Components | Component | Incident Impacts Component (Outgoing) | Starting from an incident, find components judged impacted via the supplier cascade. |
 | Incident Impacted Products | Product | Incident Impacts Product (Outgoing) | Starting from an incident, find finished products judged impacted via component and assembly BOM cascade. The bom_depth_bucket edge property lets the skill filter for tier_2 / tier_3_plus. |
 | Incident Impacted Suppliers | Supplier | Incident Impacts Supplier (Outgoing) | Starting from an incident, find suppliers judged impacted. |
-| Single Source Components For Incident | Component | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one active supplier path. Surfaces the "no alternate active supplier" enrichment for the operator summary. |
+| Single Source Components For Incident | Component | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one viable supplier path. Surfaces the "no viable alternate supplier" enrichment for the operator summary. |
 
 ### Product
 
@@ -266,7 +272,7 @@ harness, not by turning every useful traversal into a governed relationship.
 | Query | Returns | Traversal | Purpose |
 | --- | --- | --- | --- |
 | Shipment Products | Product | Product In Shipment (Incoming) | Starting from a shipment, find products contained in it. |
-| Shipment Risk Incidents | Incident | Shipment At Risk (Incoming) | Starting from a shipment, find incidents judged to put it at risk. |
+| Shipment Risk Incidents | Incident | Product In Shipment (Incoming) -> Incident Impacts Product (Incoming) | Starting from a shipment, find incidents impacting products in the shipment. |
 
 ### Supplier
 
@@ -276,6 +282,25 @@ harness, not by turning every useful traversal into a governed relationship.
 | Supplier Supplied Assemblies | Assembly | Supplier Supplies Assembly (Outgoing) | Starting from a supplier, find directly supplied assemblies. |
 | Supplier Supplied Components | Component | Supplier Supplies Component (Outgoing) | Starting from a supplier, find directly supplied components. |
 <!-- CRUXIBLE:END query-catalog -->
+
+## Schema Reference
+
+This README keeps schema detail at the diagram and table level so the kit
+remains usable as a drafting surface. The config remains the source of truth
+for full entity, relationship, and contract properties. For a generated
+Markdown schema catalog, run:
+
+```bash
+uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --runtime --view schema-catalog
+```
+
+When the kit is loaded into a local instance, generate navigable reference
+pages under `wiki/reference/` with:
+
+```bash
+uv run cruxible render-wiki --output wiki --scope local
+```
+
 
 ## Rules And Learning Loops
 
@@ -301,10 +326,23 @@ No configured constraints.
 <!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
 
+#### `incident_impacts_assembly`
+- Version: `1`
+- Reason codes:
+  - `alternate_supplier_active` (`provider_fix`): Assembly has a viable alternate supplier outside incident scope; cascade should have stopped.
+  - `assembly_decommissioned` (`quality_check`): Assembly is no longer in active use.
+  - `sourcing_plan_stale` (`provider_fix`): Supplier sourcing posture was stale at cascade time.
+  - `wrong_supplier_assembly_scope` (`provider_fix`): Rule matched the wrong directly supplied assembly for the impacted supplier.
+- Scope keys:
+  - `alternate_state`: `EDGE.alternate_state`
+  - `assembly`: `TO.assembly_id`
+  - `impacted_supplier`: `EDGE.impacted_supplier_id`
+  - `incident`: `FROM.incident_id`
+
 #### `incident_impacts_component`
 - Version: `1`
 - Reason codes:
-  - `alternate_supplier_active` (`provider_fix`): Component has an active alternate supplier outside incident scope; cascade should have stopped.
+  - `alternate_supplier_active` (`provider_fix`): Component has a viable alternate supplier outside incident scope; cascade should have stopped.
   - `component_decommissioned` (`quality_check`): Component is no longer in active use.
   - `supplier_substitution_planned` (`decision_policy`): A planned substitution mitigates this cascade.
 - Scope keys:
@@ -334,20 +372,19 @@ No configured constraints.
   - `match_basis`: `EDGE.match_basis`
   - `supplier`: `TO.supplier_id`
 
-#### `shipment_at_risk`
-- Version: `1`
-- Reason codes:
-  - `already_delivered` (`provider_fix`): Shipment was already delivered when incident occurred.
-  - `alternate_source_shipment` (`provider_fix`): Shipment uses product variant from an alternate source not in incident scope.
-  - `ships_before_incident` (`provider_fix`): Shipment ship_date predates incident; not actually at risk.
-- Scope keys:
-  - `incident`: `FROM.incident_id`
-  - `shipment`: `TO.shipment_id`
-  - `shipment_state`: `EDGE.shipment_state`
-
 ### Outcome Profiles (Loop 2)
 
 #### Resolution-Anchored
+
+##### `incident_assembly_resolution`
+- Version: `1`
+- Target: Relationship `incident_impacts_assembly`
+- Outcome codes:
+  - `assembly_unaffected` (`require_review`): The assembly remained unaffected despite the accepted impact judgment.
+  - `confirmed_assembly_constraint` (`trust_adjustment`): Later operations data confirmed assembly supply was constrained.
+  - `missed_assembly_impact` (`workflow_fix`): An assembly impact was discovered after the proposal chain ran.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
 
 ##### `incident_component_resolution`
 - Version: `1`
@@ -379,16 +416,6 @@ No configured constraints.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
-##### `shipment_risk_resolution`
-- Version: `1`
-- Target: Relationship `shipment_at_risk`
-- Outcome codes:
-  - `confirmed_shipment_delay` (`trust_adjustment`): Shipment was delayed, held, shorted, or customer-impacting as predicted.
-  - `missed_at_risk_shipment` (`workflow_fix`): A shipment became customer-impacting but was not flagged by the chain.
-  - `shipment_unaffected` (`require_review`): Shipment completed normally despite the accepted risk judgment.
-- Scope keys:
-  - `relationship_type`: `RESOLUTION.relationship_type`
-
 #### Receipt-Anchored
 
 ##### `at_risk_shipments_query`
@@ -404,8 +431,8 @@ No configured constraints.
 - Version: `1`
 - Target: Query `incident_impacted_assemblies`
 - Outcome codes:
-  - `false_positive_assembly` (`graph_fix`): Query returned an assembly later confirmed not to be exposed through the active BOM.
-  - `missing_impacted_assembly` (`graph_fix`): Query omitted an assembly later confirmed to be exposed through the BOM.
+  - `false_positive_assembly` (`graph_fix`): Query returned an assembly later confirmed not directly impacted.
+  - `missing_impacted_assembly` (`graph_fix`): Query omitted a directly supplied assembly later confirmed impacted.
 - Scope keys:
   - `query`: `SURFACE.name`
 
@@ -426,12 +453,15 @@ No configured constraints.
 - `component_part_of_assembly`, `assembly_part_of_assembly`, and
   `assembly_part_of_product` preserve the product structure needed for
   downstream blast-radius and tier-depth analysis.
-- `incident_impacted_assemblies` is a named query/view, not governed state. It is
-  derived from accepted supplier/component impact plus the deterministic BOM.
+- `incident_impacts_assembly` is governed state only for directly supplied
+  assemblies. BOM rollup context remains query-derived.
+- `incident_impacted_assemblies` returns accepted direct assembly impacts;
+  `incident_exposed_assembly_context` derives BOM context for read surfaces.
 - `product_in_shipment` points from `Product` to `Shipment`, so shipment risk is
   downstream from the product-impact decision.
-- Product impact and shipment risk are governed and review-gated because they
-  drive customer-facing action.
+- Product impact is governed and review-gated because it drives
+  customer-facing action. Shipment risk stays a query/report surface unless the
+  domain needs a separate approved operational action.
 
 ## Compounding Knowledge Procedure
 
@@ -441,11 +471,11 @@ No configured constraints.
    such as supplier, geography, disruption type, severity, and timing.
 3. Propose incident-to-supplier impact using direct supplier and geography
    matches.
-4. Cascade accepted supplier impacts to components and assemblies, accounting
-   for active alternates and criticality.
-5. Cascade accepted component and assembly impacts through the BOM to finished
+4. Cascade accepted supplier impacts to components and directly supplied
+   assemblies, accounting for viable alternates and criticality.
+5. Cascade accepted component and direct assembly impacts through the BOM to finished
    products, preserving depth and route of impact.
-6. Cascade accepted product impacts to in-flight or committed shipments.
+6. Query accepted product impacts to find in-flight or committed shipments.
 7. Use named queries to give the agent reviewed context for supplier exposure,
    assembly/product blast radius, and shipment/customer action.
 8. Feed review feedback and later operational outcomes back into provider fixes,
@@ -458,7 +488,7 @@ No configured constraints.
 - **BOM blast-radius analysis:** move from accepted supplier/component impact to
   assemblies and products without flattening away the assembly hierarchy.
 - **Alternate-source review:** distinguish real product risk from component
-  impact that is buffered by active alternate suppliers.
+  impact that is buffered by viable alternate suppliers.
 - **Shipment risk review:** identify shipments containing impacted products so
   operations can hold, reroute, expedite, or notify customers.
 - **Customer escalation context:** give an agent a reviewed path from incident
