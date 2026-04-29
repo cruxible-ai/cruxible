@@ -429,6 +429,7 @@ class TestConfigViews:
         assert "| Integration | Kind | Used By | Notes |" in result.output
         assert "No configured constraints." in result.output
         assert "No configured feedback profiles." in result.output
+        assert "### Entity Types" in result.output
         assert "### Campaign" in result.output
 
     def test_config_views_single_bare_view_outputs_raw_mermaid(
@@ -1887,12 +1888,12 @@ class TestStoreLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# Feedback validation (confidence + provenance)
+# Feedback validation (property schema + provenance)
 # ---------------------------------------------------------------------------
 
 
 class TestFeedbackValidation:
-    """Verify CLI feedback matches MCP confidence/provenance checks."""
+    """Verify CLI feedback matches MCP property/provenance checks."""
 
     @staticmethod
     def _get_receipt_id(runner: CliRunner, instance: CruxibleInstance) -> str:

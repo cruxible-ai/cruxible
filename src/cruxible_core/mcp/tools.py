@@ -391,14 +391,13 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_evaluate(
         instance_id: str,
-        confidence_threshold: float = 0.5,
         max_findings: int = 100,
         exclude_orphan_types: list[str] | None = None,
     ) -> contracts.EvaluateResult:
         """Run graph quality checks (orphans, gaps, violations, co-members).
 
         Checks: orphan entities, coverage gaps, constraint violations,
-        candidate opportunities, low-confidence edges, and unreviewed
+        candidate opportunities, governed support state, and unreviewed
         co-members (entities sharing an intermediary with a cross-referenced
         entity but lacking a cross-reference edge themselves).
 
@@ -407,7 +406,6 @@ def register_tools(server: FastMCP) -> list[str]:
         """
         return handlers.handle_evaluate(
             instance_id,
-            confidence_threshold=confidence_threshold,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
         )
@@ -507,20 +505,13 @@ def register_tools(server: FastMCP) -> list[str]:
         """Add or update relationships in the graph (upsert).
 
         Each relationship needs: from_type, from_id, relationship, to_type, to_id.
-        Optional properties dict for metadata (source, confidence, evidence).
-        Entities must already exist. Re-submitting an existing edge replaces
-        its properties (full overwrite, not merge).
+        Optional properties must be declared by the relationship schema.
+        Entities must already exist. Re-submitting an existing edge merges
+        declared domain properties while preserving system review metadata.
 
-        **Confidence guidelines** (always set ``confidence`` in properties):
-
-        - **≥ 0.9**: Unambiguous match — no plausible alternatives exist.
-        - **0.7 – 0.9**: Inspected and reasonable, but alternatives exist.
-        - **0.5 – 0.7**: Ambiguous — decent guess, other candidates are
-          similarly plausible. Flag for review.
-        - **< 0.5**: Speculative — likely needs human review before trusting.
-
-        Also set ``source`` (how the edge was created, e.g. "property_match",
-        "ai_inferred") and ``evidence`` (dict of supporting details).
+        For governed judgment relationships, prefer candidate group proposal
+        flows so Cruxible can preserve tri-state integration signals
+        (support, unsure, contradict) and review history.
 
         Batch size: practical limit is ~500 relationships per call.
         For bulk ingestion of 10K+ relationships, use ``cruxible_ingest``

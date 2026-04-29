@@ -71,20 +71,23 @@ def service_find_candidates(
 
 def service_evaluate(
     instance: InstanceProtocol,
-    confidence_threshold: float = 0.5,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
 ) -> EvaluationReport:
     """Evaluate graph quality with deterministic checks."""
     config = instance.load_config()
     graph = instance.load_graph()
-    return evaluate_graph(
-        config,
-        graph,
-        confidence_threshold=confidence_threshold,
-        max_findings=max_findings,
-        exclude_orphan_types=exclude_orphan_types,
-    )
+    group_store = instance.get_group_store()
+    try:
+        return evaluate_graph(
+            config,
+            graph,
+            group_store=group_store,
+            max_findings=max_findings,
+            exclude_orphan_types=exclude_orphan_types,
+        )
+    finally:
+        group_store.close()
 
 
 def service_config_compatibility_warnings(instance: InstanceProtocol) -> list[str]:
@@ -98,7 +101,6 @@ def service_config_compatibility_warnings(instance: InstanceProtocol) -> list[st
 def service_lint(
     instance: InstanceProtocol,
     *,
-    confidence_threshold: float = 0.5,
     max_findings: int = 100,
     analysis_limit: int = 200,
     min_support: int = 5,
@@ -114,13 +116,17 @@ def service_lint(
         config_warnings = [f"[ERROR] {e}" for e in exc.errors]
 
     compatibility_warnings = _compute_config_compatibility_warnings(config=config, graph=graph)
-    evaluation = evaluate_graph(
-        config,
-        graph,
-        confidence_threshold=confidence_threshold,
-        max_findings=max_findings,
-        exclude_orphan_types=exclude_orphan_types,
-    )
+    group_store = instance.get_group_store()
+    try:
+        evaluation = evaluate_graph(
+            config,
+            graph,
+            group_store=group_store,
+            max_findings=max_findings,
+            exclude_orphan_types=exclude_orphan_types,
+        )
+    finally:
+        group_store.close()
 
     feedback_reports: list[AnalyzeFeedbackResult] = []
     for relationship in config.relationships:

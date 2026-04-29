@@ -8,7 +8,9 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
+    IntegrationGuardrailSchema,
     JsonContentQualityCheck,
+    MatchingSchema,
     PropertyQualityCheck,
     PropertySchema,
     RelationshipSchema,
@@ -17,6 +19,8 @@ from cruxible_core.config.schema import (
 from cruxible_core.evaluate import evaluate_graph
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.store import GroupStore
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 
 
 def _minimal_config(**overrides) -> CoreConfig:
@@ -412,9 +416,57 @@ class TestCandidateOpportunities:
         assert len(candidates) == 0
 
 
-class TestLowConfidenceEdges:
-    def test_detects_low_confidence(self):
-        config = _minimal_config()
+def _governed_replaces_config(*, blocking: bool = False) -> CoreConfig:
+    role = "blocking" if blocking else "required"
+    return _minimal_config(
+        relationships=[
+            RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle"),
+            RelationshipSchema(
+                name="replaces",
+                from_entity="Part",
+                to_entity="Part",
+                matching=MatchingSchema(
+                    integrations={
+                        "detector": IntegrationGuardrailSchema(role=role),
+                        "reviewer": IntegrationGuardrailSchema(role="required"),
+                    }
+                ),
+            ),
+        ],
+    )
+
+
+def _store_with_member(
+    signals: list[CandidateSignal],
+    *,
+    group_id: str = "GRP-test",
+) -> GroupStore:
+    store = GroupStore(":memory:")
+    group = CandidateGroup(
+        group_id=group_id,
+        relationship_type="replaces",
+        signature="sig",
+        status="resolved",
+        member_count=1,
+        integrations_used=[signal.integration for signal in signals],
+    )
+    member = CandidateMember(
+        relationship_type="replaces",
+        from_type="Part",
+        from_id="P1",
+        to_type="Part",
+        to_id="P2",
+        signals=signals,
+    )
+    store.save_group(group)
+    store.save_members(group_id, [member])
+    store.commit()
+    return store
+
+
+class TestGovernedSupportRelationships:
+    def test_detects_missing_group_trail(self):
+        config = _governed_replaces_config()
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
@@ -423,16 +475,19 @@ class TestLowConfidenceEdges:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"confidence": 0.3},
+                properties={},
             )
         )
-        report = evaluate_graph(config, graph, confidence_threshold=0.5)
-        low = [f for f in report.findings if f.category == "low_confidence_edge"]
-        assert len(low) == 1
-        assert "0.30" in low[0].message
+        store = GroupStore(":memory:")
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert findings[0].detail["reason"] == "missing_group_trail"
 
     def test_detects_pending_review(self):
-        config = _minimal_config()
+        config = _governed_replaces_config()
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
@@ -445,12 +500,15 @@ class TestLowConfidenceEdges:
             )
         )
         report = evaluate_graph(config, graph)
-        low = [f for f in report.findings if f.category == "low_confidence_edge"]
-        assert len(low) == 1
-        assert "Pending review" in low[0].message
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert "Pending review" in findings[0].message
+        assert findings[0].detail["reason"] == "pending_review"
 
-    def test_no_flag_when_confident(self):
-        config = _minimal_config()
+    def test_detects_missing_required_signal(self):
+        config = _governed_replaces_config()
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
@@ -459,16 +517,22 @@ class TestLowConfidenceEdges:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"confidence": 0.9},
+                properties={"_provenance": {"source_ref": "group:GRP-test"}},
             )
         )
-        report = evaluate_graph(config, graph, confidence_threshold=0.5)
-        low = [f for f in report.findings if f.category == "low_confidence_edge"]
-        assert len(low) == 0
+        store = _store_with_member(
+            [CandidateSignal(integration="detector", signal="support")]
+        )
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert findings[0].detail["reason"] == "missing_required_signal"
+        assert findings[0].detail["integrations"] == ["reviewer"]
 
-    def test_non_numeric_confidence_is_warning(self):
-        """Non-numeric confidence like 'high' produces a warning instead of crashing."""
-        config = _minimal_config()
+    def test_detects_required_unsure_signal(self):
+        config = _governed_replaces_config()
         graph = EntityGraph()
         graph.add_relationship(
             RelationshipInstance(
@@ -477,15 +541,47 @@ class TestLowConfidenceEdges:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"confidence": "high"},
+                properties={"_provenance": {"source_ref": "group:GRP-test"}},
             )
         )
-        report = evaluate_graph(config, graph, confidence_threshold=0.5)
-        low = [f for f in report.findings if f.category == "low_confidence_edge"]
-        assert len(low) == 1
-        assert "Non-numeric confidence" in low[0].message
-        assert "'high'" in low[0].message
-        assert low[0].severity == "warning"
+        store = _store_with_member(
+            [
+                CandidateSignal(integration="detector", signal="unsure"),
+                CandidateSignal(integration="reviewer", signal="support"),
+            ]
+        )
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert findings[0].detail["reason"] == "required_unsure"
+
+    def test_detects_blocking_contradict_signal(self):
+        config = _governed_replaces_config(blocking=True)
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
+                properties={"_provenance": {"source_ref": "group:GRP-test"}},
+            )
+        )
+        store = _store_with_member(
+            [
+                CandidateSignal(integration="detector", signal="contradict"),
+                CandidateSignal(integration="reviewer", signal="support"),
+            ]
+        )
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert findings[0].detail["reason"] == "blocking_contradict"
 
 
 class TestReportStructure:
@@ -517,9 +613,9 @@ class TestReportStructure:
         report = evaluate_graph(config, graph)
         assert report.entity_count > 0
         assert report.edge_count > 0
-        # Should have at least orphan and low_confidence findings
+        # Should have at least orphan and coverage findings
         assert "orphan_entity" in report.summary
-        assert "low_confidence_edge" in report.summary
+        assert "coverage_gap" in report.summary
 
     def test_empty_graph(self):
         config = _minimal_config()

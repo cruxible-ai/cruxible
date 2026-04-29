@@ -1,28 +1,33 @@
 """Graph quality assessment.
 
 Deterministic checks for orphans, coverage gaps, constraint violations,
-candidate opportunities, and low-confidence edges.
+candidate opportunities, and governed support state.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
+from cruxible_core.config.property_validation import entity_properties_with_identity
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import REJECTED_STATUSES, make_node_id, split_node_id
 from cruxible_core.predicate import evaluate_comparison
+
+if TYPE_CHECKING:
+    from cruxible_core.group.types import CandidateMember
+    from cruxible_core.instance_protocol import GroupStoreProtocol
 
 FindingCategory = Literal[
     "orphan_entity",
     "coverage_gap",
     "constraint_violation",
     "candidate_opportunity",
-    "low_confidence_edge",
+    "governed_support_relationship",
     "unreviewed_co_member",
     "quality_check_failed",
 ]
@@ -52,7 +57,7 @@ def evaluate_graph(
     config: CoreConfig,
     graph: EntityGraph,
     *,
-    confidence_threshold: float = 0.5,
+    group_store: GroupStoreProtocol | None = None,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
 ) -> EvaluationReport:
@@ -63,7 +68,7 @@ def evaluate_graph(
     2. Coverage gaps — entity/relationship types in config but absent from graph
     3. Constraint violations — rule-based checks on edge properties
     4. Candidate opportunities — entity pairs sharing neighbors but lacking a direct edge
-    5. Low-confidence edges — edges below the confidence threshold or pending review
+    5. Governed support — pending or weakly supported governed relationships
     6. Unreviewed co-members — entities sharing an intermediary with a cross-referenced
        entity but lacking a cross-reference edge themselves
     """
@@ -79,7 +84,7 @@ def evaluate_graph(
     _check_coverage_gaps(config, graph, findings)
     _check_constraint_violations(config, graph, findings, constraint_summary)
     _check_candidate_opportunities(config, graph, findings)
-    _check_low_confidence_edges(graph, findings, confidence_threshold)
+    _check_governed_support_relationships(config, graph, findings, group_store)
     _check_unreviewed_co_members(config, graph, findings)
     _check_quality_rules(config, graph, findings, quality_summary)
 
@@ -175,8 +180,18 @@ def _check_constraint_violations(
             from_entity = graph.get_entity(from_type, from_id)
             to_entity = graph.get_entity(to_type, to_id)
 
-            from_props = from_entity.properties if from_entity else {}
-            to_props = to_entity.properties if to_entity else {}
+            from_props = (
+                entity_properties_with_identity(
+                    config, from_type, from_id, from_entity.properties
+                )
+                if from_entity
+                else {}
+            )
+            to_props = (
+                entity_properties_with_identity(config, to_type, to_id, to_entity.properties)
+                if to_entity
+                else {}
+            )
 
             from_val = from_props.get(from_prop)
             to_val = to_props.get(to_prop)
@@ -280,74 +295,192 @@ def _check_candidate_opportunities(
                 )
 
 
-def _check_low_confidence_edges(
+def _check_governed_support_relationships(
+    config: CoreConfig,
     graph: EntityGraph,
     findings: list[EvaluationFinding],
-    threshold: float,
+    group_store: GroupStoreProtocol | None,
 ) -> None:
-    """Find edges with low confidence or pending review status."""
-    for from_type, from_id, to_type, to_id, props in graph.iter_edge_data():
-        confidence = props.get("confidence")
+    """Find governed relationships whose tri-state support needs review."""
+    governed = {
+        relationship.name: relationship
+        for relationship in config.relationships
+        if relationship.matching is not None
+    }
+    if not governed:
+        return
+
+    for edge in graph.iter_edges():
+        relationship_type = edge["relationship_type"]
+        relationship = governed.get(relationship_type)
+        if relationship is None or relationship.matching is None:
+            continue
+
+        from_type = edge["from_type"]
+        from_id = edge["from_id"]
+        to_type = edge["to_type"]
+        to_id = edge["to_id"]
+        props = edge["properties"]
         review_status = props.get("review_status")
 
         if review_status == "pending_review":
             findings.append(
                 EvaluationFinding(
-                    category="low_confidence_edge",
+                    category="governed_support_relationship",
                     severity="warning",
                     message=(
                         f"Pending review: {from_type}:{from_id} "
-                        f"—[{props.get('relationship_type', '?')}]→ "
+                        f"—[{relationship_type}]→ "
                         f"{to_type}:{to_id}"
                     ),
                     detail={
                         "from_entity": f"{from_type}:{from_id}",
                         "to_entity": f"{to_type}:{to_id}",
-                        "relationship_type": props.get("relationship_type", ""),
+                        "relationship_type": relationship_type,
                         "review_status": "pending_review",
+                        "reason": "pending_review",
                     },
                 )
             )
-        elif confidence is not None:
-            try:
-                conf_val = float(confidence)
-            except (ValueError, TypeError):
+            continue
+
+        if group_store is None:
+            continue
+
+        member = resolve_edge_signal_history(
+            group_store,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            properties=props,
+        )
+        if member is None:
+            findings.append(
+                _governed_support_finding(
+                    from_type,
+                    from_id,
+                    relationship_type,
+                    to_type,
+                    to_id,
+                    "missing_group_trail",
+                    "Governed relationship has no resolvable group signal trail",
+                )
+            )
+            continue
+
+        signals_by_integration = {signal.integration: signal.signal for signal in member.signals}
+        required_integrations = {
+            name
+            for name, guardrail in relationship.matching.integrations.items()
+            if guardrail.role in {"blocking", "required"}
+        }
+        missing = sorted(required_integrations - set(signals_by_integration))
+        if missing:
+            findings.append(
+                _governed_support_finding(
+                    from_type,
+                    from_id,
+                    relationship_type,
+                    to_type,
+                    to_id,
+                    "missing_required_signal",
+                    "Governed relationship is missing required integration support",
+                    integrations=missing,
+                )
+            )
+
+        for integration_name, guardrail in relationship.matching.integrations.items():
+            signal = signals_by_integration.get(integration_name)
+            if guardrail.role == "blocking" and signal == "contradict":
                 findings.append(
-                    EvaluationFinding(
-                        category="low_confidence_edge",
-                        severity="warning",
-                        message=(
-                            f"Non-numeric confidence '{confidence}': {from_type}:{from_id} "
-                            f"—[{props.get('relationship_type', '?')}]→ "
-                            f"{to_type}:{to_id}"
-                        ),
-                        detail={
-                            "from_entity": f"{from_type}:{from_id}",
-                            "to_entity": f"{to_type}:{to_id}",
-                            "relationship_type": props.get("relationship_type", ""),
-                            "confidence": confidence,
-                        },
+                    _governed_support_finding(
+                        from_type,
+                        from_id,
+                        relationship_type,
+                        to_type,
+                        to_id,
+                        "blocking_contradict",
+                        "Governed relationship has a blocking contradict signal",
+                        integrations=[integration_name],
                     )
                 )
-                continue
-            if conf_val < threshold:
+            elif guardrail.role in {"blocking", "required"} and signal == "unsure":
                 findings.append(
-                    EvaluationFinding(
-                        category="low_confidence_edge",
-                        severity="warning",
-                        message=(
-                            f"Low confidence ({conf_val:.2f}): {from_type}:{from_id} "
-                            f"—[{props.get('relationship_type', '?')}]→ "
-                            f"{to_type}:{to_id}"
-                        ),
-                        detail={
-                            "from_entity": f"{from_type}:{from_id}",
-                            "to_entity": f"{to_type}:{to_id}",
-                            "relationship_type": props.get("relationship_type", ""),
-                            "confidence": confidence,
-                        },
+                    _governed_support_finding(
+                        from_type,
+                        from_id,
+                        relationship_type,
+                        to_type,
+                        to_id,
+                        "required_unsure",
+                        "Governed relationship has required or blocking unsure support",
+                        integrations=[integration_name],
                     )
                 )
+
+
+def resolve_edge_signal_history(
+    group_store: GroupStoreProtocol,
+    *,
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    properties: dict[str, Any],
+) -> CandidateMember | None:
+    """Resolve a graph edge back to its approved group candidate member."""
+    provenance = properties.get("_provenance")
+    if not isinstance(provenance, dict):
+        return None
+    source_ref = provenance.get("source_ref")
+    if not isinstance(source_ref, str) or not source_ref.startswith("group:"):
+        return None
+    group_id = source_ref.removeprefix("group:")
+    group = group_store.get_group(group_id)
+    if group is None:
+        return None
+    for member in group_store.get_members(group_id):
+        if (
+            member.from_type == from_type
+            and member.from_id == from_id
+            and member.relationship_type == relationship_type
+            and member.to_type == to_type
+            and member.to_id == to_id
+        ):
+            return member
+    return None
+
+
+def _governed_support_finding(
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    reason: str,
+    message: str,
+    *,
+    integrations: list[str] | None = None,
+) -> EvaluationFinding:
+    detail: dict[str, Any] = {
+        "from_entity": f"{from_type}:{from_id}",
+        "to_entity": f"{to_type}:{to_id}",
+        "relationship_type": relationship_type,
+        "reason": reason,
+    }
+    if integrations:
+        detail["integrations"] = integrations
+    return EvaluationFinding(
+        category="governed_support_relationship",
+        severity="warning",
+        message=(
+            f"{message}: {from_type}:{from_id} —[{relationship_type}]→ {to_type}:{to_id}"
+        ),
+        detail=detail,
+    )
 
 
 _MAX_MATCHED_FOR_CO_MEMBERS = 1000
@@ -676,7 +809,7 @@ def _run_uniqueness_quality_check(
             continue
         grouped.setdefault(tuple(values), []).append(entity.entity_id)
 
-    for values, entity_ids in grouped.items():
+    for grouped_values, entity_ids in grouped.items():
         if len(entity_ids) < 2:
             continue
         sorted_ids = sorted(entity_ids)
@@ -691,7 +824,7 @@ def _run_uniqueness_quality_check(
             detail={
                 "entity_type": check.entity_type,
                 "properties": check.properties,
-                "values": list(values),
+                "values": list(grouped_values),
                 "entity_ids": sorted_ids,
             },
         )

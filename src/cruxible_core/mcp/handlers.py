@@ -647,7 +647,6 @@ def handle_find_candidates(
 
 def handle_evaluate(
     instance_id: str,
-    confidence_threshold: float = 0.5,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.EvaluateResult:
@@ -655,13 +654,11 @@ def handle_evaluate(
     return _dispatch_remote_or_local(
         lambda client: client.evaluate(
             instance_id,
-            confidence_threshold=confidence_threshold,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
         ),
         lambda: local_api._handle_evaluate_local(
             instance_id,
-            confidence_threshold=confidence_threshold,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
         ),

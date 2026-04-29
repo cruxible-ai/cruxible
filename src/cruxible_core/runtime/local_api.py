@@ -801,7 +801,6 @@ def _handle_find_candidates_local(
 
 def _handle_evaluate_local(
     instance_id: str,
-    confidence_threshold: float = 0.5,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.EvaluateResult:
@@ -814,7 +813,6 @@ def _handle_evaluate_local(
     instance = get_manager().get(instance_id)
     report = service_evaluate(
         instance,
-        confidence_threshold=confidence_threshold,
         max_findings=max_findings,
         exclude_orphan_types=exclude_orphan_types,
     )
@@ -831,7 +829,6 @@ def _handle_evaluate_local(
 def _handle_lint_local(
     instance_id: str,
     *,
-    confidence_threshold: float = 0.5,
     max_findings: int = 100,
     analysis_limit: int = 200,
     min_support: int = 5,
@@ -846,7 +843,6 @@ def _handle_lint_local(
     instance = get_manager().get(instance_id)
     result = service_lint(
         instance,
-        confidence_threshold=confidence_threshold,
         max_findings=max_findings,
         analysis_limit=analysis_limit,
         min_support=min_support,

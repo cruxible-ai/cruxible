@@ -138,7 +138,6 @@ async def evaluate(instance_id: str, req: EvaluateRequest) -> contracts.Evaluate
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_evaluate_local(
         instance_id=resolved_instance_id,
-        confidence_threshold=req.confidence_threshold,
         max_findings=req.max_findings,
         exclude_orphan_types=req.exclude_orphan_types,
     )
@@ -149,7 +148,6 @@ async def lint(instance_id: str, req: LintRequest) -> contracts.LintResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_lint_local(
         instance_id=resolved_instance_id,
-        confidence_threshold=req.confidence_threshold,
         max_findings=req.max_findings,
         analysis_limit=req.analysis_limit,
         min_support=req.min_support,

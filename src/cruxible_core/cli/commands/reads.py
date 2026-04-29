@@ -458,23 +458,18 @@ def sample(entity_type: str, limit: int, output_json: bool) -> None:
 
 
 @click.command()
-@click.option(
-    "--threshold", default=0.5, type=float, help="Confidence threshold for flagging edges."
-)
 @click.option("--limit", default=100, type=int, help="Max findings to show.")
 @json_option
 @handle_errors
-def evaluate(threshold: float, limit: int, output_json: bool) -> None:
+def evaluate(limit: int, output_json: bool) -> None:
     """Assess graph quality: orphans, gaps, violations, unreviewed co-members."""
     report = _dispatch_cli_instance(
         lambda client, instance_id: client.evaluate(
             instance_id,
-            confidence_threshold=threshold,
             max_findings=limit,
         ),
         lambda instance: service_evaluate(
             instance,
-            confidence_threshold=threshold,
             max_findings=limit,
         ),
     )
@@ -520,12 +515,6 @@ def evaluate(threshold: float, limit: int, output_json: bool) -> None:
 
 
 @click.command("lint")
-@click.option(
-    "--threshold",
-    default=0.5,
-    type=float,
-    help="Confidence threshold for graph evaluation findings.",
-)
 @click.option("--max-findings", default=100, type=int, help="Max graph findings to include.")
 @click.option(
     "--analysis-limit",
@@ -548,7 +537,6 @@ def evaluate(threshold: float, limit: int, output_json: bool) -> None:
 @json_option
 @handle_errors
 def lint_cmd(
-    threshold: float,
     max_findings: int,
     analysis_limit: int,
     min_support: int,
@@ -559,7 +547,6 @@ def lint_cmd(
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.lint(
             instance_id,
-            confidence_threshold=threshold,
             max_findings=max_findings,
             analysis_limit=analysis_limit,
             min_support=min_support,
@@ -567,7 +554,6 @@ def lint_cmd(
         ),
         lambda instance: service_lint(
             instance,
-            confidence_threshold=threshold,
             max_findings=max_findings,
             analysis_limit=analysis_limit,
             min_support=min_support,

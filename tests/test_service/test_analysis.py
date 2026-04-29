@@ -34,6 +34,20 @@ from cruxible_core.service import (
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
+
+class _ClosingGroupStore:
+    closed = False
+
+    def get_group(self, group_id: str):
+        return None
+
+    def get_members(self, group_id: str):
+        return []
+
+    def close(self) -> None:
+        self.closed = True
+
+
 # ---------------------------------------------------------------------------
 # service_validate
 # ---------------------------------------------------------------------------
@@ -248,18 +262,22 @@ class TestEvaluate:
         report = service_evaluate(populated_instance)
         assert report.constraint_summary["replaces_category_match"] == 0
 
-    def test_with_threshold(self, populated_instance: CruxibleInstance) -> None:
-        report = service_evaluate(populated_instance, confidence_threshold=0.99)
-        # With a very high threshold, the replaces edge (0.95) should be flagged
-        low_conf = [f for f in report.findings if f.category == "low_confidence_edge"]
-        assert len(low_conf) >= 1
-
     def test_exclude_orphan_types(self, populated_instance: CruxibleInstance) -> None:
         report_all = service_evaluate(populated_instance)
         report_excl = service_evaluate(populated_instance, exclude_orphan_types=["Vehicle", "Part"])
         orphans_all = sum(1 for f in report_all.findings if f.category == "orphan_entity")
         orphans_excl = sum(1 for f in report_excl.findings if f.category == "orphan_entity")
         assert orphans_excl <= orphans_all
+
+    def test_closes_group_store(
+        self, populated_instance: CruxibleInstance, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _ClosingGroupStore()
+        monkeypatch.setattr(populated_instance, "get_group_store", lambda: store)
+
+        service_evaluate(populated_instance)
+
+        assert store.closed is True
 
 
 class TestAnalyzeFeedback:
@@ -739,6 +757,23 @@ class TestLint:
         assert result.summary.evaluation_finding_count == 0
         assert result.feedback_reports == []
         assert result.outcome_reports == []
+
+    def test_closes_evaluation_group_store(
+        self, populated_instance: CruxibleInstance, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stores: list[_ClosingGroupStore] = []
+
+        def get_group_store() -> _ClosingGroupStore:
+            store = _ClosingGroupStore()
+            stores.append(store)
+            return store
+
+        monkeypatch.setattr(populated_instance, "get_group_store", get_group_store)
+
+        service_lint(populated_instance)
+
+        assert stores
+        assert all(store.closed for store in stores)
 
     def test_includes_compatibility_warnings(self, populated_instance: CruxibleInstance) -> None:
         graph = populated_instance.load_graph()

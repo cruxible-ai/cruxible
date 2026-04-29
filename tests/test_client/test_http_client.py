@@ -409,10 +409,9 @@ def test_evaluate_uses_expected_route():
         )
 
     client = _build_client(handler)
-    result = client.evaluate("inst_123", confidence_threshold=0.7, max_findings=5)
+    result = client.evaluate("inst_123", max_findings=5)
     assert result.quality_summary == {"check_ok": 0}
     assert captured["path"].endswith("/api/v1/inst_123/evaluate")
-    assert captured["payload"]["confidence_threshold"] == 0.7
     assert captured["payload"]["max_findings"] == 5
 
 
@@ -454,7 +453,6 @@ def test_lint_uses_expected_route():
     client = _build_client(handler)
     result = client.lint(
         "inst_123",
-        confidence_threshold=0.7,
         max_findings=5,
         analysis_limit=50,
         min_support=2,
@@ -464,7 +462,6 @@ def test_lint_uses_expected_route():
     assert result.has_issues is False
     assert captured["path"].endswith("/api/v1/inst_123/lint")
     assert captured["payload"] == {
-        "confidence_threshold": 0.7,
         "max_findings": 5,
         "analysis_limit": 50,
         "min_support": 2,

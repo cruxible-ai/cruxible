@@ -347,14 +347,12 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        confidence_threshold: float = 0.5,
         max_findings: int = 100,
         exclude_orphan_types: builtins.list[str] | None = None,
     ) -> contracts.EvaluateResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/evaluate",
             json={
-                "confidence_threshold": confidence_threshold,
                 "max_findings": max_findings,
                 "exclude_orphan_types": exclude_orphan_types,
             },
@@ -365,7 +363,6 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        confidence_threshold: float = 0.5,
         max_findings: int = 100,
         analysis_limit: int = 200,
         min_support: int = 5,
@@ -374,7 +371,6 @@ class CruxibleClient:
         response = self._client.post(
             f"/api/v1/{instance_id}/lint",
             json={
-                "confidence_threshold": confidence_threshold,
                 "max_findings": max_findings,
                 "analysis_limit": analysis_limit,
                 "min_support": min_support,

@@ -558,7 +558,6 @@ def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
             self,
             instance_id,
             *,
-            confidence_threshold=0.5,
             max_findings=100,
             analysis_limit=200,
             min_support=5,
@@ -566,7 +565,6 @@ def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
         ):
             captured["instance_id"] = instance_id
             captured["payload"] = {
-                "confidence_threshold": confidence_threshold,
                 "max_findings": max_findings,
                 "analysis_limit": analysis_limit,
                 "min_support": min_support,
@@ -606,8 +604,6 @@ def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
             "--instance-id",
             "inst_123",
             "lint",
-            "--threshold",
-            "0.7",
             "--max-findings",
             "5",
             "--analysis-limit",
@@ -622,7 +618,6 @@ def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
     assert result.exit_code == 1
     assert captured["instance_id"] == "inst_123"
     assert captured["payload"] == {
-        "confidence_threshold": 0.7,
         "max_findings": 5,
         "analysis_limit": 50,
         "min_support": 2,
@@ -642,7 +637,6 @@ def test_server_mode_lint_json_exits_zero_when_clean(
             self,
             instance_id,
             *,
-            confidence_threshold=0.5,
             max_findings=100,
             analysis_limit=200,
             min_support=5,
