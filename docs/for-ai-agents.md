@@ -27,7 +27,8 @@ For a concrete hardened setup, see [Isolated Deployment](isolated-deployment.md)
 - Understand the user's domain by reading docs and data
 - Generate YAML configs defining entity types, relationships, queries, and constraints
 - Reason about data to infer relationships (classification, matching, similarity)
-- Propose entities and relationships with confidence scores and evidence
+- Propose entities and relationships with schema-declared evidence, using governed
+  candidate groups when tri-state support history matters
 - Interpret query results and present them to humans
 - Collect and record feedback
 
@@ -179,7 +180,9 @@ For each cross-dataset relationship type, use `cruxible_find_candidates`:
 1. Use `cruxible_sample` to inspect entities on both sides
 2. Use `property_match` with `iequals` on name fields to cross-reference entities across types/datasets
 3. Use `shared_neighbors` when entities share connections through an intermediary
-4. Review candidates and persist confirmed matches with `cruxible_add_relationship` — include `source`, `confidence`, and `evidence` in properties
+4. Review candidates and persist confirmed matches with `cruxible_add_relationship`
+   using only schema-declared properties. For governed judgment relationships,
+   use candidate group proposal flows so support/unsure/contradict signals are retained.
 
 `cruxible_find_candidates` only does exact/iequals matching. For fuzzy matching, transliteration, or abbreviation handling, use your own tools (Python, Polars, etc.) and persist matches with `cruxible_add_relationship`.
 
@@ -270,7 +273,9 @@ When rejection patterns emerge from feedback:
 
 ### Relationships
 - `from`/`to` must reference existing entity type names
-- Include `source`, `confidence`, and `evidence` in [edge properties](concepts.md#edge-properties) for AI-inferred relationships
+- Declare the relationship properties you need for inferred relationships, then
+  set only those schema-owned fields. For governed judgments, preserve support
+  evidence through candidate group signals instead of ad hoc confidence fields.
 - Use `inverse` for bidirectional traversal
 
 ### Ingestion Mappings
@@ -295,5 +300,8 @@ When rejection patterns emerge from feedback:
 - **Ingesting relationships before entities** — Edges reference entity IDs. Ingest entities first.
 - **Skipping validation** — Always run `cruxible_validate` before `cruxible_init`. Fail fast.
 - **Ignoring evaluate results** — Run `cruxible_evaluate` after every major change. Orphans and gaps indicate data problems.
-- **Omitting `source`, `confidence`, and `evidence` on inferred edges** — Always include these [edge properties](concepts.md#edge-properties) when proposing AI-inferred relationships. They enable meaningful feedback and constraint analysis.
+- **Writing unsupported ad hoc properties on inferred edges** — Relationship
+  properties must be declared in the config. For governed judgments, use the
+  proposal/group path so Cruxible retains tri-state support signals and review
+  history.
 - **Overloading a single query** — Split complex questions into multiple focused named queries rather than one query with many traversal steps.

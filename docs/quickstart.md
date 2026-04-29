@@ -130,7 +130,9 @@ Run your named queries and inspect the receipts. Every answer comes with a proof
 
 > "Review the graph quality" or "I want to provide feedback on edges"
 
-The agent will run evaluations, surface low-confidence edges for review, and record your approve/correct/reject decisions. Accepted domain state compounds in the world model across sessions.
+The agent will run evaluations, surface pending or weakly supported governed
+relationships for review, and record your approve/correct/reject decisions.
+Accepted domain state compounds in the world model across sessions.
 
 ## Next Steps
 

@@ -498,15 +498,15 @@ cruxible sample --type Drug --limit 3
 
 ## cruxible evaluate
 
-Assess graph quality: orphan entities, coverage gaps, and constraint violations.
+Assess graph quality: orphan entities, coverage gaps, constraint violations,
+candidate opportunities, governed support state, and unreviewed co-members.
 
 ```bash
-cruxible evaluate [--threshold <float>] [--limit <n>]
+cruxible evaluate [--limit <n>]
 ```
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--threshold` | no | `0.5` | Confidence threshold for flagging edges |
 | `--limit` | no | `100` | Max findings to show |
 
 **Example:**

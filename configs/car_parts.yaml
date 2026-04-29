@@ -59,6 +59,7 @@ relationships:
       source:
         type: string
         enum: [catalog, user_report, oem_cross_ref, ai_inferred, property_match, shared_neighbors]
+        optional: true
       confidence:
         type: float
         optional: true

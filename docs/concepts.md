@@ -57,8 +57,8 @@ Cruxible inverts the typical AI architecture. Instead of embedding an LLM inside
 │  3. Reads raw data → reasons about relationships             │
 │  4. Uses cruxible_find_candidates for mechanical matching    │
 │  5. Calls cruxible_ingest to populate graph                  │
-│  6. Calls cruxible_evaluate → self-reviews, surfaces low     │
-│     confidence edges to human with receipts                  │
+│  6. Calls cruxible_evaluate → self-reviews, surfaces weakly  │
+│     supported governed edges to human with receipts          │
 │  7. Human: review / accept all / defer / reject              │
 │  8. Calls cruxible_query → presents results to human         │
 │  9. Collects human feedback → calls cruxible_feedback        │
@@ -95,7 +95,7 @@ The config is the single source of truth for a shared domain/world model. AI age
 Loading data into the entity graph. Two paths:
 
 - **Deterministic ingestion** (`cruxible_ingest`): Bulk load from CSV/JSON through config-defined mappings. For data that explicitly exists in source files — entity records and known relationships.
-- **Inferred proposals** (`cruxible_add_entity`, `cruxible_add_relationship`): For entities from free text or relationships that require judgment (classification, matching, inference). The AI agent reasons about the data and proposes edges with confidence scores and evidence.
+- **Inferred proposals** (`cruxible_add_entity`, governed candidate groups, or `cruxible_add_relationship`): For entities from free text or relationships that require judgment (classification, matching, inference). The AI agent reasons about the data, proposes edges with declared properties, and uses governed group flows when tri-state support history matters.
 
 Entity ingestion always comes before relationship ingestion — edges reference entity IDs that must exist.
 
@@ -128,7 +128,7 @@ The graph is persisted to disk and loaded on init. All mutations (ingest, add_en
 
 Every edge carries a `properties` dict. Properties come from three sources:
 
-**Config-defined properties** are declared in the relationship schema and set at creation time — either via ingestion mappings or explicit `add_relationship` calls. Examples: `verified`, `confidence`, `source`, `evidence`. See [Config Reference](config-reference.md) for property type definitions.
+**Config-defined properties** are declared in the relationship schema and set at creation time — either via ingestion mappings or explicit `add_relationship` calls. Examples: `verified`, `source`, `evidence`, or any domain-specific field declared by the config. See [Config Reference](config-reference.md) for property type definitions.
 
 **`review_status`** is set by feedback actions, not declared in the config schema:
 
@@ -182,7 +182,7 @@ Run `cruxible_evaluate` to check the graph for:
 - **Orphan entities** — entities with no relationships
 - **Coverage gaps** — expected relationships that are missing
 - **Constraint violations** — edges that violate defined rules
-- **Low-confidence edges** — edges below the confidence threshold
+- **Governed support findings** — pending or weakly supported governed relationships derived from tri-state proposal signals
 
 ### Feedback-to-Constraint Workflow
 

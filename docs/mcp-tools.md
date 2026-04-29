@@ -420,14 +420,14 @@ Return a sample of entities for quick data inspection.
 
 ### cruxible_evaluate
 
-Run graph quality checks: orphan entities, coverage gaps, and constraint violations.
+Run graph quality checks: orphan entities, coverage gaps, constraint violations,
+candidate opportunities, governed support state, and unreviewed co-members.
 
 **Permission:** READ_ONLY
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `instance_id` | string | **yes** | Instance ID |
-| `confidence_threshold` | float | no | Threshold for flagging low-confidence edges (default: `0.5`) |
 | `max_findings` | int | no | Maximum findings to return (default: `100`) |
 | `exclude_orphan_types` | list[string] | no | Entity types to skip in orphan checks (for reference/taxonomy types) |
 
@@ -552,7 +552,11 @@ Each `RelationshipInput`:
 | `to_id` | string | **yes** | Target entity ID |
 | `properties` | dict | no | [Edge properties](concepts.md#edge-properties) (default: `{}`) |
 
-Entities must already exist. Re-submitting an existing edge replaces its properties. Include `source`, `confidence`, and `evidence` in properties for provenance tracking.
+Entities must already exist. Re-submitting an existing edge merges declared domain
+properties while preserving system review metadata. Properties must be declared
+by the relationship schema. For governed judgment relationships, prefer
+candidate group proposal flows so Cruxible can preserve tri-state integration
+signals and review history.
 
 **Returns:** `AddRelationshipResult`
 

@@ -48,6 +48,7 @@ tests: [ ... ]
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
 | `outcome_profiles` | dict | no | `{}` | Structured outcome vocabularies for trust calibration |
 | `decision_policies` | list | no | `[]` | Action-side behavior rules for queries and workflows |
+| `enums` | dict | no | `{}` | Shared enum vocabularies referenced by property schemas |
 | `contracts` | dict | no | `{}` | Typed payload contracts for providers/workflows |
 | `artifacts` | dict | no | `{}` | Pinned external artifacts referenced by providers |
 | `providers` | dict | no | `{}` | Versioned executable leaves used by workflow steps |
@@ -92,7 +93,7 @@ relationships:
 | Metadata | `name`, `description` | Overlay overrides base |
 | Safe lists | `constraints`, `quality_checks`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
-| Keyed maps | `entity_types`, `named_queries`, `ingestion`, `integrations`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
+| Keyed maps | `entity_types`, `named_queries`, `enums`, `ingestion`, `integrations`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
 
 When `extends` is set, `entity_types` may be empty — the base provides them.
@@ -157,14 +158,39 @@ Each property within an entity type (or relationship) is defined with:
 | `optional` | bool | no | `false` | Allow null/missing values |
 | `default` | any | no | `null` | Default value when not provided |
 | `enum` | list[string] | no | `null` | Restrict to allowed values |
+| `enum_ref` | string | no | `null` | Reference a shared enum defined in top-level `enums` |
 | `description` | string | no | `null` | Human-readable description |
-| `json_schema` | dict | no | `null` | JSON Schema for `json`-typed properties (validated at parse time) |
+| `json_schema` | dict | no | `null` | JSON Schema documentation for `json`-typed properties; write-time validation only checks JSON serializability |
 
 **Rules:**
 - Exactly one property per entity type should have `primary_key: true`.
 - `primary_key` goes on the property, not the entity type.
 - Properties are required by default; set `optional: true` to allow nulls.
+- `enum` and `enum_ref` are mutually exclusive.
 - `json_schema` is only allowed when `type: json`. Use it to document the expected structure of complex nested data (e.g., version range arrays).
+
+---
+
+## enums
+
+Shared bounded vocabularies referenced by `enum_ref`. Use these when the same
+allowed values appear across multiple entity, relationship, or contract fields.
+
+```yaml
+enums:
+  asset_status:
+    description: Lifecycle state for tracked assets.
+    values: [active, retired, decommissioned]
+
+entity_types:
+  Asset:
+    properties:
+      asset_id: {type: string, primary_key: true}
+      status: {type: string, enum_ref: asset_status, optional: true}
+```
+
+Enum values must be non-empty and unique. With `extends`, overlays may add new
+enum names but may not redefine or extend upstream enum vocabularies.
 
 ---
 
