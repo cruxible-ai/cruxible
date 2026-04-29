@@ -12,6 +12,7 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     EntityTypeSchema,
+    EnumSchema,
     IngestionMapping,
     IntegrationGuardrailSchema,
     IntegrationSchema,
@@ -65,6 +66,32 @@ class TestPropertySchema:
     def test_json_schema_rejected_for_non_json_type(self):
         with pytest.raises(ValidationError, match="json_schema is only allowed"):
             PropertySchema(type="string", json_schema={"type": "string"})
+
+    def test_enum_and_enum_ref_are_mutually_exclusive(self):
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            PropertySchema(type="string", enum=["a"], enum_ref="shared")
+
+    def test_inline_enum_rejects_duplicate_values(self):
+        with pytest.raises(ValidationError, match="unique"):
+            PropertySchema(type="string", enum=["a", "a"])
+
+    def test_inline_enum_default_must_be_allowed(self):
+        with pytest.raises(ValidationError, match="default must be one of"):
+            PropertySchema(type="string", enum=["a", "b"], default="c")
+
+
+class TestEnumSchema:
+    def test_valid_shared_enum(self):
+        enum = EnumSchema(values=["active", "retired"], description="Lifecycle")
+        assert enum.values == ["active", "retired"]
+
+    def test_rejects_empty_enum(self):
+        with pytest.raises(ValidationError, match="must not be empty"):
+            EnumSchema(values=[])
+
+    def test_rejects_duplicate_values(self):
+        with pytest.raises(ValidationError, match="unique"):
+            EnumSchema(values=["active", "active"])
 
 
 class TestEntityTypeSchema:
@@ -173,6 +200,57 @@ class TestNamedQuerySchema:
 
 
 class TestCoreConfigQueryValidation:
+    def test_accepts_enum_ref(self):
+        config = CoreConfig(
+            name="test",
+            enums={"status": EnumSchema(values=["active", "retired"])},
+            entity_types={
+                "Thing": EntityTypeSchema(
+                    properties={
+                        "thing_id": PropertySchema(type="string", primary_key=True),
+                        "status": PropertySchema(type="string", enum_ref="status"),
+                    }
+                )
+            },
+            relationships=[],
+        )
+        assert config.entity_types["Thing"].properties["status"].enum_ref == "status"
+
+    def test_rejects_missing_enum_ref(self):
+        with pytest.raises(ValidationError, match="enum_ref 'status' is not defined"):
+            CoreConfig(
+                name="test",
+                entity_types={
+                    "Thing": EntityTypeSchema(
+                        properties={
+                            "thing_id": PropertySchema(type="string", primary_key=True),
+                            "status": PropertySchema(type="string", enum_ref="status"),
+                        }
+                    )
+                },
+                relationships=[],
+            )
+
+    def test_rejects_enum_ref_default_outside_values(self):
+        with pytest.raises(ValidationError, match="default must be one of enum_ref"):
+            CoreConfig(
+                name="test",
+                enums={"status": EnumSchema(values=["active", "retired"])},
+                entity_types={
+                    "Thing": EntityTypeSchema(
+                        properties={
+                            "thing_id": PropertySchema(type="string", primary_key=True),
+                            "status": PropertySchema(
+                                type="string",
+                                enum_ref="status",
+                                default="unknown",
+                            ),
+                        }
+                    )
+                },
+                relationships=[],
+            )
+
     def test_rejects_unknown_related_exclusion_relationship(self):
         with pytest.raises(ValidationError, match="exclude_if_related"):
             CoreConfig(

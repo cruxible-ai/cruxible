@@ -149,6 +149,33 @@ named_queries:
 # --- feedback_profiles (keyed-map merge) ---
 
 
+class TestEnumComposition:
+    def test_overlay_adds_new_enum(self) -> None:
+        base = _base()
+        overlay = _overlay({
+            "enums": {
+                "case_status": {
+                    "values": ["open", "closed"],
+                    "description": "Case lifecycle",
+                },
+            },
+        })
+        composed = compose_configs(base, overlay)
+        assert composed.enums["case_status"].values == ["open", "closed"]
+
+    def test_overlay_cannot_redefine_base_enum(self) -> None:
+        base_data = {
+            **_BASE_YAML,
+            "enums": {"case_status": {"values": ["open", "closed"]}},
+        }
+        base = CoreConfig.model_validate(base_data)
+        overlay = _overlay({
+            "enums": {"case_status": {"values": ["pending", "resolved"]}},
+        })
+        with pytest.raises(ConfigError, match="redefine upstream.*enums.*case_status"):
+            compose_configs(base, overlay)
+
+
 class TestFeedbackProfilesComposition:
     def test_overlay_adds_new_feedback_profile(self) -> None:
         overlay = _overlay({

@@ -46,6 +46,26 @@ _OUTCOME_PATH_PATTERN = (
 # ---------------------------------------------------------------------------
 
 
+class EnumSchema(BaseModel):
+    """Shared enum vocabulary referenced by property schemas."""
+
+    values: list[str]
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def validate_values(self) -> EnumSchema:
+        if not self.values:
+            msg = "enum values must not be empty"
+            raise ValueError(msg)
+        if any(not isinstance(value, str) or not value.strip() for value in self.values):
+            msg = "enum values must be non-empty strings"
+            raise ValueError(msg)
+        if len(set(self.values)) != len(self.values):
+            msg = "enum values must be unique"
+            raise ValueError(msg)
+        return self
+
+
 class PropertySchema(BaseModel):
     """Schema for entity/relationship property definitions."""
 
@@ -55,11 +75,29 @@ class PropertySchema(BaseModel):
     optional: bool = False
     default: Any | None = None
     enum: list[str] | None = None
+    enum_ref: str | None = None
     description: str | None = None
     json_schema: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def validate_json_schema_usage(self) -> PropertySchema:
+    def validate_schema_usage(self) -> PropertySchema:
+        if self.enum is not None and self.enum_ref is not None:
+            msg = "enum and enum_ref are mutually exclusive"
+            raise ValueError(msg)
+        if self.enum is not None:
+            if not self.enum:
+                msg = "enum values must not be empty"
+                raise ValueError(msg)
+            if any(not isinstance(value, str) or not value.strip() for value in self.enum):
+                msg = "enum values must be non-empty strings"
+                raise ValueError(msg)
+            if len(set(self.enum)) != len(self.enum):
+                msg = "enum values must be unique"
+                raise ValueError(msg)
+            if self.default is not None and self.default not in self.enum:
+                allowed = ", ".join(self.enum)
+                msg = f"default must be one of enum values: {allowed}"
+                raise ValueError(msg)
         if self.json_schema is None:
             return self
         if self.type != "json":
@@ -1038,6 +1076,7 @@ class CoreConfig(BaseModel):
     entity_types: dict[str, EntityTypeSchema] = Field(default_factory=dict)
     relationships: list[RelationshipSchema] = Field(default_factory=list)
     named_queries: dict[str, NamedQuerySchema] = Field(default_factory=dict)
+    enums: dict[str, EnumSchema] = Field(default_factory=dict)
     constraints: list[ConstraintSchema] = Field(default_factory=list)
     feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
     outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
@@ -1066,6 +1105,22 @@ class CoreConfig(BaseModel):
                     f"Integration '{name}' references contract '{spec.contract}' "
                     f"which is not defined in contracts"
                 )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_enum_refs(self) -> CoreConfig:
+        """Check enum_ref usage and defaults across every PropertySchema."""
+        for location, prop in _iter_config_properties(self):
+            if prop.enum_ref is None:
+                continue
+            enum_schema = self.enums.get(prop.enum_ref)
+            if enum_schema is None:
+                msg = f"{location}: enum_ref '{prop.enum_ref}' is not defined in enums"
+                raise ValueError(msg)
+            if prop.default is not None and prop.default not in enum_schema.values:
+                allowed = ", ".join(enum_schema.values)
+                msg = f"{location}: default must be one of enum_ref '{prop.enum_ref}': {allowed}"
                 raise ValueError(msg)
         return self
 
@@ -1120,3 +1175,18 @@ class CoreConfig(BaseModel):
     def get_outcome_profile(self, profile_key: str) -> OutcomeProfileSchema | None:
         """Find an outcome profile by key."""
         return self.outcome_profiles.get(profile_key)
+
+
+def _iter_config_properties(config: CoreConfig) -> list[tuple[str, PropertySchema]]:
+    """Return every property schema with a human-readable config path."""
+    properties: list[tuple[str, PropertySchema]] = []
+    for entity_name, entity in config.entity_types.items():
+        for prop_name, prop in entity.properties.items():
+            properties.append((f"entity_types.{entity_name}.properties.{prop_name}", prop))
+    for relationship in config.relationships:
+        for prop_name, prop in relationship.properties.items():
+            properties.append((f"relationships.{relationship.name}.properties.{prop_name}", prop))
+    for contract_name, contract in config.contracts.items():
+        for field_name, prop in contract.fields.items():
+            properties.append((f"contracts.{contract_name}.fields.{field_name}", prop))
+    return properties
