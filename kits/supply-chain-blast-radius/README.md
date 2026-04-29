@@ -163,13 +163,27 @@ outcome profile config. It distinguishes structural proposal mechanics from the
 authored explanation around them.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
-| Relationship | Scope | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Incident Impacts Component | Incident -> Component | Incident Component Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Component Resolution |
-| Incident Impacts Product | Incident -> Product | Incident Product Cascade | All Support; prior trust: Trusted Only | Require Review: Product Impact Always Review | 3 reason codes | Incident Product Resolution |
-| Incident Impacts Supplier | Incident -> Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
-| Shipment At Risk | Incident -> Shipment | Shipment Risk Assessment | All Support; prior trust: Trusted Only | Require Review: Shipment Risk Always Review | 3 reason codes | Shipment Risk Resolution |
+| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Incident Impacts Component | Incident -> Component | Workflow: Propose Incident Impacts Component | Incident Component Cascade | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Component Resolution |
+| Incident Impacts Product | Incident -> Product | Workflow: Propose Incident Impacts Product | Incident Product Cascade | All Support; prior trust: Trusted Only | Require Review: Product Impact Always Review | 3 reason codes | Incident Product Resolution |
+| Incident Impacts Supplier | Incident -> Supplier | Workflow: Propose Incident Impacts Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
+| Shipment At Risk | Incident -> Shipment | Workflow: Propose Shipment At Risk | Shipment Risk Assessment | All Support; prior trust: Trusted Only | Require Review: Shipment Risk Always Review | 3 reason codes | Shipment Risk Resolution |
 <!-- CRUXIBLE:END governance-table -->
+
+### Integration Signal Notes
+
+This catalog is generated from configured integrations and the governed
+relationships that consume them.
+
+<!-- CRUXIBLE:BEGIN integration-catalog -->
+| Integration | Kind | Used By | Notes |
+| --- | --- | --- | --- |
+| `incident_component_cascade` | supplier_to_component_cascade | Incident Impacts Component | Cascades from impacted suppliers through supplier_supplies_component to components, downgrading the signal when an active alternate supplier exists outside incident scope. |
+| `incident_product_cascade` | bom_to_product_cascade | Incident Impacts Product | Rolls resolved impacted components and directly supplied assemblies through supplier_supplies_assembly, component_part_of_assembly, assembly_part_of_assembly, and assembly_part_of_product to finished goods. Records discretized BOM depth in bom_depth_bucket. |
+| `incident_supplier_scope_match` | incident_scope_match | Incident Impacts Supplier | Matches incident scope (supplier\|geography) to suppliers via supplier_id or supplier.primary_geography. |
+| `shipment_risk_assessment` | shipment_state_assessment | Shipment At Risk | Assesses each in-flight shipment containing an impacted product against shipment status and ship_date relative to incident.reported_at. |
+<!-- CRUXIBLE:END integration-catalog -->
 
 ## Query Map
 
@@ -263,6 +277,148 @@ harness, not by turning every useful traversal into a governed relationship.
 | Supplier Supplied Components | Component | Supplier Supplies Component (Outgoing) | Starting from a supplier, find directly supplied components. |
 <!-- CRUXIBLE:END query-catalog -->
 
+## Rules And Learning Loops
+
+These generated sections own the operational facts: constraints, quality
+checks, feedback vocabularies, and outcome vocabularies. Authored prose should
+explain how to use them, not restate the config.
+
+<!-- CRUXIBLE:BEGIN quality-rules -->
+### Constraints
+
+No configured constraints.
+
+### Quality Checks
+
+| Name | Kind | Target | Severity | Rule |
+| --- | --- | --- | --- | --- |
+| `components_have_kind` | Property | Component.component_kind | Error | Required |
+| `components_have_supplier` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `1` |
+| `critical_components_have_redundancy` | Cardinality | Component -> Supplier Supplies Component (in) | Warning | min `2` |
+| `products_have_assembly_bom` | Cardinality | Product -> Assembly Part Of Product (in) | Error | min `1` |
+<!-- CRUXIBLE:END quality-rules -->
+
+<!-- CRUXIBLE:BEGIN learning-loops -->
+### Feedback Profiles (Loop 1)
+
+#### `incident_impacts_component`
+- Version: `1`
+- Reason codes:
+  - `alternate_supplier_active` (`provider_fix`): Component has an active alternate supplier outside incident scope; cascade should have stopped.
+  - `component_decommissioned` (`quality_check`): Component is no longer in active use.
+  - `supplier_substitution_planned` (`decision_policy`): A planned substitution mitigates this cascade.
+- Scope keys:
+  - `alternate_state`: `EDGE.alternate_state`
+  - `component`: `TO.component_id`
+  - `incident`: `FROM.incident_id`
+
+#### `incident_impacts_product`
+- Version: `1`
+- Reason codes:
+  - `bom_depth_overstated` (`provider_fix`): BOM traversal recorded a tier closer than reality.
+  - `bom_variant_mismatch` (`provider_fix`): Product uses a BOM variant that does not include the impacted component path.
+  - `product_inactive` (`quality_check`): Product is inactive; cascade should not have included it.
+- Scope keys:
+  - `bom_depth_bucket`: `EDGE.bom_depth_bucket`
+  - `incident`: `FROM.incident_id`
+  - `product`: `TO.product_id`
+
+#### `incident_impacts_supplier`
+- Version: `1`
+- Reason codes:
+  - `geography_stale` (`provider_fix`): Supplier's primary_geography was outdated; supplier is no longer in scope.
+  - `supplier_recently_cleared` (`decision_policy`): Supplier was cleared for a similar incident recently and should not have been re-flagged.
+  - `wrong_supplier_scope_match` (`provider_fix`): Rule matched the wrong supplier for the incident scope.
+- Scope keys:
+  - `incident`: `FROM.incident_id`
+  - `match_basis`: `EDGE.match_basis`
+  - `supplier`: `TO.supplier_id`
+
+#### `shipment_at_risk`
+- Version: `1`
+- Reason codes:
+  - `already_delivered` (`provider_fix`): Shipment was already delivered when incident occurred.
+  - `alternate_source_shipment` (`provider_fix`): Shipment uses product variant from an alternate source not in incident scope.
+  - `ships_before_incident` (`provider_fix`): Shipment ship_date predates incident; not actually at risk.
+- Scope keys:
+  - `incident`: `FROM.incident_id`
+  - `shipment`: `TO.shipment_id`
+  - `shipment_state`: `EDGE.shipment_state`
+
+### Outcome Profiles (Loop 2)
+
+#### Resolution-Anchored
+
+##### `incident_component_resolution`
+- Version: `1`
+- Target: Relationship `incident_impacts_component`
+- Outcome codes:
+  - `alternate_covered_need` (`require_review`): Alternate sourcing prevented the predicted component impact.
+  - `confirmed_component_shortage` (`trust_adjustment`): Later operations data confirmed component supply was constrained.
+  - `missed_component_impact` (`workflow_fix`): A component impact was discovered after the proposal chain ran.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `incident_product_resolution`
+- Version: `1`
+- Target: Relationship `incident_impacts_product`
+- Outcome codes:
+  - `confirmed_product_impact` (`trust_adjustment`): Later planning, production, or customer data confirmed product impact.
+  - `missed_product_impact` (`workflow_fix`): A product impact was discovered after the proposal chain ran.
+  - `product_unaffected` (`require_review`): The product remained unaffected despite the accepted impact judgment.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `incident_supplier_resolution`
+- Version: `1`
+- Target: Relationship `incident_impacts_supplier`
+- Outcome codes:
+  - `confirmed_supplier_disruption` (`trust_adjustment`): Later operations data confirmed the supplier was materially disrupted.
+  - `scope_data_stale` (`provider_fix`): Supplier or geography scope data was stale at resolution time.
+  - `supplier_unaffected` (`require_review`): Later operations data showed the supplier was not materially disrupted.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `shipment_risk_resolution`
+- Version: `1`
+- Target: Relationship `shipment_at_risk`
+- Outcome codes:
+  - `confirmed_shipment_delay` (`trust_adjustment`): Shipment was delayed, held, shorted, or customer-impacting as predicted.
+  - `missed_at_risk_shipment` (`workflow_fix`): A shipment became customer-impacting but was not flagged by the chain.
+  - `shipment_unaffected` (`require_review`): Shipment completed normally despite the accepted risk judgment.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+#### Receipt-Anchored
+
+##### `at_risk_shipments_query`
+- Version: `1`
+- Target: Query `incident_at_risk_shipments`
+- Outcome codes:
+  - `false_positive_shipment` (`graph_fix`): Query returned a shipment later confirmed unaffected.
+  - `missing_at_risk_shipment` (`graph_fix`): Query omitted a shipment later confirmed at risk.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `impacted_assemblies_query`
+- Version: `1`
+- Target: Query `incident_impacted_assemblies`
+- Outcome codes:
+  - `false_positive_assembly` (`graph_fix`): Query returned an assembly later confirmed not to be exposed through the active BOM.
+  - `missing_impacted_assembly` (`graph_fix`): Query omitted an assembly later confirmed to be exposed through the BOM.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `impacted_products_query`
+- Version: `1`
+- Target: Query `incident_impacted_products`
+- Outcome codes:
+  - `false_positive_product` (`graph_fix`): Query returned a product later confirmed to be unaffected.
+  - `missing_impacted_product` (`graph_fix`): Query omitted a product later confirmed to be impacted.
+- Scope keys:
+  - `query`: `SURFACE.name`
+<!-- CRUXIBLE:END learning-loops -->
+
 ## Model Notes
 
 - `Assembly` is a canonical entity because the domain needs hierarchical BOM
@@ -319,16 +475,6 @@ uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml
 uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view queries
 ```
 
-## Quality Checks
-
-- `components_have_supplier`: every component should have at least one supplier.
-- `critical_components_have_redundancy`: critical components should have at least
-  two active suppliers.
-- `components_have_kind`: components should declare whether they are raw material
-  or part.
-- `products_have_assembly_bom`: every product should have at least one top-level
-  assembly in its BOM.
-
 ## Maintenance
 
 Regenerate the structural sections after changing ontology, workflows, governed
@@ -347,11 +493,6 @@ uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml
 ## Status
 
 This is a scaffold: the config, workflows, named queries, feedback profiles,
-outcome profiles, and decision policies are in place. The seed CSV bundle and
-five providers (`load_supply_chain_seed_data` plus the four cascade assessors)
-land in a follow-up.
-
-Until then, `cruxible validate` reports the known seed artifact gap on
-`build_seed_state`: the canonical provider `load_supply_chain_seed_data` needs an
-artifact bundle with `sha256`. The rest of the config structure is available for
-review and diagram generation.
+outcome profiles, and decision policies are in place and validate cleanly. The
+kit provider refs currently resolve to explicit placeholder implementations;
+real seed data and cascade provider behavior land in a follow-up.

@@ -302,20 +302,42 @@ profile config. It shows the reviewed legal-judgment layer the agent can use as
 durable context.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
-| Relationship | Scope | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Filing Requires Response | Filing -> Matter | Attorney Review, Docket Matter Match, Filing Obligation Assessor | All Support; prior trust: Trusted Only | Require Review: Filing Obligations Require Review | 3 reason codes | Filing Response Resolution |
-| Holding Addresses Issue | Holding -> Legal Issue | Attorney Review, Issue Mapper | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Holding Interprets Statute | Holding -> Statute | Attorney Review, Statute Interpretation Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
-| Holding Supports Argument | Holding -> Argument | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Holding Undermines Argument | Holding -> Argument | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
-| Matter Turns On Statute | Matter -> Statute | Attorney Review, Matter Statute Match | All Support; prior trust: Trusted Only | Require Review: Matter Scope Requires Review | 3 reason codes | Matter Scope Resolution |
-| Opinion Affects Matter | Opinion -> Matter | Attorney Review, Jurisdiction Overlap, Matter Impact Assessor | All Support; prior trust: Trusted Only | Require Review: Matter Impacts Require Review | 3 reason codes | Matter Impact Resolution |
-| Opinion Creates Review Item | Opinion -> Review Item | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Opinion Has Holding | Opinion -> Holding | Attorney Review, Holding Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
-| Opinion Treats Opinion | Opinion -> Opinion | Attorney Review, Citation Treatment Classifier | All Support; prior trust: Trusted Only | Require Review: Negative Treatment Requires Review | 3 reason codes | Treatment Resolution |
-| Review Item For Matter | Review Item -> Matter | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Filing Requires Response | Filing -> Matter | Workflow: Propose Filing Response | Attorney Review, Docket Matter Match, Filing Obligation Assessor | All Support; prior trust: Trusted Only | Require Review: Filing Obligations Require Review | 3 reason codes | Filing Response Resolution |
+| Holding Addresses Issue | Holding -> Legal Issue | Workflow: Propose Holding Issue Links | Attorney Review, Issue Mapper | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Holding Interprets Statute | Holding -> Statute | Workflow: Propose Statute Interpretations | Attorney Review, Statute Interpretation Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
+| Holding Supports Argument | Holding -> Argument | Workflow: Propose Argument Support | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Holding Undermines Argument | Holding -> Argument | Workflow: Propose Argument Risk | Argument Impact Assessor, Attorney Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
+| Matter Turns On Statute | Matter -> Statute | Workflow: Propose Matter Statutory Scope | Attorney Review, Matter Statute Match | All Support; prior trust: Trusted Only | Require Review: Matter Scope Requires Review | 3 reason codes | Matter Scope Resolution |
+| Opinion Affects Matter | Opinion -> Matter | Workflow: Propose Matter Impact | Attorney Review, Jurisdiction Overlap, Matter Impact Assessor | All Support; prior trust: Trusted Only | Require Review: Matter Impacts Require Review | 3 reason codes | Matter Impact Resolution |
+| Opinion Creates Review Item | Opinion -> Review Item | Workflow: Propose Review Items | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Opinion Has Holding | Opinion -> Holding | Workflow: Propose Holdings From Opinion | Attorney Review, Holding Extractor | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | - |
+| Opinion Treats Opinion | Opinion -> Opinion | Workflow: Propose Opinion Treatment | Attorney Review, Citation Treatment Classifier | All Support; prior trust: Trusted Only | Require Review: Negative Treatment Requires Review | 3 reason codes | Treatment Resolution |
+| Review Item For Matter | Review Item -> Matter | Workflow: Propose Review Item Matter Links | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
+
+### Integration Signal Notes
+
+This catalog is generated from configured integrations and the governed
+relationships that consume them.
+
+<!-- CRUXIBLE:BEGIN integration-catalog -->
+| Integration | Kind | Used By | Notes |
+| --- | --- | --- | --- |
+| `argument_impact_assessor` | legal_argument_impact | Holding Supports Argument, Holding Undermines Argument | Judges whether reviewed holdings support or undermine firm arguments. |
+| `attorney_review` | human_review | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Review Item, Opinion Has Holding, Opinion Treats Opinion, Review Item For Matter | Attorney review signal used for work-product acceptance and trust calibration. |
+| `citation_treatment_classifier` | legal_citation_treatment | Opinion Treats Opinion | Classifies how an opinion treats cited authority. |
+| `docket_matter_match` | legal_docket_matter_resolution | Filing Requires Response | Matches a filing or docket event to the correct tracked matter. |
+| `filing_obligation_assessor` | legal_filing_obligation | Filing Requires Response | Determines whether a filing creates a response obligation or deadline. |
+| `holding_extractor` | legal_holding_extraction | Opinion Has Holding | Extracts candidate holdings and scope limitations from opinions. |
+| `issue_mapper` | legal_issue_mapping | Holding Addresses Issue | Maps holdings to firm-tracked legal issues. |
+| `jurisdiction_overlap` | legal_authority_weighting | Opinion Affects Matter | Weighs binding, persuasive, or irrelevant authority based on matter jurisdiction. |
+| `matter_impact_assessor` | legal_matter_impact | Opinion Affects Matter | Judges whether a legal development affects a matter. |
+| `matter_statute_match` | legal_matter_scope_match | Matter Turns On Statute | Links tracked matters to statutes, rules, or doctrines referenced in matter scope. |
+| `review_item_router` | legal_review_routing | Opinion Creates Review Item, Review Item For Matter | Creates review obligations for attorneys from accepted impact signals. |
+| `statute_interpretation_extractor` | legal_statute_interpretation | Holding Interprets Statute | Maps holdings to statutes, rules, and interpretation types. |
+<!-- CRUXIBLE:END integration-catalog -->
 
 ## Query Map
 
@@ -436,6 +458,254 @@ flowchart LR
   the risk posture of a matter.
 - **Practice memory:** preserve reviewed impact decisions so future opinions are
   compared against firm-specific matter history, not generic legal memory.
+
+## Rules And Learning Loops
+
+These generated sections own the operational facts: constraints, quality
+checks, feedback vocabularies, and outcome vocabularies. Authored prose should
+explain how to use them, not restate the config.
+
+<!-- CRUXIBLE:BEGIN quality-rules -->
+### Constraints
+
+No configured constraints.
+
+### Quality Checks
+
+| Name | Kind | Target | Severity | Rule |
+| --- | --- | --- | --- | --- |
+| `case_outcomes_have_matter` | Cardinality | Case Outcome -> Outcome Of Matter (out) | Error | min `1`, max `1` |
+| `deadlines_have_matter` | Cardinality | Deadline -> Matter Has Deadline (in) | Warning | min `1` |
+| `filing_responses_have_response_type` | Property | Filing Requires Response.response_type | Error | Required |
+| `matter_impacts_have_level` | Property | Opinion Affects Matter.impact_level | Error | Required |
+| `matters_have_one_client` | Cardinality | Matter -> Matter For Client (out) | Warning | min `1`, max `1` |
+| `matters_have_responsible_attorney` | Cardinality | Matter -> Matter Assigned To Attorney (out) | Warning | min `1` |
+| `opinion_treatments_have_treatment` | Property | Opinion Treats Opinion.treatment | Error | Required |
+| `opinions_have_court` | Cardinality | Opinion -> Opinion From Court (out) | Warning | min `1` |
+<!-- CRUXIBLE:END quality-rules -->
+
+<!-- CRUXIBLE:BEGIN learning-loops -->
+### Feedback Profiles (Loop 1)
+
+#### `filing_requires_response`
+- Version: `1`
+- Reason codes:
+  - `deadline_extraction_error` (`provider_fix`): The filing response deadline was incorrectly extracted or normalized.
+  - `no_response_required` (`constraint`): This filing does not create a response obligation for the matter.
+  - `wrong_matter_routing` (`quality_check`): The filing was routed to the wrong tracked matter.
+- Scope keys:
+  - `filing`: `FROM.filing_id`
+  - `matter`: `TO.matter_id`
+  - `response_type`: `EDGE.response_type`
+
+#### `holding_addresses_issue`
+- Version: `1`
+- Reason codes:
+  - `issue_too_broad` (`decision_policy`): Holding is related but does not directly address the tracked issue.
+  - `wrong_practice_area` (`provider_fix`): Holding belongs to a different practice-area framing.
+- Scope keys:
+  - `holding`: `FROM.holding_id`
+  - `issue`: `TO.issue_id`
+  - `issue_fit`: `EDGE.issue_fit`
+
+#### `holding_interprets_statute`
+- Version: `1`
+- Reason codes:
+  - `scope_mismatch` (`constraint`): Interpretation applies only under a narrower procedural or factual scope.
+  - `wrong_interpretation_type` (`provider_fix`): Interpretation type is wrong.
+  - `wrong_statute` (`provider_fix`): Holding does not interpret this statute or rule.
+- Scope keys:
+  - `holding`: `FROM.holding_id`
+  - `interpretation_type`: `EDGE.interpretation_type`
+  - `statute`: `TO.statute_id`
+
+#### `holding_supports_argument`
+- Version: `1`
+- Reason codes:
+  - `factually_distinguishable` (`constraint`): Holding depends on facts too different from the matter argument.
+  - `tangential_support` (`decision_policy`): Holding is related but does not materially support this argument.
+- Scope keys:
+  - `argument`: `TO.argument_id`
+  - `holding`: `FROM.holding_id`
+  - `support_strength`: `EDGE.support_strength`
+
+#### `holding_undermines_argument`
+- Version: `1`
+- Reason codes:
+  - `distinguishable_authority` (`constraint`): Holding is distinguishable and should not be treated as adverse.
+  - `no_material_risk` (`decision_policy`): Holding does not materially undermine the argument.
+  - `wrong_direction` (`provider_fix`): Holding supports or is neutral to the argument rather than undermining it.
+- Scope keys:
+  - `argument`: `TO.argument_id`
+  - `holding`: `FROM.holding_id`
+  - `risk_type`: `EDGE.risk_type`
+
+#### `matter_turns_on_statute`
+- Version: `1`
+- Reason codes:
+  - `duplicate_scope` (`constraint`): This scope link duplicates an already accepted matter-scope entry.
+  - `issue_not_in_matter` (`quality_check`): The issue used to justify this statutory scope is not part of the matter.
+  - `wrong_statute_link` (`provider_fix`): The statute, rule, or doctrine is not relevant to this matter's legal issues.
+- Scope keys:
+  - `matter`: `FROM.matter_id`
+  - `scope_basis`: `EDGE.scope_basis`
+  - `statute`: `TO.statute_id`
+
+#### `opinion_affects_matter`
+- Version: `1`
+- Reason codes:
+  - `matter_posture_mismatch` (`constraint`): Opinion affects a posture or claim type not present in this matter.
+  - `no_material_impact` (`decision_policy`): Opinion does not materially affect this matter.
+  - `wrong_impact_level` (`decision_policy`): Impact level is overstated or understated.
+- Scope keys:
+  - `impact_level`: `EDGE.impact_level`
+  - `impact_type`: `EDGE.impact_type`
+  - `matter`: `TO.matter_id`
+  - `opinion`: `FROM.opinion_id`
+
+#### `opinion_creates_review_item`
+- Version: `1`
+- Reason codes:
+  - `unnecessary_review` (`decision_policy`): Opinion does not create a review obligation.
+  - `wrong_obligation_type` (`provider_fix`): Review obligation type is incorrect.
+- Scope keys:
+  - `obligation_type`: `EDGE.obligation_type`
+  - `opinion`: `FROM.opinion_id`
+  - `review_item`: `TO.review_item_id`
+
+#### `opinion_has_holding`
+- Version: `1`
+- Reason codes:
+  - `duplicate_holding` (`decision_policy`): Holding duplicates an existing accepted holding.
+  - `missed_scope_limitation` (`constraint`): Holding omits an important limitation or procedural posture.
+  - `overbroad_holding` (`provider_fix`): Holding is broader than the opinion supports.
+- Scope keys:
+  - `holding`: `TO.holding_id`
+  - `holding_type`: `TO.holding_type`
+  - `opinion`: `FROM.opinion_id`
+
+#### `opinion_treats_opinion`
+- Version: `1`
+- Reason codes:
+  - `citation_context_mismatch` (`constraint`): Treatment is accurate only in a different doctrinal or procedural context.
+  - `not_meaningful_treatment` (`provider_fix`): Citation does not meaningfully treat the cited authority.
+  - `wrong_treatment_type` (`provider_fix`): Treatment type is incorrect.
+- Scope keys:
+  - `cited_opinion`: `TO.opinion_id`
+  - `source_opinion`: `FROM.opinion_id`
+  - `treatment`: `EDGE.treatment`
+
+#### `review_item_for_matter`
+- Version: `1`
+- Reason codes:
+  - `duplicate_review_item` (`decision_policy`): Review item duplicates existing matter work.
+  - `wrong_matter` (`provider_fix`): Review item was routed to the wrong matter.
+- Scope keys:
+  - `assignment_basis`: `EDGE.assignment_basis`
+  - `matter`: `TO.matter_id`
+  - `review_item`: `FROM.review_item_id`
+
+### Outcome Profiles (Loop 2)
+
+#### Resolution-Anchored
+
+##### `filing_response_resolution`
+- Version: `1`
+- Target: Relationship `filing_requires_response`
+- Outcome codes:
+  - `date_parse_error` (`provider_fix`): The filing date or response deadline was parsed incorrectly.
+  - `false_deadline` (`trust_adjustment`): The accepted response obligation or deadline was incorrect.
+  - `missed_deadline` (`require_review`): A real response obligation or deadline was missed.
+  - `response_obligation_confirmed` (`unknown`): Later matter activity confirmed that the response obligation applied.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `matter_impact_resolution`
+- Version: `1`
+- Target: Relationship `opinion_affects_matter`
+- Outcome codes:
+  - `missed_matter` (`require_review`): A matter was later found to be affected but was missed by the workflow.
+  - `no_actual_impact` (`trust_adjustment`): Later review found the accepted impact did not change the matter.
+  - `strategy_updated` (`unknown`): Matter strategy, filing plan, or client advice changed because of this opinion.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `matter_scope_resolution`
+- Version: `1`
+- Target: Relationship `matter_turns_on_statute`
+- Outcome codes:
+  - `missed_core_statute` (`require_review`): A core statute, rule, or doctrine was missed during matter scoping.
+  - `scope_confirmed` (`unknown`): Later review confirmed the matter-scope link.
+  - `scope_too_broad` (`trust_adjustment`): The accepted matter-scope link was broader than the matter actually required.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `treatment_resolution`
+- Version: `1`
+- Target: Relationship `opinion_treats_opinion`
+- Outcome codes:
+  - `negative_treatment_missed` (`workflow_fix`): Negative treatment existed but was missed by the workflow.
+  - `treatment_confirmed` (`unknown`): Attorney review or later citation history confirmed the treatment.
+  - `treatment_overstated` (`trust_adjustment`): Later review showed the treatment was overstated.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+#### Receipt-Anchored
+
+##### `adverse_authority_query`
+- Version: `1`
+- Target: Query `adverse_authority_for_matter`
+- Outcome codes:
+  - `false_positive_authority` (`graph_fix`): Query returned authority later judged not adverse.
+  - `missed_adverse_authority` (`graph_fix`): Query omitted authority later judged adverse to the matter.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `argument_track_record_query`
+- Version: `1`
+- Target: Query `argument_track_record`
+- Outcome codes:
+  - `misleading_track_record` (`graph_fix`): Query returned outcome context that overstated the argument's usefulness.
+  - `missing_outcome_context` (`graph_fix`): Query omitted a relevant outcome for the argument pattern.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `client_impact_query`
+- Version: `1`
+- Target: Query `client_impact_watch`
+- Outcome codes:
+  - `false_client_impact` (`graph_fix`): Query returned an opinion later judged not material to the client's matters.
+  - `missed_client_impact` (`graph_fix`): Query omitted an opinion later judged material to the client's matters.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `deadline_watch_query`
+- Version: `1`
+- Target: Query `deadline_watch`
+- Outcome codes:
+  - `missed_deadline` (`graph_fix`): Query omitted a real pending matter deadline.
+  - `stale_deadline` (`graph_fix`): Query returned a deadline that should have been closed or superseded.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `filing_response_query`
+- Version: `1`
+- Target: Query `filing_response_obligations_for_matter`
+- Outcome codes:
+  - `missed_response_obligation` (`graph_fix`): Query omitted a filing that required response.
+  - `stale_response_obligation` (`graph_fix`): Query returned a filing obligation that no longer applied.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `review_item_query`
+- Version: `1`
+- Target: Query `review_items_for_matter`
+- Outcome codes:
+  - `missed_review_item` (`graph_fix`): Query omitted a review item later needed for the matter.
+  - `stale_review_item` (`graph_fix`): Query returned a review item that should have been closed or superseded.
+- Scope keys:
+  - `query`: `SURFACE.name`
+<!-- CRUXIBLE:END learning-loops -->
 
 ## Open Design Questions
 

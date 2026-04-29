@@ -134,14 +134,34 @@ Each governed relationship has a `matching` block, integrations that provide
 signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
-| Relationship | Scope | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Product Cannibalizes Product | Product -> Product | Catalog Attribute Similarity, Category Price Overlap, Demand Displacement Model, Merchant Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Cannibalization Resolution |
-| Product Complements Product | Product -> Product | Basket Affinity, Catalog Complement Classifier, Merchant Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Complement Resolution |
-| Product Substitutes Product | Product -> Product | Catalog Attribute Similarity, Category Price Overlap, Merchant Review, Search Substitution Behavior | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Substitute Resolution |
-| Product Targets Segment | Product -> Customer Segment | Merchant Review, Segment Fit Model | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Segment Fit Resolution |
-| Promotion Lifts Product | Promotion -> Product | Inventory Capacity Check, Merchant Review, Promo Performance Model | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Promotion Lift Resolution |
+| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Product Cannibalizes Product | Product -> Product | Agent/manual group propose | Catalog Attribute Similarity, Category Price Overlap, Demand Displacement Model, Merchant Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Cannibalization Resolution |
+| Product Complements Product | Product -> Product | Agent/manual group propose | Basket Affinity, Catalog Complement Classifier, Merchant Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Complement Resolution |
+| Product Substitutes Product | Product -> Product | Agent/manual group propose | Catalog Attribute Similarity, Category Price Overlap, Merchant Review, Search Substitution Behavior | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Substitute Resolution |
+| Product Targets Segment | Product -> Customer Segment | Agent/manual group propose | Merchant Review, Segment Fit Model | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Segment Fit Resolution |
+| Promotion Lifts Product | Promotion -> Product | Agent/manual group propose | Inventory Capacity Check, Merchant Review, Promo Performance Model | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Promotion Lift Resolution |
 <!-- CRUXIBLE:END governance-table -->
+
+### Integration Signal Notes
+
+This catalog is generated from configured integrations and the governed
+relationships that consume them.
+
+<!-- CRUXIBLE:BEGIN integration-catalog -->
+| Integration | Kind | Used By | Notes |
+| --- | --- | --- | --- |
+| `basket_affinity` | retail_basket_affinity | Product Complements Product | Uses basket co-occurrence, attach rate, or bundle behavior to support complement judgments. |
+| `catalog_attribute_similarity` | retail_catalog_similarity | Product Cannibalizes Product, Product Substitutes Product | Uses structured attributes and semantic product data to support substitute judgments. |
+| `catalog_complement_classifier` | retail_catalog_semantic_match | Product Complements Product | Uses product attributes, taxonomy, and shopping mission context to classify complements. |
+| `category_price_overlap` | retail_price_band_overlap | Product Cannibalizes Product, Product Substitutes Product | Checks category, size, pack, and price-band compatibility for substitution or cannibalization. |
+| `demand_displacement_model` | retail_demand_displacement | Product Cannibalizes Product | Uses sales, promotion, placement, or recommendation outcomes to support cannibalization judgments. |
+| `inventory_capacity_check` | retail_inventory_capacity | Promotion Lifts Product | Checks whether inventory availability can support promotion or substitution recommendations. |
+| `merchant_review` | human_review | Product Cannibalizes Product, Product Complements Product, Product Substitutes Product, Product Targets Segment, Promotion Lifts Product | Merchant, category manager, or planner review signal used for accepted commercial judgment. |
+| `promo_performance_model` | retail_promotion_performance | Promotion Lifts Product | Uses promotion results or forecasts to judge product lift. |
+| `search_substitution_behavior` | retail_search_session_switching | Product Substitutes Product | Uses search, PDP, or session switching behavior as advisory substitution evidence. |
+| `segment_fit_model` | retail_segment_fit | Product Targets Segment | Uses segment behavior and merchandising rules to judge product fit for a segment. |
+<!-- CRUXIBLE:END integration-catalog -->
 
 ## Query Map
 
@@ -286,6 +306,178 @@ margin because the promoted products are too close.
 segment. The agent asks `segment_merchandising_candidates` and uses reviewed
 segment-fit edges instead of relying only on broad product taxonomy or vector
 similarity.
+
+## Rules And Learning Loops
+
+These generated sections own the operational facts: constraints, quality
+checks, feedback vocabularies, and outcome vocabularies. Authored prose should
+explain how to use them, not restate the config.
+
+<!-- CRUXIBLE:BEGIN quality-rules -->
+### Constraints
+
+No configured constraints.
+
+### Quality Checks
+
+| Name | Kind | Target | Severity | Rule |
+| --- | --- | --- | --- | --- |
+| `active_skus_have_price` | Cardinality | Sku -> Sku Has Price (out) | Warning | min `1` |
+| `cannibalization_has_type` | Property | Product Cannibalizes Product.cannibalization_type | Error | Required |
+| `complements_have_type` | Property | Product Complements Product.complement_type | Warning | Required |
+| `inventory_positions_have_channel` | Cardinality | Inventory Position -> Inventory Position In Channel (out) | Warning | min `1` |
+| `inventory_positions_have_sku` | Cardinality | Inventory Position -> Sku Has Inventory (in) | Warning | min `1` |
+| `price_points_have_channel` | Cardinality | Price Point -> Price Point In Channel (out) | Warning | min `1` |
+| `products_have_category` | Cardinality | Product -> Product In Category (out) | Warning | min `1` |
+| `promotion_lift_has_type` | Property | Promotion Lifts Product.lift_type | Error | Required |
+| `segment_targets_have_basis` | Property | Product Targets Segment.fit_basis | Warning | Required |
+| `skus_have_product` | Cardinality | Sku -> Sku Of Product (out) | Error | min `1`, max `1` |
+| `substitutes_have_type` | Property | Product Substitutes Product.substitute_type | Error | Required |
+<!-- CRUXIBLE:END quality-rules -->
+
+<!-- CRUXIBLE:BEGIN learning-loops -->
+### Feedback Profiles (Loop 1)
+
+#### `product_cannibalizes_product`
+- Version: `1`
+- Reason codes:
+  - `no_observed_displacement` (`provider_fix`): Commercial evidence does not show demand displacement.
+  - `promotion_confounder` (`decision_policy`): Apparent cannibalization was caused by another concurrent promotion or placement.
+  - `stockout_confounder` (`constraint`): Apparent demand transfer was caused by stockout or availability effects.
+  - `wrong_direction` (`provider_fix`): The demand displacement direction is reversed or reciprocal.
+- Scope keys:
+  - `cannibalization_type`: `EDGE.cannibalization_type`
+  - `source_product`: `FROM.product_id`
+  - `target_product`: `TO.product_id`
+
+#### `product_complements_product`
+- Version: `1`
+- Reason codes:
+  - `not_bought_together` (`provider_fix`): Basket evidence does not support this complement relationship.
+  - `poor_bundle_economics` (`decision_policy`): Products are related but do not make a useful bundle or cross-sell action.
+  - `seasonal_or_mission_only` (`decision_policy`): Complement relationship only applies in a narrower season or shopping mission.
+- Scope keys:
+  - `complement_type`: `EDGE.complement_type`
+  - `source_product`: `FROM.product_id`
+  - `target_product`: `TO.product_id`
+
+#### `product_substitutes_product`
+- Version: `1`
+- Reason codes:
+  - `brand_tier_mismatch` (`decision_policy`): Brand tier difference changes customer expectations enough to require narrower substitution.
+  - `not_functionally_equivalent` (`provider_fix`): Products do not satisfy the same customer need.
+  - `price_band_mismatch` (`constraint`): Products are too far apart in price or value tier to substitute cleanly.
+  - `size_or_pack_mismatch` (`quality_check`): Size, quantity, pack, or unit basis makes the replacement misleading.
+- Scope keys:
+  - `source_product`: `FROM.product_id`
+  - `substitute_type`: `EDGE.substitute_type`
+  - `target_product`: `TO.product_id`
+
+#### `product_targets_segment`
+- Version: `1`
+- Reason codes:
+  - `seasonal_context_missing` (`constraint`): Segment fit depends on a seasonal or mission context not represented in the edge.
+  - `segment_too_broad` (`decision_policy`): Segment is too broad for this targeting judgment.
+  - `wrong_segment` (`provider_fix`): Product is not a good fit for this segment.
+- Scope keys:
+  - `fit_basis`: `EDGE.fit_basis`
+  - `product`: `FROM.product_id`
+  - `segment`: `TO.segment_id`
+
+#### `promotion_lifts_product`
+- Version: `1`
+- Reason codes:
+  - `inventory_constrained` (`quality_check`): Promotion lift was capped or distorted by inventory availability.
+  - `margin_negative` (`decision_policy`): Promotion lifted units or revenue but harmed contribution margin.
+  - `no_observed_lift` (`provider_fix`): Promotion did not materially lift the product.
+- Scope keys:
+  - `lift_type`: `EDGE.lift_type`
+  - `product`: `TO.product_id`
+  - `promotion`: `FROM.promotion_id`
+
+### Outcome Profiles (Loop 2)
+
+#### Resolution-Anchored
+
+##### `cannibalization_resolution`
+- Version: `1`
+- Target: Relationship `product_cannibalizes_product`
+- Outcome codes:
+  - `displacement_confirmed` (`unknown`): Later sales or margin outcomes confirmed demand displacement.
+  - `false_cannibalization` (`trust_adjustment`): Later outcomes showed the products did not materially cannibalize each other.
+  - `missed_cannibalization` (`require_review`): A material cannibalization path was missed by the workflow or graph.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `complement_resolution`
+- Version: `1`
+- Target: Relationship `product_complements_product`
+- Outcome codes:
+  - `bundle_performed` (`unknown`): Later bundle, recommendation, or PDP placement performance confirmed the complement relationship.
+  - `missed_complement` (`require_review`): A useful complement was missing from the reviewed graph.
+  - `weak_attach_rate` (`trust_adjustment`): Later behavior showed weak attach rate or poor cross-sell performance.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `promotion_lift_resolution`
+- Version: `1`
+- Target: Relationship `promotion_lifts_product`
+- Outcome codes:
+  - `lift_confirmed` (`unknown`): Later promotion results confirmed product lift.
+  - `lift_overstated` (`trust_adjustment`): Later promotion results showed lift was overstated.
+  - `missed_lift` (`require_review`): A product with material lift was missed.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `segment_fit_resolution`
+- Version: `1`
+- Target: Relationship `product_targets_segment`
+- Outcome codes:
+  - `missed_segment_candidate` (`require_review`): A useful product for the segment was missing from the reviewed graph.
+  - `segment_fit_confirmed` (`unknown`): Later merchandising or campaign behavior confirmed the segment fit.
+  - `weak_segment_fit` (`trust_adjustment`): Later behavior showed the product was a weak fit for the segment.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `substitute_resolution`
+- Version: `1`
+- Target: Relationship `product_substitutes_product`
+- Outcome codes:
+  - `bad_replacement` (`trust_adjustment`): Later behavior or merchant review showed the substitute was misleading.
+  - `missed_substitute` (`require_review`): A useful substitute was missing from the reviewed graph.
+  - `substitution_succeeded` (`unknown`): Later out-of-stock, search, or recommendation behavior confirmed the substitute relationship.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+#### Receipt-Anchored
+
+##### `bundle_candidates_query`
+- Version: `1`
+- Target: Query `product_bundle_candidates`
+- Outcome codes:
+  - `missing_bundle_candidate` (`graph_fix`): Useful complement or bundle candidate was not returned.
+  - `weak_bundle_candidate` (`graph_fix`): Query returned a weak complement or poor bundle candidate.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `promotion_cannibalization_query`
+- Version: `1`
+- Target: Query `promotion_cannibalization_risk`
+- Outcome codes:
+  - `missed_risk` (`graph_fix`): Query missed a product that later showed cannibalization risk.
+  - `overstated_risk` (`graph_fix`): Query returned a cannibalization risk that did not materialize.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `substitution_options_query`
+- Version: `1`
+- Target: Query `substitutes_for_product`
+- Outcome codes:
+  - `bad_replacement_result` (`graph_fix`): Query returned products that were not acceptable replacements.
+  - `missing_results` (`graph_fix`): Useful substitutes were not returned.
+- Scope keys:
+  - `query`: `SURFACE.name`
+<!-- CRUXIBLE:END learning-loops -->
 
 ## Open Design Questions
 
