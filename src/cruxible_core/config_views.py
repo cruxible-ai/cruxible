@@ -16,8 +16,11 @@ from cruxible_core.canonical_views import (
     build_query_view,
     build_workflow_view,
     render_governed_relationship_table_markdown,
+    render_integration_catalog_markdown,
+    render_learning_loops_markdown,
     render_ontology_mermaid,
     render_overview_markdown,
+    render_quality_rules_markdown,
     render_query_catalog_markdown,
     render_query_map_mermaid,
     render_query_mermaid,
@@ -77,6 +80,18 @@ def _render_workflow_table(config: CoreConfig) -> str:
 
 def _render_governance_table(config: CoreConfig) -> str:
     return _as_rendered_text(render_governed_relationship_table_markdown(config))
+
+
+def _render_integration_catalog(config: CoreConfig) -> str:
+    return _as_rendered_text(render_integration_catalog_markdown(config))
+
+
+def _render_quality_rules(config: CoreConfig) -> str:
+    return _as_rendered_text(render_quality_rules_markdown(config))
+
+
+def _render_learning_loops(config: CoreConfig) -> str:
+    return _as_rendered_text(render_learning_loops_markdown(config))
 
 
 def _render_workflow_steps(config: CoreConfig) -> str:
@@ -168,6 +183,12 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         _render_governance_table,
         fenced=False,
     ),
+    "integration-catalog": ViewSpec(
+        "integration-catalog",
+        "Integration Catalog",
+        _render_integration_catalog,
+        fenced=False,
+    ),
     "workflow-steps": ViewSpec(
         "workflow-steps",
         "Workflow Steps",
@@ -192,6 +213,18 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         _render_query_catalog,
         fenced=False,
     ),
+    "quality-rules": ViewSpec(
+        "quality-rules",
+        "Quality Rules",
+        _render_quality_rules,
+        fenced=False,
+    ),
+    "learning-loops": ViewSpec(
+        "learning-loops",
+        "Learning Loops",
+        _render_learning_loops,
+        fenced=False,
+    ),
     "overview": ViewSpec("overview", "Config Overview", _render_overview, fenced=False),
 }
 DEFAULT_VIEW_ORDER = (
@@ -199,8 +232,11 @@ DEFAULT_VIEW_ORDER = (
     "workflow-pipeline",
     "workflow-summary",
     "governance-table",
+    "integration-catalog",
     "query-map",
     "query-catalog",
+    "quality-rules",
+    "learning-loops",
 )
 BEGIN_MARKER = "<!-- CRUXIBLE:BEGIN {key} -->"
 END_MARKER = "<!-- CRUXIBLE:END {key} -->"

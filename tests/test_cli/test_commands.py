@@ -425,6 +425,10 @@ class TestConfigViews:
         assert f"Source: `{config_path}`" in result.output
         assert "Recommended For" in result.output
         assert "Governed proposal" in result.output
+        assert "Creation Path" in result.output
+        assert "| Integration | Kind | Used By | Notes |" in result.output
+        assert "No configured constraints." in result.output
+        assert "No configured feedback profiles." in result.output
         assert "### Campaign" in result.output
 
     def test_config_views_single_bare_view_outputs_raw_mermaid(

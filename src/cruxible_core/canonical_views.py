@@ -792,6 +792,7 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
         for relationship in sorted(config.relationships, key=lambda item: item.name)
         if relationship.matching is not None
     ]
+    creation_paths = _governed_relationship_creation_paths(config)
     rows: list[tuple[str, ...]] = []
     for relationship in governed_relationships:
         matching = relationship.matching
@@ -813,6 +814,7 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
                 _humanize_label(relationship.name),
                 f"{_humanize_label(relationship.from_entity)} -> "
                 f"{_humanize_label(relationship.to_entity)}",
+                _creation_path_label(creation_paths.get(relationship.name, [])),
                 _humanize_list_or_dash(sorted(matching.integrations)),
                 _matching_policy_label(
                     matching.auto_resolve_when,
@@ -827,6 +829,7 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
         (
             "Relationship",
             "Scope",
+            "Creation Path",
             "Signals",
             "Auto-resolve Gate",
             "Review Policy",
@@ -835,6 +838,106 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
         ),
         rows,
     )
+
+
+def render_integration_catalog_markdown(config: CoreConfig) -> str:
+    """Render configured signal integrations and governed relationship usage."""
+    if not config.integrations:
+        return "No configured integrations."
+
+    used_by: dict[str, set[str]] = {name: set() for name in config.integrations}
+    for relationship in config.relationships:
+        if relationship.matching is None:
+            continue
+        for integration_name in relationship.matching.integrations:
+            used_by.setdefault(integration_name, set()).add(relationship.name)
+
+    rows: list[tuple[str, ...]] = [
+        (
+            f"`{name}`",
+            integration.kind,
+            _humanize_list_or_dash(sorted(used_by.get(name, set()))),
+            integration.notes.strip() or "-",
+        )
+        for name, integration in sorted(config.integrations.items())
+    ]
+    return _markdown_table(("Integration", "Kind", "Used By", "Notes"), rows)
+
+
+def render_quality_rules_markdown(config: CoreConfig) -> str:
+    """Render configured constraints and graph quality checks."""
+    lines = ["### Constraints", ""]
+    if config.constraints:
+        lines.append(
+            _markdown_table(
+                ("Name", "Severity", "Rule", "Description"),
+                [
+                    (
+                        f"`{constraint.name}`",
+                        _humanize_label(constraint.severity),
+                        constraint.rule,
+                        constraint.description or "-",
+                    )
+                    for constraint in sorted(config.constraints, key=lambda item: item.name)
+                ],
+            )
+        )
+    else:
+        lines.append("No configured constraints.")
+
+    lines.extend(["", "### Quality Checks", ""])
+    if config.quality_checks:
+        lines.append(
+            _markdown_table(
+                ("Name", "Kind", "Target", "Severity", "Rule"),
+                [
+                    (
+                        f"`{check.name}`",
+                        _humanize_label(check.kind),
+                        _quality_check_target_label(check),
+                        _humanize_label(check.severity),
+                        _quality_check_rule_label(check),
+                    )
+                    for check in sorted(config.quality_checks, key=lambda item: item.name)
+                ],
+            )
+        )
+    else:
+        lines.append("No configured quality checks.")
+    return "\n".join(lines)
+
+
+def render_learning_loops_markdown(config: CoreConfig) -> str:
+    """Render feedback and outcome profile vocabularies."""
+    lines = ["### Feedback Profiles (Loop 1)", ""]
+    if config.feedback_profiles:
+        for profile_name, profile in sorted(config.feedback_profiles.items()):
+            if len(lines) > 2:
+                lines.append("")
+            lines.extend(
+                [
+                    f"#### `{profile_name}`",
+                    f"- Version: `{profile.version}`",
+                    "- Reason codes:",
+                ]
+            )
+            lines.extend(
+                _profile_code_bullets(
+                    (
+                        (code, reason.remediation_hint, reason.description)
+                        for code, reason in sorted(profile.reason_codes.items())
+                    )
+                )
+            )
+            lines.extend(["- Scope keys:", *_scope_key_bullets(profile.scope_keys)])
+    else:
+        lines.append("No configured feedback profiles.")
+
+    lines.extend(["", "### Outcome Profiles (Loop 2)", ""])
+    lines.extend(_render_outcome_profile_group("Resolution-Anchored", config, "resolution"))
+    lines.append("")
+    lines.extend(_render_outcome_profile_group("Receipt-Anchored", config, "receipt"))
+    return "\n".join(lines)
 
 
 def render_query_catalog_markdown(view: QueryView) -> str:
@@ -1561,6 +1664,26 @@ def _humanize_list_or_dash(values: list[str]) -> str:
     return _humanize_list(values)
 
 
+def _governed_relationship_creation_paths(config: CoreConfig) -> dict[str, list[str]]:
+    paths: dict[str, set[str]] = {}
+    for workflow_name, workflow in sorted(config.workflows.items()):
+        for step in workflow.steps:
+            if step.propose_relationship_group is None:
+                continue
+            relationship_type = step.propose_relationship_group.relationship_type
+            paths.setdefault(relationship_type, set()).add(workflow_name)
+    return {
+        relationship_type: sorted(workflow_names)
+        for relationship_type, workflow_names in paths.items()
+    }
+
+
+def _creation_path_label(workflow_names: list[str]) -> str:
+    if not workflow_names:
+        return "Agent/manual group propose"
+    return f"Workflow: {_humanize_list(sorted(workflow_names))}"
+
+
 def _matching_policy_label(auto_resolve_when: str, prior_trust_policy: str) -> str:
     return (
         f"{_humanize_label(auto_resolve_when)}; "
@@ -1584,6 +1707,141 @@ def _feedback_profile_label(profile: Any | None) -> str:
     if count == 1:
         return "1 reason code"
     return f"{count} reason codes"
+
+
+def _quality_check_target_label(check: Any) -> str:
+    kind = getattr(check, "kind", "")
+    if kind in {"property", "json_content"}:
+        if check.target == "entity":
+            return f"{_humanize_label(check.entity_type)}.{check.property}"
+        return f"{_humanize_label(check.relationship_type)}.{check.property}"
+    if kind == "uniqueness":
+        return _humanize_label(check.entity_type)
+    if kind == "bounds":
+        if check.target == "entity_count":
+            return f"{_humanize_label(check.entity_type)} count"
+        return f"{_humanize_label(check.relationship_type)} count"
+    if kind == "cardinality":
+        direction = "out" if check.direction == "outgoing" else "in"
+        return (
+            f"{_humanize_label(check.entity_type)} -> "
+            f"{_humanize_label(check.relationship_type)} ({direction})"
+        )
+    return "-"
+
+
+def _quality_check_rule_label(check: Any) -> str:
+    kind = getattr(check, "kind", "")
+    if kind == "property":
+        details = _quality_check_optional_details(
+            (
+                ("type", check.expected_type),
+                ("pattern", check.pattern),
+            )
+        )
+        return _join_label_parts((_humanize_label(check.rule), details))
+    if kind == "json_content":
+        details = _quality_check_optional_details(
+            (
+                ("keys", ", ".join(check.keys)),
+                ("match", check.match),
+            )
+        )
+        return _join_label_parts((_humanize_label(check.rule), details))
+    if kind == "uniqueness":
+        return f"Unique on {_code_list(check.properties)}"
+    if kind in {"bounds", "cardinality"}:
+        return _bounds_rule_label(check.min_count, check.max_count)
+    return "-"
+
+
+def _quality_check_optional_details(values: tuple[tuple[str, str | None], ...]) -> str:
+    details = [f"{label}: `{value}`" for label, value in values if value]
+    return "; ".join(details)
+
+
+def _join_label_parts(values: tuple[str, ...]) -> str:
+    return "; ".join(value for value in values if value)
+
+
+def _bounds_rule_label(min_count: int | None, max_count: int | None) -> str:
+    parts: list[str] = []
+    if min_count is not None:
+        parts.append(f"min `{min_count}`")
+    if max_count is not None:
+        parts.append(f"max `{max_count}`")
+    return ", ".join(parts) if parts else "-"
+
+
+def _code_list(values: list[str]) -> str:
+    if not values:
+        return "-"
+    return ", ".join(f"`{value}`" for value in values)
+
+
+def _profile_code_bullets(
+    codes: Any,
+) -> list[str]:
+    lines = [
+        f"  - `{code}` (`{hint}`): {description}"
+        for code, hint, description in codes
+    ]
+    if lines:
+        return lines
+    return ["  - None configured."]
+
+
+def _scope_key_bullets(scope_keys: dict[str, str]) -> list[str]:
+    if not scope_keys:
+        return ["  - None configured."]
+    return [
+        f"  - `{key}`: `{path}`"
+        for key, path in sorted(scope_keys.items())
+    ]
+
+
+def _render_outcome_profile_group(
+    title: str,
+    config: CoreConfig,
+    anchor_type: str,
+) -> list[str]:
+    profiles = [
+        (name, profile)
+        for name, profile in sorted(config.outcome_profiles.items())
+        if profile.anchor_type == anchor_type
+    ]
+    lines = [f"#### {title}", ""]
+    if not profiles:
+        lines.append(f"No configured {title.lower()} outcome profiles.")
+        return lines
+
+    for index, (profile_name, profile) in enumerate(profiles):
+        if index > 0:
+            lines.append("")
+        lines.extend(
+            [
+                f"##### `{profile_name}`",
+                f"- Version: `{profile.version}`",
+                f"- Target: {_outcome_profile_target(profile)}",
+                "- Outcome codes:",
+            ]
+        )
+        lines.extend(
+            _profile_code_bullets(
+                (
+                    (code, outcome.remediation_hint, outcome.description)
+                    for code, outcome in sorted(profile.outcome_codes.items())
+                )
+            )
+        )
+        lines.extend(["- Scope keys:", *_scope_key_bullets(profile.scope_keys)])
+    return lines
+
+
+def _outcome_profile_target(profile: Any) -> str:
+    if profile.anchor_type == "resolution":
+        return f"Relationship `{profile.relationship_type}`"
+    return f"{_humanize_label(profile.surface_type)} `{profile.surface_name}`"
 
 
 def _query_return_entity(value: str) -> str:
