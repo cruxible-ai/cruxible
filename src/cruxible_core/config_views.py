@@ -247,7 +247,6 @@ DEFAULT_VIEW_ORDER = (
     "integration-catalog",
     "query-map",
     "query-catalog",
-    "schema-catalog",
     "quality-rules",
     "learning-loops",
 )
