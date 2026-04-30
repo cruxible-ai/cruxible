@@ -190,32 +190,38 @@ Each governed relationship has a `matching` block, integrations that provide
 signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
-| Relationship | Scope | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Asset Affected By Vulnerability | Asset -> Vulnerability | Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Asset Affected Resolution |
-| Asset Exposed To Vulnerability | Asset -> Vulnerability | Control Effectiveness, Exploitability Signal | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Exposed Resolution |
-| Asset Patch Exception For | Asset -> Vulnerability | Policy Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Asset Remediated Vulnerability | Asset -> Vulnerability | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
-| Asset Runs Product | Asset -> Product | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
-| Control Reduces Exposure To | Compensating Control -> Vulnerability | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Finding From Incident | Finding -> Incident | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Incident Exploited Vulnerability | Incident -> Vulnerability | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Incident Attribution Resolution |
-| Incident Involved Asset | Incident -> Asset | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Incident Owned By | Incident -> Owner | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Service Impacted By Vulnerability | Business Service -> Vulnerability | Dependency Context | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Asset Affected By Vulnerability | Asset -> Vulnerability | Workflow: Propose Asset Affected | Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Asset Affected Resolution |
+| Asset Exposed To Vulnerability | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Exposed Resolution |
+| Asset Patch Exception For | Asset -> Vulnerability | Agent/manual group propose | Policy Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Asset Remediated Vulnerability | Asset -> Vulnerability | Agent/manual group propose | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
+| Asset Runs Product | Asset -> Product | Workflow: Propose Asset Products | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
+| Control Reduces Exposure To | Compensating Control -> Vulnerability | Agent/manual group propose | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Finding From Incident | Finding -> Incident | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Incident Exploited Vulnerability | Incident -> Vulnerability | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Incident Attribution Resolution |
+| Incident Involved Asset | Incident -> Asset | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Incident Owned By | Incident -> Owner | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Service Impacted By Vulnerability | Business Service -> Vulnerability | Workflow: Propose Service Impact | Dependency Context | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
 ### Integration Signal Notes
 
-| Integration | Kind | Notes |
-|---|---|---|
-| `software_product_match` | software_product_fuzzy_match | Fuzzy match internal software names to CPE product IDs |
-| `product_version_evidence` | product_version_match | Check installed version against NVD affected ranges |
-| `exploitability_signal` | exploitability_assessment | Is the vulnerability practically exploitable on this asset? |
-| `control_effectiveness` | compensating_control_review | Does a control block the exploit path? |
-| `dependency_context` | service_dependency_context | Does a real dependency path connect service to affected asset? |
-| `policy_review` | remediation_policy_review | Is the patch exception still valid per policy? |
-| `incident_attribution` | incident_investigation | Agent/human judgment linking incidents to assets, vulnerabilities, and findings |
+This catalog is generated from configured integrations and the governed
+relationships that consume them.
+
+<!-- CRUXIBLE:BEGIN integration-catalog -->
+| Integration | Kind | Used By | Notes |
+| --- | --- | --- | --- |
+| `control_effectiveness` | compensating_control_review | Asset Exposed To Vulnerability, Control Reduces Exposure To | Reviews whether a compensating control materially reduces exploitability for the specific vulnerability class. |
+| `dependency_context` | service_dependency_context | Service Impacted By Vulnerability | Evaluates whether a vulnerability on an asset actually impacts the business service through real dependency paths. |
+| `exploitability_signal` | exploitability_assessment | Asset Exposed To Vulnerability | Assesses whether a vulnerability is practically exploitable on a specific asset given its environment and exposure posture. |
+| `incident_attribution` | incident_investigation | Finding From Incident, Incident Exploited Vulnerability, Incident Involved Asset, Incident Owned By | Agent or human judgment linking incidents to assets, vulnerabilities, and findings based on investigation evidence. Typically proposed one at a time via group propose after reading incident reports or post-mortems. |
+| `policy_review` | remediation_policy_review | Asset Patch Exception For | Reviews whether a patch exception is still valid per organizational remediation policy. |
+| `product_version_evidence` | product_version_match | Asset Affected By Vulnerability | Matches installed product version against NVD affected version ranges to determine if an asset is actually affected. |
+| `remediation_verification` | remediation_verification | Asset Remediated Vulnerability | Reviews whether a specific asset-vulnerability pair has been remediated or verified closed based on scanner evidence, change tickets, upgrade confirmation, decommissioning, or manual validation. |
+| `software_product_match` | software_product_fuzzy_match | Asset Runs Product | Fuzzy matching between internal software inventory names (e.g. "Apache HTTP Server 2.4.49") and reference-layer CPE product identifiers. Runs against the software_inventory.csv evidence source. |
+<!-- CRUXIBLE:END integration-catalog -->
 
 ## Query Map
 
@@ -320,62 +326,227 @@ relationship.
 | Vulnerability Products | Product | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, find affected products. |
 <!-- CRUXIBLE:END query-catalog -->
 
+## Schema Reference
+
+This README keeps schema detail at the diagram and table level so the kit
+remains usable as a drafting surface. The config remains the source of truth
+for full entity, relationship, and contract properties. For a generated
+Markdown schema catalog, run:
+
+```bash
+uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view schema-catalog
+```
+
+When the kit is loaded into a local instance, generate navigable reference
+pages under `wiki/reference/` with:
+
+```bash
+uv run cruxible render-wiki --output wiki --scope local
+```
+
+
 ## Rules And Learning Loops
 
+These generated sections own the operational facts: constraints, quality
+checks, feedback vocabularies, and outcome vocabularies. Authored prose should
+explain how to use them, not restate the config.
+
+<!-- CRUXIBLE:BEGIN quality-rules -->
 ### Constraints
 
-No fork-specific constraints yet — these emerge from feedback analysis
-(Loop 1).
+No configured constraints.
 
 ### Quality Checks
 
-| Name | Kind | Target | Severity | What it checks |
-|---|---|---|---|---|
-| `assets_have_one_owner` | cardinality | Asset -> asset_owned_by (out) | warning | Every asset has exactly one owner |
-| `minimum_assets_loaded` | bounds | Asset count >= 5 | warning | CMDB load isn't empty |
-| `assets_have_hostname` | property | Asset.hostname non_empty | warning | No blank hostnames |
-| `no_empty_affected_version_objects`* | json_content | vulnerability_affects_product.affected_versions | error | No empty objects in version arrays |
-| `affected_versions_have_useful_keys`* | json_content | vulnerability_affects_product.affected_versions | warning | At least one version range key present |
-| `products_have_exactly_one_vendor`* | cardinality | Product -> product_from_vendor (out) | error | Every product has exactly one vendor |
+| Name | Kind | Target | Severity | Rule |
+| --- | --- | --- | --- | --- |
+| `affected_versions_have_useful_keys` | Json Content | Vulnerability Affects Product.affected_versions | Warning | Required Nested Keys; keys: `version_start_including, version_start_excluding, version_end_including, version_end_excluding, version_exact, fixed_version`; match: `any` |
+| `assets_have_hostname` | Property | Asset.hostname | Warning | Non Empty |
+| `assets_have_one_owner` | Cardinality | Asset -> Asset Owned By (out) | Warning | min `1`, max `1` |
+| `minimum_assets_loaded` | Bounds | Asset count | Warning | min `5` |
+| `no_empty_affected_version_objects` | Json Content | Vulnerability Affects Product.affected_versions | Error | No Empty Objects In Array |
+| `products_have_exactly_one_vendor` | Cardinality | Product -> Product From Vendor (out) | Error | min `1`, max `1` |
+<!-- CRUXIBLE:END quality-rules -->
 
-*From the reference layer (inherited via composition).
-
+<!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
 
-Structured reason codes agents attach to feedback, enabling `analyze_feedback`
-to produce constraint and decision policy suggestions.
+#### `asset_affected_by_vulnerability`
+- Version: `1`
+- Reason codes:
+  - `product_mismatch` (`provider_fix`): Asset does not actually run this product.
+  - `version_not_in_range` (`constraint`): Installed version is not within the NVD affected range.
+- Scope keys:
+  - `cve`: `TO.cve_id`
+  - `hostname`: `FROM.hostname`
+  - `product`: `EDGE.product_id`
 
-| Profile | Reason Codes | Scope Keys |
-|---|---|---|
-| `asset_runs_product` | `wrong_product_match` (provider_fix), `version_mismatch` (quality_check), `stale_inventory` (provider_fix) | product, hostname, evidence_source |
-| `asset_affected_by_vulnerability` | `version_not_in_range` (constraint), `product_mismatch` (provider_fix) | cve, product, hostname |
-| `asset_exposed_to_vulnerability` | `control_mitigates` (decision_policy), `not_internet_reachable` (constraint), `epss_score_stale` (provider_fix) | cve, criticality, environment |
-| `service_impacted_by_vulnerability` | `no_dependency_path` (constraint), `service_decommissioned` (quality_check) | service, cve |
-| `asset_patch_exception_for` | `exception_expired` (constraint), `scope_mismatch` (decision_policy) | cve, exception_id |
-| `control_reduces_exposure_to` | `control_not_validated` (quality_check), `wrong_vulnerability_class` (constraint) | control_type, cve |
+#### `asset_exposed_to_vulnerability`
+- Version: `1`
+- Reason codes:
+  - `control_mitigates` (`decision_policy`): A compensating control effectively blocks this exploit path.
+  - `epss_score_stale` (`provider_fix`): EPSS score has changed since the exposure judgment.
+  - `not_internet_reachable` (`constraint`): Asset is not reachable from the attack vector.
+- Scope keys:
+  - `criticality`: `FROM.criticality`
+  - `cve`: `TO.cve_id`
+  - `environment`: `FROM.environment`
 
-Remediation hints in parentheses tell `analyze_feedback` what kind of
-suggestion to produce.
+#### `asset_patch_exception_for`
+- Version: `1`
+- Reason codes:
+  - `exception_expired` (`constraint`): Exception review date has passed without renewal.
+  - `scope_mismatch` (`decision_policy`): Exception does not cover this specific vulnerability.
+- Scope keys:
+  - `cve`: `TO.cve_id`
+  - `exception_id`: `EDGE.exception_id`
+
+#### `asset_remediated_vulnerability`
+- Version: `1`
+- Reason codes:
+  - `insufficient_verification` (`quality_check`): Evidence was too weak to claim verified remediation.
+  - `regression_after_fix` (`provider_fix`): The issue reappeared after remediation was recorded.
+  - `wrong_closure` (`provider_fix`): The asset-vulnerability pair was not actually remediated.
+- Scope keys:
+  - `asset`: `FROM.asset_id`
+  - `cve`: `TO.cve_id`
+
+#### `asset_runs_product`
+- Version: `1`
+- Reason codes:
+  - `stale_inventory` (`provider_fix`): CMDB or software inventory data was outdated at match time.
+  - `version_mismatch` (`quality_check`): Matched correct product but installed version is wrong.
+  - `wrong_product_match` (`provider_fix`): Fuzzy match linked asset to the wrong reference product.
+- Scope keys:
+  - `evidence_source`: `EDGE.evidence_source`
+  - `hostname`: `FROM.hostname`
+  - `product`: `TO.product_name`
+
+#### `control_reduces_exposure_to`
+- Version: `1`
+- Reason codes:
+  - `control_not_validated` (`quality_check`): Control effectiveness has not been tested against this vulnerability class.
+  - `wrong_vulnerability_class` (`constraint`): Control does not apply to this vulnerability's exploit mechanism.
+- Scope keys:
+  - `control_type`: `FROM.control_type`
+  - `cve`: `TO.cve_id`
+
+#### `finding_from_incident`
+- Version: `1`
+- Reason codes:
+  - `duplicate_finding` (`quality_check`): This finding duplicates another finding for the same incident.
+  - `wrong_root_cause` (`decision_policy`): This finding was not actually a root cause of this incident.
+- Scope keys:
+  - `finding`: `FROM.finding_id`
+  - `incident`: `TO.incident_id`
+
+#### `incident_exploited_vulnerability`
+- Version: `1`
+- Reason codes:
+  - `correlation_not_causation` (`decision_policy`): CVE was present but not the attack vector used.
+  - `wrong_cve_attribution` (`provider_fix`): The CVE was not actually exploited in this incident.
+- Scope keys:
+  - `cve`: `TO.cve_id`
+  - `incident`: `FROM.incident_id`
+
+#### `incident_involved_asset`
+- Version: `1`
+- Reason codes:
+  - `misidentified_role` (`quality_check`): Asset was involved but its role was mischaracterized.
+  - `wrong_asset` (`provider_fix`): This asset was not actually involved in the incident.
+- Scope keys:
+  - `hostname`: `TO.hostname`
+  - `incident`: `FROM.incident_id`
+
+#### `incident_owned_by`
+- Version: `1`
+- Reason codes:
+  - `ownership_transferred` (`quality_check`): Ownership was transferred to a different team.
+  - `wrong_team` (`provider_fix`): This team is not the correct owner for this incident.
+- Scope keys:
+  - `incident`: `FROM.incident_id`
+  - `owner`: `TO.owner_id`
+
+#### `service_impacted_by_vulnerability`
+- Version: `1`
+- Reason codes:
+  - `no_dependency_path` (`constraint`): No real runtime dependency connects the service to the affected asset.
+  - `service_decommissioned` (`quality_check`): Service is decommissioned or no longer in use.
+- Scope keys:
+  - `cve`: `TO.cve_id`
+  - `service`: `FROM.name`
 
 ### Outcome Profiles (Loop 2)
 
-Structured outcome codes for trust calibration (resolution-anchored) and query
-surface assessment (receipt-anchored).
-
 #### Resolution-Anchored
 
-| Profile | Relationship | Outcome Codes |
-|---|---|---|
-| `asset_runs_product_resolution` | asset_runs_product | `wrong_product_match` (trust_adjustment), `version_drift` (provider_fix) |
-| `asset_affected_resolution` | asset_affected_by_vulnerability | `wrong_affected_judgment` (trust_adjustment), `missed_affected_asset` (require_review), `version_range_error` (provider_fix) |
-| `asset_exposed_resolution` | asset_exposed_to_vulnerability | `overestimated_exposure` (trust_adjustment), `underestimated_exposure` (require_review) |
+##### `asset_affected_resolution`
+- Version: `1`
+- Target: Relationship `asset_affected_by_vulnerability`
+- Outcome codes:
+  - `missed_affected_asset` (`require_review`): Resolution concluded asset was not affected but it was.
+  - `version_range_error` (`provider_fix`): NVD version range data was incorrect or incomplete.
+  - `wrong_affected_judgment` (`trust_adjustment`): Resolution concluded asset was affected but it was not.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `asset_exposed_resolution`
+- Version: `1`
+- Target: Relationship `asset_exposed_to_vulnerability`
+- Outcome codes:
+  - `overestimated_exposure` (`trust_adjustment`): Control was effective but was not credited during resolution.
+  - `underestimated_exposure` (`require_review`): An attack path was missed during exposure assessment.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `asset_remediated_resolution`
+- Version: `1`
+- Target: Relationship `asset_remediated_vulnerability`
+- Outcome codes:
+  - `premature_closure` (`trust_adjustment`): The remediation was accepted before the asset was actually closed.
+  - `reopened_after_regression` (`require_review`): The asset later became exposed again after remediation.
+  - `verified_remediation` (`unknown`): The remediation decision was correct and the asset remained closed.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `asset_runs_product_resolution`
+- Version: `1`
+- Target: Relationship `asset_runs_product`
+- Outcome codes:
+  - `version_drift` (`provider_fix`): Match was correct at resolution time but the asset has since been patched.
+  - `wrong_product_match` (`trust_adjustment`): The fuzzy match resolved to the wrong reference product.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
+
+##### `incident_attribution_resolution`
+- Version: `1`
+- Target: Relationship `incident_exploited_vulnerability`
+- Outcome codes:
+  - `attribution_incorrect` (`require_review`): Further investigation showed a different CVE or attack vector was used.
+  - `confirmed_exploitation` (`trust_adjustment`): Post-incident analysis confirmed this CVE was the attack vector.
+- Scope keys:
+  - `relationship_type`: `RESOLUTION.relationship_type`
 
 #### Receipt-Anchored
 
-| Profile | Surface | Outcome Codes |
-|---|---|---|
-| `kev_assets_query` | query: kev_assets | `missing_results` (graph_fix), `false_positive_result` (graph_fix) |
-| `owner_patch_queue_query` | query: owner_patch_queue | `stale_priority` (graph_fix), `missing_exposure` (workflow_fix) |
+##### `kev_assets_query`
+- Version: `1`
+- Target: Query `kev_assets`
+- Outcome codes:
+  - `false_positive_result` (`graph_fix`): Query returned an asset that is not actually affected.
+  - `missing_results` (`graph_fix`): A known-affected asset was not returned by the query.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `owner_patch_queue_query`
+- Version: `1`
+- Target: Query `owner_patch_queue`
+- Outcome codes:
+  - `missing_exposure` (`workflow_fix`): An exposed vulnerability was not returned for this owner.
+  - `stale_priority` (`graph_fix`): Returned vulnerability that has already been patched or mitigated.
+- Scope keys:
+  - `query`: `SURFACE.name`
+<!-- CRUXIBLE:END learning-loops -->
 
 ## Maintenance
 

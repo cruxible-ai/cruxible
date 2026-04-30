@@ -1239,6 +1239,7 @@ workflows:
 
   propose_asset_products:
     canonical: false
+    purpose: proposal
     description: >
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
@@ -1301,6 +1302,7 @@ workflows:
 
   propose_asset_affected:
     canonical: false
+    purpose: proposal
     description: >
       Join approved asset-product mappings to public KEV product
       coverage and propose asset_affected_by_vulnerability edges from
@@ -1367,6 +1369,7 @@ workflows:
 
   propose_asset_exposure:
     canonical: false
+    purpose: proposal
     description: >
       Assess whether approved affected assets are materially exposed
       using environment, exposure posture, and active controls.
@@ -1455,6 +1458,7 @@ workflows:
 
   propose_service_impact:
     canonical: false
+    purpose: proposal
     description: >
       Roll approved asset exposure judgments up to business services
       through dependency edges and propose service impact edges.
