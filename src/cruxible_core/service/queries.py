@@ -60,8 +60,10 @@ def service_query(
     config = instance.load_config()
     graph = instance.load_graph()
     query_result = read_run_query(config, graph, query_name, params)
+    head_snapshot_id = instance.get_head_snapshot_id()
 
     if query_result.receipt:
+        query_result.receipt.nodes[0].detail["head_snapshot_id"] = head_snapshot_id
         store = instance.get_receipt_store()
         try:
             store.save_receipt(query_result.receipt)

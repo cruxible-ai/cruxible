@@ -57,6 +57,27 @@ class TestQuery:
             store.close()
         assert receipt is not None
 
+    def test_stamps_receipt_with_head_snapshot_id(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        snapshot = populated_instance.create_snapshot()
+        result = service_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+
+        assert result.receipt is not None
+        assert result.receipt.nodes[0].detail["head_snapshot_id"] == snapshot.snapshot_id
+        assert result.receipt_id is not None
+        store = populated_instance.get_receipt_store()
+        try:
+            persisted = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        assert persisted is not None
+        assert persisted.nodes[0].detail["head_snapshot_id"] == snapshot.snapshot_id
+
     def test_bad_name(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(QueryNotFoundError):
             service_query(populated_instance, "nonexistent_query", {})
