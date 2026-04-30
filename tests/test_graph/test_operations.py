@@ -184,6 +184,55 @@ class TestValidateRelationship:
                 {"note": "partial insert"},
             )
 
+    def test_relationship_write_does_not_enforce_json_schema(self):
+        json_config = load_config_from_string(
+            """\
+version: "1.0"
+name: json_schema_graph_write
+entity_types:
+  Source:
+    properties:
+      source_id:
+        type: string
+        primary_key: true
+  Target:
+    properties:
+      target_id:
+        type: string
+        primary_key: true
+relationships:
+  - name: links
+    from: Source
+    to: Target
+    properties:
+      evidence:
+        type: json
+        json_schema:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [approved]
+"""
+        )
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Source", entity_id="S1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Target", entity_id="T1", properties={}))
+
+        result = validate_relationship(
+            json_config,
+            graph,
+            "Source",
+            "S1",
+            "links",
+            "Target",
+            "T1",
+            {"evidence": {"status": "rejected"}},
+        )
+
+        assert result.relationship.properties["evidence"] == {"status": "rejected"}
+
     def test_update_relationship_merges_and_validates_full_payload(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(

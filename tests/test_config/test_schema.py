@@ -1,5 +1,7 @@
 """Tests for config schema Pydantic models."""
 
+from textwrap import dedent, indent
+
 import pytest
 from pydantic import ValidationError
 
@@ -78,6 +80,10 @@ class TestPropertySchema:
     def test_inline_enum_default_must_be_allowed(self):
         with pytest.raises(ValidationError, match="default must be one of"):
             PropertySchema(type="string", enum=["a", "b"], default="c")
+
+    def test_inline_enum_accepts_non_string_values(self):
+        prop = PropertySchema(type="int", enum=[1, 2, 3], default=2)
+        assert prop.enum == [1, 2, 3]
 
 
 class TestEnumSchema:
@@ -199,6 +205,27 @@ class TestNamedQuerySchema:
         assert len(query.traversal) == 2
 
 
+def _config_with_contract_json_schema(schema_yaml: str, *, enums: str = "") -> str:
+    return f"""
+version: "1.0"
+name: nested_json_schema
+{dedent(enums).lstrip()}entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  Input:
+    fields:
+      payload:
+        type: json
+        json_schema:
+{indent(dedent(schema_yaml).strip(), "          ")}
+"""
+
+
 class TestCoreConfigQueryValidation:
     def test_accepts_enum_ref(self):
         config = CoreConfig(
@@ -215,6 +242,115 @@ class TestCoreConfigQueryValidation:
             relationships=[],
         )
         assert config.entity_types["Thing"].properties["status"].enum_ref == "status"
+
+    def test_accepts_nested_json_schema_enum_ref(self):
+        config = load_config_from_string(
+            _config_with_contract_json_schema(
+                """
+                type: array
+                items:
+                  type: object
+                  properties:
+                    verdict:
+                      type: string
+                      enum_ref: verdict
+                """,
+                enums="""
+enums:
+  verdict:
+    values: [support, contradict]
+""",
+            )
+        )
+
+        schema = config.contracts["Input"].fields["payload"].json_schema
+        assert schema is not None
+        assert schema["items"]["properties"]["verdict"]["enum_ref"] == "verdict"
+
+    def test_rejects_missing_nested_json_schema_enum_ref(self):
+        with pytest.raises(ConfigError, match="enum_ref 'verdict' is not defined"):
+            load_config_from_string(
+                _config_with_contract_json_schema(
+                    """
+                    type: object
+                    properties:
+                      verdict:
+                        type: string
+                        enum_ref: verdict
+                    """
+                )
+            )
+
+    def test_rejects_nested_json_schema_enum_and_enum_ref(self):
+        with pytest.raises(ConfigError, match="mutually exclusive"):
+            load_config_from_string(
+                _config_with_contract_json_schema(
+                    """
+                    type: object
+                    properties:
+                      verdict:
+                        type: string
+                        enum: [support]
+                        enum_ref: verdict
+                    """,
+                    enums="""
+enums:
+  verdict:
+    values: [support, contradict]
+""",
+                )
+            )
+
+    def test_rejects_unsupported_nested_json_schema_keyword(self):
+        with pytest.raises(ConfigError, match="unsupported json_schema keyword"):
+            load_config_from_string(
+                _config_with_contract_json_schema(
+                    """
+                    type: object
+                    additionalProperties: false
+                    """
+                )
+            )
+
+    @pytest.mark.parametrize(
+        ("schema_yaml", "message"),
+        [
+            ("properties: []", "properties"),
+            ("type: array\nitems: []", "items"),
+            ("type: object\nrequired: id", "required"),
+            ("enum: []", "enum"),
+        ],
+    )
+    def test_rejects_malformed_nested_json_schema_keywords(
+        self,
+        schema_yaml: str,
+        message: str,
+    ):
+        with pytest.raises(ConfigError, match=message):
+            load_config_from_string(_config_with_contract_json_schema(schema_yaml))
+
+    @pytest.mark.parametrize("type_name", ["int", "json"])
+    def test_rejects_top_level_enum_ref_on_non_string_properties(self, type_name: str):
+        with pytest.raises(ConfigError, match="enum_ref is only allowed"):
+            load_config_from_string(
+                f"""
+version: "1.0"
+name: enum_ref_type_check
+enums:
+  status:
+    values: [open, closed]
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+      status:
+        type: {type_name}
+        enum_ref: status
+relationships: []
+"""
+            )
 
     def test_rejects_missing_enum_ref(self):
         with pytest.raises(ValidationError, match="enum_ref 'status' is not defined"):

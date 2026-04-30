@@ -74,7 +74,7 @@ class PropertySchema(BaseModel):
     indexed: bool = False
     optional: bool = False
     default: Any | None = None
-    enum: list[str] | None = None
+    enum: list[Any] | None = None
     enum_ref: str | None = None
     description: str | None = None
     json_schema: dict[str, Any] | None = None
@@ -84,18 +84,26 @@ class PropertySchema(BaseModel):
         if self.enum is not None and self.enum_ref is not None:
             msg = "enum and enum_ref are mutually exclusive"
             raise ValueError(msg)
+        if self.enum_ref is not None and self.type != "string":
+            msg = "enum_ref is only allowed on properties with type 'string'"
+            raise ValueError(msg)
         if self.enum is not None:
             if not self.enum:
                 msg = "enum values must not be empty"
                 raise ValueError(msg)
-            if any(not isinstance(value, str) or not value.strip() for value in self.enum):
-                msg = "enum values must be non-empty strings"
-                raise ValueError(msg)
-            if len(set(self.enum)) != len(self.enum):
-                msg = "enum values must be unique"
-                raise ValueError(msg)
+            seen: set[str] = set()
+            for index, value in enumerate(self.enum):
+                try:
+                    key = _json.dumps(value, sort_keys=True)
+                except (TypeError, ValueError) as exc:
+                    msg = f"enum value at index {index} must be JSON-serializable"
+                    raise ValueError(msg) from exc
+                if key in seen:
+                    msg = "enum values must be unique"
+                    raise ValueError(msg)
+                seen.add(key)
             if self.default is not None and self.default not in self.enum:
-                allowed = ", ".join(self.enum)
+                allowed = ", ".join(str(value) for value in self.enum)
                 msg = f"default must be one of enum values: {allowed}"
                 raise ValueError(msg)
         if self.json_schema is None:
@@ -1122,6 +1130,21 @@ class CoreConfig(BaseModel):
                 allowed = ", ".join(enum_schema.values)
                 msg = f"{location}: default must be one of enum_ref '{prop.enum_ref}': {allowed}"
                 raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_json_schemas(self) -> CoreConfig:
+        """Check supported json_schema shape and nested enum_ref usage."""
+        from cruxible_core.config.json_schema_validation import validate_json_schema_shape
+
+        for location, prop in _iter_config_properties(self):
+            if prop.json_schema is None:
+                continue
+            validate_json_schema_shape(
+                prop.json_schema,
+                self.enums,
+                f"{location}.json_schema",
+            )
         return self
 
     @model_validator(mode="after")

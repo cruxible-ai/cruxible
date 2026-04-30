@@ -51,6 +51,14 @@ def campaign_recommendations(
     }
 
 
+def echo_json_payload(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
+    """Echo nested JSON test payload items for contract validation tests."""
+    payload = input_payload.get("payload", {})
+    if not isinstance(payload, dict):
+        return {"items": []}
+    return {"items": payload.get("items", [])}
+
+
 def broken_provider(_input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
     """Return an invalid output shape for contract failure tests."""
     return {"unexpected": "value"}

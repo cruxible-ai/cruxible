@@ -19,15 +19,20 @@ class PropertyValidationResult:
     errors: list[str] = field(default_factory=list)
 
 
-def enum_values(config: CoreConfig, schema: PropertySchema) -> list[str] | None:
+def enum_ref_values(enums: Mapping[str, Any], enum_ref: str) -> list[str]:
+    """Resolve shared enum_ref values from a config enum mapping."""
+    enum_schema = enums.get(enum_ref)
+    if enum_schema is None:
+        raise ValueError(f"enum_ref '{enum_ref}' is not defined")
+    return list(enum_schema.values)
+
+
+def enum_values(config: CoreConfig, schema: PropertySchema) -> list[Any] | None:
     """Resolve inline enum values or enum_ref values for a property."""
     if schema.enum is not None:
         return list(schema.enum)
     if schema.enum_ref is not None:
-        enum_schema = config.enums.get(schema.enum_ref)
-        if enum_schema is None:
-            raise ValueError(f"enum_ref '{schema.enum_ref}' is not defined")
-        return list(enum_schema.values)
+        return enum_ref_values(config.enums, schema.enum_ref)
     return None
 
 

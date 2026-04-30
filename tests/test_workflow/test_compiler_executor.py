@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from textwrap import dedent, indent
 
 import pytest
 
@@ -85,6 +86,65 @@ def proposal_workflow_instance(
 def _write_lock_for_instance(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     write_lock(build_lock(config, instance.get_config_path().parent), get_lock_path(instance))
+
+
+def _json_contract_workflow_yaml(
+    *,
+    workflow_payload_field: str,
+    provider_payload_field: str,
+    provider_items_field: str,
+) -> str:
+    return f"""\
+version: "1.0"
+name: json_contract_workflow
+enums:
+  verdict:
+    values: [support, reject]
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  WorkflowInput:
+    fields:
+{indent(dedent(workflow_payload_field).strip(), "      ")}
+  ProviderInput:
+    fields:
+{indent(dedent(provider_payload_field).strip(), "      ")}
+  ProviderOutput:
+    fields:
+{indent(dedent(provider_items_field).strip(), "      ")}
+providers:
+  echo_json:
+    kind: function
+    contract_in: ProviderInput
+    contract_out: ProviderOutput
+    ref: tests.support.workflow_test_providers.echo_json_payload
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+workflows:
+  validate_json_payload:
+    contract_in: WorkflowInput
+    steps:
+      - id: echo
+        provider: echo_json
+        input:
+          payload: $input.payload
+        as: echo
+    returns: echo
+"""
+
+
+def _json_contract_instance(tmp_path: Path, config_yaml: str) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    _write_lock_for_instance(instance)
+    return instance
 
 
 def _compute_directory_sha256(path: Path) -> str:
@@ -671,6 +731,233 @@ class TestWorkflowExecutor:
                     "end_date": "2026-03-07",
                 },
             )
+
+    def test_compile_workflow_rejects_missing_required_json_schema_field(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="""
+                payload:
+                  type: json
+                  json_schema:
+                    type: object
+                    required: [status]
+                    properties:
+                      status:
+                        type: string
+                """,
+                provider_payload_field="payload: {type: json}",
+                provider_items_field="items: {type: json}",
+            ),
+        )
+
+        with pytest.raises(ConfigError, match="payload: missing required property 'status'"):
+            compile_workflow(
+                instance.load_config(),
+                build_lock(instance.load_config()),
+                "validate_json_payload",
+                {"payload": {}},
+            )
+
+    def test_execute_workflow_rejects_provider_input_json_schema_type(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="payload: {type: json}",
+                provider_payload_field="""
+                payload:
+                  type: json
+                  json_schema:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                """,
+                provider_items_field="items: {type: json}",
+            ),
+        )
+
+        with pytest.raises(QueryExecutionError, match=r"payload\.count: must be an integer"):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "validate_json_payload",
+                {"payload": {"count": "3"}},
+            )
+
+    def test_execute_workflow_rejects_provider_output_json_schema_inline_enum(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="payload: {type: json}",
+                provider_payload_field="payload: {type: json}",
+                provider_items_field="""
+                items:
+                  type: json
+                  json_schema:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        verdict:
+                          type: string
+                          enum: [support]
+                """,
+            ),
+        )
+
+        with pytest.raises(QueryExecutionError, match=r"items\[1\]\.verdict"):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "validate_json_payload",
+                {"payload": {"items": [{"verdict": "support"}, {"verdict": "reject"}]}},
+            )
+
+    def test_execute_workflow_rejects_provider_output_json_schema_enum_ref(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="payload: {type: json}",
+                provider_payload_field="payload: {type: json}",
+                provider_items_field="""
+                items:
+                  type: json
+                  json_schema:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        verdict:
+                          type: string
+                          enum_ref: verdict
+                        note:
+                          type: string
+                """,
+            ),
+        )
+
+        with pytest.raises(QueryExecutionError, match="enum_ref 'verdict'"):
+            execute_workflow(
+                instance,
+                instance.load_config(),
+                "validate_json_payload",
+                {"payload": {"items": [{"verdict": "support"}, {"verdict": "other"}]}},
+            )
+
+    def test_execute_workflow_validates_defaulted_json_schema_field(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="""
+                payload:
+                  type: json
+                  default:
+                    status: bad
+                  json_schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum_ref: verdict
+                """,
+                provider_payload_field="payload: {type: json}",
+                provider_items_field="items: {type: json}",
+            ),
+        )
+
+        with pytest.raises(ConfigError, match="field 'payload' default"):
+            compile_workflow(
+                instance.load_config(),
+                build_lock(instance.load_config()),
+                "validate_json_payload",
+                {},
+            )
+
+    def test_execute_workflow_allows_optional_json_none_and_extra_nested_keys(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _json_contract_instance(
+            tmp_path,
+            _json_contract_workflow_yaml(
+                workflow_payload_field="""
+                payload:
+                  type: json
+                  optional: true
+                  json_schema:
+                    type: object
+                    required: [status]
+                """,
+                provider_payload_field="""
+                payload:
+                  type: json
+                  optional: true
+                  json_schema:
+                    type: object
+                    required: [status]
+                """,
+                provider_items_field="""
+                items:
+                  type: json
+                  json_schema:
+                    type: array
+                    items:
+                      type: object
+                      required: [verdict]
+                      properties:
+                        verdict:
+                          type: string
+                          enum_ref: verdict
+                """,
+            ),
+        )
+
+        none_result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "validate_json_payload",
+            {"payload": None},
+        )
+        assert none_result.output["items"] == []
+
+        extra_key_result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "validate_json_payload",
+            {"payload": {"status": "support", "extra": True, "items": []}},
+        )
+        assert extra_key_result.output["items"] == []
+
+        nested_null_result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "validate_json_payload",
+            {
+                "payload": {
+                    "status": "support",
+                    "items": [{"verdict": "support", "note": None}],
+                }
+            },
+        )
+        assert nested_null_result.output["items"] == [
+            {"verdict": "support", "note": None}
+        ]
 
     def test_execute_workflow_assert_failure_records_workflow_receipt(
         self, workflow_instance: CruxibleInstance

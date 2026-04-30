@@ -130,7 +130,7 @@ class PropertySchemaView:
     optional: bool
     default: Any | None
     enum_ref: str | None
-    enum_values: list[str] | None
+    enum_values: list[Any] | None
     description: str | None
 
 
@@ -2032,12 +2032,12 @@ def _property_schema_row(prop: PropertySchemaView) -> tuple[str, ...]:
         flags.append("optional")
     enum_label = "-"
     if prop.enum_ref is not None:
-        values = ", ".join(prop.enum_values or [])
+        values = ", ".join(str(value) for value in prop.enum_values or [])
         enum_label = f"`{prop.enum_ref}`"
         if values:
             enum_label = f"{enum_label}: {values}"
     elif prop.enum_values is not None:
-        enum_label = ", ".join(prop.enum_values)
+        enum_label = ", ".join(str(value) for value in prop.enum_values)
     return (
         f"`{prop.name}`",
         prop.type,

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from cruxible_core.config.json_schema_validation import validate_value_against_json_schema
 from cruxible_core.config.property_validation import normalize_value
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import CoreConfig, PropertySchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
 
 
@@ -30,14 +31,27 @@ def validate_contract_payload(
     for field_name, field_schema in contract.fields.items():
         if field_name not in payload:
             if field_schema.default is not None:
-                normalized[field_name] = field_schema.default
+                try:
+                    normalized[field_name] = _normalize_contract_field(
+                        config,
+                        field_name,
+                        field_schema.default,
+                        field_schema,
+                    )
+                except ValueError as exc:
+                    errors.append(f"field '{field_name}' default: {exc}")
                 continue
             if field_schema.optional:
                 continue
             required_missing.append(field_name)
             continue
         try:
-            normalized[field_name] = normalize_value(payload[field_name], field_schema, config)
+            normalized[field_name] = _normalize_contract_field(
+                config,
+                field_name,
+                payload[field_name],
+                field_schema,
+            )
         except ValueError as exc:
             errors.append(f"field '{field_name}': {exc}")
 
@@ -59,6 +73,27 @@ def validate_contract_payload(
     if errors:
         raise error_factory(f"{subject} failed contract '{contract_name}': {'; '.join(errors)}")
 
+    return normalized
+
+
+def _normalize_contract_field(
+    config: CoreConfig,
+    field_name: str,
+    value: Any,
+    field_schema: PropertySchema,
+) -> Any:
+    normalized = normalize_value(value, field_schema, config)
+    if (
+        field_schema.type == "json"
+        and field_schema.json_schema is not None
+        and normalized is not None
+    ):
+        validate_value_against_json_schema(
+            normalized,
+            field_schema.json_schema,
+            config.enums,
+            field_name,
+        )
     return normalized
 
 
