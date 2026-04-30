@@ -532,6 +532,27 @@ class TestWorkflowSchema:
         )
         assert workflow.contract_in == "PromoInput"
 
+    @pytest.mark.parametrize("purpose", ["decision_support", "proposal"])
+    def test_decision_support_and_proposal_workflows_cannot_be_canonical(
+        self,
+        purpose: str,
+    ):
+        with pytest.raises(ValidationError, match="must not set canonical: true"):
+            WorkflowSchema(
+                purpose=purpose,  # type: ignore[arg-type]
+                canonical=True,
+                contract_in="PromoInput",
+                steps=[
+                    WorkflowStepSchema(
+                        id="context",
+                        query="get_context",
+                        params={"sku": "$input.sku"},
+                        **{"as": "context"},
+                    )
+                ],
+                returns="context",
+            )
+
     def test_make_candidates_step_accepts_item_refs(self):
         step = WorkflowStepSchema(
             id="candidates",

@@ -26,6 +26,7 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
+    service_abandon_decision_record,
     service_add_constraint,
     service_add_decision_policy,
     service_add_entities,
@@ -34,14 +35,17 @@ from cruxible_core.service import (
     service_analyze_outcomes,
     service_apply_workflow,
     service_config_compatibility_warnings,
+    service_create_decision_record,
     service_create_snapshot,
     service_describe_query,
     service_evaluate,
     service_feedback,
     service_feedback_batch,
+    service_finalize_decision_record,
     service_find_candidates,
     service_fork_snapshot,
     service_fork_world,
+    service_get_decision_record,
     service_get_entity,
     service_get_group,
     service_get_outcome_profile,
@@ -53,6 +57,8 @@ from cruxible_core.service import (
     service_inspect_entity,
     service_lint,
     service_list,
+    service_list_decision_events,
+    service_list_decision_records,
     service_list_groups,
     service_list_queries,
     service_list_resolutions,
@@ -78,6 +84,7 @@ from cruxible_core.service import (
     service_validate,
     service_world_status,
 )
+from cruxible_core.service.types import OperationContext
 from cruxible_core.wiki import WikiOptions, build_wiki_pages
 from cruxible_core.wiki.generator import WikiScope, parse_subject_ref
 
@@ -108,6 +115,16 @@ def _build_workflow_execution_contract(
         receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
         traces=[trace.model_dump(mode="json") for trace in result.traces],
     )
+
+
+def _operation_context(
+    decision_record_id: str | None,
+    *,
+    surface: str = "local",
+) -> OperationContext | None:
+    if decision_record_id is None:
+        return None
+    return OperationContext(decision_record_id=decision_record_id, surface=surface)  # type: ignore[arg-type]
 
 
 def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -> str:
@@ -309,6 +326,9 @@ def _handle_workflow_run_local(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
+    *,
+    decision_record_id: str | None = None,
+    surface: str = "local",
 ) -> contracts.WorkflowRunResult:
     """Execute a workflow through the governed service layer."""
     check_permission(
@@ -317,7 +337,12 @@ def _handle_workflow_run_local(
         required_mode=PermissionMode.GOVERNED_WRITE,
     )
     instance = get_manager().get(instance_id)
-    result = service_run(instance, workflow_name, input_payload or {})
+    result = service_run(
+        instance,
+        workflow_name,
+        input_payload or {},
+        context=_operation_context(decision_record_id, surface=surface),
+    )
     return _build_workflow_execution_contract(result, contracts.WorkflowRunResult)
 
 
@@ -327,6 +352,9 @@ def _handle_workflow_apply_local(
     expected_apply_digest: str,
     expected_head_snapshot_id: str | None,
     input_payload: dict[str, Any] | None = None,
+    *,
+    decision_record_id: str | None = None,
+    surface: str = "local",
 ) -> contracts.WorkflowApplyResult:
     """Apply a canonical workflow through the governed service layer."""
     check_permission(
@@ -341,6 +369,7 @@ def _handle_workflow_apply_local(
         input_payload or {},
         expected_apply_digest=expected_apply_digest,
         expected_head_snapshot_id=expected_head_snapshot_id,
+        context=_operation_context(decision_record_id, surface=surface),
     )
     return _build_workflow_execution_contract(result, contracts.WorkflowApplyResult)
 
@@ -379,6 +408,9 @@ def _handle_propose_workflow_local(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
+    *,
+    decision_record_id: str | None = None,
+    surface: str = "local",
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and bridge its output into a governed relationship proposal."""
     check_permission(
@@ -386,7 +418,12 @@ def _handle_propose_workflow_local(
         instance_id=instance_id,
     )
     instance = get_manager().get(instance_id)
-    result = service_propose_workflow(instance, workflow_name, input_payload or {})
+    result = service_propose_workflow(
+        instance,
+        workflow_name,
+        input_payload or {},
+        context=_operation_context(decision_record_id, surface=surface),
+    )
     return contracts.WorkflowProposeResult(
         workflow=result.workflow,
         output=result.output,
@@ -426,6 +463,131 @@ def _handle_create_snapshot_local(
     result = service_create_snapshot(instance, label=label)
     return contracts.SnapshotCreateResult(
         snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json"))
+    )
+
+
+def _handle_create_decision_record_local(
+    instance_id: str,
+    *,
+    question: str,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    opened_by: str = "human",
+) -> contracts.DecisionRecordResult:
+    check_permission("cruxible_create_decision_record", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_create_decision_record(
+        instance,
+        question=question,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        opened_by=opened_by,
+    )
+    return contracts.DecisionRecordResult(record=result.record.model_dump(mode="json"))
+
+
+def _handle_get_decision_record_local(
+    instance_id: str,
+    decision_record_id: str,
+    *,
+    include_events: bool = True,
+) -> contracts.DecisionRecordResult:
+    check_permission("cruxible_get_decision_record", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_get_decision_record(
+        instance,
+        decision_record_id,
+        include_events=include_events,
+    )
+    return contracts.DecisionRecordResult(
+        record=result.record.model_dump(mode="json"),
+        events=[event.model_dump(mode="json") for event in result.events],
+    )
+
+
+def _handle_list_decision_records_local(
+    instance_id: str,
+    *,
+    status: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    decision_class: str | None = None,
+    limit: int = 100,
+) -> contracts.DecisionRecordListResult:
+    check_permission("cruxible_list_decision_records", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_decision_records(
+        instance,
+        status=status,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        decision_class=decision_class,
+        limit=limit,
+    )
+    return contracts.DecisionRecordListResult(
+        records=[record.model_dump(mode="json") for record in result.records]
+    )
+
+
+def _handle_list_decision_events_local(
+    instance_id: str,
+    *,
+    decision_record_id: str | None = None,
+    receipt_id: str | None = None,
+    trace_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> contracts.DecisionEventListResult:
+    check_permission("cruxible_list_decision_events", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_list_decision_events(
+        instance,
+        decision_record_id=decision_record_id,
+        receipt_id=receipt_id,
+        trace_id=trace_id,
+        status=status,
+        limit=limit,
+    )
+    return contracts.DecisionEventListResult(
+        events=[event.model_dump(mode="json") for event in result.events]
+    )
+
+
+def _handle_finalize_decision_record_local(
+    instance_id: str,
+    decision_record_id: str,
+    *,
+    final_decision: str,
+    decision_class: str,
+    rationale: str = "",
+) -> contracts.DecisionRecordResult:
+    check_permission("cruxible_finalize_decision_record", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_finalize_decision_record(
+        instance,
+        decision_record_id,
+        final_decision=final_decision,
+        decision_class=decision_class,  # type: ignore[arg-type]
+        rationale=rationale,
+    )
+    return contracts.DecisionRecordResult(
+        record=result.record.model_dump(mode="json"),
+        events=[event.model_dump(mode="json") for event in result.events],
+    )
+
+
+def _handle_abandon_decision_record_local(
+    instance_id: str,
+    decision_record_id: str,
+    *,
+    reason: str = "",
+) -> contracts.DecisionRecordResult:
+    check_permission("cruxible_abandon_decision_record", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_abandon_decision_record(instance, decision_record_id, reason=reason)
+    return contracts.DecisionRecordResult(
+        record=result.record.model_dump(mode="json"),
+        events=[event.model_dump(mode="json") for event in result.events],
     )
 
 
@@ -532,6 +694,9 @@ def _handle_query_local(
     query_name: str,
     params: dict[str, Any] | None = None,
     limit: int | None = None,
+    *,
+    decision_record_id: str | None = None,
+    surface: str = "local",
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
     check_permission("cruxible_query")
@@ -539,7 +704,12 @@ def _handle_query_local(
         raise ConfigError("limit must be a positive integer")
 
     instance = get_manager().get(instance_id)
-    result = service_query(instance, query_name, params or {})
+    result = service_query(
+        instance,
+        query_name,
+        params or {},
+        context=_operation_context(decision_record_id, surface=surface),
+    )
 
     total = result.total_results
     truncated = limit is not None and total > limit

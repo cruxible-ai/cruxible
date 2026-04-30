@@ -25,6 +25,7 @@ class QueryRequest(BaseModel):
     query_name: str
     params: dict[str, Any] | None = None
     limit: int | None = None
+    decision_record_id: str | None = None
 
 
 class RenderWikiRequest(BaseModel):
@@ -180,6 +181,7 @@ class AddDecisionPolicyRequest(BaseModel):
 class WorkflowInputRequest(BaseModel):
     workflow_name: str
     input: dict[str, Any] | None = None
+    decision_record_id: str | None = None
 
 
 class WorkflowApplyRequest(BaseModel):
@@ -187,6 +189,24 @@ class WorkflowApplyRequest(BaseModel):
     input: dict[str, Any] | None = None
     expected_apply_digest: str
     expected_head_snapshot_id: str | None = None
+    decision_record_id: str | None = None
+
+
+class DecisionRecordCreateRequest(BaseModel):
+    question: str
+    subject_type: str | None = None
+    subject_id: str | None = None
+    opened_by: Literal["human", "agent", "service"] = "human"
+
+
+class DecisionRecordFinalizeRequest(BaseModel):
+    final_decision: str
+    decision_class: contracts.DecisionClass
+    rationale: str = ""
+
+
+class DecisionRecordAbandonRequest(BaseModel):
+    reason: str = ""
 
 
 class WorkflowTestRequest(BaseModel):

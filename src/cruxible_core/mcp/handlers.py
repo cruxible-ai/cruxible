@@ -198,18 +198,27 @@ def handle_workflow_run(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
+    decision_record_id: str | None = None,
 ) -> contracts.WorkflowRunResult:
     """Execute a configured workflow."""
+    decision_kwargs = (
+        {"decision_record_id": decision_record_id}
+        if decision_record_id is not None
+        else {}
+    )
     return _dispatch_remote_or_local(
         lambda client: client.workflow_run(
             instance_id,
             workflow_name=workflow_name,
             input_payload=input_payload or {},
+            **decision_kwargs,
         ),
         lambda: local_api._handle_workflow_run_local(
             instance_id,
             workflow_name,
             input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
         ),
         allow_local=False,
         operation_name="cruxible_run_workflow",
@@ -223,8 +232,14 @@ def handle_workflow_apply(
     expected_apply_digest: str,
     expected_head_snapshot_id: str | None = None,
     input_payload: dict[str, Any] | None = None,
+    decision_record_id: str | None = None,
 ) -> contracts.WorkflowApplyResult:
     """Apply a canonical workflow after verifying preview identity."""
+    decision_kwargs = (
+        {"decision_record_id": decision_record_id}
+        if decision_record_id is not None
+        else {}
+    )
     return _dispatch_remote_or_local(
         lambda client: client.workflow_apply(
             instance_id,
@@ -232,6 +247,7 @@ def handle_workflow_apply(
             expected_apply_digest=expected_apply_digest,
             expected_head_snapshot_id=expected_head_snapshot_id,
             input_payload=input_payload or {},
+            **decision_kwargs,
         ),
         lambda: local_api._handle_workflow_apply_local(
             instance_id,
@@ -239,6 +255,8 @@ def handle_workflow_apply(
             expected_apply_digest,
             expected_head_snapshot_id,
             input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
         ),
         allow_local=False,
         operation_name="cruxible_apply_workflow",
@@ -249,18 +267,27 @@ def handle_propose_workflow(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
+    decision_record_id: str | None = None,
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and create a governed relationship proposal."""
+    decision_kwargs = (
+        {"decision_record_id": decision_record_id}
+        if decision_record_id is not None
+        else {}
+    )
     return _dispatch_remote_or_local(
         lambda client: client.propose_workflow(
             instance_id,
             workflow_name=workflow_name,
             input_payload=input_payload or {},
+            **decision_kwargs,
         ),
         lambda: local_api._handle_propose_workflow_local(
             instance_id,
             workflow_name,
             input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
         ),
         allow_local=False,
         operation_name="cruxible_propose_workflow",
@@ -306,11 +333,30 @@ def handle_query(
     query_name: str,
     params: dict[str, Any] | None = None,
     limit: int | None = None,
+    decision_record_id: str | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
+    decision_kwargs = (
+        {"decision_record_id": decision_record_id}
+        if decision_record_id is not None
+        else {}
+    )
     return _dispatch_remote_or_local(
-        lambda client: client.query(instance_id, query_name, params, limit=limit),
-        lambda: local_api._handle_query_local(instance_id, query_name, params, limit=limit),
+        lambda client: client.query(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            **decision_kwargs,
+        ),
+        lambda: local_api._handle_query_local(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            decision_record_id=decision_record_id,
+            surface="mcp",
+        ),
     )
 
 
@@ -319,6 +365,156 @@ def handle_list_queries(instance_id: str) -> contracts.QueryListResult:
     return _dispatch_remote_or_local(
         lambda client: client.list_queries(instance_id),
         lambda: local_api._handle_list_queries_local(instance_id),
+    )
+
+
+def handle_create_decision_record(
+    instance_id: str,
+    question: str,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    opened_by: str = "human",
+) -> contracts.DecisionRecordResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.create_decision_record(
+            instance_id,
+            question=question,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            opened_by=opened_by,
+        ),
+        lambda: local_api._handle_create_decision_record_local(
+            instance_id,
+            question=question,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            opened_by=opened_by,
+        ),
+        allow_local=False,
+        operation_name="cruxible_create_decision_record",
+    )
+
+
+def handle_get_decision_record(
+    instance_id: str,
+    decision_record_id: str,
+    include_events: bool = True,
+) -> contracts.DecisionRecordResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.get_decision_record(
+            instance_id,
+            decision_record_id,
+            include_events=include_events,
+        ),
+        lambda: local_api._handle_get_decision_record_local(
+            instance_id,
+            decision_record_id,
+            include_events=include_events,
+        ),
+    )
+
+
+def handle_list_decision_records(
+    instance_id: str,
+    status: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    decision_class: str | None = None,
+    limit: int = 100,
+) -> contracts.DecisionRecordListResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_decision_records(
+            instance_id,
+            status=status,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision_class=decision_class,
+            limit=limit,
+        ),
+        lambda: local_api._handle_list_decision_records_local(
+            instance_id,
+            status=status,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision_class=decision_class,
+            limit=limit,
+        ),
+    )
+
+
+def handle_list_decision_events(
+    instance_id: str,
+    decision_record_id: str | None = None,
+    receipt_id: str | None = None,
+    trace_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> contracts.DecisionEventListResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_decision_events(
+            instance_id,
+            decision_record_id=decision_record_id,
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+            limit=limit,
+        ),
+        lambda: local_api._handle_list_decision_events_local(
+            instance_id,
+            decision_record_id=decision_record_id,
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+            limit=limit,
+        ),
+    )
+
+
+def handle_finalize_decision_record(
+    instance_id: str,
+    decision_record_id: str,
+    final_decision: str,
+    decision_class: contracts.DecisionClass,
+    rationale: str = "",
+) -> contracts.DecisionRecordResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.finalize_decision_record(
+            instance_id,
+            decision_record_id,
+            final_decision=final_decision,
+            decision_class=decision_class,
+            rationale=rationale,
+        ),
+        lambda: local_api._handle_finalize_decision_record_local(
+            instance_id,
+            decision_record_id,
+            final_decision=final_decision,
+            decision_class=decision_class,
+            rationale=rationale,
+        ),
+        allow_local=False,
+        operation_name="cruxible_finalize_decision_record",
+    )
+
+
+def handle_abandon_decision_record(
+    instance_id: str,
+    decision_record_id: str,
+    reason: str = "",
+) -> contracts.DecisionRecordResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.abandon_decision_record(
+            instance_id,
+            decision_record_id,
+            reason=reason,
+        ),
+        lambda: local_api._handle_abandon_decision_record_local(
+            instance_id,
+            decision_record_id,
+            reason=reason,
+        ),
+        allow_local=False,
+        operation_name="cruxible_abandon_decision_record",
     )
 
 

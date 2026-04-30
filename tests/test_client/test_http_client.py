@@ -166,6 +166,171 @@ def test_workflow_propose_uses_expected_route():
     assert captured["payload"]["workflow_name"] == "wf"
 
 
+def test_decision_record_client_routes_round_trip():
+    captured: list[tuple[str, str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        payload = json.loads(request.content.decode()) if request.content else None
+        captured.append((request.method, path, payload))
+        record = {
+            "decision_record_id": "DR-1",
+            "question": "Should we act?",
+            "subject_type": "Incident",
+            "subject_id": "I-1",
+            "status": "open",
+        }
+        if request.method == "GET" and path.endswith("/decision-records"):
+            return httpx.Response(200, json={"records": [record]})
+        if request.method == "GET" and path.endswith("/decision-records/events"):
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "decision_event_id": "DE-1",
+                            "decision_record_id": "DR-1",
+                            "sequence": 1,
+                            "command": "query:q",
+                            "status": "success",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"record": record, "events": []})
+
+    client = _build_client(handler)
+    created = client.create_decision_record(
+        "inst_123",
+        question="Should we act?",
+        subject_type="Incident",
+        subject_id="I-1",
+        opened_by="agent",
+    )
+    fetched = client.get_decision_record("inst_123", "DR-1", include_events=False)
+    listed = client.list_decision_records("inst_123", status="open", subject_type="Incident")
+    events = client.list_decision_events("inst_123", decision_record_id="DR-1")
+    finalized = client.finalize_decision_record(
+        "inst_123",
+        "DR-1",
+        final_decision="Act",
+        decision_class="recommended",
+        rationale="Evidence supports it",
+    )
+    abandoned = client.abandon_decision_record("inst_123", "DR-2", reason="Superseded")
+
+    assert created.record["decision_record_id"] == "DR-1"
+    assert fetched.record["decision_record_id"] == "DR-1"
+    assert listed.records[0]["decision_record_id"] == "DR-1"
+    assert events.events[0]["decision_record_id"] == "DR-1"
+    assert finalized.record["decision_record_id"] == "DR-1"
+    assert abandoned.record["decision_record_id"] == "DR-1"
+    assert captured[0] == (
+        "POST",
+        "/api/v1/inst_123/decision-records",
+        {
+            "question": "Should we act?",
+            "subject_type": "Incident",
+            "subject_id": "I-1",
+            "opened_by": "agent",
+        },
+    )
+    assert captured[1][0:2] == ("GET", "/api/v1/inst_123/decision-records/DR-1")
+    assert captured[2][0:2] == ("GET", "/api/v1/inst_123/decision-records")
+    assert captured[3][0:2] == ("GET", "/api/v1/inst_123/decision-records/events")
+    assert captured[4] == (
+        "POST",
+        "/api/v1/inst_123/decision-records/DR-1/finalize",
+        {
+            "final_decision": "Act",
+            "decision_class": "recommended",
+            "rationale": "Evidence supports it",
+        },
+    )
+    assert captured[5] == (
+        "POST",
+        "/api/v1/inst_123/decision-records/DR-2/abandon",
+        {"reason": "Superseded"},
+    )
+
+
+def test_decision_record_id_is_sent_on_query_and_workflow_requests():
+    captured: list[tuple[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        payload = json.loads(request.content.decode())
+        captured.append((path, payload))
+        if path.endswith("/query"):
+            return httpx.Response(
+                200,
+                json={
+                    "results": [],
+                    "receipt_id": "RCP-query",
+                    "receipt": None,
+                    "total_results": 0,
+                    "truncated": False,
+                    "steps_executed": 1,
+                    "policy_summary": {},
+                },
+            )
+        if path.endswith("/workflows/propose"):
+            return httpx.Response(
+                200,
+                json={
+                    "workflow": "wf",
+                    "output": {},
+                    "receipt_id": "RCP-propose",
+                    "group_id": None,
+                    "group_status": "suppressed",
+                    "review_priority": "review",
+                    "query_receipt_ids": [],
+                    "trace_ids": [],
+                    "prior_resolution": None,
+                    "policy_summary": {},
+                    "receipt": None,
+                    "traces": [],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "workflow": "wf",
+                "output": {},
+                "receipt_id": "RCP-workflow",
+                "mode": "run" if path.endswith("/workflows/run") else "apply",
+                "canonical": path.endswith("/workflows/apply"),
+                "apply_digest": "sha256:abc",
+                "head_snapshot_id": "snap_1",
+                "committed_snapshot_id": None,
+                "apply_previews": {},
+                "query_receipt_ids": [],
+                "trace_ids": [],
+                "receipt": None,
+                "traces": [],
+            },
+        )
+
+    client = _build_client(handler)
+    client.query("inst_123", "q", {}, decision_record_id="DR-1")
+    client.workflow_run("inst_123", workflow_name="wf", decision_record_id="DR-1")
+    client.workflow_apply(
+        "inst_123",
+        workflow_name="wf",
+        expected_apply_digest="sha256:abc",
+        expected_head_snapshot_id="snap_1",
+        decision_record_id="DR-1",
+    )
+    client.propose_workflow("inst_123", workflow_name="wf", decision_record_id="DR-1")
+
+    assert [payload["decision_record_id"] for _, payload in captured] == [
+        "DR-1",
+        "DR-1",
+        "DR-1",
+        "DR-1",
+    ]
+
+
 def test_render_wiki_sends_scope_and_max_per_type():
     captured: dict[str, Any] = {}
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -28,7 +29,7 @@ from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
 from cruxible_core.query.candidates import CandidateMatch
 from cruxible_core.server.config import get_runtime_bearer_token
-from cruxible_core.service import service_sample, service_schema
+from cruxible_core.service import OperationContext, service_sample, service_schema
 
 console = Console()
 ResultT = TypeVar("ResultT")
@@ -37,10 +38,30 @@ json_option = click.option(
     "--json", "output_json", is_flag=True, default=False, help="Output as JSON.",
 )
 
+decision_record_option = click.option(
+    "--decision-record",
+    "decision_record_id",
+    default=None,
+    help="Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID.",
+)
+
 
 def _emit_json(data: Any) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""
     click.echo(_json.dumps(data, indent=2, default=str))
+
+
+def _resolve_decision_record_id(decision_record_id: str | None) -> str | None:
+    if decision_record_id is not None:
+        return decision_record_id
+    return os.environ.get("CRUXIBLE_DECISION_RECORD_ID")
+
+
+def _operation_context(decision_record_id: str | None) -> OperationContext | None:
+    resolved = _resolve_decision_record_id(decision_record_id)
+    if resolved is None:
+        return None
+    return OperationContext(decision_record_id=resolved, surface="cli")
 
 
 def _root_ctx_obj() -> dict[str, Any]:

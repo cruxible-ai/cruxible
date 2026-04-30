@@ -1020,6 +1020,17 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
             errors.append(
                 f"Workflow '{workflow_name}': canonical workflows require at least one apply_* step"
             )
+        if workflow.purpose == "decision_support" and uses_apply_steps:
+            errors.append(
+                f"Workflow '{workflow_name}': decision_support workflows must not use apply_* steps"
+            )
+        if workflow.purpose == "proposal" and not _workflow_returns_relationship_proposal(
+            workflow
+        ):
+            errors.append(
+                f"Workflow '{workflow_name}': proposal workflows must return a "
+                "proposal-bearing alias produced by propose_relationship_group"
+            )
 
         if workflow.canonical:
             for provider_name in providers_used:

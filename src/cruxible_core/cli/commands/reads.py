@@ -38,11 +38,14 @@ from cruxible_core.cli.commands._common import (
     _groups_from_payload,
     _lookup_query_param_hints_local,
     _lookup_query_param_hints_server,
+    _operation_context,
     _parse_params,
     _print_query_param_hints,
     _require_instance_id,
     _require_local_instance,
+    _resolve_decision_record_id,
     console,
+    decision_record_option,
     json_option,
 )
 from cruxible_core.cli.formatting import (
@@ -173,14 +176,27 @@ def _run_query_command(
     limit: int | None,
     count_only: bool,
     output_json: bool,
+    decision_record_id: str | None,
 ) -> None:
     params = _parse_params(param)
+    resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
+    decision_kwargs = (
+        {"decision_record_id": resolved_decision_record_id}
+        if resolved_decision_record_id is not None
+        else {}
+    )
     client = _common._get_client()
     if client is not None:
         effective_limit = 1 if count_only and limit is None else limit
         instance_id = _require_instance_id()
         try:
-            result = client.query(instance_id, query_name, params, limit=effective_limit)
+            result = client.query(
+                instance_id,
+                query_name,
+                params,
+                limit=effective_limit,
+                **decision_kwargs,
+            )
         except CoreError:
             hints = _lookup_query_param_hints_server(
                 client,
@@ -228,7 +244,12 @@ def _run_query_command(
 
     instance = CruxibleInstance.load()
     try:
-        result = service_query(instance, query_name, params)
+        result = service_query(
+            instance,
+            query_name,
+            params,
+            context=_operation_context(resolved_decision_record_id),
+        )
     except CoreError:
         _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
         raise
@@ -294,6 +315,7 @@ def _run_query_command(
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
+@decision_record_option
 @json_option
 @click.pass_context
 @handle_errors
@@ -303,6 +325,7 @@ def query(
     param: tuple[str, ...],
     limit: int | None,
     count_only: bool,
+    decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Execute a named query, or discover the query surfaces on this instance."""
@@ -316,6 +339,7 @@ def query(
         limit=limit,
         count_only=count_only,
         output_json=output_json,
+        decision_record_id=decision_record_id,
     )
 
 

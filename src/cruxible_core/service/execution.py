@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from pydantic import ValidationError
@@ -9,10 +10,15 @@ from pydantic import ValidationError
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.service.decisions import (
+    _append_event_if_context,
+    ensure_decision_record_open,
+)
 from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.types import (
     ApplyWorkflowResult,
     LockServiceResult,
+    OperationContext,
     PlanServiceResult,
     ProposeWorkflowResult,
     RunServiceResult,
@@ -62,6 +68,20 @@ def _build_workflow_execution_result(
     )
 
 
+def _enforce_decision_support_context(
+    instance: InstanceProtocol,
+    workflow: Any,
+    context: OperationContext | None,
+) -> None:
+    if workflow.purpose != "decision_support":
+        return
+    if context is None or context.decision_record_id is None:
+        raise ConfigError(
+            "decision_support workflows require decision_record_id"
+        )
+    ensure_decision_record_open(instance, context.decision_record_id)
+
+
 def service_lock(instance: InstanceProtocol, *, force: bool = False) -> LockServiceResult:
     """Generate and persist a workflow lock file for the instance config."""
     config = instance.load_config()
@@ -98,20 +118,56 @@ def service_run(
     instance: InstanceProtocol,
     workflow_name: str,
     input_payload: dict[str, Any],
+    *,
+    context: OperationContext | None = None,
 ) -> RunServiceResult:
     """Execute a workflow and return output plus receipt/trace identifiers."""
-    config = instance.load_config()
-    workflow = config.workflows.get(workflow_name)
-    if workflow is None:
-        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-    if _workflow_returns_relationship_proposal(workflow):
-        raise QueryExecutionError(
-            f"Workflow '{workflow_name}' produces a governed proposal; use "
-            f"'cruxible propose --workflow {workflow_name}' to bridge output into a "
-            "candidate group."
+    started_at = datetime.now(timezone.utc)
+    input_event = {"workflow_name": workflow_name, "input": input_payload, "mode": "run"}
+    try:
+        config = instance.load_config()
+        workflow = config.workflows.get(workflow_name)
+        if workflow is None:
+            raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+        _enforce_decision_support_context(instance, workflow, context)
+        if _workflow_returns_relationship_proposal(workflow):
+            raise QueryExecutionError(
+                f"Workflow '{workflow_name}' produces a governed proposal; use "
+                f"'cruxible propose --workflow {workflow_name}' to bridge output into a "
+                "candidate group."
+            )
+        result = execute_workflow(instance, config, workflow_name, input_payload)
+        service_result = _build_workflow_execution_result(result, RunServiceResult)
+    except Exception as exc:
+        _append_event_if_context(
+            instance,
+            context,
+            command=f"workflow_run:{workflow_name}",
+            status="error",
+            input_payload=input_event,
+            error=exc,
+            started_at=started_at,
         )
-    result = execute_workflow(instance, config, workflow_name, input_payload)
-    return _build_workflow_execution_result(result, RunServiceResult)
+        raise
+
+    _append_event_if_context(
+        instance,
+        context,
+        command=f"workflow_run:{workflow_name}",
+        status="success",
+        input_payload=input_event,
+        output_payload={
+            "output": service_result.output,
+            "mode": service_result.mode,
+            "apply_digest": service_result.apply_digest,
+            "committed_snapshot_id": service_result.committed_snapshot_id,
+        },
+        receipt_id=service_result.receipt_id,
+        trace_ids=service_result.trace_ids,
+        head_snapshot_id=service_result.head_snapshot_id,
+        started_at=started_at,
+    )
+    return service_result
 
 
 def service_apply_workflow(
@@ -121,120 +177,207 @@ def service_apply_workflow(
     *,
     expected_apply_digest: str,
     expected_head_snapshot_id: str | None,
+    context: OperationContext | None = None,
 ) -> ApplyWorkflowResult:
     """Apply a canonical workflow after verifying preview identity."""
-    config = instance.load_config()
-    workflow = config.workflows.get(workflow_name)
-    if workflow is None:
-        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-    if not workflow.canonical:
-        raise ConfigError(f"Workflow '{workflow_name}' is not canonical and cannot be applied")
+    started_at = datetime.now(timezone.utc)
+    input_event = {
+        "workflow_name": workflow_name,
+        "input": input_payload,
+        "mode": "apply",
+        "expected_apply_digest": expected_apply_digest,
+        "expected_head_snapshot_id": expected_head_snapshot_id,
+    }
+    try:
+        config = instance.load_config()
+        workflow = config.workflows.get(workflow_name)
+        if workflow is None:
+            raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+        _enforce_decision_support_context(instance, workflow, context)
+        if not workflow.canonical:
+            raise ConfigError(f"Workflow '{workflow_name}' is not canonical and cannot be applied")
 
-    preview = execute_workflow(
-        instance,
-        config,
-        workflow_name,
-        input_payload,
-        mode="preview",
-        persist_receipt=False,
-        persist_traces=False,
-    )
-    if preview.apply_digest != expected_apply_digest:
-        raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
-    if preview.head_snapshot_id != expected_head_snapshot_id:
-        raise ConfigError(
-            "Workflow head snapshot changed between preview and apply.\n"
-            "Apply requires both --apply-digest AND --head-snapshot from the preview output,\n"
-            "or pass --preview-file <path> if you used 'run --save-preview'.\n"
-            "Rerun the preview if output was not captured."
+        preview = execute_workflow(
+            instance,
+            config,
+            workflow_name,
+            input_payload,
+            mode="preview",
+            persist_receipt=False,
+            persist_traces=False,
         )
+        if preview.apply_digest != expected_apply_digest:
+            raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
+        if preview.head_snapshot_id != expected_head_snapshot_id:
+            raise ConfigError(
+                "Workflow head snapshot changed between preview and apply.\n"
+                "Apply requires both --apply-digest AND --head-snapshot from the preview output,\n"
+                "or pass --preview-file <path> if you used 'run --save-preview'.\n"
+                "Rerun the preview if output was not captured."
+            )
 
-    current_lock = load_lock(resolve_lock_path(instance))
-    current_lock_digest = compute_lock_digest(current_lock)
-    if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
-        raise ConfigError("Workflow lock changed; rerun workflow preview before apply")
+        current_lock = load_lock(resolve_lock_path(instance))
+        current_lock_digest = compute_lock_digest(current_lock)
+        if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
+            raise ConfigError("Workflow lock changed; rerun workflow preview before apply")
 
-    result = execute_workflow(
+        result = execute_workflow(
+            instance,
+            config,
+            workflow_name,
+            input_payload,
+            mode="apply",
+            persist_receipt=True,
+            persist_traces=True,
+        )
+        service_result = _build_workflow_execution_result(result, ApplyWorkflowResult)
+    except Exception as exc:
+        _append_event_if_context(
+            instance,
+            context,
+            command=f"workflow_apply:{workflow_name}",
+            status="error",
+            input_payload=input_event,
+            error=exc,
+            started_at=started_at,
+        )
+        raise
+
+    _append_event_if_context(
         instance,
-        config,
-        workflow_name,
-        input_payload,
-        mode="apply",
-        persist_receipt=True,
-        persist_traces=True,
+        context,
+        command=f"workflow_apply:{workflow_name}",
+        status="success",
+        input_payload=input_event,
+        output_payload={
+            "output": service_result.output,
+            "mode": service_result.mode,
+            "committed_snapshot_id": service_result.committed_snapshot_id,
+        },
+        receipt_id=service_result.receipt_id,
+        trace_ids=service_result.trace_ids,
+        head_snapshot_id=service_result.head_snapshot_id,
+        started_at=started_at,
     )
-    return _build_workflow_execution_result(result, ApplyWorkflowResult)
+    return service_result
 
 
 def service_propose_workflow(
     instance: InstanceProtocol,
     workflow_name: str,
     input_payload: dict[str, Any],
+    *,
+    context: OperationContext | None = None,
 ) -> ProposeWorkflowResult:
     """Execute a workflow and bridge its returned proposal artifact into a candidate group."""
-    config = instance.load_config()
-    workflow = config.workflows.get(workflow_name)
-    if workflow is None:
-        raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-    if workflow.canonical:
-        raise ConfigError(
-            f"Canonical workflow '{workflow_name}' cannot be used with propose_workflow"
-        )
-    result = execute_workflow(instance, config, workflow_name, input_payload)
+    started_at = datetime.now(timezone.utc)
+    input_event = {
+        "workflow_name": workflow_name,
+        "input": input_payload,
+        "mode": "propose",
+    }
     try:
-        proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
-    except ValidationError as exc:
-        raise QueryExecutionError(
-            f"Workflow '{workflow_name}' must return a relationship proposal artifact"
-        ) from exc
-    relationship_type = proposal_payload.relationship_type
-    members = [
-        CandidateMember(
-            from_type=member.from_type,
-            from_id=member.from_id,
-            to_type=member.to_type,
-            to_id=member.to_id,
-            relationship_type=relationship_type,
-            signals=member.signals,
-            properties=member.properties,
-        )
-        for member in proposal_payload.members
-    ]
+        config = instance.load_config()
+        workflow = config.workflows.get(workflow_name)
+        if workflow is None:
+            raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+        if workflow.purpose != "proposal":
+            raise ConfigError(
+                f"Workflow '{workflow_name}' must set purpose: proposal to be used with "
+                "propose_workflow"
+            )
+        if workflow.canonical:
+            raise ConfigError(
+                f"Canonical workflow '{workflow_name}' cannot be used with propose_workflow"
+            )
+        result = execute_workflow(instance, config, workflow_name, input_payload)
+        try:
+            proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
+        except ValidationError as exc:
+            raise QueryExecutionError(
+                f"Workflow '{workflow_name}' must return a relationship proposal artifact"
+            ) from exc
+        relationship_type = proposal_payload.relationship_type
+        members = [
+            CandidateMember(
+                from_type=member.from_type,
+                from_id=member.from_id,
+                to_type=member.to_type,
+                to_id=member.to_id,
+                relationship_type=relationship_type,
+                signals=member.signals,
+                properties=member.properties,
+            )
+            for member in proposal_payload.members
+        ]
 
-    source_step_id = result.alias_step_ids.get(config.workflows[workflow_name].returns)
-    source_trace_ids = [trace.trace_id for trace in result.traces]
-    group_result = service_propose_group(
+        source_step_id = result.alias_step_ids.get(config.workflows[workflow_name].returns)
+        source_trace_ids = [trace.trace_id for trace in result.traces]
+        group_result = service_propose_group(
+            instance,
+            relationship_type,
+            members,
+            thesis_text=proposal_payload.thesis_text,
+            thesis_facts=proposal_payload.thesis_facts,
+            pending_refresh_mode=proposal_payload.pending_refresh_mode,
+            analysis_state=proposal_payload.analysis_state,
+            integrations_used=proposal_payload.integrations_used,
+            proposed_by=proposal_payload.proposed_by,
+            suggested_priority=proposal_payload.suggested_priority,
+            source_workflow_name=workflow_name,
+            source_workflow_receipt_id=result.receipt.receipt_id,
+            source_trace_ids=source_trace_ids,
+            source_step_ids=[source_step_id] if source_step_id is not None else [],
+        )
+        service_result = ProposeWorkflowResult(
+            workflow=result.workflow,
+            output=result.output,
+            receipt_id=result.receipt.receipt_id,
+            group_id=group_result.group_id,
+            group_status=group_result.status,
+            review_priority=group_result.review_priority,
+            suppressed=group_result.suppressed,
+            suppressed_members=group_result.suppressed_members,
+            query_receipt_ids=result.query_receipt_ids,
+            trace_ids=[trace.trace_id for trace in result.traces],
+            prior_resolution=group_result.prior_resolution,
+            policy_summary=group_result.policy_summary,
+            receipt=result.receipt,
+            traces=result.traces,
+        )
+    except Exception as exc:
+        _append_event_if_context(
+            instance,
+            context,
+            command=f"workflow_propose:{workflow_name}",
+            status="error",
+            input_payload=input_event,
+            error=exc,
+            started_at=started_at,
+        )
+        raise
+
+    _append_event_if_context(
         instance,
-        relationship_type,
-        members,
-        thesis_text=proposal_payload.thesis_text,
-        thesis_facts=proposal_payload.thesis_facts,
-        pending_refresh_mode=proposal_payload.pending_refresh_mode,
-        analysis_state=proposal_payload.analysis_state,
-        integrations_used=proposal_payload.integrations_used,
-        proposed_by=proposal_payload.proposed_by,
-        suggested_priority=proposal_payload.suggested_priority,
-        source_workflow_name=workflow_name,
-        source_workflow_receipt_id=result.receipt.receipt_id,
-        source_trace_ids=source_trace_ids,
-        source_step_ids=[source_step_id] if source_step_id is not None else [],
+        context,
+        command=f"workflow_propose:{workflow_name}",
+        status="success",
+        input_payload=input_event,
+        output_payload={
+            "output": service_result.output,
+            "group_id": service_result.group_id,
+            "group_status": service_result.group_status,
+        },
+        receipt_id=service_result.receipt_id,
+        trace_ids=service_result.trace_ids,
+        head_snapshot_id=(
+            service_result.receipt.nodes[0].detail.get("head_snapshot_id")
+            if service_result.receipt
+            else None
+        ),
+        started_at=started_at,
     )
-    return ProposeWorkflowResult(
-        workflow=result.workflow,
-        output=result.output,
-        receipt_id=result.receipt.receipt_id,
-        group_id=group_result.group_id,
-        group_status=group_result.status,
-        review_priority=group_result.review_priority,
-        suppressed=group_result.suppressed,
-        suppressed_members=group_result.suppressed_members,
-        query_receipt_ids=result.query_receipt_ids,
-        trace_ids=[trace.trace_id for trace in result.traces],
-        prior_resolution=group_result.prior_resolution,
-        policy_summary=group_result.policy_summary,
-        receipt=result.receipt,
-        traces=result.traces,
-    )
+    return service_result
 
 
 def service_test(instance: InstanceProtocol, test_name: str | None = None) -> TestServiceResult:

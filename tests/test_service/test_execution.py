@@ -358,6 +358,20 @@ class TestWorkflowExecutionServices:
                 {"campaign_id": "CMP-1"},
             )
 
+    def test_service_propose_workflow_requires_proposal_purpose(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.workflows["propose_campaign_recommendations"].purpose = "utility"  # type: ignore[assignment]
+        proposal_workflow_instance.save_config(config)
+
+        with pytest.raises(ConfigError, match="must set purpose: proposal"):
+            service_propose_workflow(
+                proposal_workflow_instance,
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
     def test_service_propose_workflow_rejects_missing_required_signals(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:

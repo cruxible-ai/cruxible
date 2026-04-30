@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
@@ -33,10 +34,12 @@ from cruxible_core.read_surface import (
     sample_entities as read_sample_entities,
 )
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.service.decisions import _append_event_if_context
 from cruxible_core.service.types import (
     InspectEntityResult,
     InspectNeighborResult,
     ListResult,
+    OperationContext,
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
@@ -52,34 +55,70 @@ def service_query(
     instance: InstanceProtocol,
     query_name: str,
     params: dict[str, Any],
+    *,
+    context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and persist the receipt.
 
     Returns results, receipt, and execution metadata.
     """
-    config = instance.load_config()
-    graph = instance.load_graph()
-    query_result = read_run_query(config, graph, query_name, params)
-    head_snapshot_id = instance.get_head_snapshot_id()
+    started_at = datetime.now(timezone.utc)
+    input_event = {"query_name": query_name, "params": params}
+    try:
+        config = instance.load_config()
+        graph = instance.load_graph()
+        query_result = read_run_query(config, graph, query_name, params)
+        head_snapshot_id = instance.get_head_snapshot_id()
 
-    if query_result.receipt:
-        query_result.receipt.nodes[0].detail["head_snapshot_id"] = head_snapshot_id
-        store = instance.get_receipt_store()
-        try:
-            store.save_receipt(query_result.receipt)
-        finally:
-            store.close()
+        if query_result.receipt:
+            query_result.receipt.nodes[0].detail["head_snapshot_id"] = head_snapshot_id
+            store = instance.get_receipt_store()
+            try:
+                store.save_receipt(query_result.receipt)
+            finally:
+                store.close()
 
-    total = query_result.total_results or len(query_result.results)
-    return QueryServiceResult(
-        results=query_result.results,
-        receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
-        receipt=query_result.receipt,
-        total_results=total,
-        steps_executed=query_result.steps_executed,
-        param_hints=_query_param_hints(config, graph, query_name),
-        policy_summary=query_result.policy_summary,
+        total = query_result.total_results or len(query_result.results)
+        result = QueryServiceResult(
+            results=query_result.results,
+            receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
+            receipt=query_result.receipt,
+            total_results=total,
+            steps_executed=query_result.steps_executed,
+            param_hints=_query_param_hints(config, graph, query_name),
+            policy_summary=query_result.policy_summary,
+        )
+    except Exception as exc:
+        _append_event_if_context(
+            instance,
+            context,
+            command=f"query:{query_name}",
+            status="error",
+            input_payload=input_event,
+            error=exc,
+            started_at=started_at,
+        )
+        raise
+
+    receipt_head_snapshot_id = (
+        result.receipt.nodes[0].detail.get("head_snapshot_id") if result.receipt else None
     )
+    _append_event_if_context(
+        instance,
+        context,
+        command=f"query:{query_name}",
+        status="success",
+        input_payload=input_event,
+        output_payload={
+            "results": [entity.model_dump(mode="json") for entity in result.results],
+            "total_results": result.total_results,
+            "steps_executed": result.steps_executed,
+        },
+        receipt_id=result.receipt_id,
+        head_snapshot_id=receipt_head_snapshot_id,
+        started_at=started_at,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------

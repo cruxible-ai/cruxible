@@ -287,6 +287,291 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     assert describe_payload["returns"] == "Part"
 
 
+def test_query_decision_record_flag_beats_env(
+    monkeypatch,
+    runner: CliRunner,
+):
+    monkeypatch.setenv("CRUXIBLE_DECISION_RECORD_ID", "DR-env")
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def query(self, instance_id, query_name, params, limit=None, decision_record_id=None):
+            captured["instance_id"] = instance_id
+            captured["query_name"] = query_name
+            captured["params"] = params
+            captured["limit"] = limit
+            captured["decision_record_id"] = decision_record_id
+            return contracts.QueryToolResult(
+                results=[],
+                receipt_id="RCP-1",
+                receipt=None,
+                total_results=0,
+                truncated=False,
+                steps_executed=1,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "--query",
+            "parts_for_vehicle",
+            "--param",
+            "vehicle_id=V-1",
+            "--decision-record",
+            "DR-flag",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_123",
+        "query_name": "parts_for_vehicle",
+        "params": {"vehicle_id": "V-1"},
+        "limit": None,
+        "decision_record_id": "DR-flag",
+    }
+
+
+def test_decision_record_commands_delegate_to_client_in_server_mode(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def create_decision_record(
+            self,
+            instance_id,
+            *,
+            question,
+            subject_type=None,
+            subject_id=None,
+            opened_by="human",
+        ):
+            captured["create"] = (instance_id, question, subject_type, subject_id, opened_by)
+            return contracts.DecisionRecordResult(
+                record={
+                    "decision_record_id": "DR-1",
+                    "question": question,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "status": "open",
+                }
+            )
+
+        def get_decision_record(self, instance_id, decision_record_id, *, include_events=True):
+            captured["get"] = (instance_id, decision_record_id, include_events)
+            return contracts.DecisionRecordResult(
+                record={
+                    "decision_record_id": decision_record_id,
+                    "question": "Should we act?",
+                    "status": "open",
+                },
+                events=[
+                    {
+                        "sequence": 1,
+                        "command": "query:impact",
+                        "status": "success",
+                        "receipt_id": "RCP-1",
+                    }
+                ],
+            )
+
+        def list_decision_records(
+            self,
+            instance_id,
+            *,
+            status=None,
+            subject_type=None,
+            subject_id=None,
+            decision_class=None,
+            limit=100,
+        ):
+            captured["list"] = (
+                instance_id,
+                status,
+                subject_type,
+                subject_id,
+                decision_class,
+                limit,
+            )
+            return contracts.DecisionRecordListResult(
+                records=[
+                    {
+                        "decision_record_id": "DR-1",
+                        "question": "Should we act?",
+                        "status": "open",
+                    }
+                ]
+            )
+
+        def finalize_decision_record(
+            self,
+            instance_id,
+            decision_record_id,
+            *,
+            final_decision,
+            decision_class,
+            rationale="",
+        ):
+            captured["finalize"] = (
+                instance_id,
+                decision_record_id,
+                final_decision,
+                decision_class,
+                rationale,
+            )
+            return contracts.DecisionRecordResult(
+                record={
+                    "decision_record_id": decision_record_id,
+                    "question": "Should we act?",
+                    "status": "finalized",
+                    "final_decision": final_decision,
+                    "decision_class": decision_class,
+                    "rationale": rationale,
+                }
+            )
+
+        def abandon_decision_record(self, instance_id, decision_record_id, *, reason=""):
+            captured["abandon"] = (instance_id, decision_record_id, reason)
+            return contracts.DecisionRecordResult(
+                record={
+                    "decision_record_id": decision_record_id,
+                    "question": "Should we act?",
+                    "status": "abandoned",
+                    "abandoned_reason": reason,
+                }
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    create = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "decision-record",
+            "create",
+            "--question",
+            "Should we act?",
+            "--subject-type",
+            "Incident",
+            "--subject-id",
+            "I-1",
+            "--opened-by",
+            "agent",
+            "--json",
+        ],
+    )
+    assert create.exit_code == 0
+    assert json.loads(create.output)["record"]["decision_record_id"] == "DR-1"
+
+    get = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "decision-record",
+            "get",
+            "--id",
+            "DR-1",
+            "--json",
+        ],
+    )
+    assert get.exit_code == 0
+    assert json.loads(get.output)["events"][0]["receipt_id"] == "RCP-1"
+
+    listed = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "decision-record",
+            "list",
+            "--status",
+            "open",
+            "--limit",
+            "5",
+            "--json",
+        ],
+    )
+    assert listed.exit_code == 0
+    assert json.loads(listed.output)["records"][0]["decision_record_id"] == "DR-1"
+
+    finalized = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "decision-record",
+            "finalize",
+            "--id",
+            "DR-1",
+            "--final-decision",
+            "Take action",
+            "--decision-class",
+            "recommended",
+            "--rationale",
+            "Evidence supports it",
+            "--json",
+        ],
+    )
+    assert finalized.exit_code == 0
+    assert json.loads(finalized.output)["record"]["decision_class"] == "recommended"
+
+    abandoned = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "decision-record",
+            "abandon",
+            "--id",
+            "DR-2",
+            "--reason",
+            "Superseded",
+            "--json",
+        ],
+    )
+    assert abandoned.exit_code == 0
+    assert json.loads(abandoned.output)["record"]["status"] == "abandoned"
+
+    assert captured["create"] == (
+        "inst_123",
+        "Should we act?",
+        "Incident",
+        "I-1",
+        "agent",
+    )
+    assert captured["get"] == ("inst_123", "DR-1", True)
+    assert captured["list"] == ("inst_123", "open", None, None, None, 5)
+    assert captured["finalize"] == (
+        "inst_123",
+        "DR-1",
+        "Take action",
+        "recommended",
+        "Evidence supports it",
+    )
+    assert captured["abandon"] == ("inst_123", "DR-2", "Superseded")
+
+
 def test_inspect_ontology_uses_existing_server_read_surfaces(
     monkeypatch,
     runner: CliRunner,

@@ -52,6 +52,8 @@ async def workflow_run(
         resolved_instance_id,
         req.workflow_name,
         req.input,
+        decision_record_id=req.decision_record_id,
+        surface="http",
     )
 
 
@@ -67,6 +69,8 @@ async def workflow_apply(
         req.expected_apply_digest,
         req.expected_head_snapshot_id,
         req.input,
+        decision_record_id=req.decision_record_id,
+        surface="http",
     )
 
 
@@ -89,4 +93,6 @@ async def workflow_propose(
         resolved_instance_id,
         req.workflow_name,
         req.input,
+        decision_record_id=req.decision_record_id,
+        surface="http",
     )

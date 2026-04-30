@@ -114,6 +114,7 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowRunResult:
         """Execute a configured workflow and return receipts, traces, and output.
 
@@ -125,6 +126,7 @@ def register_tools(server: FastMCP) -> list[str]:
             instance_id,
             workflow_name,
             input_payload=input_payload,
+            decision_record_id=decision_record_id,
         )
 
     @_tool
@@ -134,6 +136,7 @@ def register_tools(server: FastMCP) -> list[str]:
         expected_apply_digest: str,
         expected_head_snapshot_id: str | None = None,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowApplyResult:
         """Apply a canonical workflow after verifying the preview identity."""
         return handlers.handle_workflow_apply(
@@ -142,6 +145,7 @@ def register_tools(server: FastMCP) -> list[str]:
             expected_apply_digest=expected_apply_digest,
             expected_head_snapshot_id=expected_head_snapshot_id,
             input_payload=input_payload,
+            decision_record_id=decision_record_id,
         )
 
     @_tool
@@ -191,6 +195,7 @@ def register_tools(server: FastMCP) -> list[str]:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query and return results plus a receipt.
 
@@ -206,7 +211,13 @@ def register_tools(server: FastMCP) -> list[str]:
         Use `limit` to cap the number of returned results and omit
         the inline receipt (fetch it later via `cruxible_receipt`).
         """
-        return handlers.handle_query(instance_id, query_name, params, limit=limit)
+        return handlers.handle_query(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            decision_record_id=decision_record_id,
+        )
 
     @_tool
     def cruxible_list_queries(
@@ -587,6 +598,7 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowProposeResult:
         """Execute a configured workflow and bridge its output into a governed relationship group.
 
@@ -599,6 +611,105 @@ def register_tools(server: FastMCP) -> list[str]:
             instance_id,
             workflow_name,
             input_payload=input_payload,
+            decision_record_id=decision_record_id,
+        )
+
+    @_tool
+    def cruxible_create_decision_record(
+        instance_id: str,
+        question: str,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        opened_by: str = "human",
+    ) -> contracts.DecisionRecordResult:
+        """Open a decision record that can collect query and workflow receipts."""
+        return handlers.handle_create_decision_record(
+            instance_id,
+            question=question,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            opened_by=opened_by,
+        )
+
+    @_tool
+    def cruxible_get_decision_record(
+        instance_id: str,
+        decision_record_id: str,
+        include_events: bool = True,
+    ) -> contracts.DecisionRecordResult:
+        """Fetch one decision record, optionally including its logged events."""
+        return handlers.handle_get_decision_record(
+            instance_id,
+            decision_record_id,
+            include_events=include_events,
+        )
+
+    @_tool
+    def cruxible_list_decision_records(
+        instance_id: str,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+        limit: int = 100,
+    ) -> contracts.DecisionRecordListResult:
+        """List decision records with lifecycle and subject filters."""
+        return handlers.handle_list_decision_records(
+            instance_id,
+            status=status,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision_class=decision_class,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_list_decision_events(
+        instance_id: str,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> contracts.DecisionEventListResult:
+        """List decision-record events by record, receipt, trace, or status."""
+        return handlers.handle_list_decision_events(
+            instance_id,
+            decision_record_id=decision_record_id,
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_finalize_decision_record(
+        instance_id: str,
+        decision_record_id: str,
+        final_decision: str,
+        decision_class: contracts.DecisionClass,
+        rationale: str = "",
+    ) -> contracts.DecisionRecordResult:
+        """Finalize a decision record with an indexed decision class and rationale."""
+        return handlers.handle_finalize_decision_record(
+            instance_id,
+            decision_record_id,
+            final_decision=final_decision,
+            decision_class=decision_class,
+            rationale=rationale,
+        )
+
+    @_tool
+    def cruxible_abandon_decision_record(
+        instance_id: str,
+        decision_record_id: str,
+        reason: str = "",
+    ) -> contracts.DecisionRecordResult:
+        """Abandon an open decision record without finalizing a recommendation."""
+        return handlers.handle_abandon_decision_record(
+            instance_id,
+            decision_record_id,
+            reason=reason,
         )
 
     @_tool

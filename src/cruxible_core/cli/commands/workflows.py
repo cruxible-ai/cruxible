@@ -15,9 +15,12 @@ from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
     _get_client,
+    _operation_context,
     _print_apply_previews,
     _remember_server_context,
+    _resolve_decision_record_id,
     _resolve_workflow_input,
+    decision_record_option,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
@@ -250,6 +253,7 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
     default=False,
     help="Immediately apply a canonical workflow after preview verification.",
 )
+@decision_record_option
 @json_option
 @handle_errors
 def run_cmd(
@@ -258,6 +262,7 @@ def run_cmd(
     input_file: str | None,
     save_preview: Path | None,
     apply_now: bool,
+    decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Execute a workflow for the current instance.
@@ -265,13 +270,25 @@ def run_cmd(
     For workflows that produce group proposals, use 'cruxible propose' instead.
     """
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
+    resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
+    decision_kwargs = (
+        {"decision_record_id": resolved_decision_record_id}
+        if resolved_decision_record_id is not None
+        else {}
+    )
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_run(
             instance_id,
             workflow_name=workflow_name,
             input_payload=payload,
+            **decision_kwargs,
         ),
-        lambda instance: service_run(instance, workflow_name, payload),
+        lambda instance: service_run(
+            instance,
+            workflow_name,
+            payload,
+            context=_operation_context(resolved_decision_record_id),
+        ),
         allow_local=False,
         command_name="run",
     )
@@ -302,6 +319,7 @@ def run_cmd(
                 expected_apply_digest=result.apply_digest,
                 expected_head_snapshot_id=result.head_snapshot_id,
                 input_payload=payload,
+                **decision_kwargs,
             ),
             lambda instance: service_apply_workflow(
                 instance,
@@ -309,6 +327,7 @@ def run_cmd(
                 payload,
                 expected_apply_digest=result.apply_digest or "",
                 expected_head_snapshot_id=result.head_snapshot_id,
+                context=_operation_context(resolved_decision_record_id),
             ),
             allow_local=False,
             command_name="run --apply",
@@ -390,6 +409,7 @@ def run_cmd(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Read preview state from a file saved by run --save-preview.",
 )
+@decision_record_option
 @json_option
 @handle_errors
 def apply_cmd(
@@ -399,6 +419,7 @@ def apply_cmd(
     apply_digest: str | None,
     head_snapshot: str | None,
     preview_file: Path | None,
+    decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Apply a canonical workflow after verifying preview identity."""
@@ -425,6 +446,12 @@ def apply_cmd(
 
     assert workflow_name is not None
     assert apply_digest is not None
+    resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
+    decision_kwargs = (
+        {"decision_record_id": resolved_decision_record_id}
+        if resolved_decision_record_id is not None
+        else {}
+    )
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.workflow_apply(
             instance_id,
@@ -432,6 +459,7 @@ def apply_cmd(
             expected_apply_digest=apply_digest,
             expected_head_snapshot_id=head_snapshot,
             input_payload=payload,
+            **decision_kwargs,
         ),
         lambda instance: service_apply_workflow(
             instance,
@@ -439,6 +467,7 @@ def apply_cmd(
             payload,
             expected_apply_digest=apply_digest,
             expected_head_snapshot_id=head_snapshot,
+            context=_operation_context(resolved_decision_record_id),
         ),
         allow_local=False,
         command_name="apply",
@@ -489,23 +518,37 @@ def test_cmd(test_name: str | None) -> None:
     type=click.Path(exists=True),
     help="JSON or YAML file providing workflow input.",
 )
+@decision_record_option
 @json_option
 @handle_errors
 def propose_cmd(
     workflow_name: str,
     input_text: str | None,
     input_file: str | None,
+    decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Execute a workflow and bridge its output into a candidate group."""
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
+    resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
+    decision_kwargs = (
+        {"decision_record_id": resolved_decision_record_id}
+        if resolved_decision_record_id is not None
+        else {}
+    )
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.propose_workflow(
             instance_id,
             workflow_name=workflow_name,
             input_payload=payload,
+            **decision_kwargs,
         ),
-        lambda instance: service_propose_workflow(instance, workflow_name, payload),
+        lambda instance: service_propose_workflow(
+            instance,
+            workflow_name,
+            payload,
+            context=_operation_context(resolved_decision_record_id),
+        ),
         allow_local=False,
         command_name="propose",
     )

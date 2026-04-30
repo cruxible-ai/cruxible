@@ -806,6 +806,61 @@ class TestValidateWorkflowExecution:
             for error in exc_info.value.errors
         )
 
+    def test_decision_support_workflow_rejects_apply_steps(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    purpose="decision_support",
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        ),
+                        WorkflowStepSchema(
+                            id="apply_loaded",
+                            apply_entities={"entities_from": "loaded"},
+                            **{"as": "applied"},
+                        ),
+                    ],
+                    returns="applied",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "decision_support workflows must not use apply_* steps" in error
+            for error in exc_info.value.errors
+        )
+
+    def test_proposal_purpose_requires_relationship_proposal_return(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    purpose="proposal",
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "proposal workflows must return a proposal-bearing alias" in error
+            for error in exc_info.value.errors
+        )
+
     def test_item_reference_outside_builtin_steps_is_rejected(self):
         config = self._workflow_config(
             workflows={

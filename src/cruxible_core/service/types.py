@@ -13,6 +13,7 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
     SurfaceType,
 )
+from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.evaluate import EvaluationReport
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
@@ -36,6 +37,29 @@ from cruxible_core.snapshot.types import (
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
 WorkflowMode = Literal["run", "preview", "apply"]
+
+
+@dataclass(frozen=True)
+class OperationContext:
+    decision_record_id: str | None = None
+    request_id: str | None = None
+    surface: Literal["cli", "mcp", "http", "local"] | None = None
+
+
+@dataclass
+class DecisionRecordServiceResult:
+    record: DecisionRecord
+    events: list[DecisionEvent] = field(default_factory=list)
+
+
+@dataclass
+class DecisionRecordListResult:
+    records: list[DecisionRecord]
+
+
+@dataclass
+class DecisionEventListResult:
+    events: list[DecisionEvent]
 NeighborDirection = Literal["incoming", "outgoing"]
 
 # ---------------------------------------------------------------------------

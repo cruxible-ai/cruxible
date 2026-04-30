@@ -112,6 +112,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     apply_cmd,
     config_views_cmd,
     connect_group,
+    decision_records_cmd,
     evaluate,
     explain,
     export_group,
@@ -151,6 +152,7 @@ cli.add_command(init)  # type: ignore[has-type]
 cli.add_command(validate)  # type: ignore[has-type]
 cli.add_command(config_views_cmd, "config-views")  # type: ignore[has-type]
 cli.add_command(connect_group, "context")  # type: ignore[has-type]
+cli.add_command(decision_records_cmd, "decision-record")  # type: ignore[has-type]
 cli.add_command(lock_cmd)  # type: ignore[has-type]
 cli.add_command(world_group, "world")  # type: ignore[has-type]
 cli.add_command(plan_cmd)  # type: ignore[has-type]

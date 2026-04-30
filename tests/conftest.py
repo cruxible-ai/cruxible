@@ -217,6 +217,7 @@ providers:
 
 workflows:
   propose_campaign_recommendations:
+    purpose: proposal
     contract_in: CampaignInput
     steps:
       - id: campaign

@@ -14,6 +14,7 @@ from cruxible_core.mcp.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.registry import get_registry
+from cruxible_core.server.routes.decision_records import router as decision_records_router
 from cruxible_core.server.routes.feedback import router as feedback_router
 from cruxible_core.server.routes.groups import router as groups_router
 from cruxible_core.server.routes.instances import router as instances_router
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(instances_router)
     app.include_router(world_router)
     app.include_router(queries_router)
+    app.include_router(decision_records_router)
     app.include_router(mutations_router)
     app.include_router(feedback_router)
     app.include_router(groups_router)

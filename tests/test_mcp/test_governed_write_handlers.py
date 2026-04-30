@@ -182,3 +182,126 @@ def test_feedback_batch_tool(server, instance_id):
     assert result["applied_count"] == 2
     assert len(result["feedback_ids"]) == 2
     assert result["receipt_id"]
+
+
+def test_decision_record_tools_and_workflow_context_round_trip(
+    server,
+    tmp_path,
+    workflow_config_yaml: str,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(workflow_config_yaml)
+    init = call_tool(
+        server,
+        "cruxible_init",
+        {"root_dir": str(tmp_path), "config_path": "config.yaml"},
+    )
+    instance_id = init["instance_id"]
+    call_tool(
+        server,
+        "cruxible_add_entity",
+        {
+            "instance_id": instance_id,
+            "entities": [
+                {
+                    "entity_type": "Product",
+                    "entity_id": "SKU-123",
+                    "properties": {
+                        "sku": "SKU-123",
+                        "category": "soda",
+                        "base_margin": 0.2,
+                    },
+                }
+            ],
+        },
+    )
+    call_tool(server, "cruxible_lock_workflow", {"instance_id": instance_id})
+
+    created = call_tool(
+        server,
+        "cruxible_create_decision_record",
+        {
+            "instance_id": instance_id,
+            "question": "Should the promo run?",
+            "subject_type": "Product",
+            "subject_id": "SKU-123",
+            "opened_by": "agent",
+        },
+    )
+    decision_record_id = created["record"]["decision_record_id"]
+
+    fetched = call_tool(
+        server,
+        "cruxible_get_decision_record",
+        {"instance_id": instance_id, "decision_record_id": decision_record_id},
+    )
+    assert fetched["record"]["question"] == "Should the promo run?"
+
+    listed = call_tool(
+        server,
+        "cruxible_list_decision_records",
+        {"instance_id": instance_id, "status": "open"},
+    )
+    assert [record["decision_record_id"] for record in listed["records"]] == [
+        decision_record_id
+    ]
+
+    run = call_tool(
+        server,
+        "cruxible_run_workflow",
+        {
+            "instance_id": instance_id,
+            "workflow_name": "evaluate_promo",
+            "input_payload": {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            "decision_record_id": decision_record_id,
+        },
+    )
+    assert run["receipt_id"].startswith("RCP-")
+
+    events = call_tool(
+        server,
+        "cruxible_list_decision_events",
+        {"instance_id": instance_id, "decision_record_id": decision_record_id},
+    )
+    assert len(events["events"]) == 1
+    assert events["events"][0]["command"] == "workflow_run:evaluate_promo"
+    assert events["events"][0]["receipt_id"] == run["receipt_id"]
+    assert events["events"][0]["surface"] == "mcp"
+
+    finalized = call_tool(
+        server,
+        "cruxible_finalize_decision_record",
+        {
+            "instance_id": instance_id,
+            "decision_record_id": decision_record_id,
+            "final_decision": "Run the promo",
+            "decision_class": "recommended",
+            "rationale": "Predicted lift is positive",
+        },
+    )
+    assert finalized["record"]["status"] == "finalized"
+    assert finalized["record"]["decision_class"] == "recommended"
+
+    abandoned_record = call_tool(
+        server,
+        "cruxible_create_decision_record",
+        {
+            "instance_id": instance_id,
+            "question": "Superseded question",
+        },
+    )
+    abandoned = call_tool(
+        server,
+        "cruxible_abandon_decision_record",
+        {
+            "instance_id": instance_id,
+            "decision_record_id": abandoned_record["record"]["decision_record_id"],
+            "reason": "Superseded",
+        },
+    )
+    assert abandoned["record"]["status"] == "abandoned"
+    assert abandoned["record"]["abandoned_reason"] == "Superseded"

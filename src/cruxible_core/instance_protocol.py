@@ -12,15 +12,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from cruxible_core.config.schema import CoreConfig
-from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
-from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.receipt.types import Receipt
-from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+if TYPE_CHECKING:
+    from cruxible_core.config.schema import CoreConfig
+    from cruxible_core.decision.types import DecisionEvent, DecisionRecord
+    from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+    from cruxible_core.graph.entity_graph import EntityGraph
+    from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+    from cruxible_core.provider.types import ExecutionTrace
+    from cruxible_core.receipt.types import Receipt
+    from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
 
 
 class ReceiptStoreProtocol(ABC):
@@ -60,6 +62,66 @@ class ReceiptStoreProtocol(ABC):
     def get_receipts_for_entity(
         self, entity_type: str, entity_id: str
     ) -> list[str]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class DecisionStoreProtocol(ABC):
+    """Interface for decision record and event storage."""
+
+    @abstractmethod
+    def save_record(self, record: DecisionRecord) -> str: ...
+    @abstractmethod
+    def get_record(self, decision_record_id: str) -> DecisionRecord | None: ...
+    @abstractmethod
+    def list_records(
+        self,
+        *,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DecisionRecord]: ...
+    @abstractmethod
+    def update_record(self, record: DecisionRecord) -> None: ...
+    @abstractmethod
+    def append_event(self, event: DecisionEvent) -> str: ...
+    @abstractmethod
+    def list_events(
+        self,
+        decision_record_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DecisionEvent]: ...
+    @abstractmethod
+    def find_events(
+        self,
+        *,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[DecisionEvent]: ...
+    @abstractmethod
+    def finalize_record(
+        self,
+        decision_record_id: str,
+        *,
+        final_decision: str,
+        decision_class: str,
+        rationale: str = "",
+    ) -> DecisionRecord: ...
+    @abstractmethod
+    def abandon_record(
+        self, decision_record_id: str, *, reason: str = ""
+    ) -> DecisionRecord: ...
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        raise NotImplementedError
+        yield  # pragma: no cover
     @abstractmethod
     def close(self) -> None: ...
 
@@ -277,6 +339,8 @@ class InstanceProtocol(ABC):
     def list_snapshots(self) -> list[WorldSnapshot]: ...
     @abstractmethod
     def get_receipt_store(self) -> ReceiptStoreProtocol: ...
+    @abstractmethod
+    def get_decision_store(self) -> DecisionStoreProtocol: ...
     @abstractmethod
     def get_feedback_store(self) -> FeedbackStoreProtocol: ...
     @abstractmethod

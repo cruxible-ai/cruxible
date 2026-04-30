@@ -120,8 +120,21 @@ class GovernedLocalClient:
     def workflow_plan(self, instance_id: str, *, workflow_name: str, input_payload=None):
         return local_api._handle_workflow_plan_local(instance_id, workflow_name, input_payload)
 
-    def workflow_run(self, instance_id: str, *, workflow_name: str, input_payload=None):
-        return local_api._handle_workflow_run_local(instance_id, workflow_name, input_payload)
+    def workflow_run(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        input_payload=None,
+        decision_record_id: str | None = None,
+    ):
+        return local_api._handle_workflow_run_local(
+            instance_id,
+            workflow_name,
+            input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
+        )
 
     def workflow_apply(
         self,
@@ -131,6 +144,7 @@ class GovernedLocalClient:
         expected_apply_digest: str,
         expected_head_snapshot_id: str | None = None,
         input_payload=None,
+        decision_record_id: str | None = None,
     ):
         return local_api._handle_workflow_apply_local(
             instance_id,
@@ -138,10 +152,25 @@ class GovernedLocalClient:
             expected_apply_digest,
             expected_head_snapshot_id=expected_head_snapshot_id,
             input_payload=input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
         )
 
-    def propose_workflow(self, instance_id: str, *, workflow_name: str, input_payload=None):
-        return local_api._handle_propose_workflow_local(instance_id, workflow_name, input_payload)
+    def propose_workflow(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str,
+        input_payload=None,
+        decision_record_id: str | None = None,
+    ):
+        return local_api._handle_propose_workflow_local(
+            instance_id,
+            workflow_name,
+            input_payload,
+            decision_record_id=decision_record_id,
+            surface="mcp",
+        )
 
     def ingest(
         self,
@@ -164,8 +193,120 @@ class GovernedLocalClient:
             upload_id=upload_id,
         )
 
-    def query(self, instance_id: str, query_name: str, params: dict, limit: int | None = None):
-        return local_api._handle_query_local(instance_id, query_name, params, limit=limit)
+    def query(
+        self,
+        instance_id: str,
+        query_name: str,
+        params: dict,
+        limit: int | None = None,
+        decision_record_id: str | None = None,
+    ):
+        return local_api._handle_query_local(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            decision_record_id=decision_record_id,
+            surface="mcp",
+        )
+
+    def create_decision_record(
+        self,
+        instance_id: str,
+        *,
+        question: str,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        opened_by: str = "human",
+    ):
+        return local_api._handle_create_decision_record_local(
+            instance_id,
+            question=question,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            opened_by=opened_by,
+        )
+
+    def get_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        include_events: bool = True,
+    ):
+        return local_api._handle_get_decision_record_local(
+            instance_id,
+            decision_record_id,
+            include_events=include_events,
+        )
+
+    def list_decision_records(
+        self,
+        instance_id: str,
+        *,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+        limit: int = 100,
+    ):
+        return local_api._handle_list_decision_records_local(
+            instance_id,
+            status=status,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision_class=decision_class,
+            limit=limit,
+        )
+
+    def list_decision_events(
+        self,
+        instance_id: str,
+        *,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ):
+        return local_api._handle_list_decision_events_local(
+            instance_id,
+            decision_record_id=decision_record_id,
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+            limit=limit,
+        )
+
+    def finalize_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        final_decision: str,
+        decision_class: str,
+        rationale: str = "",
+    ):
+        return local_api._handle_finalize_decision_record_local(
+            instance_id,
+            decision_record_id,
+            final_decision=final_decision,
+            decision_class=decision_class,
+            rationale=rationale,
+        )
+
+    def abandon_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        reason: str = "",
+    ):
+        return local_api._handle_abandon_decision_record_local(
+            instance_id,
+            decision_record_id,
+            reason=reason,
+        )
 
     def list_queries(self, instance_id: str):
         return local_api._handle_list_queries_local(instance_id)

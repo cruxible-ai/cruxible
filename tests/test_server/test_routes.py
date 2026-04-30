@@ -226,6 +226,98 @@ def test_init_then_ingest_then_query_round_trip(
     assert "evaluation" in lint_payload
 
 
+def test_decision_record_routes_and_query_context_round_trip(
+    app_client: TestClient,
+    server_project: Path,
+    vehicles_csv: Path,
+    parts_csv: Path,
+    fitments_csv: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    for mapping, csv_path in [
+        ("vehicles", vehicles_csv),
+        ("parts", parts_csv),
+        ("fitments", fitments_csv),
+    ]:
+        with csv_path.open("rb") as handle:
+            response = app_client.post(
+                f"/api/v1/{instance_id}/ingest",
+                data={"mapping_name": mapping},
+                files={"file": (csv_path.name, handle, "text/csv")},
+            )
+        assert response.status_code == 200
+
+    created = app_client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={
+            "question": "Should we investigate vehicle impact?",
+            "subject_type": "Vehicle",
+            "subject_id": "V-2024-CIVIC-EX",
+            "opened_by": "agent",
+        },
+    )
+    assert created.status_code == 200
+    decision_record_id = created.json()["record"]["decision_record_id"]
+
+    fetched = app_client.get(f"/api/v1/{instance_id}/decision-records/{decision_record_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["record"]["question"] == "Should we investigate vehicle impact?"
+
+    listed = app_client.get(
+        f"/api/v1/{instance_id}/decision-records",
+        params={"status": "open", "subject_type": "Vehicle"},
+    )
+    assert listed.status_code == 200
+    assert [record["decision_record_id"] for record in listed.json()["records"]] == [
+        decision_record_id
+    ]
+
+    query = app_client.post(
+        f"/api/v1/{instance_id}/query",
+        json={
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+            "decision_record_id": decision_record_id,
+        },
+    )
+    assert query.status_code == 200
+
+    events = app_client.get(
+        f"/api/v1/{instance_id}/decision-records/events",
+        params={"decision_record_id": decision_record_id},
+    )
+    assert events.status_code == 200
+    event_payload = events.json()["events"]
+    assert len(event_payload) == 1
+    assert event_payload[0]["command"] == "query:parts_for_vehicle"
+    assert event_payload[0]["receipt_id"] == query.json()["receipt_id"]
+    assert event_payload[0]["surface"] == "http"
+
+    finalized = app_client.post(
+        f"/api/v1/{instance_id}/decision-records/{decision_record_id}/finalize",
+        json={
+            "final_decision": "Investigate affected vehicle parts",
+            "decision_class": "recommended",
+            "rationale": "Query returned impacted parts.",
+        },
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["record"]["status"] == "finalized"
+
+    abandoned_record = app_client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "Superseded question"},
+    )
+    abandoned_id = abandoned_record.json()["record"]["decision_record_id"]
+    abandoned = app_client.post(
+        f"/api/v1/{instance_id}/decision-records/{abandoned_id}/abandon",
+        json={"reason": "Superseded"},
+    )
+    assert abandoned.status_code == 200
+    assert abandoned.json()["record"]["status"] == "abandoned"
+
+
 def test_stats_and_inspect_routes_return_expected_shapes(
     app_client: TestClient,
     server_project: Path,
@@ -976,6 +1068,64 @@ def test_workflow_routes_lock_plan_run_and_test(
     test = app_client.post(f"/api/v1/{instance_id}/workflows/test", json={"name": None})
     assert test.status_code == 200
     assert test.json()["failed"] == 0
+
+
+def test_workflow_run_route_appends_decision_record_event(
+    app_client: TestClient,
+    tmp_path: Path,
+    workflow_config_yaml: str,
+):
+    project = tmp_path / "workflow-run-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(workflow_config_yaml)
+    instance_id = _init_instance(app_client, project)
+
+    entity = {
+        "entity_type": "Product",
+        "entity_id": "SKU-123",
+        "properties": {
+            "sku": "SKU-123",
+            "category": "soda",
+            "base_margin": 0.2,
+        },
+    }
+    response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+    assert response.status_code == 200
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200
+
+    created = app_client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={"question": "Should the promo run?", "opened_by": "agent"},
+    )
+    assert created.status_code == 200
+    decision_record_id = created.json()["record"]["decision_record_id"]
+
+    run = app_client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={
+            "workflow_name": "evaluate_promo",
+            "input": {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            "decision_record_id": decision_record_id,
+        },
+    )
+    assert run.status_code == 200
+    assert run.json()["receipt_id"].startswith("RCP-")
+
+    events = app_client.get(
+        f"/api/v1/{instance_id}/decision-records/events",
+        params={"decision_record_id": decision_record_id},
+    )
+    assert events.status_code == 200
+    assert len(events.json()["events"]) == 1
+    assert events.json()["events"][0]["command"] == "workflow_run:evaluate_promo"
+    assert events.json()["events"][0]["receipt_id"] == run.json()["receipt_id"]
+    assert events.json()["events"][0]["surface"] == "http"
 
 
 def test_workflow_propose_route_returns_suppressed_members(

@@ -27,6 +27,7 @@ GroupProposedBy = Literal["human", "agent"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
+DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
 WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 
@@ -148,6 +149,19 @@ class QueryToolResult(BaseModel):
     steps_executed: int
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
+
+
+class DecisionRecordResult(BaseModel):
+    record: dict[str, Any]
+    events: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DecisionRecordListResult(BaseModel):
+    records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DecisionEventListResult(BaseModel):
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FeedbackResult(BaseModel):

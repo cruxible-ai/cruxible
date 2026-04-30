@@ -170,12 +170,127 @@ class CruxibleClient:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/query",
-            json={"query_name": query_name, "params": params, "limit": limit},
+            json={
+                "query_name": query_name,
+                "params": params,
+                "limit": limit,
+                "decision_record_id": decision_record_id,
+            },
         )
         return self._parse_model(response, contracts.QueryToolResult)
+
+    def create_decision_record(
+        self,
+        instance_id: str,
+        *,
+        question: str,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        opened_by: str = "human",
+    ) -> contracts.DecisionRecordResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/decision-records",
+            json={
+                "question": question,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "opened_by": opened_by,
+            },
+        )
+        return self._parse_model(response, contracts.DecisionRecordResult)
+
+    def get_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        include_events: bool = True,
+    ) -> contracts.DecisionRecordResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/decision-records/{decision_record_id}",
+            params={"include_events": include_events},
+        )
+        return self._parse_model(response, contracts.DecisionRecordResult)
+
+    def list_decision_records(
+        self,
+        instance_id: str,
+        *,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+        limit: int = 100,
+    ) -> contracts.DecisionRecordListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/decision-records",
+            params={
+                "status": status,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "decision_class": decision_class,
+                "limit": limit,
+            },
+        )
+        return self._parse_model(response, contracts.DecisionRecordListResult)
+
+    def list_decision_events(
+        self,
+        instance_id: str,
+        *,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> contracts.DecisionEventListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/decision-records/events",
+            params={
+                "decision_record_id": decision_record_id,
+                "receipt_id": receipt_id,
+                "trace_id": trace_id,
+                "status": status,
+                "limit": limit,
+            },
+        )
+        return self._parse_model(response, contracts.DecisionEventListResult)
+
+    def finalize_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        final_decision: str,
+        decision_class: contracts.DecisionClass,
+        rationale: str = "",
+    ) -> contracts.DecisionRecordResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/decision-records/{decision_record_id}/finalize",
+            json={
+                "final_decision": final_decision,
+                "decision_class": decision_class,
+                "rationale": rationale,
+            },
+        )
+        return self._parse_model(response, contracts.DecisionRecordResult)
+
+    def abandon_decision_record(
+        self,
+        instance_id: str,
+        decision_record_id: str,
+        *,
+        reason: str = "",
+    ) -> contracts.DecisionRecordResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/decision-records/{decision_record_id}/abandon",
+            json={"reason": reason},
+        )
+        return self._parse_model(response, contracts.DecisionRecordResult)
 
     def render_wiki(
         self,
@@ -578,10 +693,15 @@ class CruxibleClient:
         *,
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowRunResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/run",
-            json={"workflow_name": workflow_name, "input": input_payload or {}},
+            json={
+                "workflow_name": workflow_name,
+                "input": input_payload or {},
+                "decision_record_id": decision_record_id,
+            },
         )
         return self._parse_model(response, contracts.WorkflowRunResult)
 
@@ -593,6 +713,7 @@ class CruxibleClient:
         expected_apply_digest: str,
         expected_head_snapshot_id: str | None = None,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowApplyResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/apply",
@@ -601,6 +722,7 @@ class CruxibleClient:
                 "input": input_payload or {},
                 "expected_apply_digest": expected_apply_digest,
                 "expected_head_snapshot_id": expected_head_snapshot_id,
+                "decision_record_id": decision_record_id,
             },
         )
         return self._parse_model(response, contracts.WorkflowApplyResult)
@@ -623,10 +745,15 @@ class CruxibleClient:
         *,
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
+        decision_record_id: str | None = None,
     ) -> contracts.WorkflowProposeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/propose",
-            json={"workflow_name": workflow_name, "input": input_payload or {}},
+            json={
+                "workflow_name": workflow_name,
+                "input": input_payload or {},
+                "decision_record_id": decision_record_id,
+            },
         )
         return self._parse_model(response, contracts.WorkflowProposeResult)
 
