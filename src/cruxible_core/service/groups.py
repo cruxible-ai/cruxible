@@ -15,11 +15,12 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupNotFoundError,
 )
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.graph.types import REJECTED_STATUSES, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.service._helpers import MutationReceiptContext, mutation_receipt
 from cruxible_core.service.mutations import service_add_relationships
@@ -31,6 +32,7 @@ from cruxible_core.service.types import (
     ListResolutionsResult,
     ProposeGroupResult,
     ResolveGroupResult,
+    SuppressedProposalMember,
 )
 
 RelationshipTuple = tuple[str, str, str, str, str]
@@ -109,6 +111,100 @@ def _summarize_tuples(members: list[CandidateMember]) -> list[dict[str, str]]:
         }
         for member in members
     ]
+
+
+def _suppressed_member_for_existing_edge(member: CandidateMember) -> SuppressedProposalMember:
+    return SuppressedProposalMember(
+        relationship_type=member.relationship_type,
+        from_type=member.from_type,
+        from_id=member.from_id,
+        to_type=member.to_type,
+        to_id=member.to_id,
+        reason="existing_edge",
+    )
+
+
+def _suppressed_member_for_pending_group(
+    member: CandidateMember,
+    group: CandidateGroup,
+) -> SuppressedProposalMember:
+    return SuppressedProposalMember(
+        relationship_type=member.relationship_type,
+        from_type=member.from_type,
+        from_id=member.from_id,
+        to_type=member.to_type,
+        to_id=member.to_id,
+        reason="pending_proposal",
+        existing_group_id=group.group_id,
+        existing_group_status=group.status,
+        existing_signature=group.signature,
+        source_workflow_name=group.source_workflow_name,
+    )
+
+
+def _merge_suppressed_members(
+    existing: list[SuppressedProposalMember],
+    additions: list[SuppressedProposalMember],
+) -> list[SuppressedProposalMember]:
+    merged: dict[tuple[str, str, str, str, str, str], SuppressedProposalMember] = {
+        (
+            item.from_type,
+            item.from_id,
+            item.to_type,
+            item.to_id,
+            item.relationship_type,
+            item.reason,
+        ): item
+        for item in existing
+    }
+    for item in additions:
+        key = (
+            item.from_type,
+            item.from_id,
+            item.to_type,
+            item.to_id,
+            item.relationship_type,
+            item.reason,
+        )
+        merged.setdefault(key, item)
+    return list(merged.values())
+
+
+def _filter_relationship_tuple_conflicts(
+    *,
+    graph: EntityGraph,
+    group_store: GroupStoreProtocol,
+    relationship_type: str,
+    members: list[CandidateMember],
+    exclude_group_id: str | None,
+) -> tuple[list[CandidateMember], list[SuppressedProposalMember]]:
+    if not members:
+        return [], []
+
+    conflicts = group_store.find_pending_groups_for_tuples(
+        relationship_type,
+        [_relationship_tuple(member) for member in members],
+        exclude_group_id=exclude_group_id,
+        statuses=("pending_review", "applying"),
+    )
+    retained: list[CandidateMember] = []
+    suppressed: list[SuppressedProposalMember] = []
+    for member in members:
+        if graph.has_live_relationship(
+            member.from_type,
+            member.from_id,
+            member.to_type,
+            member.to_id,
+            member.relationship_type,
+        ):
+            suppressed.append(_suppressed_member_for_existing_edge(member))
+            continue
+        pending_group = conflicts.get(_relationship_tuple(member))
+        if pending_group is not None:
+            suppressed.append(_suppressed_member_for_pending_group(member, pending_group))
+            continue
+        retained.append(member)
+    return retained, suppressed
 
 
 def _merge_pending_members(
@@ -214,6 +310,8 @@ def service_propose_group(
         seen_members.add(key)
 
     graph = instance.load_graph()
+    # Workflow policy accounting intentionally reflects the original proposal set.
+    # Tuple-identity filtering below may remove members before the review group is stored.
     members, force_review = _apply_workflow_policies(
         config=config,
         graph=graph,
@@ -226,49 +324,6 @@ def service_propose_group(
 
     matching = rel_schema.matching
 
-    # 6. Signal validation (all members)
-    for m in members:
-        seen_integrations: set[str] = set()
-        for sig in m.signals:
-            if sig.integration in seen_integrations:
-                raise ConfigError(
-                    f"Member {m.from_id}\u2192{m.to_id} has duplicate signals "
-                    f"from integration '{sig.integration}'"
-                )
-            seen_integrations.add(sig.integration)
-
-            if matching is not None and matching.integrations:
-                if sig.integration not in matching.integrations:
-                    declared = ", ".join(sorted(matching.integrations.keys()))
-                    raise ConfigError(
-                        f"Signal from undeclared integration '{sig.integration}'; "
-                        f"declared: {declared}"
-                    )
-
-    # 7. Config guardrails (if matching section exists)
-    if matching is not None and matching.integrations:
-        # Blocking + required integrations: every member must have a signal
-        for iname, icfg in matching.integrations.items():
-            if icfg.role in ("blocking", "required"):
-                for m in members:
-                    member_integrations = {s.integration for s in m.signals}
-                    if iname not in member_integrations:
-                        raise ConfigError(
-                            f"Member {m.from_id}\u2192{m.to_id} missing signal "
-                            f"from {icfg.role} integration '{iname}'"
-                        )
-
-        # integrations_used validation
-        for iname in integrations_used:
-            if iname not in matching.integrations:
-                raise ConfigError(f"Integration '{iname}' not declared in matching.integrations")
-
-        # max_group_size
-        if len(members) > matching.max_group_size:
-            raise ConfigError(
-                f"Group size {len(members)} exceeds max_group_size {matching.max_group_size}"
-            )
-
     if not thesis_facts:
         raise ConfigError("Governed proposals require non-empty thesis_facts")
 
@@ -276,6 +331,69 @@ def service_propose_group(
     signature = compute_group_signature(relationship_type, thesis_facts)
     group_store = instance.get_group_store()
     try:
+        pending_group = group_store.find_pending_group(relationship_type, signature)
+        old_members = (
+            group_store.get_members(pending_group.group_id)
+            if pending_group is not None
+            else []
+        )
+        suppressed_members: list[SuppressedProposalMember] = []
+        if rel_schema.proposal_identity == "relationship_tuple":
+            members, suppressed_members = _filter_relationship_tuple_conflicts(
+                graph=graph,
+                group_store=group_store,
+                relationship_type=relationship_type,
+                members=members,
+                exclude_group_id=(
+                    pending_group.group_id if pending_group is not None else None
+                ),
+            )
+
+        # 6. Signal validation (retained members)
+        for m in members:
+            seen_integrations: set[str] = set()
+            for sig in m.signals:
+                if sig.integration in seen_integrations:
+                    raise ConfigError(
+                        f"Member {m.from_id}\u2192{m.to_id} has duplicate signals "
+                        f"from integration '{sig.integration}'"
+                    )
+                seen_integrations.add(sig.integration)
+
+                if matching is not None and matching.integrations:
+                    if sig.integration not in matching.integrations:
+                        declared = ", ".join(sorted(matching.integrations.keys()))
+                        raise ConfigError(
+                            f"Signal from undeclared integration '{sig.integration}'; "
+                            f"declared: {declared}"
+                        )
+
+        # 7. Config guardrails (if matching section exists)
+        if matching is not None and matching.integrations:
+            # Blocking + required integrations: every retained member must have a signal
+            for iname, icfg in matching.integrations.items():
+                if icfg.role in ("blocking", "required"):
+                    for m in members:
+                        member_integrations = {s.integration for s in m.signals}
+                        if iname not in member_integrations:
+                            raise ConfigError(
+                                f"Member {m.from_id}\u2192{m.to_id} missing signal "
+                                f"from {icfg.role} integration '{iname}'"
+                            )
+
+            # integrations_used validation
+            for iname in integrations_used:
+                if iname not in matching.integrations:
+                    raise ConfigError(
+                        f"Integration '{iname}' not declared in matching.integrations"
+                    )
+
+            # max_group_size
+            if len(members) > matching.max_group_size:
+                raise ConfigError(
+                    f"Group size {len(members)} exceeds max_group_size {matching.max_group_size}"
+                )
+
         prior = group_store.find_resolution(
             relationship_type, signature, action="approve", confirmed=True
         )
@@ -283,13 +401,16 @@ def service_propose_group(
             relationship_type,
             signature,
         )
-        pending_group = group_store.find_pending_group(relationship_type, signature)
         delta_members = [m for m in members if _relationship_tuple(m) not in approved_tuples]
-        old_members = (
-            group_store.get_members(pending_group.group_id)
-            if pending_group is not None
-            else []
-        )
+        if rel_schema.proposal_identity == "relationship_tuple":
+            suppressed_members = _merge_suppressed_members(
+                suppressed_members,
+                [
+                    _suppressed_member_for_existing_edge(member)
+                    for member in members
+                    if _relationship_tuple(member) in approved_tuples
+                ],
+            )
         pending_members = delta_members
         if pending_group is not None and pending_refresh_mode == "retain_missing":
             pending_members = _merge_pending_members(old_members, delta_members)
@@ -304,6 +425,7 @@ def service_propose_group(
                     member_count=0,
                     prior_resolution=prior,
                     suppressed=True,
+                    suppressed_members=suppressed_members,
                     policy_summary=policy_summary,
                 )
 
@@ -315,6 +437,7 @@ def service_propose_group(
                     review_priority=pending_group.review_priority,
                     member_count=pending_group.member_count,
                     prior_resolution=prior,
+                    suppressed_members=suppressed_members,
                     policy_summary=policy_summary,
                 )
 
@@ -349,6 +472,7 @@ def service_propose_group(
                         member_count=0,
                         prior_resolution=prior,
                         suppressed=True,
+                        suppressed_members=suppressed_members,
                         policy_summary=policy_summary,
                     )
                 )
@@ -455,6 +579,7 @@ def service_propose_group(
                         review_priority=review_priority,
                         member_count=len(pending_members),
                         prior_resolution=prior,
+                        suppressed_members=suppressed_members,
                         policy_summary=policy_summary,
                     )
                 )
@@ -585,6 +710,7 @@ def service_propose_group(
                             review_priority=rewritten_review_priority,
                             member_count=len(rewritten_members),
                             prior_resolution=prior,
+                            suppressed_members=suppressed_members,
                             policy_summary=policy_summary,
                         )
                     )
@@ -597,6 +723,7 @@ def service_propose_group(
                             review_priority=review_priority,
                             member_count=len(pending_members),
                             prior_resolution=prior,
+                            suppressed_members=suppressed_members,
                             policy_summary=policy_summary,
                         )
                     )

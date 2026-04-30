@@ -194,8 +194,16 @@ class RelationshipSchema(BaseModel):
     description: str | None = None
     reverse_name: str | None = Field(default=None, validation_alias="inverse")
     matching: MatchingSchema | None = None
+    proposal_identity: Literal["signature", "relationship_tuple"] = "signature"
 
     model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def validate_proposal_identity(self) -> RelationshipSchema:
+        if self.proposal_identity == "relationship_tuple" and self.matching is None:
+            msg = "proposal_identity 'relationship_tuple' requires a governed matching section"
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------

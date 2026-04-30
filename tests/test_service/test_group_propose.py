@@ -226,6 +226,18 @@ def matching_instance(tmp_path: Path) -> CruxibleInstance:
 
 
 @pytest.fixture
+def tuple_identity_instance(tmp_path: Path) -> CruxibleInstance:
+    """Instance where fits dedupes pending proposals by relationship tuple."""
+    config = MATCHING_CONFIG_YAML.replace(
+        "    matching:\n      integrations:",
+        "    proposal_identity: relationship_tuple\n    matching:\n      integrations:",
+        1,
+    )
+    (tmp_path / "config.yaml").write_text(config)
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+@pytest.fixture
 def no_matching_instance(tmp_path: Path) -> CruxibleInstance:
     """Instance without matching config."""
     (tmp_path / "config.yaml").write_text(NO_MATCHING_CONFIG_YAML)
@@ -328,6 +340,24 @@ def _seed_fitment_entities(instance: CruxibleInstance) -> None:
     instance.save_graph(graph)
 
 
+def _approve_live_fit_edge(instance: CruxibleInstance, *, review_status: str | None = None) -> None:
+    graph = instance.load_graph()
+    properties = {"verified": True}
+    if review_status is not None:
+        properties["review_status"] = review_status
+    graph.add_relationship(
+        RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1001",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC",
+            properties=properties,
+        )
+    )
+    instance.save_graph(graph)
+
+
 # ---------------------------------------------------------------------------
 # Basic proposal tests
 # ---------------------------------------------------------------------------
@@ -381,6 +411,193 @@ class TestBasicProposal:
         )
         assert result.status == "pending_review"
         assert result.review_priority == "review"  # no prior → review
+
+
+class TestRelationshipTupleProposalIdentity:
+    def test_same_signature_rerun_rewrites_without_self_suppression(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        members = [_member(signals=_all_support_signals())]
+        first = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "same"},
+        )
+
+        second = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "same"},
+        )
+
+        assert second.group_id == first.group_id
+        assert second.status == "pending_review"
+        assert second.suppressed_members == []
+
+    def test_different_signature_same_tuple_is_suppressed(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        members = [_member(signals=_all_support_signals())]
+        first = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "direct"},
+            source_workflow_name="direct_path",
+        )
+
+        second = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "cascade"},
+        )
+
+        assert second.status == "suppressed"
+        assert second.suppressed is True
+        assert second.member_count == 0
+        assert len(second.suppressed_members) == 1
+        suppressed = second.suppressed_members[0]
+        assert suppressed.reason == "pending_proposal"
+        assert suppressed.existing_group_id == first.group_id
+        assert suppressed.existing_group_status == "pending_review"
+        assert suppressed.source_workflow_name == "direct_path"
+
+    def test_mixed_tuple_conflicts_keep_new_members(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        first = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+            thesis_facts={"bucket": "first"},
+        )
+        mixed_members = [
+            _member(signals=_all_support_signals()),
+            _member(
+                from_id="BP-1002",
+                to_id="V-2024-ACCORD",
+                signals=_all_support_signals(),
+            ),
+        ]
+
+        second = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            mixed_members,
+            thesis_facts={"bucket": "mixed"},
+        )
+
+        assert second.status == "pending_review"
+        assert second.group_id is not None
+        assert second.group_id != first.group_id
+        assert second.member_count == 1
+        assert len(second.suppressed_members) == 1
+        assert second.suppressed_members[0].reason == "pending_proposal"
+
+    def test_live_existing_edge_suppresses_tuple(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        _approve_live_fit_edge(tuple_identity_instance)
+
+        result = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+            thesis_facts={"bucket": "existing"},
+        )
+
+        assert result.status == "suppressed"
+        assert result.suppressed is True
+        assert len(result.suppressed_members) == 1
+        assert result.suppressed_members[0].reason == "existing_edge"
+
+    @pytest.mark.parametrize("review_status", ["pending_review", "human_rejected"])
+    def test_non_live_existing_edge_does_not_suppress_tuple(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+        review_status: str,
+    ) -> None:
+        _approve_live_fit_edge(tuple_identity_instance, review_status=review_status)
+
+        result = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+            thesis_facts={"bucket": review_status},
+        )
+
+        assert result.status == "pending_review"
+        assert result.suppressed_members == []
+
+    def test_applying_group_suppresses_tuple(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        first = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+            thesis_facts={"bucket": "first"},
+        )
+        group_store = tuple_identity_instance.get_group_store()
+        try:
+            with group_store.transaction():
+                group_store.update_group_status(first.group_id, "applying")
+        finally:
+            group_store.close()
+
+        second = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            [_member(signals=_all_support_signals())],
+            thesis_facts={"bucket": "second"},
+        )
+
+        assert second.status == "suppressed"
+        assert second.suppressed_members[0].existing_group_status == "applying"
+
+    def test_pending_tuple_lookup_rejects_mixed_relationship_types(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        group_store = tuple_identity_instance.get_group_store()
+        try:
+            with pytest.raises(ValueError, match="relationship_type"):
+                group_store.find_pending_groups_for_tuples(
+                    "fits",
+                    [("Part", "BP-1", "Vehicle", "V-1", "replaces")],
+                )
+        finally:
+            group_store.close()
+
+    def test_signature_identity_keeps_current_cross_signature_behavior(
+        self,
+        matching_instance: CruxibleInstance,
+    ) -> None:
+        members = [_member(signals=_all_support_signals())]
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "first"},
+        )
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "second"},
+        )
+
+        assert second.group_id is not None
+        assert second.group_id != first.group_id
+        assert second.suppressed is False
 
 
 # ---------------------------------------------------------------------------

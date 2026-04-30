@@ -309,6 +309,7 @@ class TestOutputSchema:
                     "trace_ids",
                     "prior_resolution",
                     "suppressed",
+                    "suppressed_members",
                     "policy_summary",
                     "receipt",
                     "traces",

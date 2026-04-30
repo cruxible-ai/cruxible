@@ -111,12 +111,25 @@ def group_project(tmp_path):
 
 
 @pytest.fixture
-def instance_id(server, group_project):
+def tuple_identity_group_project(tmp_path):
+    """Create a project where fits uses relationship tuple proposal identity."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        GROUP_CONFIG_YAML.replace(
+            "    matching:\n",
+            "    proposal_identity: relationship_tuple\n    matching:\n",
+            1,
+        )
+    )
+    return tmp_path
+
+
+def _init_group_instance(server, project):
     """Initialize instance and add entities for group tests."""
     result = call_tool(
         server,
         "cruxible_init",
-        {"root_dir": str(group_project), "config_path": "config.yaml"},
+        {"root_dir": str(project), "config_path": "config.yaml"},
     )
     iid = result["instance_id"]
     # Add entities
@@ -170,6 +183,16 @@ def instance_id(server, group_project):
     return iid
 
 
+@pytest.fixture
+def instance_id(server, group_project):
+    return _init_group_instance(server, group_project)
+
+
+@pytest.fixture
+def tuple_identity_instance_id(server, tuple_identity_group_project):
+    return _init_group_instance(server, tuple_identity_group_project)
+
+
 def _member(from_id="BP-1", to_id="V-1"):
     return {
         "from_type": "Part",
@@ -197,6 +220,45 @@ class TestProposeGroup:
         assert result["status"] == "pending_review"
         assert result["member_count"] == 1
         assert result["signature"]
+
+    def test_tuple_suppression_surfaces_conflicts(self, server, tuple_identity_instance_id):
+        first = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": tuple_identity_instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"bucket": "first"},
+            },
+        )
+        second = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": tuple_identity_instance_id,
+                "relationship_type": "fits",
+                "members": [_member("BP-1", "V-1")],
+                "thesis_facts": {"bucket": "second"},
+            },
+        )
+
+        assert second["status"] == "suppressed"
+        assert second["group_id"] is None
+        assert second["suppressed_members"] == [
+            {
+                "relationship_type": "fits",
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "reason": "pending_proposal",
+                "existing_group_id": first["group_id"],
+                "existing_group_status": "pending_review",
+                "existing_signature": first["signature"],
+                "source_workflow_name": None,
+            }
+        ]
 
     def test_propose_with_thesis(self, server, instance_id):
         result = call_tool(

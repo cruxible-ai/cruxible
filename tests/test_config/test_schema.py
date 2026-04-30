@@ -142,6 +142,26 @@ class TestRelationshipSchema:
         assert rel.cardinality == "many_to_many"
         assert rel.properties == {}
         assert rel.reverse_name is None
+        assert rel.proposal_identity == "signature"
+
+    def test_relationship_tuple_proposal_identity_requires_matching(self):
+        with pytest.raises(ValueError, match="proposal_identity"):
+            RelationshipSchema(
+                name="r",
+                from_entity="A",
+                to_entity="B",
+                proposal_identity="relationship_tuple",
+            )
+
+    def test_relationship_tuple_proposal_identity_allows_matching(self):
+        rel = RelationshipSchema(
+            name="r",
+            from_entity="A",
+            to_entity="B",
+            matching=MatchingSchema(integrations={}),
+            proposal_identity="relationship_tuple",
+        )
+        assert rel.proposal_identity == "relationship_tuple"
 
 
 class TestTraversalStep:

@@ -159,6 +159,15 @@ class GroupStoreProtocol(ABC):
         group_kind: str = "propose",
     ) -> CandidateGroup | None: ...
     @abstractmethod
+    def find_pending_groups_for_tuples(
+        self,
+        relationship_type: str,
+        tuples: list[tuple[str, str, str, str, str]],
+        *,
+        exclude_group_id: str | None = None,
+        statuses: tuple[str, ...] = ("pending_review", "applying"),
+    ) -> dict[tuple[str, str, str, str, str], CandidateGroup]: ...
+    @abstractmethod
     def save_resolution(
         self,
         relationship_type: str,

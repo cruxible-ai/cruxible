@@ -516,6 +516,21 @@ def propose_cmd(
             "group_id": result.group_id,
             "status": result.group_status,
             "suppressed": result.suppressed,
+            "suppressed_members": [
+                {
+                    "relationship_type": item.relationship_type,
+                    "from_type": item.from_type,
+                    "from_id": item.from_id,
+                    "to_type": item.to_type,
+                    "to_id": item.to_id,
+                    "reason": item.reason,
+                    "existing_group_id": item.existing_group_id,
+                    "existing_group_status": item.existing_group_status,
+                    "existing_signature": item.existing_signature,
+                    "source_workflow_name": item.source_workflow_name,
+                }
+                for item in result.suppressed_members
+            ],
             "receipt_id": result.receipt_id,
             "trace_ids": result.trace_ids or [],
             "output": result.output,
@@ -531,6 +546,14 @@ def propose_cmd(
         click.echo(f"Receipt ID: {result.receipt_id}")
         if result.trace_ids:
             click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+        if result.suppressed_members:
+            click.echo(f"Suppressed members: {len(result.suppressed_members)}")
+            for item in result.suppressed_members:
+                click.echo(
+                    "  "
+                    f"{item.from_type}:{item.from_id} -[{item.relationship_type}]-> "
+                    f"{item.to_type}:{item.to_id} ({item.reason})"
+                )
         click.echo(json.dumps(result.output, indent=2, sort_keys=True))
         return
 
@@ -539,6 +562,14 @@ def propose_cmd(
     click.echo(f"Group status: {result.group_status} ({result.review_priority})")
     if result.trace_ids:
         click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+    if result.suppressed_members:
+        click.echo(f"Suppressed members: {len(result.suppressed_members)}")
+        for item in result.suppressed_members:
+            click.echo(
+                "  "
+                f"{item.from_type}:{item.from_id} -[{item.relationship_type}]-> "
+                f"{item.to_type}:{item.to_id} ({item.reason})"
+            )
     click.echo(json.dumps(result.output, indent=2, sort_keys=True))
 
 

@@ -395,6 +395,10 @@ def _handle_propose_workflow_local(
         group_status=result.group_status,
         review_priority=result.review_priority,
         suppressed=result.suppressed,
+        suppressed_members=[
+            contracts.SuppressedProposalMember(**item.__dict__)
+            for item in result.suppressed_members
+        ],
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=result.trace_ids,
         prior_resolution=(
@@ -1611,6 +1615,10 @@ def _handle_propose_group_local(
             else None
         ),
         suppressed=result.suppressed,
+        suppressed_members=[
+            contracts.SuppressedProposalMember(**item.__dict__)
+            for item in result.suppressed_members
+        ],
         policy_summary=result.policy_summary,
         receipt_id=result.receipt_id,
     )

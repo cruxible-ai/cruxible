@@ -110,15 +110,32 @@ def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.Monkey
                 workflow="wf",
                 output={"members": []},
                 receipt_id="RCP-1",
-                group_id="GRP-1",
-                group_status="pending_review",
+                group_id=None,
+                group_status="suppressed",
                 review_priority="review",
+                suppressed=True,
+                suppressed_members=[
+                    contracts.SuppressedProposalMember(
+                        relationship_type="recommended_for",
+                        from_type="Campaign",
+                        from_id="CMP-1",
+                        to_type="Product",
+                        to_id="SKU-123",
+                        reason="pending_proposal",
+                        existing_group_id="GRP-1",
+                        existing_group_status="pending_review",
+                        existing_signature="sig-1",
+                        source_workflow_name="wf",
+                    )
+                ],
                 trace_ids=["TRC-1"],
             )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     result = handlers.handle_propose_workflow("inst_123", "wf", {"id": "1"})
-    assert result.group_id == "GRP-1"
+    assert result.group_id is None
+    assert result.suppressed is True
+    assert result.suppressed_members[0].existing_group_id == "GRP-1"
 
 
 def test_workflow_lock_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):

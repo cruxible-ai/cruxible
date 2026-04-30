@@ -227,6 +227,7 @@ def service_propose_workflow(
         group_status=group_result.status,
         review_priority=group_result.review_priority,
         suppressed=group_result.suppressed,
+        suppressed_members=group_result.suppressed_members,
         query_receipt_ids=result.query_receipt_ids,
         trace_ids=[trace.trace_id for trace in result.traces],
         prior_resolution=group_result.prior_resolution,

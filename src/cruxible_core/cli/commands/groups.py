@@ -152,11 +152,23 @@ def group_propose(
         command_name="group propose",
     )
 
-    click.echo(f"Group {result.group_id} proposed.")
+    if result.group_id is None or result.suppressed:
+        click.echo("No reviewable group proposed.")
+    else:
+        click.echo(f"Group {result.group_id} proposed.")
     click.echo(f"  Status: {result.status}")
     click.echo(f"  Priority: {result.review_priority}")
     click.echo(f"  Members: {result.member_count}")
     click.echo(f"  Signature: {result.signature[:16]}...")
+    suppressed_members = getattr(result, "suppressed_members", [])
+    if suppressed_members:
+        click.echo(f"  Suppressed members: {len(suppressed_members)}")
+        for item in suppressed_members:
+            click.echo(
+                "    "
+                f"{item.from_type}:{item.from_id} -[{item.relationship_type}]-> "
+                f"{item.to_type}:{item.to_id} ({item.reason})"
+            )
     if result.receipt_id:
         click.echo(f"  Receipt: {result.receipt_id}")
 

@@ -73,6 +73,19 @@ class MemberInput(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class SuppressedProposalMember(BaseModel):
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    reason: Literal["existing_edge", "pending_proposal"]
+    existing_group_id: str | None = None
+    existing_group_status: str | None = None
+    existing_signature: str | None = None
+    source_workflow_name: str | None = None
+
+
 class PropertyPairInput(BaseModel):
     from_property: str
     to_property: str
@@ -368,6 +381,7 @@ class WorkflowProposeResult(BaseModel):
     group_status: str
     review_priority: str
     suppressed: bool = False
+    suppressed_members: list[SuppressedProposalMember] = Field(default_factory=list)
     query_receipt_ids: list[str] = Field(default_factory=list)
     trace_ids: list[str] = Field(default_factory=list)
     prior_resolution: dict[str, Any] | None = None
@@ -470,6 +484,7 @@ class ProposeGroupToolResult(BaseModel):
     member_count: int
     prior_resolution: dict[str, Any] | None = None
     suppressed: bool = False
+    suppressed_members: list[SuppressedProposalMember] = Field(default_factory=list)
     policy_summary: dict[str, int] = Field(default_factory=dict)
     receipt_id: str | None = None
 

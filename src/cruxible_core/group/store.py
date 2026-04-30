@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS candidate_members (
 );
 CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity
     ON candidate_members(group_id, relationship_type, from_type, from_id, to_type, to_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_members_pending_tuple
+    ON candidate_members(relationship_type, from_type, from_id, to_type, to_id);
 
 CREATE TABLE IF NOT EXISTS group_store_meta (
     key TEXT PRIMARY KEY,
@@ -148,6 +150,10 @@ class GroupStore(GroupStoreProtocol):
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity "
             "ON candidate_members(group_id, relationship_type, from_type, from_id, to_type, to_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_members_pending_tuple "
+            "ON candidate_members(relationship_type, from_type, from_id, to_type, to_id)"
         )
 
         self._run_signature_bucket_migration()
@@ -511,6 +517,68 @@ class GroupStore(GroupStoreProtocol):
         if row is None:
             return None
         return self._row_to_group(row)
+
+    def find_pending_groups_for_tuples(
+        self,
+        relationship_type: str,
+        tuples: list[tuple[str, str, str, str, str]],
+        *,
+        exclude_group_id: str | None = None,
+        statuses: tuple[str, ...] = ("pending_review", "applying"),
+    ) -> dict[tuple[str, str, str, str, str], CandidateGroup]:
+        """Return live proposal groups containing any of the given tuple identities."""
+        mismatched = [item for item in tuples if item[4] != relationship_type]
+        if mismatched:
+            raise ValueError(
+                "all tuple identities must match the requested relationship_type"
+            )
+        tuple_keys = sorted(set(tuples))
+        if not tuple_keys or not statuses:
+            return {}
+
+        status_placeholders = ", ".join("?" for _ in statuses)
+        tuple_clauses = " OR ".join(
+            "(m.from_type = ? AND m.from_id = ? AND m.to_type = ? "
+            "AND m.to_id = ? AND m.relationship_type = ?)"
+            for _ in tuple_keys
+        )
+        params: list[Any] = [relationship_type, *statuses]
+        for from_type, from_id, to_type, to_id, tuple_relationship_type in tuple_keys:
+            params.extend([from_type, from_id, to_type, to_id, tuple_relationship_type])
+
+        exclude_clause = ""
+        if exclude_group_id is not None:
+            exclude_clause = " AND g.group_id != ?"
+            params.append(exclude_group_id)
+
+        rows = self._conn.execute(
+            "SELECT g.*, "
+            "m.from_type AS member_from_type, "
+            "m.from_id AS member_from_id, "
+            "m.to_type AS member_to_type, "
+            "m.to_id AS member_to_id, "
+            "m.relationship_type AS member_relationship_type "
+            "FROM candidate_members m "
+            "JOIN candidate_groups g ON g.group_id = m.group_id "
+            f"WHERE g.relationship_type = ? AND g.status IN ({status_placeholders}) "
+            "AND g.group_kind = 'propose' "
+            f"AND ({tuple_clauses})"
+            f"{exclude_clause} "
+            "ORDER BY g.created_at DESC",
+            tuple(params),
+        ).fetchall()
+
+        conflicts: dict[tuple[str, str, str, str, str], CandidateGroup] = {}
+        for row in rows:
+            key = (
+                row["member_from_type"],
+                row["member_from_id"],
+                row["member_to_type"],
+                row["member_to_id"],
+                row["member_relationship_type"],
+            )
+            conflicts.setdefault(key, self._row_to_group(row))
+        return conflicts
 
     @staticmethod
     def _row_to_member(row: sqlite3.Row) -> CandidateMember:

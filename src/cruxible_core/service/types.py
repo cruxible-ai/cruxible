@@ -456,14 +456,29 @@ class TestServiceResult:
 
 
 @dataclass
+class SuppressedProposalMember:
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    reason: Literal["existing_edge", "pending_proposal"]
+    existing_group_id: str | None = None
+    existing_group_status: str | None = None
+    existing_signature: str | None = None
+    source_workflow_name: str | None = None
+
+
+@dataclass
 class ProposeWorkflowResult:
     workflow: str
     output: Any
     receipt_id: str
     group_id: str | None
-    group_status: GroupStatus
+    group_status: GroupStatus | Literal["suppressed"]
     review_priority: ReviewPriority
     suppressed: bool = False
+    suppressed_members: list[SuppressedProposalMember] = field(default_factory=list)
     query_receipt_ids: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
     prior_resolution: GroupResolution | None = None
@@ -538,6 +553,7 @@ class ProposeGroupResult:
     member_count: int
     prior_resolution: GroupResolution | None
     suppressed: bool = False
+    suppressed_members: list[SuppressedProposalMember] = field(default_factory=list)
     policy_summary: dict[str, int] = field(default_factory=dict)
     receipt_id: str | None = None
 

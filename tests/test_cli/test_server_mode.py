@@ -1012,6 +1012,136 @@ def test_run_apply_shortcuts_preview_file_flow_in_server_mode(
     assert "Committed snapshot: snap-commit" in result.output
 
 
+def test_propose_json_includes_suppressed_members(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("campaign_id: CMP-1\n")
+
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            assert workflow_name == "wf"
+            assert input_payload == {"campaign_id": "CMP-1"}
+            return contracts.WorkflowProposeResult(
+                workflow="wf",
+                output={"members": []},
+                receipt_id="RCP-1",
+                group_id=None,
+                group_status="suppressed",
+                review_priority="review",
+                suppressed=True,
+                suppressed_members=[
+                    contracts.SuppressedProposalMember(
+                        relationship_type="recommended_for",
+                        from_type="Campaign",
+                        from_id="CMP-1",
+                        to_type="Product",
+                        to_id="SKU-123",
+                        reason="pending_proposal",
+                        existing_group_id="GRP-1",
+                        existing_group_status="pending_review",
+                        existing_signature="sig-1",
+                        source_workflow_name="wf",
+                    )
+                ],
+                trace_ids=["TRC-1"],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "propose",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["suppressed"] is True
+    assert payload["suppressed_members"] == [
+        {
+            "relationship_type": "recommended_for",
+            "from_type": "Campaign",
+            "from_id": "CMP-1",
+            "to_type": "Product",
+            "to_id": "SKU-123",
+            "reason": "pending_proposal",
+            "existing_group_id": "GRP-1",
+            "existing_group_status": "pending_review",
+            "existing_signature": "sig-1",
+            "source_workflow_name": "wf",
+        }
+    ]
+
+
+def test_propose_human_output_prints_suppressed_members(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("campaign_id: CMP-1\n")
+
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            return contracts.WorkflowProposeResult(
+                workflow=workflow_name,
+                output={"members": []},
+                receipt_id="RCP-1",
+                group_id=None,
+                group_status="suppressed",
+                review_priority="review",
+                suppressed=True,
+                suppressed_members=[
+                    contracts.SuppressedProposalMember(
+                        relationship_type="recommended_for",
+                        from_type="Campaign",
+                        from_id="CMP-1",
+                        to_type="Product",
+                        to_id="SKU-123",
+                        reason="pending_proposal",
+                        existing_group_id="GRP-1",
+                        existing_group_status="pending_review",
+                        existing_signature="sig-1",
+                        source_workflow_name="wf",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "propose",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Workflow wf produced no reviewable group." in result.output
+    assert "Suppressed members: 1" in result.output
+    assert "Campaign:CMP-1 -[recommended_for]-> Product:SKU-123" in result.output
+
+
 def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
     monkeypatch,
     runner: CliRunner,

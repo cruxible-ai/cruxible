@@ -978,6 +978,91 @@ def test_workflow_routes_lock_plan_run_and_test(
     assert test.json()["failed"] == 0
 
 
+def test_workflow_propose_route_returns_suppressed_members(
+    app_client: TestClient,
+    workflow_server_project: Path,
+    proposal_workflow_config_yaml: str,
+):
+    tuple_config_yaml = proposal_workflow_config_yaml.replace(
+        "    matching:\n",
+        "    proposal_identity: relationship_tuple\n    matching:\n",
+        1,
+    )
+    instance_id = _init_instance(
+        app_client,
+        workflow_server_project,
+        config_yaml=tuple_config_yaml,
+    )
+
+    for entity in [
+        {
+            "entity_type": "Campaign",
+            "entity_id": "CMP-1",
+            "properties": {"campaign_id": "CMP-1", "region": "north"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-123",
+            "properties": {"sku": "SKU-123", "category": "beverages"},
+        },
+        {
+            "entity_type": "Product",
+            "entity_id": "SKU-456",
+            "properties": {"sku": "SKU-456", "category": "beverages"},
+        },
+    ]:
+        response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+        assert response.status_code == 200
+
+    lock = app_client.post(f"/api/v1/{instance_id}/workflows/lock")
+    assert lock.status_code == 200, lock.text
+
+    first = app_client.post(
+        f"/api/v1/{instance_id}/workflows/propose",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert first.status_code == 200, first.text
+    first_group_id = first.json()["group_id"]
+    assert first_group_id
+
+    update_campaign = app_client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Campaign",
+                    "entity_id": "CMP-1",
+                    "properties": {"campaign_id": "CMP-1", "region": "south"},
+                }
+            ]
+        },
+    )
+    assert update_campaign.status_code == 200, update_campaign.text
+
+    second = app_client.post(
+        f"/api/v1/{instance_id}/workflows/propose",
+        json={
+            "workflow_name": "propose_campaign_recommendations",
+            "input": {"campaign_id": "CMP-1"},
+        },
+    )
+    assert second.status_code == 200, second.text
+    payload = second.json()
+    assert payload["group_id"] is None
+    assert payload["suppressed"] is True
+    assert len(payload["suppressed_members"]) == 2
+    sku_123 = next(
+        item for item in payload["suppressed_members"] if item["to_id"] == "SKU-123"
+    )
+    assert sku_123["relationship_type"] == "recommended_for"
+    assert sku_123["reason"] == "pending_proposal"
+    assert sku_123["existing_group_id"] == first_group_id
+    assert sku_123["existing_group_status"] == "pending_review"
+
+
 def test_workflow_apply_route_commits_canonical_snapshot(
     app_client: TestClient,
     canonical_workflow_project: Path,
