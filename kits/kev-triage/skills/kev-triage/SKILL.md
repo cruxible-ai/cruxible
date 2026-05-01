@@ -103,9 +103,7 @@ does not approve or resolve governed proposals directly.
 2. Run the fork proposal chain:
    ```
    cruxible propose --workflow propose_asset_products
-   cruxible propose --workflow propose_asset_affected
    cruxible propose --workflow propose_asset_exposure
-   cruxible propose --workflow propose_service_impact
    ```
    These are the standard workflow names in the stock `kev-triage` kit. If
    this instance uses a documented local variant, run the equivalent chain for
@@ -354,17 +352,17 @@ materially blocks a specific CVE class.
    cruxible get-entity --type CompensatingControl --id CTRL-1
    ```
 
-2. Propose `control_reduces_exposure_to` for the CVE the control mitigates:
+2. Propose `control_mitigates_class` for the vulnerability class the control mitigates:
    ```
    cruxible group propose \
-     --relationship control_reduces_exposure_to \
+     --relationship control_mitigates_class \
      --members '[{"from_type":"CompensatingControl","from_id":"CTRL-1",
-                   "to_type":"Vulnerability","to_id":"CVE-2021-41773",
-                   "relationship_type":"control_reduces_exposure_to",
+                   "to_type":"VulnerabilityClass","to_id":"path_traversal",
+                   "relationship_type":"control_mitigates_class",
                    "signals":[{"integration":"control_effectiveness","signal":"support",
                                 "evidence":"WAF rule set 941xx blocks path traversal payloads; tested 2025-10-15"}]}]' \
-     --thesis "Edge WAF ruleset 941xx blocks exploit strings for CVE-2021-41773 path traversal" \
-     --thesis-facts '{"control_id":"CTRL-1","cve_id":"CVE-2021-41773"}' \
+     --thesis "Edge WAF ruleset 941xx blocks path traversal exploit strings" \
+     --thesis-facts '{"control_id":"CTRL-1","class_id":"path_traversal"}' \
      --integration control_effectiveness
    ```
 
@@ -502,11 +500,10 @@ Every governed relationship the agent can propose:
 | Relationship | From → To | Required integration |
 |---|---|---|
 | `asset_runs_product` | Asset → Product | `software_product_match` |
-| `asset_affected_by_vulnerability` | Asset → Vulnerability | `product_version_evidence` |
-| `asset_exposed_to_vulnerability` | Asset → Vulnerability | `exploitability_signal` + `control_effectiveness` |
-| `service_impacted_by_vulnerability` | BusinessService → Vulnerability | `dependency_context` |
+| `asset_exposed_to_vulnerability` | Asset → Vulnerability | `product_version_evidence` + `exploitability_signal` + `control_effectiveness` |
 | `asset_patch_exception_for` | Asset → Vulnerability | `policy_review` |
-| `control_reduces_exposure_to` | CompensatingControl → Vulnerability | `control_effectiveness` |
+| `vulnerability_classified_as` | Vulnerability → VulnerabilityClass | `vulnerability_classification` |
+| `control_mitigates_class` | CompensatingControl → VulnerabilityClass | `control_effectiveness` |
 | `asset_remediated_vulnerability` | Asset → Vulnerability | `remediation_verification` |
 | `incident_owned_by` | Incident → Owner | `incident_attribution` |
 | `incident_involved_asset` | Incident → Asset | `incident_attribution` |

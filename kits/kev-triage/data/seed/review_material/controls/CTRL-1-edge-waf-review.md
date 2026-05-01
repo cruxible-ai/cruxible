@@ -10,11 +10,11 @@ instances.
 
 ## Candidate graph facts
 
-- Proposed `control_reduces_exposure_to`:
-  `CTRL-1 -> CVE-2021-41773`
+- Proposed `control_mitigates_class`:
+  `CTRL-1 -> path_traversal`
   `validation_basis=Validated against replay of observed path traversal requests`
-- Proposed `control_reduces_exposure_to`:
-  `CTRL-1 -> CVE-2024-38475`
+- Proposed `control_mitigates_class`:
+  `CTRL-1 -> http_request_routing`
   `validation_basis=Emergency mod_rewrite blocking rule tested on production mirror`
 
 ## Caveat

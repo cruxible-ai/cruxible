@@ -10,8 +10,8 @@ are time-bounded.
 
 ## Candidate graph facts
 
-- Proposed `control_reduces_exposure_to`:
-  `CTRL-3 -> CVE-2020-14882`
+- Proposed `control_mitigates_class`:
+  `CTRL-3 -> admin_interface_rce`
   `validation_basis=Replay of blocked admin-console requests from non-allowlisted partner hosts`
 
 ## Caveat

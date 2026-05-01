@@ -5,7 +5,6 @@ from __future__ import annotations
 from .assessment import (
     assess_asset_affected,
     assess_asset_exposure,
-    assess_service_impact,
 )
 from .matching import match_software_to_products
 from .reference import load_public_kev_rows, normalize_public_kev_reference
@@ -14,7 +13,6 @@ from .seed import load_fork_seed_data, load_software_inventory, normalize_fork_s
 __all__ = [
     "assess_asset_affected",
     "assess_asset_exposure",
-    "assess_service_impact",
     "load_fork_seed_data",
     "load_public_kev_rows",
     "load_software_inventory",

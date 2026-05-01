@@ -77,6 +77,25 @@ entity_types:
         type: string
         optional: true
 
+  VulnerabilityClass:
+    description: >
+      Operational vulnerability category used by local controls, policy,
+      and scenario analysis. This is fork-layer classification rather than
+      reference-layer public data.
+    properties:
+      class_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      description:
+        type: string
+        optional: true
+      attack_vector:
+        type: string
+        optional: true
+
   Exception:
     description: Approved patch or remediation exception.
     properties:
@@ -221,31 +240,10 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: asset_affected_by_vulnerability
-    description: Accepted judgment that an internal asset is actually affected by a vulnerability.
-    from: Asset
-    to: Vulnerability
-    properties:
-      product_id:
-        type: string
-        optional: true
-      installed_version:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
-      source:
-        type: string
-        optional: true
-    matching:
-      integrations:
-        product_version_evidence:
-          role: required
-          always_review_on_unsure: true
-
   - name: asset_exposed_to_vulnerability
-    description: Accepted judgment that the asset is materially exposed and should drive action.
+    description: >
+      Accepted judgment that an asset runs an affected product version and
+      is materially exposed enough to drive action.
     from: Asset
     to: Vulnerability
     properties:
@@ -258,30 +256,29 @@ relationships:
       rationale:
         type: string
         optional: true
+      product_id:
+        type: string
+        optional: true
+      installed_version:
+        type: string
+        optional: true
+      affected_rationale:
+        type: string
+        optional: true
+      evidence_source:
+        type: string
+        optional: true
     matching:
       integrations:
+        product_version_evidence:
+          role: required
+          always_review_on_unsure: true
         exploitability_signal:
           role: required
           always_review_on_unsure: true
         control_effectiveness:
           role: required
           always_review_on_unsure: true
-
-  - name: service_impacted_by_vulnerability
-    description: Accepted judgment that a business service is impacted through its asset dependencies.
-    from: BusinessService
-    to: Vulnerability
-    properties:
-      blast_radius:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
-    matching:
-      integrations:
-        dependency_context:
-          role: required
 
   - name: asset_patch_exception_for
     description: Accepted judgment that an exception currently waives remediation for a vulnerability on an asset.
@@ -302,10 +299,29 @@ relationships:
         policy_review:
           role: required
 
-  - name: control_reduces_exposure_to
-    description: Accepted judgment that a compensating control materially reduces exploitability for a vulnerability class.
+  - name: vulnerability_classified_as
+    description: >
+      Fork-layer classification of a public vulnerability into an
+      operational category used by local controls and stress scenarios.
+    from: Vulnerability
+    to: VulnerabilityClass
+    properties:
+      basis:
+        type: string
+        optional: true
+      source:
+        type: string
+        optional: true
+    matching:
+      integrations:
+        vulnerability_classification:
+          role: required
+          always_review_on_unsure: true
+
+  - name: control_mitigates_class
+    description: Accepted judgment that a compensating control materially mitigates a vulnerability class.
     from: CompensatingControl
-    to: Vulnerability
+    to: VulnerabilityClass
     properties:
       validation_basis:
         type: string
@@ -416,21 +432,26 @@ relationships:
 named_queries:
   kev_assets:
     description: >
-      Starting from a vulnerability, find internal assets that are currently
-      accepted as affected.
+      Starting from a vulnerability, find internal assets that run a product
+      affected by that vulnerability.
     entry_point: Vulnerability
     returns: Asset
     traversal:
-      - relationship: asset_affected_by_vulnerability
+      - relationship: vulnerability_affects_product
+        direction: outgoing
+      - relationship: asset_runs_product
         direction: incoming
 
   service_blast_radius:
     description: >
-      Starting from a vulnerability, find impacted business services.
+      Starting from a vulnerability, find business services with exposed
+      dependent assets.
     entry_point: Vulnerability
     returns: BusinessService
     traversal:
-      - relationship: service_impacted_by_vulnerability
+      - relationship: asset_exposed_to_vulnerability
+        direction: incoming
+      - relationship: service_depends_on_asset
         direction: incoming
 
   owner_patch_queue:
@@ -451,13 +472,13 @@ named_queries:
   product_kev_exposure:
     description: >
       Starting from a product, find KEV or CVE records known to affect it and
-      the assets that are currently accepted as affected.
+      the assets currently accepted as exposed.
     entry_point: Product
     returns: Asset
     traversal:
       - relationship: vulnerability_affects_product
         direction: incoming
-      - relationship: asset_affected_by_vulnerability
+      - relationship: asset_exposed_to_vulnerability
         direction: incoming
 
   vendor_service_impact:
@@ -473,7 +494,7 @@ named_queries:
         direction: incoming
       - relationship: vulnerability_affects_product
         direction: incoming
-      - relationship: asset_affected_by_vulnerability
+      - relationship: asset_exposed_to_vulnerability
         direction: incoming
       - relationship: service_depends_on_asset
         direction: incoming
@@ -482,16 +503,18 @@ named_queries:
     description: >
       Starting from a compensating control, find the business services
       that would lose coverage if this control were disabled or invalidated.
-      Traces from control through covered assets to exposed vulnerabilities
-      to dependent services.
+      Traces from control through mitigated vulnerability classes to exposed
+      vulnerabilities and dependent services.
     entry_point: CompensatingControl
     returns: BusinessService
     traversal:
-      - relationship: asset_has_control
+      - relationship: control_mitigates_class
+        direction: outgoing
+      - relationship: vulnerability_classified_as
         direction: incoming
       - relationship: asset_exposed_to_vulnerability
-        direction: outgoing
-      - relationship: service_impacted_by_vulnerability
+        direction: incoming
+      - relationship: service_depends_on_asset
         direction: incoming
 
   asset_exception_context:
@@ -650,12 +673,12 @@ integrations:
       Reviews whether a compensating control materially reduces
       exploitability for the specific vulnerability class.
 
-  dependency_context:
-    kind: service_dependency_context
+  vulnerability_classification:
+    kind: vulnerability_classification
     contract: null
     notes: >
-      Evaluates whether a vulnerability on an asset actually impacts
-      the business service through real dependency paths.
+      Reviews whether a vulnerability belongs to a local operational
+      class used for control coverage and scenario analysis.
 
   policy_review:
     kind: remediation_policy_review
@@ -733,6 +756,17 @@ contracts:
               name: {type: string}
               control_type: {type: string}
               status: {type: string}
+      vulnerability_classes:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              class_id: {type: string}
+              name: {type: string}
+              description: {type: string}
+              attack_vector: {type: string}
       exceptions:
         type: json
         json_schema:
@@ -878,9 +912,9 @@ contracts:
               verdict: {type: string}
 
   AssetExposureAssessmentInput:
-    description: Approved affected edges plus asset posture and control context.
+    description: Transient affected candidates plus asset posture and control context.
     fields:
-      affected_edges:
+      affected_items:
         type: json
       assets:
         type: json
@@ -904,34 +938,13 @@ contracts:
               priority: {type: string}
               due_by: {type: string}
               rationale: {type: string}
+              product_id: {type: string}
+              installed_version: {type: string}
+              affected_rationale: {type: string}
+              evidence_source: {type: string}
+              affected_verdict: {type: string}
               exploitability_verdict: {type: string}
               control_verdict: {type: string}
-
-  ServiceImpactAssessmentInput:
-    description: Approved exposure edges plus service dependency context.
-    fields:
-      exposure_edges:
-        type: json
-      service_asset_edges:
-        type: json
-      services:
-        type: json
-
-  ServiceImpactAssessmentResults:
-    description: Candidate service-vulnerability impact judgments.
-    fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              service_id: {type: string}
-              cve_id: {type: string}
-              blast_radius: {type: string}
-              rationale: {type: string}
-              verdict: {type: string}
 
 # ─── Artifacts ────────────────────────────────────────────────────────
 
@@ -939,7 +952,7 @@ artifacts:
   fork_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:987b94595dea61fa28a3c63bfbaac17bff101583e5c721fe70deeb36b533023c
+    sha256: sha256:48b06157affbbc61eeda489024e7e668518c2dcf2ea117c314d5028f800820d3
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
@@ -1025,18 +1038,6 @@ providers:
     deterministic: true
     runtime: python
 
-  assess_service_impact:
-    kind: function
-    description: >
-      Roll approved asset exposure judgments up through service
-      dependency edges to propose service impact relationships.
-    contract_in: ServiceImpactAssessmentInput
-    contract_out: ServiceImpactAssessmentResults
-    ref: cruxible_kits.kev_triage.assess_service_impact
-    version: "1.0.0"
-    deterministic: true
-    runtime: python
-
 # ─── Workflows ────────────────────────────────────────────────────────
 
 workflows:
@@ -1056,6 +1057,7 @@ workflows:
             - business_services
             - owners
             - compensating_controls
+            - vulnerability_classes
             - exceptions
             - patch_windows
             - service_depends_on_asset
@@ -1120,6 +1122,17 @@ workflows:
             control_type: $item.control_type
             status: $item.status
         as: controls
+      - id: vulnerability_classes
+        make_entities:
+          entity_type: VulnerabilityClass
+          items: $steps.seed.vulnerability_classes
+          entity_id: $item.class_id
+          properties:
+            class_id: $item.class_id
+            name: $item.name
+            description: $item.description
+            attack_vector: $item.attack_vector
+        as: vulnerability_classes
       - id: exceptions
         make_entities:
           entity_type: Exception
@@ -1207,6 +1220,10 @@ workflows:
         apply_entities:
           entities_from: controls
         as: apply_controls
+      - id: apply_vulnerability_classes
+        apply_entities:
+          entities_from: vulnerability_classes
+        as: apply_vulnerability_classes
       - id: apply_exceptions
         apply_entities:
           entities_from: exceptions
@@ -1300,13 +1317,13 @@ workflows:
         as: proposal
     returns: proposal
 
-  propose_asset_affected:
+  propose_asset_exposure:
     canonical: false
     purpose: proposal
     description: >
-      Join approved asset-product mappings to public KEV product
-      coverage and propose asset_affected_by_vulnerability edges from
-      version-range evidence.
+      Derive affected asset-vulnerability candidates from approved
+      asset-product mappings, then propose the asset exposure edges that
+      should drive action.
     contract_in: EmptyInput
     steps:
       - id: asset_products
@@ -1317,68 +1334,12 @@ workflows:
         list_relationships:
           relationship_type: vulnerability_affects_product
         as: vulnerability_products
-      - id: assessments
+      - id: affected_assessments
         provider: assess_asset_affected
         input:
           asset_product_edges: $steps.asset_products.items
           vulnerability_product_edges: $steps.vulnerability_products.items
-        as: assessments
-      - id: candidates
-        make_candidates:
-          relationship_type: asset_affected_by_vulnerability
-          items: $steps.assessments.items
-          from_type: Asset
-          from_id: $item.asset_id
-          to_type: Vulnerability
-          to_id: $item.cve_id
-          properties:
-            product_id: $item.product_id
-            installed_version: $item.installed_version
-            rationale: $item.rationale
-            source: $item.source
-        as: candidates
-      - id: version_signals
-        map_signals:
-          integration: product_version_evidence
-          items: $steps.assessments.items
-          from_id: $item.asset_id
-          to_id: $item.cve_id
-          evidence: $item.rationale
-          enum:
-            path: verdict
-            map:
-              support: support
-              unsure: unsure
-              contradict: contradict
-        as: version_signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: asset_affected_by_vulnerability
-          candidates_from: candidates
-          signals_from: [version_signals]
-          thesis_text: >
-            Installed versions fall within KEV reference-layer affected
-            ranges
-          thesis_facts:
-            rule_id: installed_version_in_kev_affected_range
-            rule_version: 1
-            reference_source: kev_reference
-          proposed_by: agent
-        as: proposal
-    returns: proposal
-
-  propose_asset_exposure:
-    canonical: false
-    purpose: proposal
-    description: >
-      Assess whether approved affected assets are materially exposed
-      using environment, exposure posture, and active controls.
-    contract_in: EmptyInput
-    steps:
-      - id: affected_edges
-        list_relationships:
-          relationship_type: asset_affected_by_vulnerability
-        as: affected_edges
+        as: affected_assessments
       - id: assets
         list_entities:
           entity_type: Asset
@@ -1394,7 +1355,7 @@ workflows:
       - id: assessments
         provider: assess_asset_exposure
         input:
-          affected_edges: $steps.affected_edges.items
+          affected_items: $steps.affected_assessments.items
           assets: $steps.assets.items
           asset_control_edges: $steps.asset_controls.items
           controls: $steps.controls.items
@@ -1411,7 +1372,25 @@ workflows:
             priority: $item.priority
             due_by: $item.due_by
             rationale: $item.rationale
+            product_id: $item.product_id
+            installed_version: $item.installed_version
+            affected_rationale: $item.affected_rationale
+            evidence_source: $item.evidence_source
         as: candidates
+      - id: version_signals
+        map_signals:
+          integration: product_version_evidence
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.affected_rationale
+          enum:
+            path: affected_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: version_signals
       - id: exploitability_signals
         map_signals:
           integration: exploitability_signal
@@ -1444,83 +1423,14 @@ workflows:
         propose_relationship_group:
           relationship_type: asset_exposed_to_vulnerability
           candidates_from: candidates
-          signals_from: [exploitability_signals, control_signals]
+          signals_from: [version_signals, exploitability_signals, control_signals]
           thesis_text: >
-            Approved affected assets are materially exposed after
-            posture and control review
+            Installed versions fall within KEV reference ranges and
+            exposed asset posture requires action
           thesis_facts:
-            rule_id: exposure_assessment_from_posture_and_controls
+            rule_id: exposure_assessment_from_version_posture_and_controls
             rule_version: 1
-            source: asset_posture_and_controls
-          proposed_by: agent
-        as: proposal
-    returns: proposal
-
-  propose_service_impact:
-    canonical: false
-    purpose: proposal
-    description: >
-      Roll approved asset exposure judgments up to business services
-      through dependency edges and propose service impact edges.
-    contract_in: EmptyInput
-    steps:
-      - id: exposure_edges
-        list_relationships:
-          relationship_type: asset_exposed_to_vulnerability
-        as: exposure_edges
-      - id: service_asset_edges
-        list_relationships:
-          relationship_type: service_depends_on_asset
-        as: service_asset_edges
-      - id: services
-        list_entities:
-          entity_type: BusinessService
-        as: services
-      - id: assessments
-        provider: assess_service_impact
-        input:
-          exposure_edges: $steps.exposure_edges.items
-          service_asset_edges: $steps.service_asset_edges.items
-          services: $steps.services.items
-        as: assessments
-      - id: candidates
-        make_candidates:
-          relationship_type: service_impacted_by_vulnerability
-          items: $steps.assessments.items
-          from_type: BusinessService
-          from_id: $item.service_id
-          to_type: Vulnerability
-          to_id: $item.cve_id
-          properties:
-            blast_radius: $item.blast_radius
-            rationale: $item.rationale
-        as: candidates
-      - id: dependency_signals
-        map_signals:
-          integration: dependency_context
-          items: $steps.assessments.items
-          from_id: $item.service_id
-          to_id: $item.cve_id
-          evidence: $item.rationale
-          enum:
-            path: verdict
-            map:
-              support: support
-              unsure: unsure
-              contradict: contradict
-        as: dependency_signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: service_impacted_by_vulnerability
-          candidates_from: candidates
-          signals_from: [dependency_signals]
-          thesis_text: >
-            Approved exposed assets create downstream business-service
-            impact
-          thesis_facts:
-            rule_id: dependency_rollup_from_exposed_assets
-            rule_version: 1
-            source: service_asset_dependencies
+            source: kev_reference_asset_posture_and_controls
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1548,25 +1458,13 @@ feedback_profiles:
       hostname: FROM.hostname
       evidence_source: EDGE.evidence_source
 
-  asset_affected_by_vulnerability:
+  asset_exposed_to_vulnerability:
     version: 1
     reason_codes:
       version_not_in_range:
         description: Installed version is not within the NVD affected range.
         remediation_hint: constraint
         required_scope_keys: [cve, product]
-      product_mismatch:
-        description: Asset does not actually run this product.
-        remediation_hint: provider_fix
-        required_scope_keys: [product, hostname]
-    scope_keys:
-      cve: TO.cve_id
-      product: EDGE.product_id
-      hostname: FROM.hostname
-
-  asset_exposed_to_vulnerability:
-    version: 1
-    reason_codes:
       control_mitigates:
         description: A compensating control effectively blocks this exploit path.
         remediation_hint: decision_policy
@@ -1581,23 +1479,9 @@ feedback_profiles:
         required_scope_keys: [cve]
     scope_keys:
       cve: TO.cve_id
+      product: EDGE.product_id
       criticality: FROM.criticality
       environment: FROM.environment
-
-  service_impacted_by_vulnerability:
-    version: 1
-    reason_codes:
-      no_dependency_path:
-        description: No real runtime dependency connects the service to the affected asset.
-        remediation_hint: constraint
-        required_scope_keys: [service, cve]
-      service_decommissioned:
-        description: Service is decommissioned or no longer in use.
-        remediation_hint: quality_check
-        required_scope_keys: [service]
-    scope_keys:
-      service: FROM.name
-      cve: TO.cve_id
 
   asset_patch_exception_for:
     version: 1
@@ -1614,7 +1498,22 @@ feedback_profiles:
       cve: TO.cve_id
       exception_id: EDGE.exception_id
 
-  control_reduces_exposure_to:
+  vulnerability_classified_as:
+    version: 1
+    reason_codes:
+      wrong_class:
+        description: Vulnerability was assigned to the wrong operational class.
+        remediation_hint: provider_fix
+        required_scope_keys: [cve, class]
+      classification_too_broad:
+        description: Classification is too broad for control or scenario analysis.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, class]
+    scope_keys:
+      cve: FROM.cve_id
+      class: TO.class_id
+
+  control_mitigates_class:
     version: 1
     reason_codes:
       control_not_validated:
@@ -1622,12 +1521,12 @@ feedback_profiles:
         remediation_hint: quality_check
         required_scope_keys: [control_type]
       wrong_vulnerability_class:
-        description: Control does not apply to this vulnerability's exploit mechanism.
+        description: Control does not apply to this vulnerability class.
         remediation_hint: constraint
-        required_scope_keys: [control_type, cve]
+        required_scope_keys: [control_type, class]
     scope_keys:
       control_type: FROM.control_type
-      cve: TO.cve_id
+      class: TO.class_id
 
   asset_remediated_vulnerability:
     version: 1
@@ -1724,26 +1623,6 @@ outcome_profiles:
         required_scope_keys: [relationship_type]
       version_drift:
         description: Match was correct at resolution time but the asset has since been patched.
-        remediation_hint: provider_fix
-        required_scope_keys: [relationship_type]
-    scope_keys:
-      relationship_type: RESOLUTION.relationship_type
-
-  asset_affected_resolution:
-    anchor_type: resolution
-    relationship_type: asset_affected_by_vulnerability
-    version: 1
-    outcome_codes:
-      wrong_affected_judgment:
-        description: Resolution concluded asset was affected but it was not.
-        remediation_hint: trust_adjustment
-        required_scope_keys: [relationship_type]
-      missed_affected_asset:
-        description: Resolution concluded asset was not affected but it was.
-        remediation_hint: require_review
-        required_scope_keys: [relationship_type]
-      version_range_error:
-        description: NVD version range data was incorrect or incomplete.
         remediation_hint: provider_fix
         required_scope_keys: [relationship_type]
     scope_keys:

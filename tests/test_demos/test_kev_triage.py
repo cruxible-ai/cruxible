@@ -25,7 +25,6 @@ from cruxible_core.service import (
 from cruxible_kits.kev_triage import (
     assess_asset_affected,
     assess_asset_exposure,
-    assess_service_impact,
     load_fork_seed_data,
     match_software_to_products,
     normalize_fork_seed_tables,
@@ -104,6 +103,7 @@ def test_load_fork_seed_data_reads_expected_rows() -> None:
         "business_services",
         "owners",
         "compensating_controls",
+        "vulnerability_classes",
         "exceptions",
         "patch_windows",
         "service_depends_on_asset",
@@ -342,40 +342,13 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
             "priority": "high",
             "due_by": "72h",
             "rationale": payload["items"][0]["rationale"],
+            "product_id": "",
+            "installed_version": "",
+            "affected_rationale": "",
+            "evidence_source": "",
+            "affected_verdict": "support",
             "exploitability_verdict": "support",
             "control_verdict": "unsure",
-        }
-    ]
-
-
-def test_assess_service_impact_aggregates_exposed_assets() -> None:
-    payload = assess_service_impact(
-        {
-            "exposure_edges": [
-                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
-                {"from_id": "ASSET-2", "to_id": "CVE-2021-0001", "properties": {}},
-            ],
-            "service_asset_edges": [
-                {"from_id": "SVC-1", "to_id": "ASSET-1", "properties": {}},
-                {"from_id": "SVC-1", "to_id": "ASSET-2", "properties": {}},
-            ],
-            "services": [
-                {
-                    "entity_id": "SVC-1",
-                    "properties": {"name": "Billing", "tier": "tier-1"},
-                }
-            ],
-        },
-        _provider_context(None),
-    )
-
-    assert payload["items"] == [
-        {
-            "service_id": "SVC-1",
-            "cve_id": "CVE-2021-0001",
-            "blast_radius": "critical",
-            "rationale": "Service depends on 2 exposed asset(s): ASSET-1, ASSET-2",
-            "verdict": "support",
         }
     ]
 
@@ -391,29 +364,29 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     _apply_canonical_workflow(instance, "build_fork_state")
 
     _approve_workflow_group(instance, "propose_asset_products")
-    _approve_workflow_group(instance, "propose_asset_affected")
     _approve_workflow_group(instance, "propose_asset_exposure")
-    _approve_workflow_group(instance, "propose_service_impact")
 
     graph = instance.load_graph()
     assert graph.entity_count("Asset") == _csv_row_count(
         KEV_KIT_DIR / "data" / "seed" / "assets.csv"
     )
+    assert graph.entity_count("VulnerabilityClass") == _csv_row_count(
+        KEV_KIT_DIR / "data" / "seed" / "vulnerability_classes.csv"
+    )
     assert graph.edge_count("asset_owned_by") == _csv_row_count(
         KEV_KIT_DIR / "data" / "seed" / "asset_owned_by.csv"
     )
     assert graph.edge_count("asset_runs_product") > 0
-    assert graph.edge_count("asset_affected_by_vulnerability") > 0
     assert graph.edge_count("asset_exposed_to_vulnerability") > 0
-    assert graph.edge_count("service_impacted_by_vulnerability") > 0
     assert graph.edge_count("asset_remediated_vulnerability") == 0
 
-    affected_edge = graph.list_edges("asset_affected_by_vulnerability")[0]
     exposure_edge = graph.list_edges("asset_exposed_to_vulnerability")[0]
-    service_edge = graph.list_edges("service_impacted_by_vulnerability")[0]
 
-    affected_asset_id = affected_edge["from_id"]
-    affected_cve_id = affected_edge["to_id"]
+    affected_asset_id = exposure_edge["from_id"]
+    affected_cve_id = exposure_edge["to_id"]
+    assert exposure_edge["properties"]["product_id"]
+    assert exposure_edge["properties"]["installed_version"]
+    assert exposure_edge["properties"]["affected_rationale"]
     owner_edge = next(
         edge
         for edge in graph.list_edges("asset_owned_by")
@@ -432,7 +405,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     service_blast_radius = service_query(
         instance,
         "service_blast_radius",
-        {"cve_id": service_edge["to_id"]},
+        {"cve_id": affected_cve_id},
     )
     product_kev_exposure = service_query(
         instance,
@@ -454,7 +427,6 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_fork_state")
     _approve_workflow_group(instance, "propose_asset_products")
-    _approve_workflow_group(instance, "propose_asset_affected")
     _approve_workflow_group(instance, "propose_asset_exposure")
 
     graph = instance.load_graph()

@@ -18,6 +18,7 @@ _FORK_SEED_FILES = {
     "business_services": "business_services.csv",
     "owners": "owners.csv",
     "compensating_controls": "compensating_controls.csv",
+    "vulnerability_classes": "vulnerability_classes.csv",
     "exceptions": "exceptions.csv",
     "patch_windows": "patch_windows.csv",
     "service_depends_on_asset": "service_depends_on_asset.csv",

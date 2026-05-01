@@ -79,7 +79,7 @@ def assess_asset_exposure(
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Assess which affected assets are materially exposed."""
-    affected_edges = _require_items(input_payload, "affected_edges")
+    affected_items = _affected_items(input_payload)
     assets = _require_items(input_payload, "assets")
     asset_control_edges = _require_items(input_payload, "asset_control_edges")
     controls = _require_items(input_payload, "controls")
@@ -98,12 +98,13 @@ def assess_asset_exposure(
         active_controls_by_asset[asset_id].append(control)
 
     rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
-    for edge in affected_edges:
-        asset_id = _edge_from_id(edge)
-        cve_id = _edge_to_id(edge)
+    for item in affected_items:
+        asset_id = _first_non_empty(item.get("asset_id")) or _edge_from_id(item)
+        cve_id = _first_non_empty(item.get("cve_id")) or _edge_to_id(item)
         if not asset_id or not cve_id:
             continue
 
+        properties = _edge_properties(item)
         asset = assets_by_id.get(asset_id, {})
         active_controls = active_controls_by_asset.get(asset_id, [])
         exploitability_verdict = _derive_exploitability_verdict(asset)
@@ -120,6 +121,22 @@ def assess_asset_exposure(
             "priority": priority,
             "due_by": due_by,
             "rationale": rationale,
+            "product_id": _first_non_empty(item.get("product_id"), properties.get("product_id"))
+            or "",
+            "installed_version": _first_non_empty(
+                item.get("installed_version"),
+                properties.get("installed_version"),
+            )
+            or "",
+            "affected_rationale": _first_non_empty(
+                item.get("rationale"),
+                properties.get("rationale"),
+            )
+            or "",
+            "evidence_source": _first_non_empty(item.get("source"), properties.get("source"))
+            or "",
+            "affected_verdict": _first_non_empty(item.get("verdict"), properties.get("verdict"))
+            or "support",
             "exploitability_verdict": exploitability_verdict,
             "control_verdict": control_verdict,
         }
@@ -127,53 +144,13 @@ def assess_asset_exposure(
     return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
 
 
-def assess_service_impact(
-    input_payload: dict[str, Any],
-    _context: ProviderContext,
-) -> dict[str, Any]:
-    """Roll exposed asset-vulnerability pairs up to service impact judgments."""
-    exposure_edges = _require_items(input_payload, "exposure_edges")
-    service_asset_edges = _require_items(input_payload, "service_asset_edges")
-    services = _require_items(input_payload, "services")
-
-    services_by_id = {_entity_id(entity): _entity_properties(entity) for entity in services}
-    service_ids_by_asset: dict[str, list[str]] = defaultdict(list)
-    for edge in service_asset_edges:
-        service_id = _edge_from_id(edge)
-        asset_id = _edge_to_id(edge)
-        if service_id and asset_id:
-            service_ids_by_asset[asset_id].append(service_id)
-
-    impacted_assets_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for edge in exposure_edges:
-        asset_id = _edge_from_id(edge)
-        cve_id = _edge_to_id(edge)
-        if not asset_id or not cve_id:
-            continue
-        for service_id in service_ids_by_asset.get(asset_id, []):
-            impacted_assets_by_pair[(service_id, cve_id)].add(asset_id)
-
-    items: list[dict[str, Any]] = []
-    for (service_id, cve_id), asset_ids in sorted(impacted_assets_by_pair.items()):
-        service = services_by_id.get(service_id, {})
-        blast_radius = _derive_blast_radius(
-            _first_non_empty(service.get("tier")) or "",
-            len(asset_ids),
-        )
-        items.append(
-            {
-                "service_id": service_id,
-                "cve_id": cve_id,
-                "blast_radius": blast_radius,
-                "rationale": (
-                    f"Service depends on {len(asset_ids)} exposed asset(s): "
-                    f"{', '.join(sorted(asset_ids))}"
-                ),
-                "verdict": "support",
-            }
-        )
-
-    return {"items": items}
+def _affected_items(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items = input_payload.get("affected_items")
+    if raw_items is None:
+        return _require_items(input_payload, "affected_edges")
+    if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
+        raise ValueError("Expected 'affected_items' to be a list of objects")
+    return raw_items
 
 
 def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:
@@ -231,12 +208,3 @@ def _build_exposure_rationale(
         )
     )
     return f"{hostname} is {exposure_clause}; active controls require review: {control_names}"
-
-
-def _derive_blast_radius(tier: str, exposed_asset_count: int) -> str:
-    normalized = tier.lower()
-    if normalized == "tier-1":
-        return "critical" if exposed_asset_count > 1 else "high"
-    if normalized == "tier-2":
-        return "high" if exposed_asset_count > 1 else "medium"
-    return "medium" if exposed_asset_count > 1 else "low"

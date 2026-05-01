@@ -1328,18 +1328,16 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
 
     for workflow_name in [
         "propose_asset_products",
-        "propose_asset_affected",
         "propose_asset_exposure",
-        "propose_service_impact",
     ]:
         _approve_workflow_group(app_client, instance_id, workflow_name)
 
-    affected_edges = app_client.get(
+    exposure_edges = app_client.get(
         f"/api/v1/{instance_id}/list/edges",
-        params={"relationship_type": "asset_affected_by_vulnerability", "limit": 5},
+        params={"relationship_type": "asset_exposed_to_vulnerability", "limit": 5},
     )
-    assert affected_edges.status_code == 200
-    edge = affected_edges.json()["items"][0]
+    assert exposure_edges.status_code == 200
+    edge = exposure_edges.json()["items"][0]
 
     query = app_client.post(
         f"/api/v1/{instance_id}/query",

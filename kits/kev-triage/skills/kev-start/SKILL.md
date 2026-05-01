@@ -185,9 +185,7 @@ Treat the surfaces in three buckets:
    narrowing the kit:
    - `build_fork_state`
    - `propose_asset_products`
-   - `propose_asset_affected`
    - `propose_asset_exposure`
-   - `propose_service_impact`
 
    For each one, decide:
    - **Keep** if the user's data supports the workflow's assumptions and
@@ -399,19 +397,15 @@ cruxible group resolve --group <group_id> --action approve \
 Use the `pending_version` surfaced by `group get` / `group status` as `<n>`.
 
 Do not proceed to Stage 2 until this group is resolved. If the user rejects,
-explain that Stages 2–4 depend on approved `asset_runs_product` edges and
+explain that Stage 2 depends on approved `asset_runs_product` edges and
 will fail with `Members list must not be empty` if run now.
 
-**Stages 2–4** follow the same pattern:
+**Stage 2** follows the same pattern:
 
-- Stage 2: `cruxible propose --workflow propose_asset_affected`
-  (depends on approved Stage 1 edges)
-- Stage 3: `cruxible propose --workflow propose_asset_exposure`
-  (depends on approved Stage 2 edges)
-- Stage 4: `cruxible propose --workflow propose_service_impact`
-  (depends on approved Stage 3 edges)
+- Stage 2: `cruxible propose --workflow propose_asset_exposure`
+  (depends on approved Stage 1 edges and reference vulnerability-product edges)
 
-For these stages:
+For this stage:
 
 - in guided onboarding, pause for explicit user approval at each unresolved
   stage
