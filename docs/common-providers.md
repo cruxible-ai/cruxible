@@ -7,6 +7,12 @@ reused by kits before domain-specific normalization providers run. They are
 normal Python providers: configs still declare the input/output contracts,
 provider entries, artifacts, and workflow steps explicitly.
 
+Use built-in workflow step types for engine-owned deterministic row mechanics
+such as shaping, joining, filtering, deduping, building graph objects, and
+applying canonical state. Use common providers for reusable but opaque
+adapters, external integrations, model calls, source parsing, or domain-policy
+modules.
+
 For `0.2`, do not add schema magic for these providers. Document the contract
 snippets agents should copy into configs.
 
@@ -73,6 +79,7 @@ Typical workflow shape:
 ```text
 pinned artifact
   -> common provider parses generic source shape
-  -> domain provider normalizes tables/documents into kit-specific objects
+  -> dataflow steps shape/filter/join/dedupe rows where possible
+  -> domain provider handles source-specific policy only when needed
   -> workflow creates entities, relationships, candidates, or signals
 ```

@@ -963,6 +963,10 @@ Each step must define exactly one of these operations:
 | `assert` | Guard condition — fail the workflow if not met | `assert: {left, op, right, message}` |
 | `list_entities` | Read entity rows from current graph state into a workflow payload | `list_entities: {entity_type, property_filter?, limit?}`, `as` |
 | `list_relationships` | Read relationship rows from current graph state into a workflow payload | `list_relationships: {relationship_type, property_filter?, limit?}`, `as` |
+| `shape_items` | Project, rename, require, and cast list-shaped rows | `shape_items: {items, include_input?, rename?, fields?, casts?, required?}`, `as` |
+| `join_items` | Indexed inner join over two item sets | `join_items: {left_items, right_items, left_key, right_key, fields}`, `as` |
+| `filter_items` | Filter rows with exact filters and comparisons | `filter_items: {items, where?, comparisons?}`, `as` |
+| `dedupe_items` | Deterministically deduplicate rows | `dedupe_items: {items, keys, strategy?, rank?}`, `as` |
 | `make_entities` | Build an entity set from list data | `make_entities: {entity_type, items, entity_id, properties}`, `as` |
 | `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
@@ -986,6 +990,39 @@ Steps reference data from prior steps and the current item in list iterations:
 **Read-step outputs:**
 - `list_entities` returns `{items: [...], total: N}` where each item is an entity object with `entity_type`, `entity_id`, and `properties`.
 - `list_relationships` returns `{items: [...], total: N}` where each item is a relationship object with `from_id`, `to_id`, `relationship_type`, and `properties`.
+- `shape_items` returns `{items, input_count, output_count, dropped_count, drop_examples}`.
+- `join_items` returns `{items, left_count, right_count, skipped_right_count, matched_left_count, output_count}`.
+- `filter_items` returns `{items, input_count, output_count, filtered_count}`.
+- `dedupe_items` returns `{items, input_count, output_count, duplicate_count, duplicate_examples}`.
+
+### Dataflow Steps
+
+Use dataflow steps for deterministic row mechanics that should be visible in
+the workflow receipt rather than hidden inside a provider.
+
+`shape_items` applies operations in this order: `rename -> fields -> casts ->
+required`. Rename keys are top-level only. `fields` resolves against the
+post-rename item and may overwrite projected keys. Casts are explicit and
+support `str`, `int`, `float`, `bool`, and `json`; missing and `null` values are
+left for `required` handling.
+
+`join_items` currently supports `join_type: inner`. It indexes the right side by
+the canonical JSON form of `right_key`, skips right rows with `null` keys, and
+preserves left-row order with right-match order for one-to-many fanout.
+
+`filter_items` uses exact-match/list-membership `where` rules plus comparison
+predicates. `where` reads top-level item keys and may use literals or `$input.*`
+refs only. Comparisons may use normal workflow refs, including `$item`,
+`$input`, and prior `$steps`.
+
+`dedupe_items` requires one or more keys and supports `first`, `last`, `max`,
+and `min`. Ranked strategies require `rank`; missing ranks lose to present
+ranks, and ties keep the earlier item.
+
+Common providers and step types have different jobs: step types are
+engine-owned deterministic workflow/dataflow mechanics, while common providers
+remain reusable but opaque adapters, external integrations, model calls, or
+domain-policy modules.
 
 ### Governed Proposal Steps
 
