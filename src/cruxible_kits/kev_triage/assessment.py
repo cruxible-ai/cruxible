@@ -144,6 +144,77 @@ def assess_asset_exposure(
     return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
 
 
+def assess_exposure_reconciliation(
+    input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    """Find accepted exposure edges no longer supported by product-derived evidence."""
+    accepted_exposure_edges = _require_items(input_payload, "accepted_exposure_edges")
+    affected_items = _require_items(input_payload, "affected_items")
+    asset_product_edges = _require_items(input_payload, "asset_product_edges")
+    vulnerability_product_edges = _require_items(input_payload, "vulnerability_product_edges")
+    remediated_edges = _require_items(input_payload, "remediated_edges")
+
+    current_affected_pairs = {
+        (asset_id, cve_id)
+        for item in affected_items
+        if (asset_id := _first_non_empty(item.get("asset_id")))
+        and (cve_id := _first_non_empty(item.get("cve_id")))
+    }
+    asset_product_pairs = {
+        (_edge_from_id(edge), _edge_to_id(edge))
+        for edge in asset_product_edges
+        if _edge_from_id(edge) and _edge_to_id(edge)
+    }
+    vulnerability_product_pairs = {
+        (_edge_from_id(edge), _edge_to_id(edge))
+        for edge in vulnerability_product_edges
+        if _edge_from_id(edge) and _edge_to_id(edge)
+    }
+    remediated_pairs = {
+        (_edge_from_id(edge), _edge_to_id(edge))
+        for edge in remediated_edges
+        if _edge_from_id(edge) and _edge_to_id(edge)
+    }
+
+    items: list[dict[str, Any]] = []
+    for edge in accepted_exposure_edges:
+        asset_id = _edge_from_id(edge)
+        cve_id = _edge_to_id(edge)
+        if not asset_id or not cve_id:
+            continue
+        pair = (asset_id, cve_id)
+        if pair in current_affected_pairs or pair in remediated_pairs:
+            continue
+
+        properties = _edge_properties(edge)
+        product_id = _first_non_empty(properties.get("product_id")) or ""
+        remediation_type = _stale_exposure_remediation_type(
+            asset_id,
+            cve_id,
+            product_id,
+            asset_product_pairs,
+            vulnerability_product_pairs,
+        )
+        items.append(
+            {
+                "asset_id": asset_id,
+                "cve_id": cve_id,
+                "remediation_type": remediation_type,
+                "evidence_source": "kev_reference_reconciliation",
+                "rationale": _stale_exposure_rationale(
+                    asset_id,
+                    cve_id,
+                    product_id,
+                    remediation_type,
+                ),
+                "verdict": "support",
+            }
+        )
+
+    return {"items": sorted(items, key=lambda item: (item["asset_id"], item["cve_id"]))}
+
+
 def _affected_items(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw_items = input_payload.get("affected_items")
     if raw_items is None:
@@ -151,6 +222,43 @@ def _affected_items(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
         raise ValueError("Expected 'affected_items' to be a list of objects")
     return raw_items
+
+
+def _stale_exposure_remediation_type(
+    asset_id: str,
+    cve_id: str,
+    product_id: str,
+    asset_product_pairs: set[tuple[str, str]],
+    vulnerability_product_pairs: set[tuple[str, str]],
+) -> str:
+    if product_id and (asset_id, product_id) not in asset_product_pairs:
+        return "product_mapping_changed"
+    if product_id and (cve_id, product_id) not in vulnerability_product_pairs:
+        return "reference_changed"
+    return "not_affected"
+
+
+def _stale_exposure_rationale(
+    asset_id: str,
+    cve_id: str,
+    product_id: str,
+    remediation_type: str,
+) -> str:
+    product_clause = f" via product {product_id}" if product_id else ""
+    if remediation_type == "product_mapping_changed":
+        return (
+            f"{asset_id}->{cve_id}{product_clause} is no longer supported by an "
+            "accepted asset_runs_product edge"
+        )
+    if remediation_type == "reference_changed":
+        return (
+            f"{asset_id}->{cve_id}{product_clause} is no longer supported by the "
+            "reference vulnerability_affects_product edge"
+        )
+    return (
+        f"{asset_id}->{cve_id}{product_clause} is no longer in the current "
+        "product-version affected candidate set"
+    )
 
 
 def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:

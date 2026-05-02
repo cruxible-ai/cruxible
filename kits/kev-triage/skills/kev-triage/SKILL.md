@@ -104,6 +104,7 @@ does not approve or resolve governed proposals directly.
    ```
    cruxible propose --workflow propose_asset_products
    cruxible propose --workflow propose_asset_exposure
+   cruxible propose --workflow propose_exposure_reconciliation
    ```
    These are the standard workflow names in the stock `kev-triage` kit. If
    this instance uses a documented local variant, run the equivalent chain for
@@ -445,10 +446,13 @@ there.
 
 | When you need... | Default query |
 |---|---|
-| Everything affected by a CVE | `query --query kev_assets --param cve_id=<cve>` |
+| Candidate assets by product/CVE linkage | `query --query candidate_assets_for_vulnerability --param cve_id=<cve>` |
+| Accepted exposed assets for a CVE | `query --query exposed_assets_for_vulnerability --param cve_id=<cve>` |
 | Patch queue for an owner | `query --query owner_patch_queue --param owner_id=<owner>` |
 | Services hit by a CVE | `query --query service_blast_radius --param cve_id=<cve>` |
 | Has this product ever been exploited? | `query --query incident_history_for_product --param product_id=<product>` |
+| Prior classifications for a class | `query --query vulnerabilities_for_class --param class_id=<class>` |
+| Controls mapped to a class | `query --query controls_for_vulnerability_class --param class_id=<class>` |
 | What open findings for this asset? | `query --query open_findings_for_asset --param asset_id=<asset>` |
 | Prior post-mortem for this CVE | `query --query prior_exploitation_context --param cve_id=<cve>` |
 | All exceptions on an asset | `query --query asset_exception_context --param asset_id=<asset>` |
@@ -510,6 +514,9 @@ Every governed relationship the agent can propose:
 | `incident_exploited_vulnerability` | Incident → Vulnerability | `incident_attribution` |
 | `finding_from_incident` | Finding → Incident | `incident_attribution` |
 
-The first four are typically produced by batch workflows (`propose_*`). The
-last seven are typically produced by one-off agent proposals from review
-material.
+`asset_runs_product`, `asset_exposed_to_vulnerability`, and
+`asset_remediated_vulnerability` closure proposals are typically produced by
+batch workflows. Classifications and control-class mitigation proposals can be
+produced by agent-called workflows with explicit input. Incident, finding,
+exception, and remediation verification proposals are typically one-off agent
+proposals from review material.

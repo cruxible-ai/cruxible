@@ -186,6 +186,7 @@ Treat the surfaces in three buckets:
    - `build_fork_state`
    - `propose_asset_products`
    - `propose_asset_exposure`
+   - `propose_exposure_reconciliation`
 
    For each one, decide:
    - **Keep** if the user's data supports the workflow's assumptions and
@@ -400,12 +401,15 @@ Do not proceed to Stage 2 until this group is resolved. If the user rejects,
 explain that Stage 2 depends on approved `asset_runs_product` edges and
 will fail with `Members list must not be empty` if run now.
 
-**Stage 2** follows the same pattern:
+**Stages 2-3** follow the same pattern:
 
 - Stage 2: `cruxible propose --workflow propose_asset_exposure`
   (depends on approved Stage 1 edges and reference vulnerability-product edges)
+- Stage 3: `cruxible propose --workflow propose_exposure_reconciliation`
+  (depends on approved Stage 1 edges, reference vulnerability-product edges,
+  and existing accepted exposure state)
 
-For this stage:
+For these stages:
 
 - in guided onboarding, pause for explicit user approval at each unresolved
   stage

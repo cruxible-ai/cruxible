@@ -25,6 +25,7 @@ from cruxible_core.service import (
 from cruxible_kits.kev_triage import (
     assess_asset_affected,
     assess_asset_exposure,
+    assess_exposure_reconciliation,
     load_fork_seed_data,
     match_software_to_products,
     normalize_fork_seed_tables,
@@ -85,7 +86,15 @@ def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) ->
 
 
 def _approve_workflow_group(instance: CruxibleInstance, workflow_name: str) -> None:
-    proposed = service_propose_workflow(instance, workflow_name, {})
+    _approve_workflow_group_with_input(instance, workflow_name, {})
+
+
+def _approve_workflow_group_with_input(
+    instance: CruxibleInstance,
+    workflow_name: str,
+    input_payload: dict,
+) -> None:
+    proposed = service_propose_workflow(instance, workflow_name, input_payload)
     assert proposed.group_id is not None
     resolved = service_resolve_group(
         instance,
@@ -353,6 +362,38 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
     ]
 
 
+def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
+    payload = assess_exposure_reconciliation(
+        {
+            "accepted_exposure_edges": [
+                {
+                    "from_id": "ASSET-1",
+                    "to_id": "CVE-2021-0001",
+                    "properties": {"product_id": "apache__http_server"},
+                }
+            ],
+            "affected_items": [],
+            "asset_product_edges": [
+                {"from_id": "ASSET-1", "to_id": "apache__http_server", "properties": {}}
+            ],
+            "vulnerability_product_edges": [],
+            "remediated_edges": [],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "cve_id": "CVE-2021-0001",
+            "remediation_type": "reference_changed",
+            "evidence_source": "kev_reference_reconciliation",
+            "rationale": payload["items"][0]["rationale"],
+            "verdict": "support",
+        }
+    ]
+
+
 def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path, str(config_path))
@@ -412,11 +453,78 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         "product_kev_exposure",
         {"product_id": product_id},
     )
+    candidate_assets = service_query(
+        instance,
+        "candidate_assets_for_vulnerability",
+        {"cve_id": affected_cve_id},
+    )
+    exposed_assets = service_query(
+        instance,
+        "exposed_assets_for_vulnerability",
+        {"cve_id": affected_cve_id},
+    )
+    exposed_assets_for_product = service_query(
+        instance,
+        "exposed_assets_for_product",
+        {"product_id": product_id},
+    )
 
     assert kev_assets.total_results > 0
     assert owner_patch_queue.total_results > 0
     assert service_blast_radius.total_results > 0
     assert product_kev_exposure.total_results > 0
+    assert candidate_assets.total_results > 0
+    assert exposed_assets.total_results > 0
+    assert exposed_assets_for_product.total_results > 0
+
+    _approve_workflow_group_with_input(
+        instance,
+        "propose_vulnerability_classification",
+        {
+            "items": [
+                {
+                    "cve_id": affected_cve_id,
+                    "class_id": "path_traversal",
+                    "basis": "Test classification for control coverage traversal",
+                    "source": "test",
+                    "verdict": "support",
+                }
+            ]
+        },
+    )
+    _approve_workflow_group_with_input(
+        instance,
+        "propose_control_mitigates_class",
+        {
+            "items": [
+                {
+                    "control_id": "CTRL-1",
+                    "class_id": "path_traversal",
+                    "validation_basis": "Test control coverage traversal",
+                    "verdict": "support",
+                }
+            ]
+        },
+    )
+    vulnerabilities_for_class = service_query(
+        instance,
+        "vulnerabilities_for_class",
+        {"class_id": "path_traversal"},
+    )
+    controls_for_class = service_query(
+        instance,
+        "controls_for_vulnerability_class",
+        {"class_id": "path_traversal"},
+    )
+    control_coverage_gap = service_query(
+        instance,
+        "control_coverage_gap",
+        {"control_id": "CTRL-1"},
+    )
+
+    assert vulnerabilities_for_class.total_results > 0
+    assert controls_for_class.total_results > 0
+    assert control_coverage_gap.total_results > 0
 
 
 def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:

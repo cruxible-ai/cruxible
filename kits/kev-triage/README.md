@@ -101,10 +101,16 @@ flowchart LR
   workflow_pipeline_build_fork_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
   workflow_pipeline_propose_asset_exposure["3. Asset Exposed To Vulnerability<br/>Governed proposal"]
+  workflow_pipeline_propose_control_mitigates_class["4. Control Mitigates Class<br/>Governed proposal"]
+  workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
+  workflow_pipeline_propose_vulnerability_classification["6. Vulnerability Classified As<br/>Governed proposal"]
   workflow_pipeline_build_fork_state --> workflow_pipeline_propose_asset_products
   workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_asset_exposure
+  workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_control_mitigates_class
+  workflow_pipeline_propose_control_mitigates_class --> workflow_pipeline_propose_exposure_reconciliation
+  workflow_pipeline_propose_exposure_reconciliation --> workflow_pipeline_propose_vulnerability_classification
   class workflow_pipeline_build_fork_state canonicalWorkflow
-  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_asset_exposure governedWorkflow
+  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_control_mitigates_class,workflow_pipeline_propose_exposure_reconciliation,workflow_pipeline_propose_vulnerability_classification governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -152,6 +158,46 @@ flowchart LR
 **Provider source**
 - Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_affected`
 - Assess Asset Exposure (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_exposure`
+
+### 4. Propose Control Mitigates Class
+
+**Role:** Governed proposal
+
+**Input context**
+- None
+
+**Result**
+- Proposed relationships: Control Mitigates Class
+
+**Provider source**
+- -
+
+### 5. Propose Exposure Reconciliation
+
+**Role:** Governed proposal
+
+**Input context**
+- Relationship context: Asset Exposed To Vulnerability, Asset Remediated Vulnerability, Asset Runs Product, Vulnerability Affects Product
+
+**Result**
+- Proposed relationships: Asset Remediated Vulnerability
+
+**Provider source**
+- Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_affected`
+- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_exposure_reconciliation`
+
+### 6. Propose Vulnerability Classification
+
+**Role:** Governed proposal
+
+**Input context**
+- None
+
+**Result**
+- Proposed relationships: Vulnerability Classified As
+
+**Provider source**
+- -
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -164,14 +210,14 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Asset Exposed To Vulnerability | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Exposed Resolution |
 | Asset Patch Exception For | Asset -> Vulnerability | Agent/manual group propose | Policy Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Asset Remediated Vulnerability | Asset -> Vulnerability | Agent/manual group propose | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
+| Asset Remediated Vulnerability | Asset -> Vulnerability | Workflow: Propose Exposure Reconciliation | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
 | Asset Runs Product | Asset -> Product | Workflow: Propose Asset Products | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
-| Control Mitigates Class | Compensating Control -> Vulnerability Class | Agent/manual group propose | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Control Mitigates Class | Compensating Control -> Vulnerability Class | Workflow: Propose Control Mitigates Class | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Finding From Incident | Finding -> Incident | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Incident Exploited Vulnerability | Incident -> Vulnerability | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Incident Attribution Resolution |
 | Incident Involved Asset | Incident -> Asset | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Incident Owned By | Incident -> Owner | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Vulnerability Classified As | Vulnerability -> Vulnerability Class | Agent/manual group propose | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
+| Vulnerability Classified As | Vulnerability -> Vulnerability Class | Workflow: Propose Vulnerability Classification | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
 ### Integration Signal Notes
@@ -212,7 +258,8 @@ flowchart LR
   query_entity_Product["Product"]
   query_entity_Vendor["Vendor"]
   query_entity_Vulnerability["Vulnerability"]
-  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Exception,query_entity_Finding,query_entity_Incident,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability queryEntity
+  query_entity_VulnerabilityClass["Vulnerability Class"]
+  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Exception,query_entity_Finding,query_entity_Incident,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
   query_entity_Asset --> query_entity_CompensatingControl
   query_entity_Asset --> query_entity_Exception
   query_entity_Asset --> query_entity_Finding
@@ -230,6 +277,8 @@ flowchart LR
   query_entity_Vulnerability --> query_entity_BusinessService
   query_entity_Vulnerability --> query_entity_Finding
   query_entity_Vulnerability --> query_entity_Product
+  query_entity_VulnerabilityClass --> query_entity_CompensatingControl
+  query_entity_VulnerabilityClass --> query_entity_Vulnerability
 ```
 <!-- CRUXIBLE:END query-map -->
 
@@ -272,8 +321,9 @@ relationship.
 
 | Query | Returns | Traversal | Purpose |
 | --- | --- | --- | --- |
+| Exposed Assets For Product | Asset | Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) | Starting from a product, find assets currently accepted as exposed through vulnerabilities affecting that product. |
 | Incident History For Product | Incident | Vulnerability Affects Product (Incoming) -> Incident Exploited Vulnerability (Incoming) | Starting from a product, find incidents where vulnerabilities affecting this product were exploited. Answers: "Has this product been exploited before in our environment?" |
-| Product Kev Exposure | Asset | Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) | Starting from a product, find KEV or CVE records known to affect it and the assets currently accepted as exposed. |
+| Product Kev Exposure | Asset | Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) | Compatibility alias for exposed_assets_for_product. |
 | Product Vulnerabilities | Vulnerability | Vulnerability Affects Product (Incoming) | Starting from a product, find vulnerabilities that affect it. |
 
 ### Vendor
@@ -288,11 +338,20 @@ relationship.
 
 | Query | Returns | Traversal | Purpose |
 | --- | --- | --- | --- |
-| Kev Assets | Asset | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, find internal assets that run a product affected by that vulnerability. |
+| Candidate Assets For Vulnerability | Asset | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, find internal assets that run a product affected by that vulnerability. This is a candidate impact surface derived from product mappings, not accepted exposure state. |
+| Exposed Assets For Vulnerability | Asset | Asset Exposed To Vulnerability (Incoming) | Starting from a vulnerability, find assets with accepted exposure state for that vulnerability. |
+| Kev Assets | Asset | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Compatibility alias for candidate_assets_for_vulnerability. Prefer candidate_assets_for_vulnerability or exposed_assets_for_vulnerability in new decision workflows. |
 | Prior Exploitation Context | Finding | Incident Exploited Vulnerability (Incoming) -> Finding From Incident (Incoming) | Starting from a vulnerability, find incidents where it was exploited and the findings from those investigations. Answers: "What did we learn last time this CVE was exploited?" |
 | Remediated Assets For Vulnerability | Asset | Asset Remediated Vulnerability (Incoming) | Starting from a vulnerability, find assets that have explicit remediation state recorded for it. |
-| Service Blast Radius | Business Service | Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vulnerability, find business services with exposed dependent assets. |
+| Service Blast Radius | Business Service | Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vulnerability, find business services with accepted exposed dependent assets. |
 | Vulnerability Products | Product | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, find affected products. |
+
+### Vulnerability Class
+
+| Query | Returns | Traversal | Purpose |
+| --- | --- | --- | --- |
+| Controls For Vulnerability Class | Compensating Control | Control Mitigates Class (Incoming) | Starting from a vulnerability class, find compensating controls governed as mitigating that class. |
+| Vulnerabilities For Class | Vulnerability | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, find vulnerabilities that have been governed into that class. Useful context for future agent classification proposals. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Schema Reference

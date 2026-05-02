@@ -430,10 +430,11 @@ relationships:
 # ─── Named queries (fork-specific, traverse across both layers) ──────
 
 named_queries:
-  kev_assets:
+  candidate_assets_for_vulnerability:
     description: >
-      Starting from a vulnerability, find internal assets that run a product
-      affected by that vulnerability.
+      Starting from a vulnerability, find internal assets that run a
+      product affected by that vulnerability. This is a candidate impact
+      surface derived from product mappings, not accepted exposure state.
     entry_point: Vulnerability
     returns: Asset
     traversal:
@@ -442,10 +443,33 @@ named_queries:
       - relationship: asset_runs_product
         direction: incoming
 
+  kev_assets:
+    description: >
+      Compatibility alias for candidate_assets_for_vulnerability. Prefer
+      candidate_assets_for_vulnerability or exposed_assets_for_vulnerability
+      in new decision workflows.
+    entry_point: Vulnerability
+    returns: Asset
+    traversal:
+      - relationship: vulnerability_affects_product
+        direction: outgoing
+      - relationship: asset_runs_product
+        direction: incoming
+
+  exposed_assets_for_vulnerability:
+    description: >
+      Starting from a vulnerability, find assets with accepted exposure
+      state for that vulnerability.
+    entry_point: Vulnerability
+    returns: Asset
+    traversal:
+      - relationship: asset_exposed_to_vulnerability
+        direction: incoming
+
   service_blast_radius:
     description: >
-      Starting from a vulnerability, find business services with exposed
-      dependent assets.
+      Starting from a vulnerability, find business services with accepted
+      exposed dependent assets.
     entry_point: Vulnerability
     returns: BusinessService
     traversal:
@@ -469,10 +493,21 @@ named_queries:
           - relationship: asset_remediated_vulnerability
             direction: outgoing
 
+  exposed_assets_for_product:
+    description: >
+      Starting from a product, find assets currently accepted as exposed
+      through vulnerabilities affecting that product.
+    entry_point: Product
+    returns: Asset
+    traversal:
+      - relationship: vulnerability_affects_product
+        direction: incoming
+      - relationship: asset_exposed_to_vulnerability
+        direction: incoming
+
   product_kev_exposure:
     description: >
-      Starting from a product, find KEV or CVE records known to affect it and
-      the assets currently accepted as exposed.
+      Compatibility alias for exposed_assets_for_product.
     entry_point: Product
     returns: Asset
     traversal:
@@ -515,6 +550,27 @@ named_queries:
       - relationship: asset_exposed_to_vulnerability
         direction: incoming
       - relationship: service_depends_on_asset
+        direction: incoming
+
+  vulnerabilities_for_class:
+    description: >
+      Starting from a vulnerability class, find vulnerabilities that have
+      been governed into that class. Useful context for future agent
+      classification proposals.
+    entry_point: VulnerabilityClass
+    returns: Vulnerability
+    traversal:
+      - relationship: vulnerability_classified_as
+        direction: incoming
+
+  controls_for_vulnerability_class:
+    description: >
+      Starting from a vulnerability class, find compensating controls
+      governed as mitigating that class.
+    entry_point: VulnerabilityClass
+    returns: CompensatingControl
+    traversal:
+      - relationship: control_mitigates_class
         direction: incoming
 
   asset_exception_context:
@@ -946,6 +1002,68 @@ contracts:
               exploitability_verdict: {type: string}
               control_verdict: {type: string}
 
+  VulnerabilityClassificationProposalInput:
+    description: Agent-selected vulnerability classification proposals.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              cve_id: {type: string}
+              class_id: {type: string}
+              basis: {type: string}
+              source: {type: string}
+              verdict: {type: string}
+
+  ControlMitigatesClassProposalInput:
+    description: Agent-selected control-to-vulnerability-class mitigation proposals.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              control_id: {type: string}
+              class_id: {type: string}
+              validation_basis: {type: string}
+              verdict: {type: string}
+
+  ExposureReconciliationInput:
+    description: Accepted exposure state plus product-derived current affected candidates.
+    fields:
+      accepted_exposure_edges:
+        type: json
+      affected_items:
+        type: json
+      asset_product_edges:
+        type: json
+      vulnerability_product_edges:
+        type: json
+      remediated_edges:
+        type: json
+
+  ExposureReconciliationResults:
+    description: Closure proposals for accepted exposure edges no longer supported by current product-derived evidence.
+    fields:
+      items:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_id: {type: string}
+              cve_id: {type: string}
+              remediation_type: {type: string}
+              evidence_source: {type: string}
+              rationale: {type: string}
+              verdict: {type: string}
+
 # ─── Artifacts ────────────────────────────────────────────────────────
 
 artifacts:
@@ -1034,6 +1152,18 @@ providers:
     contract_in: AssetExposureAssessmentInput
     contract_out: AssetExposureAssessmentResults
     ref: cruxible_kits.kev_triage.assess_asset_exposure
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  assess_exposure_reconciliation:
+    kind: function
+    description: >
+      Compare accepted exposure edges against the current product-derived
+      affected candidate set and identify stale exposures to close.
+    contract_in: ExposureReconciliationInput
+    contract_out: ExposureReconciliationResults
+    ref: cruxible_kits.kev_triage.assess_exposure_reconciliation
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1431,6 +1561,192 @@ workflows:
             rule_id: exposure_assessment_from_version_posture_and_controls
             rule_version: 1
             source: kev_reference_asset_posture_and_controls
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_vulnerability_classification:
+    canonical: false
+    purpose: proposal
+    description: >
+      Propose fork-layer vulnerability classifications selected by an
+      agent after reviewing the available VulnerabilityClass buckets and
+      prior classification examples.
+    contract_in: VulnerabilityClassificationProposalInput
+    steps:
+      - id: candidates
+        make_candidates:
+          relationship_type: vulnerability_classified_as
+          items: $input.items
+          from_type: Vulnerability
+          from_id: $item.cve_id
+          to_type: VulnerabilityClass
+          to_id: $item.class_id
+          properties:
+            basis: $item.basis
+            source: $item.source
+        as: candidates
+      - id: classification_signals
+        map_signals:
+          integration: vulnerability_classification
+          items: $input.items
+          from_id: $item.cve_id
+          to_id: $item.class_id
+          evidence: $item.basis
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: classification_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: vulnerability_classified_as
+          candidates_from: candidates
+          signals_from: [classification_signals]
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Agent-selected operational vulnerability classification
+          thesis_facts:
+            rule_id: agent_vulnerability_classification
+            rule_version: 1
+            source: agent_review
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_control_mitigates_class:
+    canonical: false
+    purpose: proposal
+    description: >
+      Propose that an existing compensating control materially mitigates
+      a vulnerability class. This is the stock onboarding path and may be
+      tuned to the user's control evidence model.
+    contract_in: ControlMitigatesClassProposalInput
+    steps:
+      - id: candidates
+        make_candidates:
+          relationship_type: control_mitigates_class
+          items: $input.items
+          from_type: CompensatingControl
+          from_id: $item.control_id
+          to_type: VulnerabilityClass
+          to_id: $item.class_id
+          properties:
+            validation_basis: $item.validation_basis
+        as: candidates
+      - id: control_signals
+        map_signals:
+          integration: control_effectiveness
+          items: $input.items
+          from_id: $item.control_id
+          to_id: $item.class_id
+          evidence: $item.validation_basis
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: control_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: control_mitigates_class
+          candidates_from: candidates
+          signals_from: [control_signals]
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Agent-selected control mitigation coverage for vulnerability class
+          thesis_facts:
+            rule_id: agent_control_class_mitigation
+            rule_version: 1
+            source: control_review
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_exposure_reconciliation:
+    canonical: false
+    purpose: proposal
+    description: >
+      After a KEV reference refresh or product-mapping refresh, derive the
+      current affected candidate set through Asset -> Product <- Vulnerability
+      and propose remediation/closure for accepted exposure edges that are no
+      longer supported.
+    contract_in: EmptyInput
+    steps:
+      - id: asset_products
+        list_relationships:
+          relationship_type: asset_runs_product
+        as: asset_products
+      - id: vulnerability_products
+        list_relationships:
+          relationship_type: vulnerability_affects_product
+        as: vulnerability_products
+      - id: affected_assessments
+        provider: assess_asset_affected
+        input:
+          asset_product_edges: $steps.asset_products.items
+          vulnerability_product_edges: $steps.vulnerability_products.items
+        as: affected_assessments
+      - id: accepted_exposures
+        list_relationships:
+          relationship_type: asset_exposed_to_vulnerability
+        as: accepted_exposures
+      - id: remediated_edges
+        list_relationships:
+          relationship_type: asset_remediated_vulnerability
+        as: remediated_edges
+      - id: reconciliation
+        provider: assess_exposure_reconciliation
+        input:
+          accepted_exposure_edges: $steps.accepted_exposures.items
+          affected_items: $steps.affected_assessments.items
+          asset_product_edges: $steps.asset_products.items
+          vulnerability_product_edges: $steps.vulnerability_products.items
+          remediated_edges: $steps.remediated_edges.items
+        as: reconciliation
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_remediated_vulnerability
+          items: $steps.reconciliation.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            remediation_type: $item.remediation_type
+            evidence_source: $item.evidence_source
+            rationale: $item.rationale
+        as: candidates
+      - id: remediation_signals
+        map_signals:
+          integration: remediation_verification
+          items: $steps.reconciliation.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: remediation_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_remediated_vulnerability
+          candidates_from: candidates
+          signals_from: [remediation_signals]
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Accepted exposure edges no longer supported by current
+            product-derived affected evidence should be closed
+          thesis_facts:
+            rule_id: exposure_reconciliation_from_product_reference_path
+            rule_version: 1
+            source: kev_reference_refresh
           proposed_by: agent
         as: proposal
     returns: proposal
