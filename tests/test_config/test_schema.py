@@ -595,6 +595,74 @@ class TestWorkflowSchema:
         assert step.list_relationships is not None
         assert step.list_relationships.relationship_type == "recommended_for"
 
+    def test_shape_items_step_accepts_projection_config(self):
+        step = WorkflowStepSchema(
+            id="shaped",
+            shape_items={
+                "items": "$steps.parsed.tables.assets.rows",
+                "include_input": False,
+                "rename": {"tags_json": "tags"},
+                "fields": {
+                    "asset_id": "$item.asset_id",
+                    "priority": "$item.priority",
+                },
+                "casts": {"priority": "int", "tags": "json"},
+                "required": ["asset_id"],
+            },
+            **{"as": "shaped"},
+        )
+        assert step.shape_items is not None
+        assert step.shape_items.casts["priority"] == "int"
+
+    def test_shape_items_requires_projection_when_not_including_input(self):
+        with pytest.raises(ValidationError, match="must define fields or rename"):
+            WorkflowStepSchema(
+                id="shaped",
+                shape_items={"items": "$steps.rows.items", "include_input": False},
+                **{"as": "shaped"},
+            )
+
+    def test_shape_items_rejects_invalid_cast_type(self):
+        with pytest.raises(ValidationError):
+            WorkflowStepSchema(
+                id="shaped",
+                shape_items={
+                    "items": "$steps.rows.items",
+                    "fields": {"priority": "$item.priority"},
+                    "casts": {"priority": "date"},
+                },
+                **{"as": "shaped"},
+            )
+
+    def test_filter_items_rejects_invalid_comparison_op(self):
+        with pytest.raises(ValidationError):
+            WorkflowStepSchema(
+                id="filtered",
+                filter_items={
+                    "items": "$steps.rows.items",
+                    "comparisons": [{"left": "$item.score", "op": "contains", "right": 1}],
+                },
+                **{"as": "filtered"},
+            )
+
+    def test_dedupe_items_requires_keys_and_rank_for_ranked_strategies(self):
+        with pytest.raises(ValidationError, match="keys must not be empty"):
+            WorkflowStepSchema(
+                id="deduped",
+                dedupe_items={"items": "$steps.rows.items", "keys": []},
+                **{"as": "deduped"},
+            )
+        with pytest.raises(ValidationError, match="requires rank"):
+            WorkflowStepSchema(
+                id="deduped",
+                dedupe_items={
+                    "items": "$steps.rows.items",
+                    "keys": ["$item.id"],
+                    "strategy": "max",
+                },
+                **{"as": "deduped"},
+            )
+
     def test_map_signals_requires_exactly_one_mapping_mode(self):
         with pytest.raises(ValidationError, match="exactly one of 'score' or 'enum'"):
             WorkflowStepSchema(

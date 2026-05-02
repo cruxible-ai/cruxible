@@ -1336,6 +1336,14 @@ def _workflow_step_kind(step: WorkflowStepSchema) -> str:
         return "list_entities"
     if step.list_relationships is not None:
         return "list_relationships"
+    if step.shape_items is not None:
+        return "shape_items"
+    if step.join_items is not None:
+        return "join_items"
+    if step.filter_items is not None:
+        return "filter_items"
+    if step.dedupe_items is not None:
+        return "dedupe_items"
     if step.make_candidates is not None:
         return "make_candidates"
     if step.map_signals is not None:
@@ -1366,6 +1374,14 @@ def _workflow_step_summary(
         detail = step.list_entities.entity_type
     elif step_kind == "list_relationships" and step.list_relationships is not None:
         detail = step.list_relationships.relationship_type
+    elif step_kind == "shape_items" and step.shape_items is not None:
+        detail = f"{len(step.shape_items.fields)} fields"
+    elif step_kind == "join_items" and step.join_items is not None:
+        detail = step.join_items.join_type
+    elif step_kind == "filter_items" and step.filter_items is not None:
+        detail = f"{len(step.filter_items.where)} filters"
+    elif step_kind == "dedupe_items" and step.dedupe_items is not None:
+        detail = step.dedupe_items.strategy
     elif step_kind == "make_candidates" and step.make_candidates is not None:
         detail = step.make_candidates.relationship_type
     elif step_kind == "map_signals" and step.map_signals is not None:

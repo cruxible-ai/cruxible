@@ -11,6 +11,7 @@ from typing import Any
 
 import polars as pl
 
+from cruxible_core.canonical_json import canonical_json
 from cruxible_core.provider.types import ProviderContext
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xls"}
@@ -494,7 +495,7 @@ def _row_hash(row: dict[str, Any]) -> str:
 
 
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return canonical_json(value)
 
 
 def _json_safe_value(value: Any) -> Any:

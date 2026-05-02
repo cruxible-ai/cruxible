@@ -707,6 +707,119 @@ class AssertSpec(BaseModel):
     message: str
 
 
+ShapeCastType = Literal["str", "int", "float", "bool", "json"]
+MissingRequiredAction = Literal["error", "drop"]
+FilterComparisonOp = Literal[
+    "eq",
+    "ne",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "==",
+    "!=",
+    ">",
+    ">=",
+    "<",
+    "<=",
+]
+DeduplicationStrategy = Literal["first", "last", "max", "min"]
+
+
+class ShapeItemsSpec(BaseModel):
+    """Project, rename, and explicitly cast list-shaped workflow data."""
+
+    items: Any
+    include_input: bool = False
+    rename: dict[str, str] = Field(default_factory=dict)
+    fields: dict[str, Any] = Field(default_factory=dict)
+    casts: dict[str, ShapeCastType] = Field(default_factory=dict)
+    required: list[str] = Field(default_factory=list)
+    on_missing_required: MissingRequiredAction = "error"
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> ShapeItemsSpec:
+        if not self.include_input and not self.rename and not self.fields:
+            msg = "shape_items with include_input: false must define fields or rename"
+            raise ValueError(msg)
+        for source, target in self.rename.items():
+            if "." in source or "." in target:
+                msg = "shape_items rename keys are top-level only"
+                raise ValueError(msg)
+            if not source or not target:
+                msg = "shape_items rename keys must be non-empty strings"
+                raise ValueError(msg)
+        rename_targets = list(self.rename.values())
+        if len(set(rename_targets)) != len(rename_targets):
+            msg = "shape_items rename targets must be unique"
+            raise ValueError(msg)
+        return self
+
+
+class JoinItemsSpec(BaseModel):
+    """Join two list-shaped workflow payloads by resolved item keys."""
+
+    left_items: Any
+    right_items: Any
+    left_key: Any
+    right_key: Any
+    join_type: Literal["inner"] = "inner"
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class FilterComparisonSpec(BaseModel):
+    """Single predicate comparison used by filter_items."""
+
+    left: Any
+    op: FilterComparisonOp
+    right: Any
+
+    model_config = {"extra": "forbid"}
+
+
+class FilterItemsSpec(BaseModel):
+    """Filter list-shaped workflow data using shared exact filters and comparisons."""
+
+    items: Any
+    where: dict[str, Any] = Field(default_factory=dict)
+    comparisons: list[FilterComparisonSpec] = Field(default_factory=list)
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_where_keys(self) -> FilterItemsSpec:
+        for key in self.where:
+            if "." in key:
+                msg = "filter_items where keys are top-level only"
+                raise ValueError(msg)
+        return self
+
+
+class DedupeItemsSpec(BaseModel):
+    """Deduplicate list-shaped workflow data by one or more resolved keys."""
+
+    items: Any
+    keys: list[Any]
+    strategy: DeduplicationStrategy = "first"
+    rank: Any | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_dedupe(self) -> DedupeItemsSpec:
+        if not self.keys:
+            msg = "dedupe_items keys must not be empty"
+            raise ValueError(msg)
+        if self.strategy in {"max", "min"} and self.rank is None:
+            msg = f"dedupe_items strategy '{self.strategy}' requires rank"
+            raise ValueError(msg)
+        return self
+
+
 class MakeCandidatesSpec(BaseModel):
     """Build a relationship candidate set from list-shaped workflow data."""
 
@@ -859,6 +972,10 @@ StepKind = Literal[
     "assert",
     "list_entities",
     "list_relationships",
+    "shape_items",
+    "join_items",
+    "filter_items",
+    "dedupe_items",
     "make_candidates",
     "map_signals",
     "propose_relationship_group",
@@ -867,13 +984,13 @@ StepKind = Literal[
     "apply_entities",
     "apply_relationships",
 ]
-"""The 12 workflow step kinds, grouped into Read/Compute/Build/Write phases."""
+"""The 16 workflow step kinds, grouped into Read/Compute/Build/Write phases."""
 
 
 class WorkflowStepSchema(BaseModel):
     """Single step in a declarative workflow.
 
-    Exactly one step kind must be set per step. The 12 kinds fall into
+    Exactly one step kind must be set per step. The 16 kinds fall into
     four logical phases:
 
     Phase 1 — Read (pull data in):
@@ -884,6 +1001,10 @@ class WorkflowStepSchema(BaseModel):
     Phase 2 — Compute (transform data):
         provider            Call an external provider (function/model/tool).
         assert              Guard condition; fails the workflow if false.
+        shape_items         Project, rename, and cast list-shaped data.
+        join_items          Indexed inner join over two item sets.
+        filter_items        Filter list-shaped data with shared predicates.
+        dedupe_items        Deterministically deduplicate list-shaped data.
 
     Phase 3 — Build (structure results for the graph):
         make_candidates     Build relationship candidate pairs from list data.
@@ -913,6 +1034,10 @@ class WorkflowStepSchema(BaseModel):
     assert_spec: AssertSpec | None = Field(alias="assert", default=None)
     list_entities: ListEntitiesSpec | None = None
     list_relationships: ListRelationshipsSpec | None = None
+    shape_items: ShapeItemsSpec | None = None
+    join_items: JoinItemsSpec | None = None
+    filter_items: FilterItemsSpec | None = None
+    dedupe_items: DedupeItemsSpec | None = None
     make_candidates: MakeCandidatesSpec | None = None
     map_signals: MapSignalsSpec | None = None
     propose_relationship_group: ProposeRelationshipGroupSpec | None = None
@@ -934,6 +1059,10 @@ class WorkflowStepSchema(BaseModel):
             "assert": self.assert_spec,
             "list_entities": self.list_entities,
             "list_relationships": self.list_relationships,
+            "shape_items": self.shape_items,
+            "join_items": self.join_items,
+            "filter_items": self.filter_items,
+            "dedupe_items": self.dedupe_items,
             "make_candidates": self.make_candidates,
             "map_signals": self.map_signals,
             "propose_relationship_group": self.propose_relationship_group,

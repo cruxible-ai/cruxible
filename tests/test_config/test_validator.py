@@ -882,6 +882,134 @@ class TestValidateWorkflowExecution:
             validate_config(config)
         assert any("unsupported reference '$item.id'" in e for e in exc_info.value.errors)
 
+    def test_dataflow_step_item_source_references_are_rejected(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="shaped",
+                            shape_items={
+                                "items": "$item.rows",
+                                "fields": {"id": "$item.id"},
+                            },
+                            **{"as": "shaped"},
+                        )
+                    ],
+                    returns="shaped",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any("unsupported reference '$item.rows'" in e for e in exc_info.value.errors)
+
+    def test_filter_items_where_refs_must_use_input(self):
+        config = self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="loaded",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        ),
+                        WorkflowStepSchema(
+                            id="filtered",
+                            filter_items={
+                                "items": "$steps.loaded.items",
+                                "where": {
+                                    "status": "$item.status",
+                                    "owner": "$steps.loaded.owner",
+                                },
+                            },
+                            **{"as": "filtered"},
+                        ),
+                    ],
+                    returns="filtered",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "filter_items where reference '$item.status' must use $input only" in e
+            for e in exc_info.value.errors
+        )
+        assert any(
+            "filter_items where reference '$steps.loaded.owner' must use $input only" in e
+            for e in exc_info.value.errors
+        )
+
+    def test_dataflow_steps_accept_scoped_item_refs(self):
+        config = self._workflow_config(
+            contracts={
+                "WorkflowInput": ContractSchema(
+                    fields={
+                        "id": PropertySchema(type="string"),
+                        "status": PropertySchema(type="string", optional=True),
+                    }
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="loaded",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        ),
+                        WorkflowStepSchema(
+                            id="shaped",
+                            shape_items={
+                                "items": "$steps.loaded.items",
+                                "fields": {"id": "$item.id", "status": "$item.status"},
+                            },
+                            **{"as": "shaped"},
+                        ),
+                        WorkflowStepSchema(
+                            id="filtered",
+                            filter_items={
+                                "items": "$steps.shaped.items",
+                                "where": {"status": "$input.status"},
+                                "comparisons": [
+                                    {"left": "$item.id", "op": "ne", "right": "$input.id"}
+                                ],
+                            },
+                            **{"as": "filtered"},
+                        ),
+                        WorkflowStepSchema(
+                            id="joined",
+                            join_items={
+                                "left_items": "$steps.filtered.items",
+                                "right_items": "$steps.shaped.items",
+                                "left_key": "$item.id",
+                                "right_key": "$item.id",
+                                "fields": {"id": "$item.left.id"},
+                            },
+                            **{"as": "joined"},
+                        ),
+                        WorkflowStepSchema(
+                            id="deduped",
+                            dedupe_items={
+                                "items": "$steps.joined.items",
+                                "keys": ["$item.id"],
+                            },
+                            **{"as": "deduped"},
+                        ),
+                    ],
+                    returns="deduped",
+                )
+            },
+        )
+
+        validate_config(config)
+
 
 class TestValidateKinds:
     def test_ontology_rejects_world_model_execution_blocks(self):

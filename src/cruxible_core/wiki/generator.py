@@ -1936,6 +1936,14 @@ class _WikiGenerator:
                 "List recorded "
                 f"{_humanize(step.list_relationships.relationship_type)} links"
             )
+        if step.shape_items is not None:
+            return "Shape rows"
+        if step.join_items is not None:
+            return "Join row sets"
+        if step.filter_items is not None:
+            return "Filter rows"
+        if step.dedupe_items is not None:
+            return "Deduplicate rows"
         if step.make_candidates is not None:
             return (
                 "Build candidate "
@@ -1969,6 +1977,14 @@ class _WikiGenerator:
             return _humanize(step.list_entities.entity_type)
         if step.list_relationships is not None:
             return _humanize(step.list_relationships.relationship_type)
+        if step.shape_items is not None:
+            return _format_mapping_refs(step.shape_items.model_dump(mode="python"))
+        if step.join_items is not None:
+            return _format_mapping_refs(step.join_items.model_dump(mode="python"))
+        if step.filter_items is not None:
+            return _format_mapping_refs(step.filter_items.model_dump(mode="python"))
+        if step.dedupe_items is not None:
+            return _format_mapping_refs(step.dedupe_items.model_dump(mode="python"))
         if step.make_candidates is not None:
             return _format_mapping_refs(step.make_candidates.model_dump(mode="python"))
         if step.map_signals is not None:
@@ -2002,6 +2018,14 @@ class _WikiGenerator:
                 )
             if step.map_signals is not None:
                 return f"{step.as_} ({_humanize(step.map_signals.integration)} signals)"
+            if step.shape_items is not None:
+                return f"{step.as_} (shaped rows)"
+            if step.join_items is not None:
+                return f"{step.as_} (joined rows)"
+            if step.filter_items is not None:
+                return f"{step.as_} (filtered rows)"
+            if step.dedupe_items is not None:
+                return f"{step.as_} (deduplicated rows)"
             return step.as_
         return "-"
 

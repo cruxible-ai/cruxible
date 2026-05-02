@@ -11,6 +11,9 @@ from cruxible_core.config.schema import (
     ApplyEntitiesSpec,
     ApplyRelationshipsSpec,
     AssertSpec,
+    DedupeItemsSpec,
+    FilterItemsSpec,
+    JoinItemsSpec,
     ListEntitiesSpec,
     ListRelationshipsSpec,
     MakeCandidatesSpec,
@@ -18,6 +21,7 @@ from cruxible_core.config.schema import (
     MakeRelationshipsSpec,
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
+    ShapeItemsSpec,
     StepKind,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -92,6 +96,10 @@ class CompiledPlanStep(BaseModel):
     assert_spec: AssertSpec | None = None
     list_entities_spec: ListEntitiesSpec | None = None
     list_relationships_spec: ListRelationshipsSpec | None = None
+    shape_items_spec: ShapeItemsSpec | None = None
+    join_items_spec: JoinItemsSpec | None = None
+    filter_items_spec: FilterItemsSpec | None = None
+    dedupe_items_spec: DedupeItemsSpec | None = None
     make_candidates_spec: MakeCandidatesSpec | None = None
     map_signals_spec: MapSignalsSpec | None = None
     propose_relationship_group_spec: ProposeRelationshipGroupSpec | None = None

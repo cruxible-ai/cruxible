@@ -147,6 +147,47 @@ def _json_contract_instance(tmp_path: Path, config_yaml: str) -> CruxibleInstanc
     return instance
 
 
+def _dataflow_instance(
+    tmp_path: Path,
+    *,
+    steps_yaml: str,
+    returns: str,
+    contract_fields_yaml: str = "fields: {}",
+) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""\
+version: "1.0"
+name: dataflow_workflow
+kind: world_model
+
+entity_types:
+  Row:
+    properties:
+      id:
+        type: string
+        primary_key: true
+
+relationships: []
+
+contracts:
+  DataflowInput:
+{indent(dedent(contract_fields_yaml).strip(), "    ")}
+
+workflows:
+  dataflow:
+    contract_in: DataflowInput
+    steps:
+{indent(dedent(steps_yaml).strip(), "      ")}
+    returns: {returns}
+"""
+    )
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    _write_lock_for_instance(instance)
+    return instance
+
+
 def _compute_directory_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     for child in sorted(item for item in path.rglob("*") if item.is_file()):
@@ -414,6 +455,466 @@ class TestWorkflowCompiler:
         )
 
         assert result.output["decision"] == "approve"
+
+
+class TestWorkflowDataflowSteps:
+    def test_execute_shape_items_casts_and_drops_missing_required(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items:
+                  - asset_id: ASSET-1
+                    priority: " 1 "
+                    internet_exposed: "true"
+                    tags_json: '["prod","api"]'
+                    unused: ignored
+                  - asset_id: ""
+                    priority: "2"
+                    internet_exposed: "false"
+                    tags_json: '["staging"]'
+                include_input: false
+                rename:
+                  tags_json: tags
+                fields:
+                  asset_id: $item.asset_id
+                  priority: $item.priority
+                  internet_exposed: $item.internet_exposed
+                  source: seed
+                casts:
+                  priority: int
+                  internet_exposed: bool
+                  tags: json
+                required: [asset_id]
+                on_missing_required: drop
+              as: shaped
+            """,
+            returns="shaped",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["input_count"] == 2
+        assert result.output["output_count"] == 1
+        assert result.output["dropped_count"] == 1
+        assert result.output["items"] == [
+            {
+                "asset_id": "ASSET-1",
+                "priority": 1,
+                "internet_exposed": True,
+                "tags": ["prod", "api"],
+                "source": "seed",
+            }
+        ]
+
+    def test_execute_shape_items_rejects_cast_failure_and_rename_collision(
+        self, tmp_path: Path
+    ) -> None:
+        cast_instance = _dataflow_instance(
+            tmp_path / "cast",
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items:
+                  - id: A
+                    priority: 42px
+                fields:
+                  id: $item.id
+                  priority: $item.priority
+                casts:
+                  priority: int
+              as: shaped
+            """,
+            returns="shaped",
+        )
+        with pytest.raises(QueryExecutionError, match="could not cast field 'priority'"):
+            execute_workflow(cast_instance, cast_instance.load_config(), "dataflow", {})
+
+        collision_instance = _dataflow_instance(
+            tmp_path / "collision",
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items:
+                  - tags: existing
+                    tags_json: '["new"]'
+                rename:
+                  tags_json: tags
+              as: shaped
+            """,
+            returns="shaped",
+        )
+        with pytest.raises(QueryExecutionError, match="rename collision"):
+            execute_workflow(
+                collision_instance,
+                collision_instance.load_config(),
+                "dataflow",
+                {},
+            )
+
+    def test_execute_shape_items_empty_input_missing_cast_and_required_error(
+        self, tmp_path: Path
+    ) -> None:
+        empty_instance = _dataflow_instance(
+            tmp_path / "empty",
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items: []
+                include_input: true
+                casts:
+                  missing: int
+              as: shaped
+            """,
+            returns="shaped",
+        )
+        empty_result = execute_workflow(
+            empty_instance,
+            empty_instance.load_config(),
+            "dataflow",
+            {},
+        )
+        assert empty_result.output["items"] == []
+        assert empty_result.output["input_count"] == 0
+
+        null_instance = _dataflow_instance(
+            tmp_path / "null",
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items:
+                  - id: A
+                    priority:
+                fields:
+                  id: $item.id
+                  priority: $item.priority
+                casts:
+                  priority: int
+                required: [id]
+              as: shaped
+            """,
+            returns="shaped",
+        )
+        null_result = execute_workflow(
+            null_instance,
+            null_instance.load_config(),
+            "dataflow",
+            {},
+        )
+        assert null_result.output["items"] == [{"id": "A", "priority": None}]
+
+        required_instance = _dataflow_instance(
+            tmp_path / "required",
+            steps_yaml="""
+            - id: shaped
+              shape_items:
+                items:
+                  - id:
+                fields:
+                  id: $item.id
+                required: [id]
+              as: shaped
+            """,
+            returns="shaped",
+        )
+        with pytest.raises(QueryExecutionError, match="missing required field"):
+            execute_workflow(
+                required_instance,
+                required_instance.load_config(),
+                "dataflow",
+                {},
+            )
+
+    def test_execute_join_items_inner_join_fanout_and_stable_order(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: joined
+              join_items:
+                left_items:
+                  - asset_id: A1
+                    product_id: P1
+                  - asset_id: A2
+                    product_id: P2
+                  - asset_id: A3
+                    product_id: P3
+                right_items:
+                  - cve_id: CVE-1
+                    product_id: P1
+                  - cve_id: CVE-2
+                    product_id: P1
+                  - cve_id: CVE-skip
+                    product_id:
+                  - cve_id: CVE-3
+                    product_id: P2
+                left_key: $item.product_id
+                right_key: $item.product_id
+                fields:
+                  asset_id: $item.left.asset_id
+                  product_id: $item.join_key
+                  cve_id: $item.right.cve_id
+              as: joined
+            """,
+            returns="joined",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["skipped_right_count"] == 1
+        assert result.output["matched_left_count"] == 2
+        assert result.output["items"] == [
+            {"asset_id": "A1", "product_id": "P1", "cve_id": "CVE-1"},
+            {"asset_id": "A1", "product_id": "P1", "cve_id": "CVE-2"},
+            {"asset_id": "A2", "product_id": "P2", "cve_id": "CVE-3"},
+        ]
+
+    def test_execute_join_items_composite_key_shape_must_match(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: joined
+              join_items:
+                left_items:
+                  - a: A
+                    b: B
+                right_items:
+                  - a: A
+                    b: B
+                left_key: [$item.a, $item.b]
+                right_key:
+                  a: $item.a
+                  b: $item.b
+                fields:
+                  a: $item.left.a
+              as: joined
+            """,
+            returns="joined",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["output_count"] == 0
+        assert result.output["items"] == []
+
+    def test_execute_join_items_handles_empty_inputs(self, tmp_path: Path) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: joined
+              join_items:
+                left_items: []
+                right_items: []
+                left_key: $item.id
+                right_key: $item.id
+                fields:
+                  id: $item.left.id
+              as: joined
+            """,
+            returns="joined",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["left_count"] == 0
+        assert result.output["right_count"] == 0
+        assert result.output["items"] == []
+
+    def test_execute_filter_items_where_comparisons_and_passthrough(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: filtered
+              filter_items:
+                items:
+                  - id: A
+                    severity: high
+                    score: 0.9
+                  - id: B
+                    severity: low
+                    score: 0.95
+                  - id: C
+                    severity: critical
+                    score: 0.7
+                where:
+                  severity: [high, critical]
+                comparisons:
+                  - left: $item.score
+                    op: ">="
+                    right: 0.8
+              as: filtered
+            - id: passthrough
+              filter_items:
+                items: $steps.filtered.items
+              as: passthrough
+            """,
+            returns="passthrough",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["input_count"] == 1
+        assert result.output["items"] == [{"id": "A", "severity": "high", "score": 0.9}]
+
+    def test_execute_filter_items_where_accepts_input_refs(self, tmp_path: Path) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            contract_fields_yaml="""
+            fields:
+              allowed:
+                type: json
+            """,
+            steps_yaml="""
+            - id: filtered
+              filter_items:
+                items:
+                  - id: A
+                    severity: high
+                  - id: B
+                    severity: low
+                where:
+                  severity: $input.allowed
+              as: filtered
+            """,
+            returns="filtered",
+        )
+
+        result = execute_workflow(
+            instance,
+            instance.load_config(),
+            "dataflow",
+            {"allowed": ["high", "critical"]},
+        )
+
+        assert result.output["items"] == [{"id": "A", "severity": "high"}]
+
+    def test_execute_dedupe_items_ranked_and_positional_strategies(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: maxed
+              dedupe_items:
+                items:
+                  - asset_id: A1
+                    product_id: P1
+                    confidence:
+                  - asset_id: A1
+                    product_id: P1
+                    confidence: 0.9
+                  - asset_id: A1
+                    product_id: P1
+                    confidence: 0.8
+                  - asset_id: A2
+                    product_id: P2
+                    confidence: 0.4
+                  - asset_id: A2
+                    product_id: P2
+                    confidence: 0.4
+                keys: [$item.asset_id, $item.product_id]
+                strategy: max
+                rank: $item.confidence
+              as: maxed
+            - id: lasted
+              dedupe_items:
+                items: $steps.maxed.items
+                keys: [$item.asset_id]
+                strategy: last
+                rank: $item.confidence
+              as: lasted
+            """,
+            returns="lasted",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.step_outputs["maxed"]["duplicate_count"] == 3
+        assert result.step_outputs["maxed"]["items"] == [
+            {"asset_id": "A1", "product_id": "P1", "confidence": 0.9},
+            {"asset_id": "A2", "product_id": "P2", "confidence": 0.4},
+        ]
+        assert result.output["items"] == [
+            {"asset_id": "A1", "product_id": "P1", "confidence": 0.9},
+            {"asset_id": "A2", "product_id": "P2", "confidence": 0.4},
+        ]
+
+    def test_execute_dedupe_items_incomparable_rank_raises(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: deduped
+              dedupe_items:
+                items:
+                  - id: A
+                    confidence: 0.8
+                  - id: A
+                    confidence: high
+                keys: [$item.id]
+                strategy: max
+                rank: $item.confidence
+              as: deduped
+            """,
+            returns="deduped",
+        )
+
+        with pytest.raises(QueryExecutionError, match="rank values are incomparable"):
+            execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+    def test_execute_dedupe_items_empty_first_and_min_strategies(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: empty
+              dedupe_items:
+                items: []
+                keys: [$item.id]
+              as: empty
+            - id: firsted
+              dedupe_items:
+                items:
+                  - id: A
+                    rank: 2
+                  - id: A
+                    rank: 1
+                keys: [$item.id]
+                strategy: first
+                rank: $item.rank
+              as: firsted
+            - id: mined
+              dedupe_items:
+                items:
+                  - id: B
+                    rank:
+                  - id: B
+                    rank: 3
+                  - id: B
+                    rank: 2
+                keys: [$item.id]
+                strategy: min
+                rank: $item.rank
+              as: mined
+            """,
+            returns="mined",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.step_outputs["empty"]["items"] == []
+        assert result.step_outputs["firsted"]["items"] == [{"id": "A", "rank": 2}]
+        assert result.output["items"] == [{"id": "B", "rank": 2}]
 
 
 class TestWorkflowExecutor:
@@ -1053,6 +1554,137 @@ class TestWorkflowExecutor:
         assert applied.committed_snapshot_id is not None
         assert applied.receipt.committed is True
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_canonical_workflow_tabular_shape_ingest_parity(
+        self, tmp_path: Path
+    ) -> None:
+        bundle_dir = tmp_path / "bundle"
+        bundle_dir.mkdir()
+        (bundle_dir / "assets.csv").write_text(
+            "\n".join(
+                [
+                    "asset_id,priority,internet_exposed,tags_json",
+                    'ASSET-1,1,true,"[""prod"",""api""]"',
+                    'ASSET-2,2,false,"[""staging""]"',
+                ]
+            )
+            + "\n"
+        )
+        bundle_sha256 = _compute_directory_sha256(bundle_dir)
+        config_yaml = f"""\
+version: "1.0"
+name: tabular_shape_ingest_parity
+kind: world_model
+
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+      priority:
+        type: int
+      internet_exposed:
+        type: bool
+      tags:
+        type: json
+
+relationships: []
+
+contracts:
+  EmptyInput:
+    fields: {{}}
+  TabularParseOptions:
+    fields:
+      table_names:
+        type: json
+        optional: true
+  ParsedTabularBundle:
+    fields:
+      artifact:
+        type: json
+      tables:
+        type: json
+      files:
+        type: json
+      diagnostics:
+        type: json
+
+artifacts:
+  seed_bundle:
+    kind: directory
+    uri: ./bundle
+    sha256: {bundle_sha256}
+
+providers:
+  parse_seed_bundle:
+    kind: function
+    contract_in: TabularParseOptions
+    contract_out: ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    version: 1.0.0
+    deterministic: true
+    runtime: python
+    artifact: seed_bundle
+
+workflows:
+  import_assets:
+    canonical: true
+    contract_in: EmptyInput
+    steps:
+      - id: parsed
+        provider: parse_seed_bundle
+        input:
+          table_names:
+            assets.csv: assets
+        as: parsed
+      - id: shaped
+        shape_items:
+          items: $steps.parsed.tables.assets.rows
+          include_input: false
+          rename:
+            tags_json: tags
+          fields:
+            asset_id: $item.asset_id
+            priority: $item.priority
+            internet_exposed: $item.internet_exposed
+          casts:
+            priority: int
+            internet_exposed: bool
+            tags: json
+          required: [asset_id]
+        as: shaped
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: $steps.shaped.items
+          entity_id: $item.asset_id
+          properties:
+            asset_id: $item.asset_id
+            priority: $item.priority
+            internet_exposed: $item.internet_exposed
+            tags: $item.tags
+        as: assets
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
+    returns: apply_assets
+"""
+        (tmp_path / "config.yaml").write_text(config_yaml)
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        _write_lock_for_instance(instance)
+
+        execute_workflow(instance, instance.load_config(), "import_assets", {}, mode="apply")
+
+        asset = instance.load_graph().get_entity("Asset", "ASSET-1")
+        assert asset is not None
+        assert asset.properties["priority"] == 1
+        assert isinstance(asset.properties["priority"], int)
+        assert asset.properties["internet_exposed"] is True
+        assert isinstance(asset.properties["internet_exposed"], bool)
+        assert asset.properties["tags"] == ["prod", "api"]
+        assert isinstance(asset.properties["tags"], list)
 
     def test_canonical_preview_reports_duplicate_inputs(
         self, canonical_workflow_instance: CruxibleInstance

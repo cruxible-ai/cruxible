@@ -812,6 +812,113 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.shape_items is not None:
+                for ref in _iter_refs(step.shape_items.items):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                for ref in _iter_refs(step.shape_items.fields):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.join_items is not None:
+                for ref in _iter_refs(
+                    [
+                        step.join_items.left_items,
+                        step.join_items.right_items,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.join_items.left_key,
+                        step.join_items.right_key,
+                        step.join_items.fields,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.filter_items is not None:
+                for ref in _iter_refs(step.filter_items.items):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                for ref in _iter_refs(step.filter_items.where):
+                    _validate_filter_where_ref(workflow_name, step.id, ref, errors)
+                for comparison in step.filter_items.comparisons:
+                    for ref in _iter_refs([comparison.left, comparison.right]):
+                        _validate_workflow_ref(
+                            workflow_name,
+                            step.id,
+                            ref,
+                            produced_aliases,
+                            errors,
+                            allow_item=True,
+                        )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.dedupe_items is not None:
+                for ref in _iter_refs(step.dedupe_items.items):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                for ref in _iter_refs(
+                    [
+                        step.dedupe_items.keys,
+                        step.dedupe_items.rank,
+                    ]
+                ):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             if step.make_candidates is not None:
                 if step.make_candidates.relationship_type not in relationship_names:
                     errors.append(
@@ -1135,3 +1242,19 @@ def _validate_workflow_ref(
             f"'{workflow_name}' step '{step_id}': reference '{ref}' points "
             f"to unknown or future step alias '{alias}'"
         )
+
+
+def _validate_filter_where_ref(
+    workflow_name: str,
+    step_id: str,
+    ref: str,
+    errors: list[str],
+) -> None:
+    """Validate filter_items where refs, which may only read workflow input."""
+    if ref == "$input" or ref.startswith("$input."):
+        return
+    errors.append(
+        "Workflow "
+        f"'{workflow_name}' step '{step_id}': filter_items where reference "
+        f"'{ref}' must use $input only"
+    )

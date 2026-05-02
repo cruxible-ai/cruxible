@@ -288,6 +288,54 @@ def compile_workflow(
             )
             continue
 
+        if step.shape_items is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="shape_items",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    shape_items_spec=step.shape_items,
+                )
+            )
+            continue
+
+        if step.join_items is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="join_items",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    join_items_spec=step.join_items,
+                )
+            )
+            continue
+
+        if step.filter_items is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="filter_items",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    filter_items_spec=step.filter_items,
+                )
+            )
+            continue
+
+        if step.dedupe_items is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="dedupe_items",
+                    canonical=workflow.canonical,
+                    as_name=step.as_,
+                    dedupe_items_spec=step.dedupe_items,
+                )
+            )
+            continue
+
         if step.make_candidates is not None:
             compiled_steps.append(
                 CompiledPlanStep(
