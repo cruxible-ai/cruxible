@@ -50,18 +50,18 @@ def evaluate_comparison(left: Any, op: str, right: Any) -> bool:
     """Evaluate a comparison, treating incomparable ordered values as False."""
     normalized = normalize_comparison_op(op)
     if normalized == "eq":
-        return left == right
+        return bool(left == right)
     if normalized == "ne":
-        return left != right
+        return bool(left != right)
 
     try:
         if normalized == "gt":
-            return left > right
+            return bool(left > right)
         if normalized == "gte":
-            return left >= right
+            return bool(left >= right)
         if normalized == "lt":
-            return left < right
+            return bool(left < right)
         # normalized == "lte"
-        return left <= right
+        return bool(left <= right)
     except TypeError:
         return False
