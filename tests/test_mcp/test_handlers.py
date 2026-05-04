@@ -64,7 +64,10 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
     ("tool_name", "args"),
     [
         ("cruxible_init", {"root_dir": "/tmp/project", "config_yaml": "name: demo"}),
-        ("cruxible_world_fork", {"transport_ref": "file:///tmp/release", "root_dir": "/tmp/fork"}),
+        (
+            "cruxible_world_create_overlay",
+            {"transport_ref": "file:///tmp/release", "root_dir": "/tmp/overlay"},
+        ),
         (
             "cruxible_run_workflow",
             {"instance_id": "inst_123", "workflow_name": "wf", "input_payload": {}},

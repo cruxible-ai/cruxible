@@ -1095,7 +1095,7 @@ providers:
     description: Extract candidate holdings from monitored legal opinions.
     contract_in: OpinionAnalysisInput
     contract_out: OpinionAnalysisOutput
-    ref: cruxible_kits.case_law_monitoring.extract_holdings_from_opinions
+    ref: kit://providers/case_law_monitoring.py::extract_holdings_from_opinions
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1105,7 +1105,7 @@ providers:
     description: Link holdings to interpreted statutes, rules, or regulations.
     contract_in: StatuteInterpretationInput
     contract_out: StatuteInterpretationOutput
-    ref: cruxible_kits.case_law_monitoring.link_holdings_to_statutes
+    ref: kit://providers/case_law_monitoring.py::link_holdings_to_statutes
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1115,7 +1115,7 @@ providers:
     description: Map holdings to firm-tracked legal issues.
     contract_in: IssueMappingInput
     contract_out: IssueMappingOutput
-    ref: cruxible_kits.case_law_monitoring.map_holdings_to_issues
+    ref: kit://providers/case_law_monitoring.py::map_holdings_to_issues
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1125,7 +1125,7 @@ providers:
     description: Classify treatment of cited opinions.
     contract_in: OpinionTreatmentInput
     contract_out: OpinionTreatmentOutput
-    ref: cruxible_kits.case_law_monitoring.classify_opinion_treatment
+    ref: kit://providers/case_law_monitoring.py::classify_opinion_treatment
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1135,7 +1135,7 @@ providers:
     description: Assess whether holdings support or undermine firm arguments.
     contract_in: ArgumentImpactInput
     contract_out: ArgumentImpactOutput
-    ref: cruxible_kits.case_law_monitoring.assess_argument_impact
+    ref: kit://providers/case_law_monitoring.py::assess_argument_impact
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1145,7 +1145,7 @@ providers:
     description: Extract or normalize statutory and doctrinal scope for tracked matters.
     contract_in: MatterScopeInput
     contract_out: MatterScopeOutput
-    ref: cruxible_kits.case_law_monitoring.scope_matters_to_statutes
+    ref: kit://providers/case_law_monitoring.py::scope_matters_to_statutes
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1155,7 +1155,7 @@ providers:
     description: Assess whether opinions affect firm matters.
     contract_in: MatterImpactInput
     contract_out: MatterImpactOutput
-    ref: cruxible_kits.case_law_monitoring.assess_matter_impact
+    ref: kit://providers/case_law_monitoring.py::assess_matter_impact
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1165,7 +1165,7 @@ providers:
     description: Assess whether filings require responses, deadlines, or client updates.
     contract_in: FilingResponseInput
     contract_out: FilingResponseOutput
-    ref: cruxible_kits.case_law_monitoring.assess_filing_response_obligations
+    ref: kit://providers/case_law_monitoring.py::assess_filing_response_obligations
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1175,7 +1175,7 @@ providers:
     description: Create candidate review obligations from impact and treatment signals.
     contract_in: ReviewItemInput
     contract_out: ReviewItemOutput
-    ref: cruxible_kits.case_law_monitoring.route_review_items
+    ref: kit://providers/case_law_monitoring.py::route_review_items
     version: "0.1.0"
     deterministic: false
     runtime: python
@@ -1183,6 +1183,7 @@ providers:
 workflows:
   propose_holdings_from_opinion:
     canonical: false
+    purpose: proposal
     description: Extract candidate holdings from monitored opinions.
     contract_in: EmptyInput
     steps:
@@ -1236,6 +1237,7 @@ workflows:
 
   propose_statute_interpretations:
     canonical: false
+    purpose: proposal
     description: Propose statute and rule interpretation links for reviewed holdings.
     contract_in: EmptyInput
     steps:
@@ -1304,6 +1306,7 @@ workflows:
 
   propose_holding_issue_links:
     canonical: false
+    purpose: proposal
     description: Map reviewed holdings to firm-tracked legal issues.
     contract_in: EmptyInput
     steps:
@@ -1367,6 +1370,7 @@ workflows:
 
   propose_opinion_treatment:
     canonical: false
+    purpose: proposal
     description: Classify how monitored opinions treat cited authorities.
     contract_in: EmptyInput
     steps:
@@ -1425,6 +1429,7 @@ workflows:
 
   propose_argument_support:
     canonical: false
+    purpose: proposal
     description: Propose holdings that support firm arguments.
     contract_in: EmptyInput
     steps:
@@ -1493,6 +1498,7 @@ workflows:
 
   propose_argument_risk:
     canonical: false
+    purpose: proposal
     description: Propose holdings that undermine or create risk for firm arguments.
     contract_in: EmptyInput
     steps:
@@ -1561,6 +1567,7 @@ workflows:
 
   propose_matter_statutory_scope:
     canonical: false
+    purpose: proposal
     description: Extract statutory and doctrinal scope for tracked firm matters.
     contract_in: EmptyInput
     steps:
@@ -1619,6 +1626,7 @@ workflows:
 
   propose_matter_impact:
     canonical: false
+    purpose: proposal
     description: Assess whether monitored opinions affect active firm matters.
     contract_in: EmptyInput
     steps:
@@ -1698,6 +1706,7 @@ workflows:
 
   propose_filing_response:
     canonical: false
+    purpose: proposal
     description: Classify filing response obligations and deadlines for tracked matters.
     contract_in: EmptyInput
     steps:
@@ -1776,6 +1785,7 @@ workflows:
 
   propose_review_items:
     canonical: false
+    purpose: proposal
     description: Create review obligations from matter impact and negative treatment signals.
     contract_in: EmptyInput
     steps:
@@ -1844,6 +1854,7 @@ workflows:
 
   propose_review_item_matter_links:
     canonical: false
+    purpose: proposal
     description: Link review obligations to the matters requiring attention.
     contract_in: EmptyInput
     steps:

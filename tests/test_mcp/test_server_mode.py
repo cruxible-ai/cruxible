@@ -64,6 +64,28 @@ def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch
     assert result.instance_count == 2
 
 
+def test_init_handler_delegates_kit_to_client(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, str | None] = {}
+
+    class StubClient:
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kit=None):
+            captured["root_dir"] = root_dir
+            captured["config_yaml"] = config_yaml
+            captured["kit"] = kit
+            return contracts.InitResult(instance_id="inst_123", status="initialized")
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+
+    result = handlers.handle_init("/srv/project", kit="kev-reference")
+
+    assert result.instance_id == "inst_123"
+    assert captured == {
+        "root_dir": "/srv/project",
+        "config_yaml": None,
+        "kit": "kev-reference",
+    }
+
+
 def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def list_queries(self, instance_id):
@@ -231,7 +253,11 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
     ("fn", "args", "label"),
     [
         (handlers.handle_init, ("./project", None, "name: demo", None), "cruxible_init"),
-        (handlers.handle_world_fork, ("./fork", "file:///tmp/release"), "cruxible_world_fork"),
+        (
+            handlers.handle_create_world_overlay,
+            ("./overlay", "file:///tmp/release"),
+            "cruxible_world_create_overlay",
+        ),
         (handlers.handle_workflow_run, ("inst_123", "wf", {"id": "1"}), "cruxible_run_workflow"),
     ],
 )

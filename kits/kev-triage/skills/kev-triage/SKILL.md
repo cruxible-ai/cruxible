@@ -1,6 +1,6 @@
 ---
 name: kev-triage
-description: Run the KEV fork's daily triage loop, incident intake, remediation verification, waiver intake, and control-effectiveness proposals against a KEV triage instance using governed proposal flows.
+description: Run the KEV local's daily triage loop, incident intake, remediation verification, waiver intake, and control-effectiveness proposals against a KEV triage instance using governed proposal flows.
 ---
 
 # KEV Security Triage
@@ -100,7 +100,7 @@ does not approve or resolve governed proposals directly.
    cruxible world pull-apply --apply-digest <digest>
    ```
 
-2. Run the fork proposal chain:
+2. Run the local proposal chain:
    ```
    cruxible propose --workflow propose_asset_products
    cruxible propose --workflow propose_asset_exposure
@@ -497,7 +497,7 @@ Stop and ask the user (don't guess) when:
 | `add-entity` says "entity updated" when you expected "added" | ID collision — the entity already exists. Fetch it (`get-entity`) and decide whether to continue. |
 | Thesis is accepted but proposal still blocks | `group propose` enforces integration signals. A proposal with no `signals` array and no `--integration` flag will be rejected. |
 
-## Relationship reference (fork-governed)
+## Relationship reference (local-governed)
 
 Every governed relationship the agent can propose:
 

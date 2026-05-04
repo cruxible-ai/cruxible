@@ -1,4 +1,4 @@
-"""Centralized ownership guards for release-backed forks."""
+"""Centralized ownership guards for release-backed overlays."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def check_type_ownership(
     entity_types: Iterable[str] = (),
     relationship_types: Iterable[str] = (),
 ) -> None:
-    """Reject writes that target upstream-owned types in a fork instance."""
+    """Reject writes that target upstream-owned types in a overlay instance."""
     upstream = instance.get_upstream_metadata()
     if upstream is None:
         return
@@ -23,7 +23,7 @@ def check_type_ownership(
     if blocked_entities:
         names = ", ".join(blocked_entities)
         raise OwnershipError(
-            f"Fork instances cannot mutate upstream-owned entity types: {names}",
+            f"Overlay instances cannot mutate upstream-owned entity types: {names}",
             blocked_types=blocked_entities,
         )
 
@@ -33,6 +33,6 @@ def check_type_ownership(
     if blocked_relationships:
         names = ", ".join(blocked_relationships)
         raise OwnershipError(
-            f"Fork instances cannot mutate upstream-owned relationship types: {names}",
+            f"Overlay instances cannot mutate upstream-owned relationship types: {names}",
             blocked_types=blocked_relationships,
         )

@@ -80,6 +80,7 @@ class CruxibleClient:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
+        kit: str | None = None,
     ) -> contracts.InitResult:
         response = self._client.post(
             "/api/v1/instances",
@@ -88,6 +89,7 @@ class CruxibleClient:
                 "config_path": config_path,
                 "config_yaml": config_yaml,
                 "data_dir": data_dir,
+                "kit": kit,
             },
         )
         return self._parse_model(response, contracts.InitResult)
@@ -107,7 +109,7 @@ class CruxibleClient:
         response = self._client.get("/api/v1/server/info")
         return self._parse_model(response, contracts.ServerInfoResult)
 
-    def world_fork(
+    def create_world_overlay(
         self,
         *,
         root_dir: str,
@@ -115,9 +117,9 @@ class CruxibleClient:
         world_ref: str | None = None,
         kit: str | None = None,
         no_kit: bool = False,
-    ) -> contracts.WorldForkResult:
+    ) -> contracts.WorldOverlayResult:
         response = self._client.post(
-            "/api/v1/worlds/fork",
+            "/api/v1/worlds/overlays",
             json={
                 "transport_ref": transport_ref,
                 "world_ref": world_ref,
@@ -126,7 +128,7 @@ class CruxibleClient:
                 "root_dir": root_dir,
             },
         )
-        return self._parse_model(response, contracts.WorldForkResult)
+        return self._parse_model(response, contracts.WorldOverlayResult)
 
     def ingest(
         self,
@@ -773,18 +775,18 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/snapshots")
         return self._parse_model(response, contracts.SnapshotListResult)
 
-    def fork_snapshot(
+    def clone_snapshot(
         self,
         instance_id: str,
         *,
         snapshot_id: str,
         root_dir: str,
-    ) -> contracts.ForkSnapshotResult:
+    ) -> contracts.CloneSnapshotResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/fork",
+            f"/api/v1/{instance_id}/clone",
             json={"snapshot_id": snapshot_id, "root_dir": root_dir},
         )
-        return self._parse_model(response, contracts.ForkSnapshotResult)
+        return self._parse_model(response, contracts.CloneSnapshotResult)
 
     def world_publish(
         self,

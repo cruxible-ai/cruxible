@@ -138,9 +138,9 @@ class TestInputSchema:
         # root_dir remains required
         assert "root_dir" in required
 
-    def test_world_fork_has_optional_world_ref_and_transport_ref(self, server):
+    def test_create_world_overlay_has_optional_world_ref_and_transport_ref(self, server):
         schemas = _get_tool_schemas(server)
-        schema = schemas["cruxible_world_fork"].inputSchema
+        schema = schemas["cruxible_world_create_overlay"].inputSchema
         props = schema["properties"]
         required = set(schema.get("required", []))
         assert "root_dir" in required

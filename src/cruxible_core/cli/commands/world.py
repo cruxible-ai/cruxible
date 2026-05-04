@@ -1,4 +1,4 @@
-"""CLI commands for published worlds and pullable forks."""
+"""CLI commands for published worlds and pullable overlays."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
-    service_fork_world,
+    service_create_world_overlay,
     service_publish_world,
     service_pull_world_apply,
     service_pull_world_preview,
@@ -25,7 +25,7 @@ from cruxible_core.service import (
 
 @click.group("world")
 def world_group() -> None:
-    """Publish immutable worlds and manage pullable forks."""
+    """Publish immutable worlds and manage pullable overlays."""
 
 
 @world_group.command("publish")
@@ -70,7 +70,7 @@ def world_publish_cmd(
     click.echo(f"  compatibility={result.manifest.compatibility}")
 
 
-@world_group.command("fork")
+@world_group.command("create-overlay")
 @click.option("--transport-ref", help="Transport ref, e.g. file://... or oci://...")
 @click.option(
     "--world-ref",
@@ -83,34 +83,34 @@ def world_publish_cmd(
 @click.option(
     "--no-kit",
     is_flag=True,
-    help="Skip automatic kit application and create a bare fork overlay.",
+    help="Skip automatic kit application and create a bare overlay.",
 )
 @click.option(
     "--root-dir",
     default=None,
-    help="Workspace root for the new fork overlay (defaults to current directory in server mode).",
+    help="Workspace root for the new overlay (defaults to current directory in server mode).",
 )
 @handle_errors
-def world_fork_cmd(
+def create_world_overlay_cmd(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
     no_kit: bool,
     root_dir: str | None,
 ) -> None:
-    """Create a new local fork instance from a published world release."""
+    """Create a new local overlay instance from a published world release."""
     effective_root_dir = root_dir
     if _get_client() is not None and effective_root_dir is None:
         effective_root_dir = str(Path.cwd())
     result = _dispatch_cli(
-        lambda client: client.world_fork(
+        lambda client: client.create_world_overlay(
             root_dir=effective_root_dir or str(Path.cwd()),
             transport_ref=transport_ref,
             world_ref=world_ref,
             kit=kit,
             no_kit=no_kit,
         ),
-        lambda: service_fork_world(
+        lambda: service_create_world_overlay(
             transport_ref=transport_ref,
             world_ref=world_ref,
             kit=kit,
@@ -118,14 +118,14 @@ def world_fork_cmd(
             root_dir=Path(effective_root_dir) if effective_root_dir is not None else Path.cwd(),
         ),
         allow_local=False,
-        command_name="world fork",
+        command_name="world create-overlay",
     )
-    instance_id = result.instance_id if isinstance(result, contracts.WorldForkResult) else str(
+    instance_id = result.instance_id if isinstance(result, contracts.WorldOverlayResult) else str(
         result.instance.get_root_path()
     )
-    if isinstance(result, contracts.WorldForkResult):
+    if isinstance(result, contracts.WorldOverlayResult):
         _remember_server_context(instance_id=result.instance_id)
-    click.echo(f"Forked {result.manifest.world_id}:{result.manifest.release_id}")
+    click.echo(f"Created overlay for {result.manifest.world_id}:{result.manifest.release_id}")
     click.echo(f"Instance ID: {instance_id}")
 
 
@@ -153,7 +153,7 @@ def world_status_cmd() -> None:
 @world_group.command("pull-preview")
 @handle_errors
 def world_pull_preview_cmd() -> None:
-    """Preview pulling a newer upstream release into the current fork."""
+    """Preview pulling a newer upstream release into the current overlay."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.world_pull_preview(instance_id),
         service_pull_world_preview,
@@ -178,7 +178,7 @@ def world_pull_preview_cmd() -> None:
 @click.option("--apply-digest", required=True, help="Apply digest returned by pull-preview.")
 @handle_errors
 def world_pull_apply_cmd(apply_digest: str) -> None:
-    """Apply a previewed upstream release into the current fork."""
+    """Apply a previewed upstream release into the current overlay."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.world_pull_apply(
             instance_id,

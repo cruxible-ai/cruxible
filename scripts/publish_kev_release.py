@@ -29,6 +29,7 @@ import httpx
 import yaml
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.kits import copy_kit_runtime_files, write_materialized_kit_metadata
 from cruxible_core.service.execution import service_apply_workflow, service_lock, service_run
 from cruxible_core.service.lifecycle import service_init
 from cruxible_core.service.world import build_release_bundle
@@ -79,12 +80,14 @@ def publish_kev_release(
 
     with tempfile.TemporaryDirectory(prefix="kev_publish_") as temp_dir:
         workspace = Path(temp_dir)
+        kit_root = repo_root / "kits" / "kev-reference"
+        copy_kit_runtime_files(kit_root, workspace)
+
         data_dir = workspace / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
-
         populate_data_dir(data_dir, api_key=nvd_api_key)
 
-        config_src = repo_root / "kits" / "kev-triage" / "kev-reference.yaml"
+        config_src = kit_root / "config.yaml"
         config_path = workspace / "config.yaml"
         artifact_sha256 = compute_path_sha256(data_dir)
         write_temp_kev_config(
@@ -92,6 +95,7 @@ def publish_kev_release(
             output_path=config_path,
             artifact_sha256=artifact_sha256,
         )
+        write_materialized_kit_metadata(workspace)
 
         instance = service_init(workspace, config_path="config.yaml").instance
         service_lock(instance)

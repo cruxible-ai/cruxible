@@ -26,8 +26,8 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
     service_apply_workflow,
+    service_clone_snapshot,
     service_create_snapshot,
-    service_fork_snapshot,
     service_ingest,
     service_init,
     service_list_snapshots,
@@ -106,7 +106,8 @@ def _load_preview_file(preview_path: Path) -> dict[str, Any]:
 
 
 @click.command()
-@click.option("--config", "config_path", required=True, help="Path to config YAML file.")
+@click.option("--config", "config_path", default=None, help="Path to config YAML file.")
+@click.option("--kit", default=None, help="Standalone kit alias or ref to materialize.")
 @click.option(
     "--root-dir",
     default=None,
@@ -114,22 +115,39 @@ def _load_preview_file(preview_path: Path) -> dict[str, Any]:
 )
 @click.option("--data-dir", default=None, help="Directory for data files.")
 @handle_errors
-def init(config_path: str, root_dir: str | None, data_dir: str | None) -> None:
+def init(
+    config_path: str | None,
+    kit: str | None,
+    root_dir: str | None,
+    data_dir: str | None,
+) -> None:
     """Initialize a new instance or governed server-backed workspace."""
     client = _common._get_client()
     effective_root_dir = root_dir
     if client is not None and effective_root_dir is None:
         effective_root_dir = str(Path.cwd())
+
+    def _remote_init(client) -> contracts.InitResult:
+        kwargs = {
+            "root_dir": effective_root_dir or str(Path.cwd()),
+            "config_yaml": (
+                _common._read_validation_yaml_or_error(config_path)
+                if config_path is not None
+                else None
+            ),
+            "data_dir": data_dir,
+        }
+        if kit is not None:
+            kwargs["kit"] = kit
+        return client.init(**kwargs)
+
     result = _dispatch_cli(
-        lambda client: client.init(
-            root_dir=effective_root_dir or str(Path.cwd()),
-            config_yaml=_common._read_validation_yaml_or_error(config_path),
-            data_dir=data_dir,
-        ),
+        _remote_init,
         lambda: service_init(
             Path(effective_root_dir) if effective_root_dir is not None else Path.cwd(),
             config_path=config_path,
             data_dir=data_dir,
+            kit=kit,
         ),
         allow_local=False,
         command_name="init",
@@ -657,30 +675,30 @@ def snapshot_list_cmd() -> None:
         click.echo(f"{snapshot.snapshot_id} {snapshot.created_at}{label}")
 
 
-@click.command("fork")
-@click.option("--snapshot", "snapshot_id", required=True, help="Snapshot ID to fork from.")
-@click.option("--root-dir", required=True, help="Root directory for the new forked instance.")
+@click.command("clone")
+@click.option("--snapshot", "snapshot_id", required=True, help="Snapshot ID to clone from.")
+@click.option("--root-dir", required=True, help="Root directory for the new cloned instance.")
 @handle_errors
-def fork_cmd(snapshot_id: str, root_dir: str) -> None:
+def clone_cmd(snapshot_id: str, root_dir: str) -> None:
     """Create a new local instance from a chosen snapshot."""
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.fork_snapshot(
+        lambda client, instance_id: client.clone_snapshot(
             instance_id,
             snapshot_id=snapshot_id,
             root_dir=root_dir,
         ),
-        lambda instance: service_fork_snapshot(instance, snapshot_id, root_dir),
+        lambda instance: service_clone_snapshot(instance, snapshot_id, root_dir),
         allow_local=False,
-        command_name="fork",
+        command_name="clone",
     )
-    if isinstance(result, contracts.ForkSnapshotResult):
+    if isinstance(result, contracts.CloneSnapshotResult):
         _remember_server_context(instance_id=result.instance_id)
         click.echo(
-            f"Forked snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
+            f"Cloned snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
         )
         return
     click.echo(
-        f"Forked snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
+        f"Cloned snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
     )
 
 

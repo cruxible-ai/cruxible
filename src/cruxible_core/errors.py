@@ -19,7 +19,7 @@ errors (runtime data), making it easy to catch by category.
     │   ├── MutationError
     │   ├── QueryExecutionError
     │   └── TransportError
-    ├── OwnershipError (fork type-level ownership)
+    ├── OwnershipError (overlay type-level ownership)
     └── PermissionDeniedError (MCP permission mode)
 """
 
@@ -250,7 +250,7 @@ class TransportError(ExecutionError):
 
 
 class OwnershipError(CoreError):
-    """Write rejected because the target type is upstream-owned in a fork instance."""
+    """Write rejected because the target type is upstream-owned in a overlay instance."""
 
     def __init__(self, message: str, *, blocked_types: list[str] | None = None):
         self.blocked_types = blocked_types or []

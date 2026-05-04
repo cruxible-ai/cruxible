@@ -106,7 +106,7 @@ relationships:
         overlay = tmp_path / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: base.yaml\n"
             "entity_types: {}\n"
             "relationships:\n"
@@ -124,7 +124,7 @@ relationships:
         overlay = tmp_path / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: nonexistent.yaml\n"
             "entity_types: {}\n"
             "relationships: []\n"
@@ -135,7 +135,7 @@ relationships:
     def test_extends_inline_relative_errors(self) -> None:
         yaml_str = (
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: base.yaml\n"
             "entity_types: {}\n"
             "relationships: []\n"

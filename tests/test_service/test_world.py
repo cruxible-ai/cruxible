@@ -1,4 +1,4 @@
-"""Tests for published world release, fork, and pull flows."""
+"""Tests for published world release, overlay, and pull flows."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
-    service_fork_world,
+    service_create_world_overlay,
     service_lock,
     service_publish_world,
     service_pull_world_apply,
@@ -28,7 +28,6 @@ from cruxible_core.service import (
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
-from cruxible_core.world_kits import WorldKitEntry
 from cruxible_core.world_refs import WorldCatalogEntry
 
 WORLD_MODEL_YAML = """\
@@ -77,23 +76,50 @@ def published_release_fixture(tmp_path: Path) -> tuple[CruxibleInstance, Path]:
     return instance, release_dir
 
 
-def test_publish_fork_and_pull_apply_preserves_fork_overlay(
+def _write_overlay_kit_manifest(
+    kit_dir: Path,
+    kit_id: str,
+    *,
+    target_world: str = "case-law",
+) -> None:
+    (kit_dir / "cruxible-kit.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: cruxible.kit.v1",
+                f"kit_id: {kit_id}",
+                "version: 0.2.0",
+                "role: overlay",
+                f"target_world: {target_world}",
+                "entry_config: config.yaml",
+                "provider_paths: []",
+                "copy_paths: []",
+                "requires_extras: []",
+            ]
+        )
+        + "\n"
+    )
+    (kit_dir / "cruxible.lock.yaml").write_text(
+        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
+    )
+
+
+def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
 ) -> None:
     root_instance, release_dir = published_release_fixture
-    fork_root = tmp_path / "forked-model"
+    overlay_root = tmp_path / "cloned-model"
 
-    fork_result = service_fork_world(
+    overlay_result = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     )
-    fork_instance = fork_result.instance
-    _write_overlay_config(fork_root)
-    service_reload_config(fork_instance)
+    overlay_instance = overlay_result.instance
+    _write_overlay_config(overlay_root)
+    service_reload_config(overlay_instance)
 
     add_result = service_add_relationships(
-        fork_instance,
+        overlay_instance,
         [
             RelationshipInstance(
                 from_type="Case",
@@ -129,27 +155,27 @@ def test_publish_fork_and_pull_apply_preserves_fork_overlay(
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_world_preview(fork_instance)
+    preview = service_pull_world_preview(overlay_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
     assert preview.upstream_entity_delta == 1
 
     applied = service_pull_world_apply(
-        fork_instance,
+        overlay_instance,
         expected_apply_digest=preview.apply_digest,
     )
     assert applied.release_id == "v1.1.0"
     assert applied.pre_pull_snapshot_id.startswith("snap_")
 
-    merged_graph = fork_instance.load_graph()
+    merged_graph = overlay_instance.load_graph()
     assert merged_graph.has_entity("Case", "CASE-C")
     assert merged_graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
-    status = service_world_status(fork_instance)
+    status = service_world_status(overlay_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.1.0"
 
 
-def test_fork_world_ref_specific_release_tracks_latest_ref(
+def test_overlay_world_ref_specific_release_tracks_latest_ref(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -169,13 +195,13 @@ def test_fork_world_ref_specific_release_tracks_latest_ref(
         },
     )
 
-    fork_root = tmp_path / "forked-model"
-    fork_instance = service_fork_world(
+    overlay_root = tmp_path / "cloned-model"
+    overlay_instance = service_create_world_overlay(
         world_ref="case-law@v1.0.0",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     ).instance
 
-    status = service_world_status(fork_instance)
+    status = service_world_status(overlay_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.0.0"
     assert status.upstream.requested_source_ref == "case-law@v1.0.0"
@@ -201,12 +227,12 @@ def test_fork_world_ref_specific_release_tracks_latest_ref(
     )
     _replace_release_dir(successor_dir, current_dir)
 
-    preview = service_pull_world_preview(fork_instance)
+    preview = service_pull_world_preview(overlay_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
 
 
-def test_fork_with_explicit_kit_materializes_local_overlay(
+def test_overlay_with_explicit_kit_materializes_local_overlay(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -241,35 +267,29 @@ def test_fork_with_explicit_kit_materializes_local_overlay(
     seed_dir = kit_dir / "data" / "seed"
     seed_dir.mkdir(parents=True)
     (seed_dir / "notes.csv").write_text("note_id\nNOTE-1\n")
+    _write_overlay_kit_manifest(kit_dir, "case-overlay")
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
-        lambda: {
-            "case-overlay": WorldKitEntry(
-                kit="case-overlay",
-                source_dir=kit_dir,
-                copy_paths=("providers.py", "data/seed"),
-                world_id="case-law",
-            )
-        },
+        "cruxible_core.kits.get_kit_catalog",
+        lambda: {"case-overlay": f"file://{kit_dir}"},
     )
 
-    fork_root = tmp_path / "forked-model"
-    fork_result = service_fork_world(
+    overlay_root = tmp_path / "cloned-model"
+    overlay_result = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
         kit="case-overlay",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     )
 
-    overlay_text = (fork_root / "config.yaml").read_text()
+    overlay_text = (overlay_root / "config.yaml").read_text()
     assert "extends: .cruxible/upstream/current/config.yaml" in overlay_text
-    assert (fork_root / "providers.py").exists()
-    assert (fork_root / "data" / "seed" / "notes.csv").exists()
-    loaded = fork_result.instance.load_config()
+    assert (overlay_root / "providers.py").exists()
+    assert (overlay_root / "data" / "seed" / "notes.csv").exists()
+    loaded = overlay_result.instance.load_config()
     assert "Case" in loaded.entity_types
     assert "Note" in loaded.entity_types
 
 
-def test_fork_world_ref_uses_default_kit(
+def test_overlay_world_ref_uses_default_kit(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -308,23 +328,17 @@ def test_fork_world_ref_uses_default_kit(
         + "\n"
     )
     (kit_dir / "providers.py").write_text("DEFAULT_KIT = True\n")
+    _write_overlay_kit_manifest(kit_dir, "case-overlay")
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
-        lambda: {
-            "case-overlay": WorldKitEntry(
-                kit="case-overlay",
-                source_dir=kit_dir,
-                copy_paths=("providers.py",),
-                world_id="case-law",
-            )
-        },
+        "cruxible_core.kits.get_kit_catalog",
+        lambda: {"case-overlay": f"file://{kit_dir}"},
     )
 
-    fork_root = tmp_path / "forked-default-kit"
-    fork_result = service_fork_world(world_ref="case-law", root_dir=fork_root)
+    overlay_root = tmp_path / "cloned-default-kit"
+    overlay_result = service_create_world_overlay(world_ref="case-law", root_dir=overlay_root)
 
-    assert (fork_root / "providers.py").exists()
-    assert "Note" in fork_result.instance.load_config().entity_types
+    assert (overlay_root / "providers.py").exists()
+    assert "Note" in overlay_result.instance.load_config().entity_types
 
 
 def test_explicit_kit_overrides_world_default_kit(
@@ -385,27 +399,21 @@ def test_explicit_kit_overrides_world_default_kit(
         )
         + "\n"
     )
+    _write_overlay_kit_manifest(default_dir, "default-kit")
+    _write_overlay_kit_manifest(override_dir, "override-kit")
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
+        "cruxible_core.kits.get_kit_catalog",
         lambda: {
-            "default-kit": WorldKitEntry(
-                kit="default-kit",
-                source_dir=default_dir,
-                world_id="case-law",
-            ),
-            "override-kit": WorldKitEntry(
-                kit="override-kit",
-                source_dir=override_dir,
-                world_id="case-law",
-            ),
+            "default-kit": f"file://{default_dir}",
+            "override-kit": f"file://{override_dir}",
         },
     )
 
-    fork_root = tmp_path / "forked-override-kit"
-    loaded = service_fork_world(
+    overlay_root = tmp_path / "cloned-override-kit"
+    loaded = service_create_world_overlay(
         world_ref="case-law",
         kit="override-kit",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     ).instance.load_config()
 
     assert "OverrideNote" in loaded.entity_types
@@ -450,27 +458,26 @@ def test_no_kit_skips_world_default_kit(
         )
         + "\n"
     )
+    _write_overlay_kit_manifest(kit_dir, "case-overlay")
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
-        lambda: {
-            "case-overlay": WorldKitEntry(
-                kit="case-overlay",
-                source_dir=kit_dir,
-                world_id="case-law",
-            )
-        },
+        "cruxible_core.kits.get_kit_catalog",
+        lambda: {"case-overlay": f"file://{kit_dir}"},
     )
 
-    fork_root = tmp_path / "forked-no-kit"
-    fork_result = service_fork_world(world_ref="case-law", no_kit=True, root_dir=fork_root)
+    overlay_root = tmp_path / "cloned-no-kit"
+    overlay_result = service_create_world_overlay(
+        world_ref="case-law",
+        no_kit=True,
+        root_dir=overlay_root,
+    )
 
-    assert not (fork_root / "providers.py").exists()
-    loaded = fork_result.instance.load_config()
+    assert not (overlay_root / "providers.py").exists()
+    loaded = overlay_result.instance.load_config()
     assert "Note" not in loaded.entity_types
     assert "Case" in loaded.entity_types
 
 
-def test_transport_ref_fork_does_not_auto_apply_any_kit(
+def test_transport_ref_overlay_does_not_auto_apply_any_kit(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -496,41 +503,36 @@ def test_transport_ref_fork_does_not_auto_apply_any_kit(
         )
         + "\n"
     )
+    _write_overlay_kit_manifest(kit_dir, "transport-kit")
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
-        lambda: {
-            "transport-kit": WorldKitEntry(
-                kit="transport-kit",
-                source_dir=kit_dir,
-                world_id="case-law",
-            )
-        },
+        "cruxible_core.kits.get_kit_catalog",
+        lambda: {"transport-kit": f"file://{kit_dir}"},
     )
 
-    fork_root = tmp_path / "forked-transport-ref"
-    loaded = service_fork_world(
+    overlay_root = tmp_path / "cloned-transport-ref"
+    loaded = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     ).instance.load_config()
 
     assert "TransportNote" not in loaded.entity_types
     assert "Case" in loaded.entity_types
 
 
-def test_pull_preview_surfaces_dangling_fork_relationships(
+def test_pull_preview_surfaces_dangling_overlay_relationships(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
 ) -> None:
     root_instance, release_dir = published_release_fixture
-    fork_root = tmp_path / "forked-model"
-    fork_instance = service_fork_world(
+    overlay_root = tmp_path / "cloned-model"
+    overlay_instance = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     ).instance
-    _write_overlay_config(fork_root)
-    service_reload_config(fork_instance)
+    _write_overlay_config(overlay_root)
+    service_reload_config(overlay_instance)
     service_add_relationships(
-        fork_instance,
+        overlay_instance,
         [
             RelationshipInstance(
                 from_type="Case",
@@ -559,12 +561,12 @@ def test_pull_preview_surfaces_dangling_fork_relationships(
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_world_preview(fork_instance)
+    preview = service_pull_world_preview(overlay_instance)
     assert preview.target_release_id == "v2.0.0"
     assert any("missing upstream entity Case:CASE-B" in conflict for conflict in preview.conflicts)
 
 
-def test_fork_runtime_config_excludes_upstream_canonical_workflows(
+def test_overlay_runtime_config_excludes_upstream_canonical_workflows(
     canonical_workflow_instance: CruxibleInstance,
     tmp_path: Path,
 ) -> None:
@@ -615,19 +617,19 @@ def test_fork_runtime_config_excludes_upstream_canonical_workflows(
         compatibility="data_only",
     )
 
-    fork_root = tmp_path / "forked-runtime"
-    fork_result = service_fork_world(
+    overlay_root = tmp_path / "cloned-runtime"
+    overlay_result = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
-        root_dir=fork_root,
+        root_dir=overlay_root,
     )
 
-    fork_config = fork_result.instance.load_config()
-    assert "build_reference" not in fork_config.workflows
-    assert "list_vendors_runtime" in fork_config.workflows
-    assert "reference_loader" not in fork_config.providers
-    assert [test.name for test in fork_config.tests] == ["runtime_vendor_smoke"]
-    assert (fork_result.instance.get_instance_dir() / "cruxible.lock.yaml").exists()
-    test_result = service_test(fork_result.instance)
+    overlay_config = overlay_result.instance.load_config()
+    assert "build_reference" not in overlay_config.workflows
+    assert "list_vendors_runtime" in overlay_config.workflows
+    assert "reference_loader" not in overlay_config.providers
+    assert [test.name for test in overlay_config.tests] == ["runtime_vendor_smoke"]
+    assert (overlay_result.instance.get_instance_dir() / "cruxible.lock.yaml").exists()
+    test_result = service_test(overlay_result.instance)
     assert test_result.total == 1
     assert test_result.failed == 0
 
@@ -640,7 +642,7 @@ def test_load_config_with_extends_remains_single_file(tmp_path: Path) -> None:
         "\n".join(
             [
                 'version: "1.0"',
-                "name: case_reference_fork",
+                "name: case_reference_overlay",
                 f"extends: {base}",
                 "entity_types: {}",
                 "relationships: []",
@@ -789,7 +791,7 @@ def _write_overlay_config(root: Path) -> None:
         "\n".join(
             [
                 'version: "1.0"',
-                "name: case-law-fork",
+                "name: case-law-overlay",
                 "extends: .cruxible/upstream/current/config.yaml",
                 "entity_types: {}",
                 "relationships:",

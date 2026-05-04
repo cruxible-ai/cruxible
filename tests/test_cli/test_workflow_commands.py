@@ -223,7 +223,7 @@ class TestWorkflowCli:
             "propose",
         )
 
-    def test_snapshot_create_list_and_fork(
+    def test_snapshot_create_list_and_clone(
         self,
         runner: CliRunner,
         proposal_workflow_project: CruxibleInstance,
@@ -244,12 +244,12 @@ class TestWorkflowCli:
         assert listed.exit_code == 0
         assert snapshot_id in listed.output
 
-        fork_root = tmp_path / "forked-cli"
+        clone_root = tmp_path / "cloned-cli"
         _assert_local_mutation_disabled(
             runner,
             proposal_workflow_project.root,
-            ["fork", "--snapshot", snapshot_id, "--root-dir", str(fork_root)],
-            "fork",
+            ["clone", "--snapshot", snapshot_id, "--root-dir", str(clone_root)],
+            "clone",
         )
 
     def test_apply_commits_canonical_workflow(

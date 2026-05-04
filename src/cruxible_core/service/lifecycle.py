@@ -13,6 +13,7 @@ from cruxible_core.config.loader import load_config, load_config_from_string, sa
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.kits import materialize_kit
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
     InitResult,
@@ -60,6 +61,7 @@ def service_init(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
+    kit: str | None = None,
     *,
     instance_mode: str = CruxibleInstance.DEV_MODE,
 ) -> InitResult:
@@ -68,14 +70,22 @@ def service_init(
     If the config uses ``extends``, the base is resolved and the composed
     config is written to ``{root_dir}/config.yaml``.  The instance then
     references the flattened file — future base/overlay edits require
-    re-init or the full fork flow.
+    re-init or the full overlay flow.
     """
-    if config_path is not None and config_yaml is not None:
-        raise ConfigError("Provide exactly one of config_path or config_yaml, not both")
-    if config_path is None and config_yaml is None:
-        raise ConfigError("config_path or config_yaml is required when initializing a new instance")
-
     root = Path(root_dir)
+    normalized_kit = (kit or "").strip() or None
+    sources = sum(value is not None for value in (config_path, config_yaml, normalized_kit))
+    if sources != 1:
+        raise ConfigError("Provide exactly one of config_path, config_yaml, or kit")
+
+    if normalized_kit is not None:
+        materialized_config = materialize_kit(
+            kit=normalized_kit,
+            root=root,
+            expected_role="standalone",
+        )
+        config_path = str(materialized_config.relative_to(root))
+
     wrote_inline = False
 
     if config_yaml is not None:

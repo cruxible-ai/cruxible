@@ -1,4 +1,4 @@
-"""Published world release, fork, status, and pull service functions."""
+"""Published world release, overlay, status, and pull service functions."""
 
 from __future__ import annotations
 
@@ -15,11 +15,12 @@ from cruxible_core.config.composer import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.kits import materialize_kit
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
 from cruxible_core.service.snapshots import service_create_snapshot
 from cruxible_core.service.types import (
-    WorldForkResult,
+    WorldOverlayResult,
     WorldPublishResult,
     WorldPullApplyResult,
     WorldPullPreviewResult,
@@ -32,7 +33,6 @@ from cruxible_core.snapshot.types import (
 )
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
-from cruxible_core.world_kits import materialize_world_kit
 from cruxible_core.world_refs import resolve_world_source
 
 
@@ -67,7 +67,7 @@ def service_publish_world(
     return WorldPublishResult(manifest=manifest)
 
 
-def service_fork_world(
+def service_create_world_overlay(
     *,
     transport_ref: str | None = None,
     world_ref: str | None = None,
@@ -75,8 +75,8 @@ def service_fork_world(
     no_kit: bool = False,
     root_dir: str | Path,
     instance_mode: str = CruxibleInstance.DEV_MODE,
-) -> WorldForkResult:
-    """Create a new local fork instance from a published world release."""
+) -> WorldOverlayResult:
+    """Create a new local overlay instance from a published world release."""
     root = Path(root_dir)
     if (root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
         raise ConfigError(f"Instance already exists at {root}")
@@ -91,10 +91,12 @@ def service_fork_world(
     selected_kit = None if no_kit else (normalized_kit or resolved.default_kit)
 
     overlay_path = (
-        materialize_world_kit(
+        materialize_kit(
             kit=selected_kit,
             root=root,
-            upstream_world_id=pulled.manifest.world_id,
+            expected_role="overlay",
+            target_world=pulled.manifest.world_id,
+            upstream_config_path=".cruxible/upstream/current/config.yaml",
         )
         if selected_kit is not None
         else _write_default_overlay_config(root, pulled.manifest.world_id, upstream_dir)
@@ -133,16 +135,16 @@ def service_fork_world(
     )
     instance.set_upstream_metadata(upstream)
     service_lock(instance)
-    return WorldForkResult(instance=instance, manifest=pulled.manifest)
+    return WorldOverlayResult(instance=instance, manifest=pulled.manifest)
 
 
 def service_world_status(instance: InstanceProtocol) -> WorldStatusResult:
-    """Return upstream tracking metadata for a release-backed fork, if any."""
+    """Return upstream tracking metadata for a release-backed overlay, if any."""
     return WorldStatusResult(upstream=instance.get_upstream_metadata())
 
 
 def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewResult:
-    """Preview an upstream pull for a release-backed fork instance."""
+    """Preview an upstream pull for a release-backed overlay instance."""
     upstream = instance.get_upstream_metadata()
     if upstream is None:
         raise ConfigError("Instance is not tracking an upstream world release")
@@ -166,8 +168,8 @@ def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewRe
 
     current_upstream_graph = _load_graph_from_bundle(root / ".cruxible" / "upstream" / "current")
     next_graph = _load_graph_from_bundle(pulled.root_dir)
-    fork_graph = _extract_fork_overlay_graph(instance.load_graph(), upstream)
-    conflicts.extend(_find_dangling_reference_conflicts(fork_graph, next_graph, pulled.manifest))
+    local_graph = _extract_local_overlay_graph(instance.load_graph(), upstream)
+    conflicts.extend(_find_dangling_reference_conflicts(local_graph, next_graph, pulled.manifest))
     apply_digest = _compute_world_apply_digest(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
@@ -193,7 +195,7 @@ def service_pull_world_apply(
     *,
     expected_apply_digest: str,
 ) -> WorldPullApplyResult:
-    """Apply a previewed upstream pull to a release-backed fork instance."""
+    """Apply a previewed upstream pull to a release-backed overlay instance."""
     preview = service_pull_world_preview(instance)
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("World pull apply digest mismatch; rerun pull preview before apply")
@@ -218,12 +220,16 @@ def service_pull_world_apply(
     instance.set_config_path(upstream.active_config_path)
 
     current_graph = instance.load_graph()
-    fork_graph = _extract_fork_overlay_graph(current_graph, upstream)
+    local_graph = _extract_local_overlay_graph(current_graph, upstream)
     next_upstream_graph = _load_graph_from_bundle(upstream_dir)
-    conflicts = _find_dangling_reference_conflicts(fork_graph, next_upstream_graph, pulled.manifest)
+    conflicts = _find_dangling_reference_conflicts(
+        local_graph,
+        next_upstream_graph,
+        pulled.manifest,
+    )
     if conflicts:
-        raise ConfigError("Fork overlay references entities removed upstream", errors=conflicts)
-    merged = EntityGraph.merge_graphs(next_upstream_graph, fork_graph)
+        raise ConfigError("Local overlay references entities removed upstream", errors=conflicts)
+    merged = EntityGraph.merge_graphs(next_upstream_graph, local_graph)
     instance.save_graph(merged)
 
     updated = UpstreamMetadata(
@@ -310,7 +316,7 @@ def _write_default_overlay_config(root: Path, world_id: str, upstream_dir: Path)
         "\n".join(
             [
                 "version: '1.0'",
-                f"name: {world_id}-fork",
+                f"name: {world_id}-overlay",
                 f"extends: {str((upstream_dir / 'config.yaml').relative_to(root))}",
                 "entity_types: {}",
                 "relationships: []",
@@ -354,39 +360,39 @@ def _compute_world_apply_digest(
     return f"sha256:{hashlib.sha256(blob).hexdigest()}"
 
 
-def _extract_fork_overlay_graph(
+def _extract_local_overlay_graph(
     current_graph: EntityGraph,
     upstream: UpstreamMetadata,
 ) -> EntityGraph:
-    fork_entity_types = [
+    local_entity_types = [
         entity_type
         for entity_type in current_graph.list_entity_types()
         if entity_type not in set(upstream.owned_entity_types)
     ]
-    fork_relationship_types = [
+    local_relationship_types = [
         relationship_type
         for relationship_type in current_graph.list_relationship_types()
         if relationship_type not in set(upstream.owned_relationship_types)
     ]
     return current_graph.extract_owned_subgraph(
-        entity_types=fork_entity_types,
-        relationship_types=fork_relationship_types,
+        entity_types=local_entity_types,
+        relationship_types=local_relationship_types,
     )
 
 
 def _find_dangling_reference_conflicts(
-    fork_graph: EntityGraph,
+    local_graph: EntityGraph,
     next_upstream_graph: EntityGraph,
     manifest: PublishedWorldManifest,
 ) -> list[str]:
     upstream_entity_types = set(manifest.owned_entity_types)
     conflicts: list[str] = []
-    for edge in fork_graph.iter_edges():
+    for edge in local_graph.iter_edges():
         if edge["from_type"] in upstream_entity_types and not next_upstream_graph.has_entity(
             edge["from_type"], edge["from_id"]
         ):
             conflicts.append(
-                "Fork-owned relationship "
+                "Local relationship "
                 f"{edge['relationship_type']} references missing upstream entity "
                 f"{edge['from_type']}:{edge['from_id']}"
             )
@@ -394,7 +400,7 @@ def _find_dangling_reference_conflicts(
             edge["to_type"], edge["to_id"]
         ):
             conflicts.append(
-                "Fork-owned relationship "
+                "Local relationship "
                 f"{edge['relationship_type']} references missing upstream entity "
                 f"{edge['to_type']}:{edge['to_id']}"
             )

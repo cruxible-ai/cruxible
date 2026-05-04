@@ -14,6 +14,7 @@ class InitRequest(BaseModel):
     config_path: str | None = None
     config_yaml: str | None = None
     data_dir: str | None = None
+    kit: str | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -226,7 +227,7 @@ class SnapshotCreateRequest(BaseModel):
     label: str | None = None
 
 
-class ForkSnapshotRequest(BaseModel):
+class CloneSnapshotRequest(BaseModel):
     snapshot_id: str
     root_dir: str
 
@@ -238,7 +239,7 @@ class WorldPublishRequest(BaseModel):
     compatibility: contracts.WorldCompatibility
 
 
-class WorldForkRequest(BaseModel):
+class WorldOverlayRequest(BaseModel):
     transport_ref: str | None = None
     world_ref: str | None = None
     kit: str | None = None
@@ -246,7 +247,7 @@ class WorldForkRequest(BaseModel):
     root_dir: str
 
     @model_validator(mode="after")
-    def validate_source(self) -> WorldForkRequest:
+    def validate_source(self) -> WorldOverlayRequest:
         if bool((self.transport_ref or "").strip()) == bool((self.world_ref or "").strip()):
             raise ValueError("Provide exactly one of transport_ref or world_ref")
         if bool((self.kit or "").strip()) and self.no_kit:

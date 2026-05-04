@@ -1,21 +1,21 @@
 ---
 name: kev-start
-description: Adapt the KEV triage kit to your own asset, inventory, and service-mapping data. Build the reference and fork layers, run the proposal chain, and verify that your data participates in the governed loop cleanly.
+description: Adapt the KEV triage kit to your own asset, inventory, and service-mapping data. Build the reference and local layers, run the proposal chain, and verify that your data participates in the governed loop cleanly.
 ---
 
 # KEV Start
 
 Use this skill when a developer is adapting the KEV kit to their own data.
 The goal is to build a working KEV-shaped world on their inventory: reference
-layer loaded, fork layer built from their assets/owners/software/services,
+layer loaded, local layer built from their assets/owners/software/services,
 proposal chain run, and governed outputs visible in queries and the wiki.
 
 ## Goal
 
-Produce a working KEV fork in one pass:
+Produce a working KEV local in one pass:
 
 - The public KEV reference layer is loaded
-- The fork layer is built from the user's asset, owner, software, and service
+- The local layer is built from the user's asset, owner, software, and service
   inputs
 - The proposal chain has run and the review queue is populated
 - The final supported KEV surface is tailored to the user's data. Kept
@@ -31,7 +31,7 @@ Produce a working KEV fork in one pass:
 
 ## Done When
 
-- Reference and fork state both build without drift or missing-input errors
+- Reference and local state both build without drift or missing-input errors
 - The proposal queue reflects the user's inventory
 - Every kept workflow surface either runs successfully or is intentionally
   removed or modified before onboarding completes
@@ -41,11 +41,11 @@ Produce a working KEV fork in one pass:
 
 ## Preconditions
 
-- Run from `kits/kev-triage/` or a fork of it
+- Run from `kits/kev-triage/` or a local of it
 - Cruxible daemon reachable (`cruxible server info --json` succeeds)
 - For custom onboarding, replace local seed or source files after
-  `world fork --kit` materializes the local overlay, unless you are already
-  working in a fork where the kit has been applied
+  `world create-overlay --kit` materializes the local overlay, unless you are already
+  working in a local where the kit has been applied
 - `CRUXIBLE_AGENT_MODE` may be set; that's fine — this skill does not use
   blocked commands
 
@@ -94,7 +94,7 @@ contradict the generated ontology, workflow, governed relationship, or query
 views. Do not hand-author alternate Mermaid diagrams when a generated view
 exists.
 
-When iterating the KEV fork toward its final supported surface, explicitly
+When iterating the KEV local toward its final supported surface, explicitly
 direct the user to the generated README views as the primary way to understand
 the current configuration. The YAML remains the execution source of truth, but
 the README's generated ontology, workflow, governed relationship, and query
@@ -126,7 +126,7 @@ guarded local-mode assumptions will not be exercised.
 Use this step to decide which milestone already exists:
 
 - Reference layer built
-- Fork layer built
+- Local layer built
 - Proposal queue already populated
 
 If the remembered instance's query surface does not look like the KEV kit
@@ -141,9 +141,9 @@ starting over blindly.
 
 ### 2. Prepare and verify the input files
 
-Before building the fork layer, make sure the local source files are usable as
+Before building the local layer, make sure the local source files are usable as
 KEV inputs, not just present on disk. At this stage, verify only the minimum
-base surfaces needed for a KEV-shaped fork:
+base surfaces needed for a KEV-shaped local:
 
 - assets
 - owners
@@ -166,12 +166,12 @@ Sanity-check the prepared inputs before continuing:
 
 If the source files are too messy to normalize cleanly, stop and switch to
 `prepare-data` or the general `create-world` skill rather than forcing bad
-state into the KEV fork.
+state into the KEV local.
 
 ### 3. Tailor the final KEV surface to the user's data
 
 The exit condition for onboarding is that the final supported KEV surface is
-validated against the user's fork. Walk through the relevant parts of
+validated against the user's local. Walk through the relevant parts of
 `config.yaml` with the user and decide what survives this onboarding pass.
 Before making those keep/modify/remove decisions, render the runtime config
 views inline and update the README marker blocks. Use the generated ontology,
@@ -183,7 +183,7 @@ Treat the surfaces in three buckets:
 1. **Core required workflows**
    These are part of the standard KEV loop unless the user is intentionally
    narrowing the kit:
-   - `build_fork_state`
+   - `build_local_state`
    - `propose_asset_products`
    - `propose_asset_exposure`
    - `propose_exposure_reconciliation`
@@ -224,7 +224,7 @@ queries or workflows that depend on them.
 
 After modifying the final supported surface, rerender the runtime config views
 inline and update the README marker blocks again. Do this before initializing
-or running the fork so the durable README matches the config the agent is about
+or running the local so the durable README matches the config the agent is about
 to execute.
 
 Confirm the final supported surface with the user before initializing. The
@@ -239,22 +239,22 @@ A query may be intentionally kept even if this dataset is expected to leave it
 empty, but a kept workflow should not remain in the final surface if its
 required inputs are absent for this pass.
 
-### 4. Create the KEV fork from the published world
+### 4. Create the KEV local from the published world
 
 Server mode is the primary path for 0.2. The daemon owns the instance
 directory (under `CRUXIBLE_SERVER_STATE_DIR`, default `~/.cruxible/server/
-instances/inst_<id>/`). In server mode, `world fork` defaults its workspace
+instances/inst_<id>/`). In server mode, `world create-overlay` defaults its workspace
 root to the current directory, so you do **not** need to pass `--root-dir` for
 normal onboarding. Do not create a local `.cruxible/` directory.
 
 If no instance exists:
 
 ```
-cruxible world fork --world-ref kev-reference --kit kev-triage
+cruxible world create-overlay --world-ref kev-reference --kit kev-triage
 ```
 
-This materializes the local fork overlay into the workspace root, including
-`config.yaml`, `providers.py`, and `data/seed/`. That is the fork-side kit
+This materializes the local local overlay into the workspace root, including
+`config.yaml`, `providers.py`, and `data/seed/`. That is the local-side kit
 overlay, not the published reference config. Do not replace `data/seed/` before
 this command unless you are prepared for the kit materialization to overwrite
 those local files.
@@ -262,15 +262,15 @@ those local files.
 Capture the returned `instance_id` and persist it with `cruxible context use
 <instance_id>` so subsequent commands target it.
 
-Narrate briefly: "Created a KEV fork from the published upstream world with the
+Narrate briefly: "Created a KEV local from the published upstream world with the
 `kev-triage` overlay kit. Daemon owns state at
 `~/.cruxible/server/instances/<instance_id>/`."
 
 ### 5. Check for newer upstream reference releases
 
 The onboarding path should consume the published upstream KEV world, not
-rebuild it locally. A fresh `world fork` already materializes the current
-published KEV release into the fork. This step checks whether a newer release
+rebuild it locally. A fresh `world create-overlay` already materializes the current
+published KEV release into the local. This step checks whether a newer release
 needs to be pulled into the instance:
 
 ```
@@ -307,26 +307,26 @@ If apply fails because the head moved, rerun `world pull-preview` and apply the
 new digest. Do not switch to a local reference rebuild path during onboarding.
 
 Narrate with real counts pulled from `cruxible stats --json`:
-"Published KEV reference is ready in the fork — N vulnerabilities, M products,
+"Published KEV reference is ready in the local — N vulnerabilities, M products,
 V vendors."
 
-### 6. Build fork state
+### 6. Build local state
 
-Skip this step if `cruxible stats` from Step 1 shows fork entities
+Skip this step if `cruxible stats` from Step 1 shows local entities
 (`Asset`, `Owner`, `BusinessService`) already loaded.
 
-Run the canonical fork build directly:
+Run the canonical local build directly:
 
 ```
 cruxible lock --force
-cruxible run --workflow build_fork_state --apply
+cruxible run --workflow build_local_state --apply
 ```
 
-`lock --force` is required if you replaced local seed files after the fork was
+`lock --force` is required if you replaced local seed files after the local was
 created. It accepts the current on-disk artifact hash into the workflow lock.
 For the checked-in demo seed data it is safe but not normally necessary.
 
-Narrate: "Fork state loaded — X assets, Y owners, Z services, plus whichever
+Narrate: "Local state loaded — X assets, Y owners, Z services, plus whichever
 optional surfaces (controls, exceptions, patch windows, incidents, findings)
 were included to support the kept surface."
 
@@ -451,7 +451,7 @@ moving on:
   or modify it, then re-run the affected steps
 - If an upstream proposal workflow hasn't produced the needed edges, approve
   a related proposal (or adjust the proposal workflow) and retry
-- Do not ship an onboarded fork with a query that should have data but still
+- Do not ship an onboarded local with a query that should have data but still
   returns empty — either the query or the data needs to change
 
 If a kept query is expected to be empty for this dataset, note that explicitly
@@ -470,9 +470,9 @@ Then open at least one rendered page under `wiki/subjects/`.
 
 Tell the user concisely:
 
-- The fork is live; the proposal chain walked through with reviewer approval
+- The local is live; the proposal chain walked through with reviewer approval
   at each stage
-- To exercise the ongoing daily loop on this fork (incident attribution,
+- To exercise the ongoing daily loop on this local (incident attribution,
   waiver intake, control reviews, daily triage summary), run `kev-triage`
   next
 - If they want to keep adapting the kit, the next likely changes are provider
@@ -512,16 +512,16 @@ not issue further approvals outside that flow.
   broadly correct and focuses on adapting data to it.
 - Does not create a new world from scratch. Use the general `create-world`
   skill for that.
-- Does not force every optional KEV data surface on the fork. Surfaces are
+- Does not force every optional KEV data surface on the local. Surfaces are
   required only for queries and workflows the user chooses to keep in Step 3.
 - Does not approve or reject proposals outside the Step 7 walk-through.
   Approvals in Step 7 are the user's governance decisions, issued one stage
   at a time with explicit consent.
 - Does not optimize the full daily triage loop. That is the role of
-  `kev-triage` once the fork is producing sane results.
+  `kev-triage` once the local is producing sane results.
 
 ## Next
 
-Once the forked data is producing sane proposals, queries, and wiki pages,
+Once the local data is producing sane proposals, queries, and wiki pages,
 run `kev-triage` on the same instance to exercise the ongoing daily loop and
 the richer incident/outcome story.

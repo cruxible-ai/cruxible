@@ -522,7 +522,7 @@ class SnapshotListResult:
 
 
 @dataclass
-class ForkSnapshotResult:
+class CloneSnapshotResult:
     instance: InstanceProtocol
     snapshot: WorldSnapshot
 
@@ -533,7 +533,7 @@ class WorldPublishResult:
 
 
 @dataclass
-class WorldForkResult:
+class WorldOverlayResult:
     instance: InstanceProtocol
     manifest: PublishedWorldManifest
 

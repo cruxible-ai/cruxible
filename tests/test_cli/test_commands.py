@@ -559,7 +559,7 @@ workflows:
         overlay.write_text(
             """\
 version: "1.0"
-name: fork
+name: overlay
 extends: base.yaml
 entity_types:
   Asset:
@@ -575,7 +575,7 @@ relationships:
     matching:
       integrations: {}
 workflows:
-  build_fork:
+  build_overlay:
     canonical: true
     contract_in: EmptyInput
     returns: EmptyOutput
@@ -596,7 +596,7 @@ workflows:
         )
 
         assert result.exit_code == 0
-        assert "Build Fork" in result.output
+        assert "Build Overlay" in result.output
         assert "Build Reference" not in result.output
 
 

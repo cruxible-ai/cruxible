@@ -42,7 +42,7 @@ def _base() -> CoreConfig:
 def _overlay(extra: dict) -> CoreConfig:
     data = {
         "version": "1.0",
-        "name": "fork",
+        "name": "overlay",
         "extends": "base.yaml",
         "entity_types": {},
         "relationships": [],
@@ -120,7 +120,7 @@ workflows:
         overlay = load_config_from_string(
             """\
 version: "1.0"
-name: fork
+name: overlay
 extends: base.yaml
 entity_types: {}
 relationships: []
@@ -298,7 +298,7 @@ class TestDecisionPoliciesComposition:
         overlay = _overlay({
             "decision_policies": [
                 {
-                    "name": "fork_policy",
+                    "name": "overlay_policy",
                     "applies_to": "query",
                     "query_name": "find_cases",
                     "relationship_type": "cites",
@@ -309,13 +309,13 @@ class TestDecisionPoliciesComposition:
         })
         composed = compose_configs(base, overlay)
         names = [p.name for p in composed.decision_policies]
-        assert names == ["base_policy", "fork_policy"]
+        assert names == ["base_policy", "overlay_policy"]
 
     def test_overlay_decision_policies_without_base(self) -> None:
         overlay = _overlay({
             "decision_policies": [
                 {
-                    "name": "fork_only",
+                    "name": "overlay_only",
                     "applies_to": "query",
                     "query_name": "find_cases",
                     "relationship_type": "cites",
@@ -325,7 +325,7 @@ class TestDecisionPoliciesComposition:
         })
         composed = compose_configs(_base(), overlay)
         assert len(composed.decision_policies) == 1
-        assert composed.decision_policies[0].name == "fork_only"
+        assert composed.decision_policies[0].name == "overlay_only"
 
 
 class TestArtifactUriComposition:
@@ -360,7 +360,7 @@ artifacts:
         overlay_path.write_text(
             """\
 version: "1.0"
-name: fork
+name: overlay
 extends: ../base/config.yaml
 entity_types: {}
 relationships: []
@@ -410,7 +410,7 @@ artifacts:
         overlay_path.write_text(
             """\
 version: "1.0"
-name: fork
+name: overlay
 extends: ../base/config.yaml
 entity_types: {}
 relationships: []

@@ -14,6 +14,12 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.kits import (
+    KIT_MANIFEST_FILE,
+    config_yaml_has_kit_provider_refs,
+    copy_kit_runtime_files,
+    write_materialized_kit_metadata,
+)
 from cruxible_core.mcp.permissions import (
     PermissionMode,
     check_permission,
@@ -34,17 +40,17 @@ from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
+    service_clone_snapshot,
     service_config_compatibility_warnings,
     service_create_decision_record,
     service_create_snapshot,
+    service_create_world_overlay,
     service_describe_query,
     service_evaluate,
     service_feedback,
     service_feedback_batch,
     service_finalize_decision_record,
     service_find_candidates,
-    service_fork_snapshot,
-    service_fork_world,
     service_get_decision_record,
     service_get_entity,
     service_get_group,
@@ -152,11 +158,12 @@ def _handle_init_local(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
+    kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     check_permission("cruxible_init")
 
-    has_config = config_path is not None or config_yaml is not None
+    has_config = config_path is not None or config_yaml is not None or kit is not None
 
     if has_config:
         check_permission(
@@ -188,6 +195,7 @@ def _handle_init_local(
         config_path=config_path,
         config_yaml=config_yaml,
         data_dir=data_dir,
+        kit=kit,
     )
     instance_id = str(root)
     get_manager().register(instance_id, result.instance)
@@ -199,11 +207,12 @@ def _handle_init_governed(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
+    kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
     check_permission("cruxible_init")
 
-    has_config = config_path is not None or config_yaml is not None
+    has_config = config_path is not None or config_yaml is not None or kit is not None
     if has_config:
         check_permission(
             "cruxible_init",
@@ -237,16 +246,32 @@ def _handle_init_governed(
             "CLI and MCP callers should read the config locally and send config_yaml "
             "instead of passing config_path."
         )
+    workspace_root = Path(root_dir)
+    copied_kit_runtime_files = False
     if config_yaml is not None:
-        config_yaml = _normalize_governed_config_yaml(config_yaml, workspace_root=Path(root_dir))
+        has_kit_refs = config_yaml_has_kit_provider_refs(config_yaml)
+        config_yaml = _normalize_governed_config_yaml(config_yaml, workspace_root=workspace_root)
+        has_kit_refs = has_kit_refs or config_yaml_has_kit_provider_refs(config_yaml)
+        if has_kit_refs and not (workspace_root / KIT_MANIFEST_FILE).exists():
+            raise ConfigError(
+                "Uploaded config contains kit:// provider refs, but the workspace root "
+                "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
+                "standalone kits, or `cruxible world create-overlay --kit` for overlay kits."
+            )
+        if (workspace_root / KIT_MANIFEST_FILE).exists():
+            copy_kit_runtime_files(workspace_root, governed_root, include_entry_config=False)
+            copied_kit_runtime_files = True
 
     result = service_init(
         governed_root,
         config_path=None,
         config_yaml=config_yaml,
         data_dir=data_dir,
+        kit=kit,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
     )
+    if copied_kit_runtime_files:
+        write_materialized_kit_metadata(governed_root)
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.InitResult(
         instance_id=registered.record.instance_id,
@@ -608,50 +633,50 @@ def _handle_list_snapshots_local(instance_id: str) -> contracts.SnapshotListResu
     )
 
 
-def _handle_fork_snapshot_local(
+def _handle_clone_snapshot_local(
     instance_id: str,
     snapshot_id: str,
     root_dir: str,
-) -> contracts.ForkSnapshotResult:
+) -> contracts.CloneSnapshotResult:
     """Create a new local instance from a selected snapshot."""
     check_permission(
-        "snapshot_fork",
+        "snapshot_clone",
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
     validate_root_dir(root_dir)
     instance = get_manager().get(instance_id)
-    result = service_fork_snapshot(instance, snapshot_id, root_dir)
+    result = service_clone_snapshot(instance, snapshot_id, root_dir)
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.ForkSnapshotResult(
+    return contracts.CloneSnapshotResult(
         instance_id=registered.record.instance_id,
         snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json")),
     )
 
 
-def _handle_fork_snapshot_governed(
+def _handle_clone_snapshot_governed(
     instance_id: str,
     snapshot_id: str,
     root_dir: str,
-) -> contracts.ForkSnapshotResult:
+) -> contracts.CloneSnapshotResult:
     """Create a new daemon-owned governed instance from a selected snapshot."""
     check_permission(
-        "snapshot_fork",
+        "snapshot_clone",
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
     validate_root_dir(root_dir)
     instance = get_manager().get(instance_id)
     registered = get_registry().create_governed_instance(workspace_root=root_dir)
-    result = service_fork_snapshot(
+    result = service_clone_snapshot(
         instance,
         snapshot_id,
         registered.record.location,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
     )
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.ForkSnapshotResult(
+    return contracts.CloneSnapshotResult(
         instance_id=registered.record.instance_id,
         snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json")),
     )
@@ -1969,21 +1994,21 @@ def _handle_world_publish_local(
     )
 
 
-def _handle_world_fork_local(
+def _handle_create_world_overlay_local(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
     no_kit: bool,
     root_dir: str,
-) -> contracts.WorldForkResult:
-    """Create a new local fork from a published world release."""
+) -> contracts.WorldOverlayResult:
+    """Create a new local overlay from a published world release."""
     check_permission(
-        "cruxible_world_fork",
+        "cruxible_world_create_overlay",
         instance_id=root_dir,
         required_mode=PermissionMode.ADMIN,
     )
     validate_root_dir(root_dir)
-    result = service_fork_world(
+    result = service_create_world_overlay(
         transport_ref=transport_ref,
         world_ref=world_ref,
         kit=kit,
@@ -1992,7 +2017,7 @@ def _handle_world_fork_local(
     )
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.WorldForkResult(
+    return contracts.WorldOverlayResult(
         instance_id=registered.record.instance_id,
         manifest=contracts.PublishedWorldManifest.model_validate(
             result.manifest.model_dump(mode="json")
@@ -2000,22 +2025,22 @@ def _handle_world_fork_local(
     )
 
 
-def _handle_world_fork_governed(
+def _handle_create_world_overlay_governed(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
     no_kit: bool,
     root_dir: str,
-) -> contracts.WorldForkResult:
-    """Create a daemon-owned governed fork from a published world release."""
+) -> contracts.WorldOverlayResult:
+    """Create a daemon-owned governed overlay from a published world release."""
     check_permission(
-        "cruxible_world_fork",
+        "cruxible_world_create_overlay",
         instance_id=root_dir,
         required_mode=PermissionMode.ADMIN,
     )
     validate_root_dir(root_dir)
     registered = get_registry().create_governed_instance(workspace_root=root_dir)
-    result = service_fork_world(
+    result = service_create_world_overlay(
         transport_ref=transport_ref,
         world_ref=world_ref,
         kit=kit,
@@ -2024,7 +2049,7 @@ def _handle_world_fork_governed(
         instance_mode=CruxibleInstance.GOVERNED_MODE,
     )
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.WorldForkResult(
+    return contracts.WorldOverlayResult(
         instance_id=registered.record.instance_id,
         manifest=contracts.PublishedWorldManifest.model_validate(
             result.manifest.model_dump(mode="json")
@@ -2033,7 +2058,7 @@ def _handle_world_fork_governed(
 
 
 def _handle_world_status_local(instance_id: str) -> contracts.WorldStatusResult:
-    """Return upstream tracking metadata for a release-backed fork."""
+    """Return upstream tracking metadata for a release-backed overlay."""
     check_permission(
         "cruxible_world_status",
         instance_id=instance_id,
@@ -2050,7 +2075,7 @@ def _handle_world_status_local(instance_id: str) -> contracts.WorldStatusResult:
 
 
 def _handle_world_pull_preview_local(instance_id: str) -> contracts.WorldPullPreviewResult:
-    """Preview pulling a newer upstream release into a fork."""
+    """Preview pulling a newer upstream release into an overlay."""
     check_permission(
         "cruxible_world_pull_preview",
         instance_id=instance_id,
@@ -2075,7 +2100,7 @@ def _handle_world_pull_apply_local(
     instance_id: str,
     expected_apply_digest: str,
 ) -> contracts.WorldPullApplyResult:
-    """Apply a previewed upstream pull to a tracked fork."""
+    """Apply a previewed upstream pull to a tracked overlay."""
     check_permission(
         "cruxible_world_pull_apply",
         instance_id=instance_id,

@@ -110,6 +110,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
+    clone_cmd,
     config_views_cmd,
     connect_group,
     decision_records_cmd,
@@ -120,7 +121,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     feedback_cmd,
     feedback_profile_cmd,
     find_candidates_cmd,
-    fork_cmd,
     get_entity_cmd,
     get_relationship_cmd,
     group_group,
@@ -161,7 +161,7 @@ cli.add_command(apply_cmd)  # type: ignore[has-type]
 cli.add_command(test_cmd)  # type: ignore[has-type]
 cli.add_command(propose_cmd)  # type: ignore[has-type]
 cli.add_command(snapshot_group, "snapshot")  # type: ignore[has-type]
-cli.add_command(fork_cmd, "fork")  # type: ignore[has-type]
+cli.add_command(clone_cmd, "clone")  # type: ignore[has-type]
 cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(render_wiki_cmd, "render-wiki")  # type: ignore[has-type]

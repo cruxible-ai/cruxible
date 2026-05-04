@@ -5,15 +5,82 @@ description: >
   Supply chain incident blast-radius kit. Deterministic base world of
   suppliers, components, assemblies (with recursive BOM hierarchy),
   products, and shipments. Incidents arrive as new entities
-  and cascade through four staged governed-relationship workflows:
-  incident → supplier → component/direct assembly → product.
-  Shipment risk is a query/report surface over accepted product impact
-  plus deterministic shipment state, rather than a direct incident-shipment
-  edge.
+  and cascade through three staged governed-relationship workflows:
+  incident → supplier → component/direct assembly. Product and shipment
+  risk are derived context surfaces over accepted upstream impacts, BOM,
+  buffer, and deterministic shipment state, rather than direct incident-product
+  or incident-shipment edges.
   Each governed edge is rule-centric (the bucket signature
   carries rule_id + rule_version, not incident_id), so trust
   accumulates on rules across many incidents rather than starting fresh
   per incident.
+
+# ─── Shared enum vocabularies ────────────────────────────────────────
+
+enums:
+  component_kind:
+    values: [raw_material, part]
+    description: Non-assembly component role in the BOM.
+  lifecycle_status:
+    values: [active, deprecated, obsolete]
+    description: Catalog lifecycle state for components, assemblies, and products.
+  criticality:
+    values: [critical, standard, low]
+    description: Internal materiality tier for component and assembly blast-radius context.
+  shipment_status:
+    values: [in_flight, delivered, cancelled]
+    description: Operational shipment state used by shipment review workflows.
+  location_type:
+    values: [plant, warehouse, supplier, in_transit]
+    description: Location category for inventory evidence.
+  inventory_item_type:
+    values: [component, assembly, product]
+    description: Item type represented by an inventory position.
+  buffer_item_type:
+    values: [component, assembly]
+    description: Item type assessed for reusable buffer coverage.
+  rate_period:
+    values: [day, week, month]
+    description: Time period denominator for consumption rates.
+  duration_unit:
+    values: [days, weeks, months]
+    description: Time unit for coverage and planning horizons.
+  buffer_state:
+    values: [no_buffer, partial_buffer, sufficient_buffer, unknown]
+    description: Inventory buffer conclusion used by product exposure assessment.
+  incident_severity:
+    values: [critical, high, medium, low]
+    description: Incident severity band.
+  incident_scope_type:
+    values: [supplier, geography]
+    description: Incident scope basis.
+  incident_status:
+    values: [open, monitoring, closed]
+    description: Incident lifecycle state.
+  qualification_status:
+    values: [qualified, conditional, expired, disqualified]
+    description: Supplier qualification posture for a supplied item.
+  sourcing_role:
+    values: [primary, secondary, tertiary, emergency, inactive]
+    description: Sourcing priority role for a supplied item.
+  activation_state:
+    values: [active, standby, constrained, unavailable]
+    description: Operational availability state for a sourcing path.
+  supplier_match_basis:
+    values: [direct, geography]
+    description: How an incident scope matched a supplier.
+  alternate_state:
+    values: [no_alternate, alternate_in_scope, alternate_viable]
+    description: Alternate sourcing coverage at cascade time.
+  bom_depth_bucket:
+    values: [direct, tier_2, tier_3_plus]
+    description: Discretized BOM traversal depth.
+  proposal_verdict:
+    values: [support, unsure, contradict]
+    description: Provider verdict mapped into governed proposal signals.
+  product_exposure_basis:
+    values: [component_bom_path, direct_assembly_bom_path, mixed_paths]
+    description: Dominant upstream evidence path for derived product exposure context.
 
 # ─── Entity types ────────────────────────────────────────────────────
 
@@ -46,7 +113,7 @@ entity_types:
         indexed: true
       component_kind:
         type: string
-        enum: [raw_material, part]
+        enum_ref: component_kind
         description: Explicit BOM role for non-assembly components.
       revision:
         type: string
@@ -55,11 +122,11 @@ entity_types:
       lifecycle_status:
         type: string
         optional: true
-        enum: [active, deprecated, obsolete]
+        enum_ref: lifecycle_status
       criticality:
         type: string
         optional: true
-        enum: [critical, standard, low]
+        enum_ref: criticality
       category:
         type: string
         optional: true
@@ -80,11 +147,11 @@ entity_types:
       lifecycle_status:
         type: string
         optional: true
-        enum: [active, deprecated, obsolete]
+        enum_ref: lifecycle_status
       criticality:
         type: string
         optional: true
-        enum: [critical, standard, low]
+        enum_ref: criticality
       category:
         type: string
         optional: true
@@ -100,9 +167,10 @@ entity_types:
         indexed: true
       name:
         type: string
-      active:
-        type: bool
+      lifecycle_status:
+        type: string
         optional: true
+        enum_ref: lifecycle_status
 
   Shipment:
     description: A specific outbound shipment of products to a customer.
@@ -116,12 +184,124 @@ entity_types:
       status:
         type: string
         optional: true
-        enum: [in_flight, delivered, cancelled]
+        enum_ref: shipment_status
       ship_date:
         type: date
         optional: true
       eta:
         type: date
+        optional: true
+
+  Location:
+    description: Plant, warehouse, supplier, or in-transit location where inventory may sit.
+    properties:
+      location_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      location_type:
+        type: string
+        optional: true
+        enum_ref: location_type
+      geography:
+        type: string
+        optional: true
+
+  InventoryPosition:
+    description: Time-stamped inventory evidence for a component, assembly, or product at a location.
+    properties:
+      inventory_position_id:
+        type: string
+        primary_key: true
+      item_type:
+        type: string
+        enum_ref: inventory_item_type
+      item_id:
+        type: string
+        indexed: true
+      location_id:
+        type: string
+        indexed: true
+      quantity_on_hand:
+        type: float
+        optional: true
+      quantity_allocated:
+        type: float
+        optional: true
+      net_available:
+        type: float
+        optional: true
+      unit_of_measure:
+        type: string
+        optional: true
+      as_of:
+        type: date
+        optional: true
+
+  BufferAssessment:
+    description: Reusable operational assessment of whether inventory covers expected demand for a component or assembly in a product/BOM context.
+    properties:
+      buffer_assessment_id:
+        type: string
+        primary_key: true
+      item_type:
+        type: string
+        enum_ref: buffer_item_type
+      item_id:
+        type: string
+        indexed: true
+      product_id:
+        type: string
+        indexed: true
+      bom_variant_id:
+        type: string
+        optional: true
+      net_available:
+        type: float
+        optional: true
+      required_per_unit:
+        type: float
+        optional: true
+      open_demand_units:
+        type: float
+        optional: true
+      estimated_consumption_rate:
+        type: float
+        optional: true
+        description: Expected consumption quantity per rate_period.
+      rate_period:
+        type: string
+        optional: true
+        enum_ref: rate_period
+      coverage_duration:
+        type: float
+        optional: true
+        description: Computed duration the net available inventory covers.
+      coverage_unit:
+        type: string
+        optional: true
+        enum_ref: duration_unit
+      horizon_duration:
+        type: float
+        optional: true
+      horizon_unit:
+        type: string
+        optional: true
+        enum_ref: duration_unit
+      buffer_state:
+        type: string
+        optional: true
+        enum_ref: buffer_state
+      unit_of_measure:
+        type: string
+        optional: true
+      as_of:
+        type: date
+        optional: true
+      rationale:
+        type: string
         optional: true
 
   Incident:
@@ -136,16 +316,23 @@ entity_types:
       severity:
         type: string
         optional: true
-        enum: [critical, high, medium, low]
+        enum_ref: incident_severity
       scope_type:
         type: string
         optional: true
-        enum: [supplier, geography]
+        enum_ref: incident_scope_type
       scope_id:
         type: string
         optional: true
         description: Identifier of the in-scope supplier or geography string.
+      status:
+        type: string
+        optional: true
+        enum_ref: incident_status
       reported_at:
+        type: date
+        optional: true
+      closed_at:
         type: date
         optional: true
       summary:
@@ -166,11 +353,11 @@ relationships:
       qualification_status:
         type: string
         optional: true
-        enum: [qualified, conditional, expired, disqualified]
+        enum_ref: qualification_status
       sourcing_role:
         type: string
         optional: true
-        enum: [primary, secondary, tertiary, emergency, inactive]
+        enum_ref: sourcing_role
       priority_rank:
         type: int
         optional: true
@@ -180,7 +367,7 @@ relationships:
       activation_state:
         type: string
         optional: true
-        enum: [active, standby, constrained, unavailable]
+        enum_ref: activation_state
       capacity_units_per_week:
         type: int
         optional: true
@@ -193,10 +380,6 @@ relationships:
       last_verified_at:
         type: date
         optional: true
-      active:
-        type: bool
-        optional: true
-        description: Deprecated coarse flag; prefer qualification_status and activation_state.
 
   - name: supplier_supplies_assembly
     description: A supplier can provide a buildable assembly directly. Properties capture qualification, sourcing posture, capacity, and timing.
@@ -209,11 +392,11 @@ relationships:
       qualification_status:
         type: string
         optional: true
-        enum: [qualified, conditional, expired, disqualified]
+        enum_ref: qualification_status
       sourcing_role:
         type: string
         optional: true
-        enum: [primary, secondary, tertiary, emergency, inactive]
+        enum_ref: sourcing_role
       priority_rank:
         type: int
         optional: true
@@ -223,7 +406,7 @@ relationships:
       activation_state:
         type: string
         optional: true
-        enum: [active, standby, constrained, unavailable]
+        enum_ref: activation_state
       capacity_units_per_week:
         type: int
         optional: true
@@ -236,10 +419,6 @@ relationships:
       last_verified_at:
         type: date
         optional: true
-      active:
-        type: bool
-        optional: true
-        description: Deprecated coarse flag; prefer qualification_status and activation_state.
 
   - name: component_part_of_assembly
     description: BOM edge linking a raw material or part into an assembly.
@@ -248,6 +427,18 @@ relationships:
     properties:
       quantity:
         type: int
+        optional: true
+      bom_variant_id:
+        type: string
+        optional: true
+      plant_id:
+        type: string
+        optional: true
+      effective_from:
+        type: date
+        optional: true
+      effective_to:
+        type: date
         optional: true
 
   - name: assembly_part_of_assembly
@@ -258,6 +449,18 @@ relationships:
       quantity:
         type: int
         optional: true
+      bom_variant_id:
+        type: string
+        optional: true
+      plant_id:
+        type: string
+        optional: true
+      effective_from:
+        type: date
+        optional: true
+      effective_to:
+        type: date
+        optional: true
 
   - name: assembly_part_of_product
     description: Top-level BOM edge linking an assembly into a finished product.
@@ -266,6 +469,18 @@ relationships:
     properties:
       quantity:
         type: int
+        optional: true
+      bom_variant_id:
+        type: string
+        optional: true
+      plant_id:
+        type: string
+        optional: true
+      effective_from:
+        type: date
+        optional: true
+      effective_to:
+        type: date
         optional: true
 
   - name: product_in_shipment
@@ -276,6 +491,46 @@ relationships:
       qty:
         type: int
         optional: true
+
+  - name: component_inventory_position
+    description: Inventory evidence for a component.
+    from: Component
+    to: InventoryPosition
+
+  - name: assembly_inventory_position
+    description: Inventory evidence for an assembly.
+    from: Assembly
+    to: InventoryPosition
+
+  - name: product_inventory_position
+    description: Inventory evidence for a finished product.
+    from: Product
+    to: InventoryPosition
+
+  - name: inventory_position_location
+    description: Location where an inventory position was observed.
+    from: InventoryPosition
+    to: Location
+
+  - name: component_buffer_assessment
+    description: Buffer coverage assessment for a component in a product/BOM context.
+    from: Component
+    to: BufferAssessment
+
+  - name: assembly_buffer_assessment
+    description: Buffer coverage assessment for an assembly in a product/BOM context.
+    from: Assembly
+    to: BufferAssessment
+
+  - name: product_buffer_assessment
+    description: Product context for a buffer assessment.
+    from: Product
+    to: BufferAssessment
+
+  - name: buffer_assessment_inventory
+    description: Inventory evidence used by a buffer assessment.
+    from: BufferAssessment
+    to: InventoryPosition
 
 # ─── Governed relationships ──────────────────────────────────────────
 #
@@ -296,7 +551,7 @@ relationships:
       match_basis:
         type: string
         optional: true
-        enum: [direct, geography]
+        enum_ref: supplier_match_basis
         description: How the incident scope matched this supplier.
       rationale:
         type: string
@@ -316,7 +571,7 @@ relationships:
       alternate_state:
         type: string
         optional: true
-        enum: [no_alternate, alternate_in_scope, alternate_active]
+        enum_ref: alternate_state
         description: State of substitute supplier coverage at cascade time.
       rationale:
         type: string
@@ -340,7 +595,7 @@ relationships:
       alternate_state:
         type: string
         optional: true
-        enum: [no_alternate, alternate_in_scope, alternate_active]
+        enum_ref: alternate_state
         description: State of substitute supplier coverage at cascade time.
       rationale:
         type: string
@@ -351,51 +606,6 @@ relationships:
           role: required
           always_review_on_unsure: true
       auto_resolve_when: all_support
-
-  - name: incident_impacts_product
-    description: Governed judgment that an incident impacts a finished product through accepted component impacts, accepted direct assembly impacts, and the deterministic assembly BOM hierarchy.
-    from: Incident
-    to: Product
-    properties:
-      bom_depth_bucket:
-        type: string
-        optional: true
-        enum: [direct, tier_2, tier_3_plus]
-        description: Discretized BOM traversal depth from impacted component or assembly through the assembly hierarchy to product.
-      rationale:
-        type: string
-        optional: true
-    matching:
-      integrations:
-        incident_product_cascade:
-          role: required
-          always_review_on_unsure: true
-      # Product-level impact is too load-bearing to auto-resolve in v1
-      # even when signals are clean. Keep on review track.
-      # NOTE (schema gap): there is no `auto_resolve_when: never` value
-      # in MatchingSchema. Setting all_support + relying on
-      # auto_resolve_requires_prior_trust=trusted_only (the default)
-      # means first-incident review-everything; later incidents with
-      # accrued trust on this bucket *could* auto-apply unless we
-      # leave always_review_on_unsure plus a decision_policy below.
-      auto_resolve_when: all_support
-
-# ─── Decision policies ───────────────────────────────────────────────
-#
-# Force product-impact proposals to require review even when bucket
-# trust would otherwise allow auto-apply.
-# This is how we express "always human review for customer-facing
-# judgments" given the current MatchingSchema does not have a
-# `never_auto_resolve` option.
-
-decision_policies:
-  - name: product_impact_always_review
-    description: Customer-facing product impact must always be reviewed.
-    rationale: Product impact drives customer comms and recall planning; human approval required.
-    applies_to: workflow
-    workflow_name: propose_incident_impacts_product
-    relationship_type: incident_impacts_product
-    effect: require_review
 
 # ─── Named queries ───────────────────────────────────────────────────
 #
@@ -444,29 +654,50 @@ named_queries:
         direction: outgoing
         max_depth: 8
 
-  incident_impacted_products:
+  incident_component_exposed_products:
     description: >
-      Starting from an incident, find finished products judged impacted via component and assembly BOM cascade.
-      The bom_depth_bucket edge property lets the skill filter for tier_2 / tier_3_plus.
+      Starting from an incident, derive finished products exposed through
+      accepted component impacts and the component/assembly BOM hierarchy.
+      This is context for an agentic product or shipment judgment, not
+      governed graph state.
     entry_point: Incident
     returns: Product
     traversal:
-      - relationship: incident_impacts_product
+      - relationship: incident_impacts_component
+        direction: outgoing
+      - relationship: [component_part_of_assembly, assembly_part_of_assembly]
+        direction: outgoing
+        max_depth: 8
+      - relationship: assembly_part_of_product
         direction: outgoing
 
-  incident_at_risk_shipments:
+  incident_direct_assembly_exposed_products:
     description: >
-      Starting from an incident, find in-flight shipments containing products
-      with accepted product-impact judgments.
+      Starting from an incident, derive finished products exposed through
+      accepted direct assembly impacts where the assembly is a top-level
+      product assembly.
     entry_point: Incident
-    returns: Shipment
+    returns: Product
     traversal:
-      - relationship: incident_impacts_product
+      - relationship: incident_impacts_assembly
         direction: outgoing
-      - relationship: product_in_shipment
+      - relationship: assembly_part_of_product
         direction: outgoing
-        target_filter:
-          status: in_flight
+
+  incident_nested_assembly_exposed_products:
+    description: >
+      Starting from an incident, derive finished products exposed through
+      accepted direct assembly impacts and higher-level parent assemblies.
+    entry_point: Incident
+    returns: Product
+    traversal:
+      - relationship: incident_impacts_assembly
+        direction: outgoing
+      - relationship: assembly_part_of_assembly
+        direction: outgoing
+        max_depth: 8
+      - relationship: assembly_part_of_product
+        direction: outgoing
 
   single_source_components_for_incident:
     description: >
@@ -477,6 +708,18 @@ named_queries:
     returns: Component
     traversal:
       - relationship: incident_impacts_component
+        direction: outgoing
+        filter:
+          alternate_state: no_alternate
+
+  single_source_assemblies_for_incident:
+    description: >
+      Starting from an incident, find impacted directly supplied assemblies
+      that have only one viable supplier path.
+    entry_point: Incident
+    returns: Assembly
+    traversal:
+      - relationship: incident_impacts_assembly
         direction: outgoing
         filter:
           alternate_state: no_alternate
@@ -540,6 +783,30 @@ named_queries:
       - relationship: product_in_shipment
         direction: outgoing
 
+  product_buffer_assessments:
+    description: Starting from a product, find current buffer assessments used for product exposure context.
+    entry_point: Product
+    returns: BufferAssessment
+    traversal:
+      - relationship: product_buffer_assessment
+        direction: outgoing
+
+  component_inventory_positions:
+    description: Starting from a component, find inventory positions for that component.
+    entry_point: Component
+    returns: InventoryPosition
+    traversal:
+      - relationship: component_inventory_position
+        direction: outgoing
+
+  assembly_inventory_positions:
+    description: Starting from an assembly, find inventory positions for that assembly.
+    entry_point: Assembly
+    returns: InventoryPosition
+    traversal:
+      - relationship: assembly_inventory_position
+        direction: outgoing
+
   shipment_products:
     description: Starting from a shipment, find products contained in it.
     entry_point: Shipment
@@ -556,12 +823,40 @@ named_queries:
       - relationship: incident_impacts_supplier
         direction: incoming
 
-  product_impacting_incidents:
-    description: Starting from a product, find incidents judged to impact it.
+  product_component_impacting_incidents:
+    description: Starting from a product, find incidents that impact components in its BOM.
     entry_point: Product
     returns: Incident
     traversal:
-      - relationship: incident_impacts_product
+      - relationship: assembly_part_of_product
+        direction: incoming
+      - relationship: [assembly_part_of_assembly, component_part_of_assembly]
+        direction: incoming
+        max_depth: 8
+      - relationship: incident_impacts_component
+        direction: incoming
+
+  product_direct_assembly_impacting_incidents:
+    description: Starting from a product, find incidents that directly impact top-level assemblies in its BOM.
+    entry_point: Product
+    returns: Incident
+    traversal:
+      - relationship: assembly_part_of_product
+        direction: incoming
+      - relationship: incident_impacts_assembly
+        direction: incoming
+
+  product_nested_assembly_impacting_incidents:
+    description: Starting from a product, find incidents that directly impact nested assemblies in its BOM.
+    entry_point: Product
+    returns: Incident
+    traversal:
+      - relationship: assembly_part_of_product
+        direction: incoming
+      - relationship: assembly_part_of_assembly
+        direction: incoming
+        max_depth: 8
+      - relationship: incident_impacts_assembly
         direction: incoming
 
   assembly_impacting_incidents:
@@ -570,16 +865,6 @@ named_queries:
     returns: Incident
     traversal:
       - relationship: incident_impacts_assembly
-        direction: incoming
-
-  shipment_risk_incidents:
-    description: Starting from a shipment, find incidents impacting products in the shipment.
-    entry_point: Shipment
-    returns: Incident
-    traversal:
-      - relationship: product_in_shipment
-        direction: incoming
-      - relationship: incident_impacts_product
         direction: incoming
 
 # ─── Quality checks ──────────────────────────────────────────────────
@@ -653,15 +938,6 @@ integrations:
       to directly supplied assemblies, downgrading the signal when a viable
       alternate sourcing option exists outside incident scope.
 
-  incident_product_cascade:
-    kind: bom_to_product_cascade
-    contract: null
-    notes: >
-      Rolls resolved impacted components and directly impacted assemblies
-      through component_part_of_assembly, assembly_part_of_assembly, and
-      assembly_part_of_product to finished goods. Records discretized BOM
-      depth in bom_depth_bucket.
-
 # ─── Contracts ───────────────────────────────────────────────────────
 
 contracts:
@@ -677,6 +953,7 @@ contracts:
           type: array
           items:
             type: object
+            required: [supplier_id, name, primary_geography, tier_hint]
             properties:
               supplier_id: {type: string}
               name: {type: string}
@@ -688,17 +965,14 @@ contracts:
           type: array
           items:
             type: object
+            required: [component_id, name, component_kind, revision, lifecycle_status, criticality, category]
             properties:
               component_id: {type: string}
               name: {type: string}
-              component_kind:
-                type: string
-                enum: [raw_material, part]
+              component_kind: {type: string, enum_ref: component_kind}
               revision: {type: string}
-              lifecycle_status:
-                type: string
-                enum: [active, deprecated, obsolete]
-              criticality: {type: string}
+              lifecycle_status: {type: string, enum_ref: lifecycle_status}
+              criticality: {type: string, enum_ref: criticality}
               category: {type: string}
       assemblies:
         type: json
@@ -706,14 +980,13 @@ contracts:
           type: array
           items:
             type: object
+            required: [assembly_id, name, revision, lifecycle_status, criticality, category]
             properties:
               assembly_id: {type: string}
               name: {type: string}
               revision: {type: string}
-              lifecycle_status:
-                type: string
-                enum: [active, deprecated, obsolete]
-              criticality: {type: string}
+              lifecycle_status: {type: string, enum_ref: lifecycle_status}
+              criticality: {type: string, enum_ref: criticality}
               category: {type: string}
       products:
         type: json
@@ -721,21 +994,23 @@ contracts:
           type: array
           items:
             type: object
+            required: [product_id, sku, name, lifecycle_status]
             properties:
               product_id: {type: string}
               sku: {type: string}
               name: {type: string}
-              active: {type: boolean}
+              lifecycle_status: {type: string, enum_ref: lifecycle_status}
       shipments:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [shipment_id, customer_id, status, ship_date, eta]
             properties:
               shipment_id: {type: string}
               customer_id: {type: string}
-              status: {type: string}
+              status: {type: string, enum_ref: shipment_status}
               ship_date: {type: string}
               eta: {type: string}
       supplier_supplies_component:
@@ -744,88 +1019,437 @@ contracts:
           type: array
           items:
             type: object
+            required: [supplier_id, component_id, lead_time_days, qualification_status, sourcing_role, priority_rank, allocation_pct, activation_state, capacity_units_per_week, effective_from, effective_to, last_verified_at]
             properties:
               supplier_id: {type: string}
               component_id: {type: string}
               lead_time_days: {type: integer}
-              qualification_status: {type: string}
-              sourcing_role: {type: string}
+              qualification_status: {type: string, enum_ref: qualification_status}
+              sourcing_role: {type: string, enum_ref: sourcing_role}
               priority_rank: {type: integer}
               allocation_pct: {type: number}
-              activation_state: {type: string}
+              activation_state: {type: string, enum_ref: activation_state}
               capacity_units_per_week: {type: integer}
               effective_from: {type: string}
               effective_to: {type: string}
               last_verified_at: {type: string}
-              active: {type: boolean}
       supplier_supplies_assembly:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [supplier_id, assembly_id, lead_time_days, qualification_status, sourcing_role, priority_rank, allocation_pct, activation_state, capacity_units_per_week, effective_from, effective_to, last_verified_at]
             properties:
               supplier_id: {type: string}
               assembly_id: {type: string}
               lead_time_days: {type: integer}
-              qualification_status: {type: string}
-              sourcing_role: {type: string}
+              qualification_status: {type: string, enum_ref: qualification_status}
+              sourcing_role: {type: string, enum_ref: sourcing_role}
               priority_rank: {type: integer}
               allocation_pct: {type: number}
-              activation_state: {type: string}
+              activation_state: {type: string, enum_ref: activation_state}
               capacity_units_per_week: {type: integer}
               effective_from: {type: string}
               effective_to: {type: string}
               last_verified_at: {type: string}
-              active: {type: boolean}
       component_part_of_assembly:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [component_id, assembly_id, quantity, bom_variant_id, plant_id, effective_from, effective_to]
             properties:
               component_id: {type: string}
               assembly_id: {type: string}
               quantity: {type: integer}
+              bom_variant_id: {type: string}
+              plant_id: {type: string}
+              effective_from: {type: string}
+              effective_to: {type: string}
       assembly_part_of_assembly:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [parent_assembly_id, child_assembly_id, quantity, bom_variant_id, plant_id, effective_from, effective_to]
             properties:
               parent_assembly_id: {type: string}
               child_assembly_id: {type: string}
               quantity: {type: integer}
+              bom_variant_id: {type: string}
+              plant_id: {type: string}
+              effective_from: {type: string}
+              effective_to: {type: string}
       assembly_part_of_product:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [assembly_id, product_id, quantity, bom_variant_id, plant_id, effective_from, effective_to]
             properties:
               assembly_id: {type: string}
               product_id: {type: string}
               quantity: {type: integer}
+              bom_variant_id: {type: string}
+              plant_id: {type: string}
+              effective_from: {type: string}
+              effective_to: {type: string}
       product_in_shipment:
         type: json
         json_schema:
           type: array
           items:
             type: object
+            required: [shipment_id, product_id, qty]
             properties:
               shipment_id: {type: string}
               product_id: {type: string}
               qty: {type: integer}
+
+  InventoryFetchInput:
+    description: Optional filters for fetching inventory positions from an internal inventory API.
+    fields:
+      item_ids:
+        type: json
+        optional: true
+        default: []
+        json_schema:
+          type: array
+          items:
+            type: string
+      item_types:
+        type: json
+        optional: true
+        default: []
+        json_schema:
+          type: array
+          items:
+            type: string
+            enum_ref: inventory_item_type
+      location_ids:
+        type: json
+        optional: true
+        default: []
+        json_schema:
+          type: array
+          items:
+            type: string
+      as_of:
+        type: string
+        optional: true
+        default: ""
+        description: ISO date/time cursor for the inventory source; empty means provider default/current.
+
+  InventoryFetchResults:
+    description: Inventory positions, locations, and canonical inventory relationship rows from an operational source.
+    fields:
+      locations:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [location_id, name, location_type]
+            properties:
+              location_id: {type: string}
+              name: {type: string}
+              location_type: {type: string, enum_ref: location_type}
+              geography: {type: string}
+      inventory_positions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [inventory_position_id, item_type, item_id, location_id, net_available, unit_of_measure, as_of]
+            properties:
+              inventory_position_id: {type: string}
+              item_type: {type: string, enum_ref: inventory_item_type}
+              item_id: {type: string}
+              location_id: {type: string}
+              quantity_on_hand: {type: number}
+              quantity_allocated: {type: number}
+              net_available: {type: number}
+              unit_of_measure: {type: string}
+              as_of: {type: string}
+      component_inventory_positions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [component_id, inventory_position_id]
+            properties:
+              component_id: {type: string}
+              inventory_position_id: {type: string}
+      assembly_inventory_positions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [assembly_id, inventory_position_id]
+            properties:
+              assembly_id: {type: string}
+              inventory_position_id: {type: string}
+      product_inventory_positions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [product_id, inventory_position_id]
+            properties:
+              product_id: {type: string}
+              inventory_position_id: {type: string}
+      inventory_position_locations:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [inventory_position_id, location_id]
+            properties:
+              inventory_position_id: {type: string}
+              location_id: {type: string}
+
+  BufferCoverageRefreshInput:
+    description: Optional demand context for refreshing reusable buffer assessments from current graph inventory and BOM state.
+    fields:
+      demand_context:
+        type: json
+        optional: true
+        default: {}
+        json_schema:
+          type: object
+
+  BufferAssessmentInput:
+    description: Inventory, BOM, and demand context used to calculate reusable buffer coverage assessments.
+    fields:
+      components:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
+      assemblies:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
+      products:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
+      inventory_positions:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
+      component_inventory_position_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      assembly_inventory_position_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      component_part_of_assembly_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      assembly_part_of_assembly_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      assembly_part_of_product_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      demand_context:
+        type: json
+        optional: true
+        json_schema:
+          type: object
+
+  BufferAssessmentResults:
+    description: Buffer assessments plus relationship rows connecting assessed items, products, and inventory evidence.
+    fields:
+      buffer_assessments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [buffer_assessment_id, item_type, item_id, product_id, bom_variant_id, net_available, required_per_unit, open_demand_units, estimated_consumption_rate, rate_period, coverage_duration, coverage_unit, horizon_duration, horizon_unit, buffer_state, unit_of_measure, as_of, rationale]
+            properties:
+              buffer_assessment_id: {type: string}
+              item_type: {type: string, enum_ref: buffer_item_type}
+              item_id: {type: string}
+              product_id: {type: string}
+              bom_variant_id: {type: string}
+              net_available: {type: number}
+              required_per_unit: {type: number}
+              open_demand_units: {type: number}
+              estimated_consumption_rate: {type: number}
+              rate_period: {type: string, enum_ref: rate_period}
+              coverage_duration: {type: number}
+              coverage_unit: {type: string, enum_ref: duration_unit}
+              horizon_duration: {type: number}
+              horizon_unit: {type: string, enum_ref: duration_unit}
+              buffer_state: {type: string, enum_ref: buffer_state}
+              unit_of_measure: {type: string}
+              as_of: {type: string}
+              rationale: {type: string}
+      component_buffer_assessments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [component_id, buffer_assessment_id]
+            properties:
+              component_id: {type: string}
+              buffer_assessment_id: {type: string}
+      assembly_buffer_assessments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [assembly_id, buffer_assessment_id]
+            properties:
+              assembly_id: {type: string}
+              buffer_assessment_id: {type: string}
+      product_buffer_assessments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [product_id, buffer_assessment_id]
+            properties:
+              product_id: {type: string}
+              buffer_assessment_id: {type: string}
+      buffer_assessment_inventory:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [buffer_assessment_id, inventory_position_id]
+            properties:
+              buffer_assessment_id: {type: string}
+              inventory_position_id: {type: string}
 
   IncidentScopeAssessmentInput:
     description: Open incidents plus suppliers for direct supplier and geography scope matching.
     fields:
       incidents:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
       suppliers:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
 
   IncidentScopeAssessmentResults:
     description: Candidate (incident, supplier) judgments with match_basis and tri-state verdict.
@@ -836,22 +1460,58 @@ contracts:
           type: array
           items:
             type: object
+            required: [incident_id, supplier_id, match_basis, rationale, verdict]
             properties:
               incident_id: {type: string}
               supplier_id: {type: string}
-              match_basis: {type: string}
+              match_basis: {type: string, enum_ref: supplier_match_basis}
               rationale: {type: string}
-              verdict: {type: string}
+              verdict: {type: string, enum_ref: proposal_verdict}
 
   IncidentComponentCascadeInput:
     description: Resolved incident_impacts_supplier edges plus supplier_supplies_component context.
     fields:
       impacted_supplier_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       supplier_supplies_component_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       components:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
 
   IncidentComponentCascadeResults:
     description: Candidate (incident, component) judgments with alternate_state and verdict.
@@ -862,22 +1522,58 @@ contracts:
           type: array
           items:
             type: object
+            required: [incident_id, component_id, alternate_state, rationale, verdict]
             properties:
               incident_id: {type: string}
               component_id: {type: string}
-              alternate_state: {type: string}
+              alternate_state: {type: string, enum_ref: alternate_state}
               rationale: {type: string}
-              verdict: {type: string}
+              verdict: {type: string, enum_ref: proposal_verdict}
 
   IncidentAssemblyCascadeInput:
     description: Resolved incident_impacts_supplier edges plus supplier_supplies_assembly context.
     fields:
       impacted_supplier_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       supplier_supplies_assembly_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       assemblies:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
 
   IncidentAssemblyCascadeResults:
     description: Candidate (incident, directly supplied assembly) judgments with alternate_state and verdict.
@@ -888,34 +1584,174 @@ contracts:
           type: array
           items:
             type: object
+            required: [incident_id, assembly_id, impacted_supplier_id, alternate_state, rationale, verdict]
             properties:
               incident_id: {type: string}
               assembly_id: {type: string}
               impacted_supplier_id: {type: string}
-              alternate_state: {type: string}
+              alternate_state: {type: string, enum_ref: alternate_state}
               rationale: {type: string}
-              verdict: {type: string}
+              verdict: {type: string, enum_ref: proposal_verdict}
 
-  IncidentProductCascadeInput:
-    description: Resolved component and direct assembly impacts plus assembly-aware BOM edges for product cascade.
+  IncidentProductExposureInput:
+    description: Resolved component and direct assembly impacts plus assembly-aware BOM edges for product exposure context.
     fields:
       impacted_component_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       impacted_assembly_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       component_part_of_assembly_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       assembly_part_of_assembly_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       assembly_part_of_product_edges:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      buffer_assessments:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
+      component_buffer_assessment_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      assembly_buffer_assessment_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
+      product_buffer_assessment_edges:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [relationship_type, from_type, from_id, to_type, to_id, properties]
+            properties:
+              relationship_type: {type: string}
+              from_type: {type: string}
+              from_id: {type: string}
+              to_type: {type: string}
+              to_id: {type: string}
+              edge_key: {type: integer}
+              properties: {type: object}
       assemblies:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
       products:
         type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, properties]
+            properties:
+              entity_type: {type: string}
+              entity_id: {type: string}
+              properties: {type: object}
 
-  IncidentProductCascadeResults:
-    description: Candidate (incident, product) judgments with bom_depth_bucket and verdict.
+  IncidentProductExposureResults:
+    description: Derived product exposure context rows with BOM depth, buffer posture, and tri-state provider judgment.
     fields:
       items:
         type: json
@@ -923,12 +1759,17 @@ contracts:
           type: array
           items:
             type: object
+            required: [incident_id, product_id, bom_depth_bucket, buffer_state, exposure_basis, exposure_path_summary, contributing_path_count, rationale, verdict]
             properties:
               incident_id: {type: string}
               product_id: {type: string}
-              bom_depth_bucket: {type: string}
+              bom_depth_bucket: {type: string, enum_ref: bom_depth_bucket}
+              buffer_state: {type: string, enum_ref: buffer_state}
+              exposure_basis: {type: string, enum_ref: product_exposure_basis}
+              exposure_path_summary: {type: string}
+              contributing_path_count: {type: integer}
               rationale: {type: string}
-              verdict: {type: string}
+              verdict: {type: string, enum_ref: proposal_verdict}
 
 # ─── Artifacts ───────────────────────────────────────────────────────
 #
@@ -944,10 +1785,10 @@ artifacts:
 
 # ─── Providers ───────────────────────────────────────────────────────
 #
-# Five providers: one to load seed CSVs, four cascade-stage assessors.
-# All deterministic. The cascade providers operate on whatever is
-# currently in the graph (open incidents, resolved upstream impacts) —
-# bucket dedup handles the case where they re-propose existing pairs.
+# Providers include deterministic seed/cascade assessors plus a
+# kit-specific inventory API adapter. The inventory fetch is non-deterministic
+# operational evidence and reads auth inside the provider implementation, not
+# from workflow payloads.
 
 providers:
   load_supply_chain_seed_data:
@@ -955,7 +1796,7 @@ providers:
     description: Load all base-world entities and deterministic edges from the seed bundle.
     contract_in: EmptyInput
     contract_out: SupplyChainSeedData
-    ref: cruxible_kits.supply_chain_blast_radius.load_seed_data
+    ref: kit://providers/supply_chain_blast_radius.py::load_seed_data
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -966,7 +1807,31 @@ providers:
     description: Match each open incident's scope to suppliers via direct supplier or geography basis.
     contract_in: IncidentScopeAssessmentInput
     contract_out: IncidentScopeAssessmentResults
-    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_supplier_scope
+    ref: kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
+
+  fetch_inventory_positions:
+    kind: function
+    description: Fetch inventory positions from an internal inventory API using provider-managed auth.
+    contract_in: InventoryFetchInput
+    contract_out: InventoryFetchResults
+    ref: kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions
+    version: "1.0.0"
+    deterministic: false
+    runtime: python
+    side_effects: false
+    config:
+      base_url: null
+      timeout_s: 20
+
+  assess_buffer_coverage:
+    kind: function
+    description: Compute reusable buffer coverage assessments from inventory, BOM, and demand context.
+    contract_in: BufferAssessmentInput
+    contract_out: BufferAssessmentResults
+    ref: kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -976,7 +1841,7 @@ providers:
     description: Cascade impacted suppliers to components, downgrading where viable alternate sourcing exists.
     contract_in: IncidentComponentCascadeInput
     contract_out: IncidentComponentCascadeResults
-    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_component_cascade
+    ref: kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -986,27 +1851,28 @@ providers:
     description: Cascade impacted suppliers to directly supplied assemblies, downgrading where viable alternate sourcing exists.
     contract_in: IncidentAssemblyCascadeInput
     contract_out: IncidentAssemblyCascadeResults
-    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_assembly_cascade
+    ref: kit://providers/supply_chain_blast_radius.py::assess_incident_assembly_cascade
     version: "1.0.0"
     deterministic: true
     runtime: python
 
-  assess_incident_product_cascade:
+  assess_incident_product_exposure:
     kind: function
-    description: Roll impacted components and directly impacted assemblies through assembly BOM hierarchy to finished products; records bom_depth_bucket.
-    contract_in: IncidentProductCascadeInput
-    contract_out: IncidentProductCascadeResults
-    ref: cruxible_kits.supply_chain_blast_radius.assess_incident_product_cascade
+    description: Roll impacted components and directly impacted assemblies through assembly BOM hierarchy to derived product exposure context.
+    contract_in: IncidentProductExposureInput
+    contract_out: IncidentProductExposureResults
+    ref: kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure
     version: "1.0.0"
     deterministic: true
     runtime: python
 
 # ─── Workflows ───────────────────────────────────────────────────────
 #
-# Five workflows: one canonical base loader plus four governed propose stages.
-# Each propose workflow is contract_in: EmptyInput and operates on
-# the current graph state (KEV pattern). Operators run them in order;
-# the skill orchestrates and pauses for human review between stages.
+# Workflows include canonical graph syncs, three governed propose stages,
+# and utility context refresh/assessment stages. Governed propose workflows
+# are contract_in: EmptyInput and operate on the current graph state
+# (KEV pattern). Operators run them in order; the skill orchestrates and
+# pauses for human review between governed stages.
 
 workflows:
 
@@ -1068,7 +1934,7 @@ workflows:
             product_id: $item.product_id
             sku: $item.sku
             name: $item.name
-            active: $item.active
+            lifecycle_status: $item.lifecycle_status
         as: products
       - id: shipments
         make_entities:
@@ -1103,7 +1969,6 @@ workflows:
             effective_from: $item.effective_from
             effective_to: $item.effective_to
             last_verified_at: $item.last_verified_at
-            active: $item.active
         as: supplies_edges
       - id: assembly_supply_edges
         make_relationships:
@@ -1124,7 +1989,6 @@ workflows:
             effective_from: $item.effective_from
             effective_to: $item.effective_to
             last_verified_at: $item.last_verified_at
-            active: $item.active
         as: assembly_supply_edges
       - id: component_assembly_edges
         make_relationships:
@@ -1136,6 +2000,10 @@ workflows:
           to_id: $item.assembly_id
           properties:
             quantity: $item.quantity
+            bom_variant_id: $item.bom_variant_id
+            plant_id: $item.plant_id
+            effective_from: $item.effective_from
+            effective_to: $item.effective_to
         as: component_assembly_edges
       - id: assembly_recursive_edges
         make_relationships:
@@ -1147,6 +2015,10 @@ workflows:
           to_id: $item.parent_assembly_id
           properties:
             quantity: $item.quantity
+            bom_variant_id: $item.bom_variant_id
+            plant_id: $item.plant_id
+            effective_from: $item.effective_from
+            effective_to: $item.effective_to
         as: assembly_recursive_edges
       - id: assembly_product_edges
         make_relationships:
@@ -1158,6 +2030,10 @@ workflows:
           to_id: $item.product_id
           properties:
             quantity: $item.quantity
+            bom_variant_id: $item.bom_variant_id
+            plant_id: $item.plant_id
+            effective_from: $item.effective_from
+            effective_to: $item.effective_to
         as: assembly_product_edges
       - id: shipment_edges
         make_relationships:
@@ -1218,10 +2094,273 @@ workflows:
         as: apply_shipment_edges
     returns: apply_shipment_edges
 
+  sync_inventory_positions:
+    canonical: true
+    description: Apply fetched or curated inventory positions and their locations into graph state.
+    contract_in: InventoryFetchResults
+    steps:
+      - id: locations
+        make_entities:
+          entity_type: Location
+          items: $input.locations
+          entity_id: $item.location_id
+          properties:
+            location_id: $item.location_id
+            name: $item.name
+            location_type: $item.location_type
+            geography: $item.geography
+        as: locations
+      - id: inventory_positions
+        make_entities:
+          entity_type: InventoryPosition
+          items: $input.inventory_positions
+          entity_id: $item.inventory_position_id
+          properties:
+            inventory_position_id: $item.inventory_position_id
+            item_type: $item.item_type
+            item_id: $item.item_id
+            location_id: $item.location_id
+            quantity_on_hand: $item.quantity_on_hand
+            quantity_allocated: $item.quantity_allocated
+            net_available: $item.net_available
+            unit_of_measure: $item.unit_of_measure
+            as_of: $item.as_of
+        as: inventory_positions
+      - id: component_inventory_edges
+        make_relationships:
+          relationship_type: component_inventory_position
+          items: $input.component_inventory_positions
+          from_type: Component
+          from_id: $item.component_id
+          to_type: InventoryPosition
+          to_id: $item.inventory_position_id
+        as: component_inventory_edges
+      - id: assembly_inventory_edges
+        make_relationships:
+          relationship_type: assembly_inventory_position
+          items: $input.assembly_inventory_positions
+          from_type: Assembly
+          from_id: $item.assembly_id
+          to_type: InventoryPosition
+          to_id: $item.inventory_position_id
+        as: assembly_inventory_edges
+      - id: product_inventory_edges
+        make_relationships:
+          relationship_type: product_inventory_position
+          items: $input.product_inventory_positions
+          from_type: Product
+          from_id: $item.product_id
+          to_type: InventoryPosition
+          to_id: $item.inventory_position_id
+        as: product_inventory_edges
+      - id: inventory_location_edges
+        make_relationships:
+          relationship_type: inventory_position_location
+          items: $input.inventory_position_locations
+          from_type: InventoryPosition
+          from_id: $item.inventory_position_id
+          to_type: Location
+          to_id: $item.location_id
+        as: inventory_location_edges
+      - id: apply_locations
+        apply_entities:
+          entities_from: locations
+        as: apply_locations
+      - id: apply_inventory_positions
+        apply_entities:
+          entities_from: inventory_positions
+        as: apply_inventory_positions
+      - id: apply_component_inventory
+        apply_relationships:
+          relationships_from: component_inventory_edges
+        as: apply_component_inventory
+      - id: apply_assembly_inventory
+        apply_relationships:
+          relationships_from: assembly_inventory_edges
+        as: apply_assembly_inventory
+      - id: apply_product_inventory
+        apply_relationships:
+          relationships_from: product_inventory_edges
+        as: apply_product_inventory
+      - id: apply_inventory_locations
+        apply_relationships:
+          relationships_from: inventory_location_edges
+        as: apply_inventory_locations
+    returns: apply_inventory_locations
+
+  sync_product_buffer_assessments:
+    canonical: true
+    description: Apply reviewed buffer coverage assessments into graph state.
+    contract_in: BufferAssessmentResults
+    steps:
+      - id: buffer_assessments
+        make_entities:
+          entity_type: BufferAssessment
+          items: $input.buffer_assessments
+          entity_id: $item.buffer_assessment_id
+          properties:
+            buffer_assessment_id: $item.buffer_assessment_id
+            item_type: $item.item_type
+            item_id: $item.item_id
+            product_id: $item.product_id
+            bom_variant_id: $item.bom_variant_id
+            net_available: $item.net_available
+            required_per_unit: $item.required_per_unit
+            open_demand_units: $item.open_demand_units
+            estimated_consumption_rate: $item.estimated_consumption_rate
+            rate_period: $item.rate_period
+            coverage_duration: $item.coverage_duration
+            coverage_unit: $item.coverage_unit
+            horizon_duration: $item.horizon_duration
+            horizon_unit: $item.horizon_unit
+            buffer_state: $item.buffer_state
+            unit_of_measure: $item.unit_of_measure
+            as_of: $item.as_of
+            rationale: $item.rationale
+        as: buffer_assessments
+      - id: component_buffer_edges
+        make_relationships:
+          relationship_type: component_buffer_assessment
+          items: $input.component_buffer_assessments
+          from_type: Component
+          from_id: $item.component_id
+          to_type: BufferAssessment
+          to_id: $item.buffer_assessment_id
+        as: component_buffer_edges
+      - id: assembly_buffer_edges
+        make_relationships:
+          relationship_type: assembly_buffer_assessment
+          items: $input.assembly_buffer_assessments
+          from_type: Assembly
+          from_id: $item.assembly_id
+          to_type: BufferAssessment
+          to_id: $item.buffer_assessment_id
+        as: assembly_buffer_edges
+      - id: product_buffer_edges
+        make_relationships:
+          relationship_type: product_buffer_assessment
+          items: $input.product_buffer_assessments
+          from_type: Product
+          from_id: $item.product_id
+          to_type: BufferAssessment
+          to_id: $item.buffer_assessment_id
+        as: product_buffer_edges
+      - id: buffer_inventory_edges
+        make_relationships:
+          relationship_type: buffer_assessment_inventory
+          items: $input.buffer_assessment_inventory
+          from_type: BufferAssessment
+          from_id: $item.buffer_assessment_id
+          to_type: InventoryPosition
+          to_id: $item.inventory_position_id
+        as: buffer_inventory_edges
+      - id: apply_buffer_assessments
+        apply_entities:
+          entities_from: buffer_assessments
+        as: apply_buffer_assessments
+      - id: apply_component_buffers
+        apply_relationships:
+          relationships_from: component_buffer_edges
+        as: apply_component_buffers
+      - id: apply_assembly_buffers
+        apply_relationships:
+          relationships_from: assembly_buffer_edges
+        as: apply_assembly_buffers
+      - id: apply_product_buffers
+        apply_relationships:
+          relationships_from: product_buffer_edges
+        as: apply_product_buffers
+      - id: apply_buffer_inventory
+        apply_relationships:
+          relationships_from: buffer_inventory_edges
+        as: apply_buffer_inventory
+    returns: apply_buffer_inventory
+
+  # ── Utility: live inventory API context ─────────────────────────────
+
+  refresh_inventory_positions:
+    canonical: false
+    description: >
+      Fetch inventory positions from an internal inventory API. This is a
+      utility context workflow because live API data is non-deterministic;
+      provider auth is handled inside the kit-specific provider.
+    contract_in: InventoryFetchInput
+    steps:
+      - id: inventory
+        provider: fetch_inventory_positions
+        input:
+          item_ids: $input.item_ids
+          item_types: $input.item_types
+          location_ids: $input.location_ids
+          as_of: $input.as_of
+        as: inventory
+    returns: inventory
+
+  refresh_buffer_assessments:
+    canonical: false
+    description: >
+      Compute reusable buffer coverage assessments from current graph inventory,
+      BOM, and optional demand context. Results can be used by agents or
+      synced into canonical graph state through sync_product_buffer_assessments.
+    contract_in: BufferCoverageRefreshInput
+    steps:
+      - id: components
+        list_entities:
+          entity_type: Component
+        as: components
+      - id: assemblies
+        list_entities:
+          entity_type: Assembly
+        as: assemblies
+      - id: products
+        list_entities:
+          entity_type: Product
+        as: products
+      - id: inventory_positions
+        list_entities:
+          entity_type: InventoryPosition
+        as: inventory_positions
+      - id: component_inventory
+        list_relationships:
+          relationship_type: component_inventory_position
+        as: component_inventory
+      - id: assembly_inventory
+        list_relationships:
+          relationship_type: assembly_inventory_position
+        as: assembly_inventory
+      - id: component_assembly
+        list_relationships:
+          relationship_type: component_part_of_assembly
+        as: component_assembly
+      - id: assembly_recursive
+        list_relationships:
+          relationship_type: assembly_part_of_assembly
+        as: assembly_recursive
+      - id: assembly_product
+        list_relationships:
+          relationship_type: assembly_part_of_product
+        as: assembly_product
+      - id: assessments
+        provider: assess_buffer_coverage
+        input:
+          components: $steps.components.items
+          assemblies: $steps.assemblies.items
+          products: $steps.products.items
+          inventory_positions: $steps.inventory_positions.items
+          component_inventory_position_edges: $steps.component_inventory.items
+          assembly_inventory_position_edges: $steps.assembly_inventory.items
+          component_part_of_assembly_edges: $steps.component_assembly.items
+          assembly_part_of_assembly_edges: $steps.assembly_recursive.items
+          assembly_part_of_product_edges: $steps.assembly_product.items
+          demand_context: $input.demand_context
+        as: assessments
+    returns: assessments
+
   # ── Stage 1: incident → supplier ───────────────────────────────────
 
   propose_incident_impacts_supplier:
     canonical: false
+    purpose: proposal
     description: >
       Match every open incident's scope to suppliers via direct supplier
       or geography basis. Bucket signature is rule-centric
@@ -1289,6 +2428,7 @@ workflows:
 
   propose_incident_impacts_component:
     canonical: false
+    purpose: proposal
     description: >
       Cascade resolved incident_impacts_supplier edges through
       supplier_supplies_component to candidate component impacts.
@@ -1361,6 +2501,7 @@ workflows:
 
   propose_incident_impacts_assembly:
     canonical: false
+    purpose: proposal
     description: >
       Cascade resolved incident_impacts_supplier edges through
       supplier_supplies_assembly to candidate direct assembly impacts.
@@ -1430,13 +2571,16 @@ workflows:
         as: proposal
     returns: proposal
 
-  # ── Stage 4: component/direct assembly → assembly BOM → product ─────
+  # ── Utility: upstream impact → product exposure context ─────────────
 
-  propose_incident_impacts_product:
+  assess_incident_product_exposure:
     canonical: false
     description: >
       Roll resolved impacted components and directly impacted assemblies
-      through the assembly BOM hierarchy to finished products.
+      through the assembly BOM hierarchy to finished products, using
+      buffer assessments as inventory coverage context. This returns
+      ephemeral context for agentic product and shipment decisions; it
+      does not create an incident-product edge.
     contract_in: EmptyInput
     steps:
       - id: impacted_component_edges
@@ -1459,6 +2603,22 @@ workflows:
         list_relationships:
           relationship_type: assembly_part_of_product
         as: assembly_product
+      - id: buffer_assessments
+        list_entities:
+          entity_type: BufferAssessment
+        as: buffer_assessments
+      - id: component_buffers
+        list_relationships:
+          relationship_type: component_buffer_assessment
+        as: component_buffers
+      - id: assembly_buffers
+        list_relationships:
+          relationship_type: assembly_buffer_assessment
+        as: assembly_buffers
+      - id: product_buffers
+        list_relationships:
+          relationship_type: product_buffer_assessment
+        as: product_buffers
       - id: assemblies
         list_entities:
           entity_type: Assembly
@@ -1468,57 +2628,21 @@ workflows:
           entity_type: Product
         as: products
       - id: assessments
-        provider: assess_incident_product_cascade
+        provider: assess_incident_product_exposure
         input:
           impacted_component_edges: $steps.impacted_component_edges.items
           impacted_assembly_edges: $steps.impacted_assembly_edges.items
           component_part_of_assembly_edges: $steps.component_assembly.items
           assembly_part_of_assembly_edges: $steps.assembly_recursive.items
           assembly_part_of_product_edges: $steps.assembly_product.items
+          buffer_assessments: $steps.buffer_assessments.items
+          component_buffer_assessment_edges: $steps.component_buffers.items
+          assembly_buffer_assessment_edges: $steps.assembly_buffers.items
+          product_buffer_assessment_edges: $steps.product_buffers.items
           assemblies: $steps.assemblies.items
           products: $steps.products.items
         as: assessments
-      - id: candidates
-        make_candidates:
-          relationship_type: incident_impacts_product
-          items: $steps.assessments.items
-          from_type: Incident
-          from_id: $item.incident_id
-          to_type: Product
-          to_id: $item.product_id
-          properties:
-            bom_depth_bucket: $item.bom_depth_bucket
-            rationale: $item.rationale
-        as: candidates
-      - id: signals
-        map_signals:
-          integration: incident_product_cascade
-          items: $steps.assessments.items
-          from_id: $item.incident_id
-          to_id: $item.product_id
-          evidence: $item.rationale
-          enum:
-            path: verdict
-            map:
-              support: support
-              unsure: unsure
-              contradict: contradict
-        as: signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: incident_impacts_product
-          candidates_from: candidates
-          signals_from: [signals]
-          thesis_text: >
-            Products are impacted via component-to-assembly or
-            direct-assembly BOM rollup.
-          thesis_facts:
-            rule_id: cascade_from_impacted_component_or_assembly_to_product
-            rule_version: 1
-            source: assembly_bom_traversal
-          proposed_by: agent
-        as: proposal
-    returns: proposal
+    returns: assessments
 
 # ─── Feedback profiles ───────────────────────────────────────────────
 #
@@ -1551,7 +2675,7 @@ feedback_profiles:
   incident_impacts_component:
     version: 1
     reason_codes:
-      alternate_supplier_active:
+      alternate_supplier_available:
         description: Component has a viable alternate supplier outside incident scope; cascade should have stopped.
         remediation_hint: provider_fix
         required_scope_keys: [component]
@@ -1571,7 +2695,7 @@ feedback_profiles:
   incident_impacts_assembly:
     version: 1
     reason_codes:
-      alternate_supplier_active:
+      alternate_supplier_available:
         description: Assembly has a viable alternate supplier outside incident scope; cascade should have stopped.
         remediation_hint: provider_fix
         required_scope_keys: [assembly]
@@ -1592,26 +2716,6 @@ feedback_profiles:
       assembly: TO.assembly_id
       impacted_supplier: EDGE.impacted_supplier_id
       alternate_state: EDGE.alternate_state
-
-  incident_impacts_product:
-    version: 1
-    reason_codes:
-      product_inactive:
-        description: Product is inactive; cascade should not have included it.
-        remediation_hint: quality_check
-        required_scope_keys: [product]
-      bom_variant_mismatch:
-        description: Product uses a BOM variant that does not include the impacted component path.
-        remediation_hint: provider_fix
-        required_scope_keys: [product]
-      bom_depth_overstated:
-        description: BOM traversal recorded a tier closer than reality.
-        remediation_hint: provider_fix
-        required_scope_keys: [product, bom_depth_bucket]
-    scope_keys:
-      incident: FROM.incident_id
-      product: TO.product_id
-      bom_depth_bucket: EDGE.bom_depth_bucket
 
 # ─── Outcome profiles (Loop 2) ───────────────────────────────────────
 #
@@ -1681,26 +2785,6 @@ outcome_profiles:
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
 
-  incident_product_resolution:
-    anchor_type: resolution
-    relationship_type: incident_impacts_product
-    version: 1
-    outcome_codes:
-      confirmed_product_impact:
-        description: Later planning, production, or customer data confirmed product impact.
-        remediation_hint: trust_adjustment
-        required_scope_keys: [relationship_type]
-      product_unaffected:
-        description: The product remained unaffected despite the accepted impact judgment.
-        remediation_hint: require_review
-        required_scope_keys: [relationship_type]
-      missed_product_impact:
-        description: A product impact was discovered after the proposal chain ran.
-        remediation_hint: workflow_fix
-        required_scope_keys: [relationship_type]
-    scope_keys:
-      relationship_type: RESOLUTION.relationship_type
-
   impacted_assemblies_query:
     anchor_type: receipt
     surface_type: query
@@ -1718,35 +2802,52 @@ outcome_profiles:
     scope_keys:
       query: SURFACE.name
 
-  impacted_products_query:
+  component_exposed_products_query:
     anchor_type: receipt
     surface_type: query
-    surface_name: incident_impacted_products
+    surface_name: incident_component_exposed_products
     version: 1
     outcome_codes:
       missing_impacted_product:
-        description: Query omitted a product later confirmed to be impacted.
+        description: Component-path exposure query omitted a product later confirmed to be impacted.
         remediation_hint: graph_fix
         required_scope_keys: [query]
       false_positive_product:
-        description: Query returned a product later confirmed to be unaffected.
+        description: Component-path exposure query returned a product later confirmed to be unaffected.
         remediation_hint: graph_fix
         required_scope_keys: [query]
     scope_keys:
       query: SURFACE.name
 
-  at_risk_shipments_query:
+  direct_assembly_exposed_products_query:
     anchor_type: receipt
     surface_type: query
-    surface_name: incident_at_risk_shipments
+    surface_name: incident_direct_assembly_exposed_products
     version: 1
     outcome_codes:
-      missing_at_risk_shipment:
-        description: Query omitted a shipment later confirmed at risk.
+      missing_impacted_product:
+        description: Direct-assembly exposure query omitted a product later confirmed to be impacted.
         remediation_hint: graph_fix
         required_scope_keys: [query]
-      false_positive_shipment:
-        description: Query returned a shipment later confirmed unaffected.
+      false_positive_product:
+        description: Direct-assembly exposure query returned a product later confirmed to be unaffected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  nested_assembly_exposed_products_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: incident_nested_assembly_exposed_products
+    version: 1
+    outcome_codes:
+      missing_impacted_product:
+        description: Nested-assembly exposure query omitted a product later confirmed to be impacted.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_product:
+        description: Nested-assembly exposure query returned a product later confirmed to be unaffected.
         remediation_hint: graph_fix
         required_scope_keys: [query]
     scope_keys:

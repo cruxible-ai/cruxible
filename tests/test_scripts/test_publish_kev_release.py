@@ -43,7 +43,7 @@ def test_build_publish_refs_rejects_tagged_oci_ref() -> None:
 
 def test_write_temp_kev_config_updates_artifact_sha(tmp_path: Path) -> None:
     module = _load_publish_script()
-    source = Path("kits/kev-triage/kev-reference.yaml")
+    source = Path("kits/kev-reference/config.yaml")
     output = tmp_path / "config.yaml"
 
     module.write_temp_kev_config(
@@ -55,6 +55,12 @@ def test_write_temp_kev_config_updates_artifact_sha(tmp_path: Path) -> None:
     loaded = module.yaml.safe_load(output.read_text(encoding="utf-8"))
     assert loaded["artifacts"]["public_kev_bundle"]["sha256"] == "sha256:test-artifact"
     assert loaded["workflows"]["build_public_kev_reference"]["canonical"] is True
+
+
+def test_publish_script_uses_split_reference_kit() -> None:
+    script_text = Path("scripts/publish_kev_release.py").read_text(encoding="utf-8")
+    assert '"kev-reference"' in script_text
+    assert '"kev-triage" / "kev-reference.yaml"' not in script_text
 
 
 def test_publish_kev_release_file_transport_end_to_end(

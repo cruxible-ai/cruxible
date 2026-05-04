@@ -21,7 +21,7 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
 
 
-def test_server_mode_world_fork_defaults_root_dir_to_cwd(
+def test_server_mode_create_world_overlay_defaults_root_dir_to_cwd(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
     tmp_path: Path,
@@ -30,7 +30,7 @@ def test_server_mode_world_fork_defaults_root_dir_to_cwd(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def world_fork(
+        def create_world_overlay(
             self,
             *,
             root_dir,
@@ -44,8 +44,8 @@ def test_server_mode_world_fork_defaults_root_dir_to_cwd(
             captured["world_ref"] = world_ref
             captured["kit"] = kit
             captured["no_kit"] = no_kit
-            return contracts.WorldForkResult(
-                instance_id="inst_forked",
+            return contracts.WorldOverlayResult(
+                instance_id="inst_cloned",
                 manifest=contracts.PublishedWorldManifest(
                     format_version=1,
                     world_id="kev-reference",
@@ -64,7 +64,7 @@ def test_server_mode_world_fork_defaults_root_dir_to_cwd(
             "--server-url",
             "http://server",
             "world",
-            "fork",
+            "create-overlay",
             "--world-ref",
             "kev-reference",
             "--kit",
@@ -76,4 +76,4 @@ def test_server_mode_world_fork_defaults_root_dir_to_cwd(
     assert captured["root_dir"] == str(tmp_path)
     assert captured["world_ref"] == "kev-reference"
     assert captured["kit"] == "kev-triage"
-    assert "Instance ID: inst_forked" in result.output
+    assert "Instance ID: inst_cloned" in result.output

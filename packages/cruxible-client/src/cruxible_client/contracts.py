@@ -423,7 +423,7 @@ class SnapshotListResult(BaseModel):
     snapshots: list[SnapshotMetadata] = Field(default_factory=list)
 
 
-class ForkSnapshotResult(BaseModel):
+class CloneSnapshotResult(BaseModel):
     instance_id: str
     snapshot: SnapshotMetadata
 
@@ -463,7 +463,7 @@ class WorldPublishResult(BaseModel):
     manifest: PublishedWorldManifest
 
 
-class WorldForkResult(BaseModel):
+class WorldOverlayResult(BaseModel):
     instance_id: str
     manifest: PublishedWorldManifest
 

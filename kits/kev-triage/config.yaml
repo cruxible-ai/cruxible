@@ -1,15 +1,15 @@
 version: "1.0"
 name: kev_triage
 kind: world_model
-extends: kev-reference.yaml
+extends: ../kev-reference/config.yaml
 description: >
-  Fork of the KEV reference world model for internal vulnerability triage.
+  Local of the KEV reference world model for internal vulnerability triage.
   The reference layer (Vendor, Product, Vulnerability) comes from public
-  feeds and is read-only. This fork adds internal assets, services,
+  feeds and is read-only. This overlay adds internal assets, services,
   controls, and the accepted judgment relationships that link public
   vulnerabilities to internal operational impact.
 
-# ─── Fork: internal entity types ─────────────────────────────────────
+# ─── Local: internal entity types ─────────────────────────────────────
 
 entity_types:
   Asset:
@@ -80,7 +80,7 @@ entity_types:
   VulnerabilityClass:
     description: >
       Operational vulnerability category used by local controls, policy,
-      and scenario analysis. This is fork-layer classification rather than
+      and scenario analysis. This is local-layer classification rather than
       reference-layer public data.
     properties:
       class_id:
@@ -184,7 +184,7 @@ entity_types:
         type: date
         optional: true
 
-# ─── Fork: deterministic internal mappings ────────────────────────────
+# ─── Local: deterministic internal mappings ────────────────────────────
 
 relationships:
   - name: service_depends_on_asset
@@ -212,7 +212,7 @@ relationships:
     from: Asset
     to: PatchWindow
 
-# ─── Fork: governed relationships ─────────────────────────────────────
+# ─── Local: governed relationships ─────────────────────────────────────
 #
 # These relationships are created through the proposal/group resolution
 # flow, not direct writes. Each has a matching block that defines which
@@ -301,7 +301,7 @@ relationships:
 
   - name: vulnerability_classified_as
     description: >
-      Fork-layer classification of a public vulnerability into an
+      Local-layer classification of a public vulnerability into an
       operational category used by local controls and stress scenarios.
     from: Vulnerability
     to: VulnerabilityClass
@@ -427,7 +427,7 @@ relationships:
         incident_attribution:
           role: required
 
-# ─── Named queries (fork-specific, traverse across both layers) ──────
+# ─── Named queries (local-specific, traverse across both layers) ──────
 
 named_queries:
   candidate_assets_for_vulnerability:
@@ -696,7 +696,7 @@ quality_checks:
     property: hostname
     rule: non_empty
 
-# ─── Fork: integrations for governed relationships ────────────────────
+# ─── Local: integrations for governed relationships ────────────────────
 
 integrations:
   software_product_match:
@@ -764,7 +764,7 @@ integrations:
 # ─── Contracts ────────────────────────────────────────────────────────
 
 contracts:
-  ForkSeedData:
+  LocalSeedData:
     description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
     fields:
       assets:
@@ -1067,20 +1067,20 @@ contracts:
 # ─── Artifacts ────────────────────────────────────────────────────────
 
 artifacts:
-  fork_seed_bundle:
+  local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:48b06157affbbc61eeda489024e7e668518c2dcf2ea117c314d5028f800820d3
+    sha256: sha256:774b1b868538903194302b58fdaa073f677ccc7b2b385e0693fb8dcd0ee6083a
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
 # ─── Providers ────────────────────────────────────────────────────────
 
 providers:
-  parse_fork_seed_bundle:
+  parse_local_seed_bundle:
     kind: function
     description: >
-      Parse the pinned fork seed artifact into generic provenance-rich
+      Parse the pinned local seed artifact into generic provenance-rich
       tabular rows. Domain normalization happens in the next workflow step.
     contract_in: TabularParseOptions
     contract_out: ParsedTabularBundle
@@ -1088,20 +1088,20 @@ providers:
     version: "1.0.0"
     deterministic: true
     runtime: python
-    artifact: fork_seed_bundle
+    artifact: local_seed_bundle
 
-  normalize_fork_seed_tables:
+  normalize_local_seed_tables:
     kind: function
     description: >
-      Normalize parsed fork seed tables into deterministic KEV entities and
+      Normalize parsed local seed tables into deterministic KEV entities and
       relationship rows keyed by entity and relationship type.
     contract_in: ParsedTabularBundle
-    contract_out: ForkSeedData
-    ref: cruxible_kits.kev_triage.normalize_fork_seed_tables
+    contract_out: LocalSeedData
+    ref: kit://providers/seed.py::normalize_local_seed_tables
     version: "1.0.0"
     deterministic: true
     runtime: python
-    artifact: fork_seed_bundle
+    artifact: local_seed_bundle
 
   load_software_inventory:
     kind: function
@@ -1111,11 +1111,11 @@ providers:
       evidence sources.
     contract_in: EmptyInput
     contract_out: SoftwareInventory
-    ref: cruxible_kits.kev_triage.load_software_inventory
+    ref: kit://providers/seed.py::load_software_inventory
     version: "1.0.0"
     deterministic: true
     runtime: python
-    artifact: fork_seed_bundle
+    artifact: local_seed_bundle
 
   match_software_to_products:
     kind: function
@@ -1125,7 +1125,7 @@ providers:
       match results with confidence scores and verdicts.
     contract_in: SoftwareMatchInput
     contract_out: SoftwareMatchResults
-    ref: cruxible_kits.kev_triage.match_software_to_products
+    ref: kit://providers/matching.py::match_software_to_products
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1138,7 +1138,7 @@ providers:
       installed version is within the reference-layer affected range.
     contract_in: AssetAffectedAssessmentInput
     contract_out: AssetAffectedAssessmentResults
-    ref: cruxible_kits.kev_triage.assess_asset_affected
+    ref: kit://providers/assessment.py::assess_asset_affected
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1151,7 +1151,7 @@ providers:
       controls.
     contract_in: AssetExposureAssessmentInput
     contract_out: AssetExposureAssessmentResults
-    ref: cruxible_kits.kev_triage.assess_asset_exposure
+    ref: kit://providers/assessment.py::assess_asset_exposure
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1163,7 +1163,7 @@ providers:
       affected candidate set and identify stale exposures to close.
     contract_in: ExposureReconciliationInput
     contract_out: ExposureReconciliationResults
-    ref: cruxible_kits.kev_triage.assess_exposure_reconciliation
+    ref: kit://providers/assessment.py::assess_exposure_reconciliation
     version: "1.0.0"
     deterministic: true
     runtime: python
@@ -1171,16 +1171,16 @@ providers:
 # ─── Workflows ────────────────────────────────────────────────────────
 
 workflows:
-  build_fork_state:
+  build_local_state:
     canonical: true
     description: >
       Load deterministic internal entities and relationships from the
-      seed data bundle. This is the fork's equivalent of the reference
+      seed data bundle. This is the local's equivalent of the reference
       layer's build_public_kev_reference workflow.
     contract_in: EmptyInput
     steps:
       - id: raw_tables
-        provider: parse_fork_seed_bundle
+        provider: parse_local_seed_bundle
         input:
           expected_tables:
             - assets
@@ -1198,7 +1198,7 @@ workflows:
         as: raw_tables
 
       - id: seed
-        provider: normalize_fork_seed_tables
+        provider: normalize_local_seed_tables
         input:
           artifact: $steps.raw_tables.artifact
           tables: $steps.raw_tables.tables
@@ -1569,7 +1569,7 @@ workflows:
     canonical: false
     purpose: proposal
     description: >
-      Propose fork-layer vulnerability classifications selected by an
+      Propose local-layer vulnerability classifications selected by an
       agent after reviewing the available VulnerabilityClass buckets and
       prior classification examples.
     contract_in: VulnerabilityClassificationProposalInput

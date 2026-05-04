@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
-    WorldForkRequest,
+    WorldOverlayRequest,
     WorldPublishRequest,
     WorldPullApplyRequest,
 )
@@ -16,10 +16,10 @@ from cruxible_core.server.routes import resolve_server_instance_id
 router = APIRouter(prefix="/api/v1", tags=["world"])
 
 
-@router.post("/worlds/fork", response_model=contracts.WorldForkResult)
-async def world_fork(req: WorldForkRequest) -> contracts.WorldForkResult:
-    """Create a new governed fork from a published world release."""
-    return local_api._handle_world_fork_governed(
+@router.post("/worlds/overlays", response_model=contracts.WorldOverlayResult)
+async def create_world_overlay(req: WorldOverlayRequest) -> contracts.WorldOverlayResult:
+    """Create a new governed overlay from a published world release."""
+    return local_api._handle_create_world_overlay_governed(
         transport_ref=req.transport_ref,
         world_ref=req.world_ref,
         kit=req.kit,
@@ -46,7 +46,7 @@ async def world_publish(
 
 @router.get("/{instance_id}/world/status", response_model=contracts.WorldStatusResult)
 async def world_status(instance_id: str) -> contracts.WorldStatusResult:
-    """Read upstream tracking metadata for a release-backed fork."""
+    """Read upstream tracking metadata for a release-backed overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_world_status_local(resolved_instance_id)
 
@@ -56,7 +56,7 @@ async def world_status(instance_id: str) -> contracts.WorldStatusResult:
     response_model=contracts.WorldPullPreviewResult,
 )
 async def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
-    """Preview pulling a new upstream release into a fork."""
+    """Preview pulling a new upstream release into an overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_world_pull_preview_local(resolved_instance_id)
 
@@ -69,7 +69,7 @@ async def world_pull_apply(
     instance_id: str,
     req: WorldPullApplyRequest,
 ) -> contracts.WorldPullApplyResult:
-    """Apply a previewed upstream release into a fork."""
+    """Apply a previewed upstream release into an overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api._handle_world_pull_apply_local(
         resolved_instance_id,

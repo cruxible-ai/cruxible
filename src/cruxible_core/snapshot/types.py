@@ -15,7 +15,7 @@ WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 - ``data_only``: graph data changes only; no schema changes.
 - ``additive_schema``: schema additions that are backward-compatible.
-- ``breaking``: schema changes that require fork action.
+- ``breaking``: schema changes that require overlay action.
 """
 
 
@@ -62,7 +62,7 @@ class PublishedWorldManifest(BaseModel):
 
 
 class UpstreamMetadata(PublishedWorldManifest):
-    """Per-instance upstream release tracking metadata for pullable forks.
+    """Per-instance upstream release tracking metadata for pullable overlays.
 
     Extends ``PublishedWorldManifest`` with transport and local-path
     bookkeeping. The manifest fields record what was pulled; the rest

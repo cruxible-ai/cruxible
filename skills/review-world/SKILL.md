@@ -28,7 +28,7 @@ Start by identifying:
    - query quality
    - feedback or outcome patterns
    - overall world health
-3. whether the world is a root world or a fork
+3. whether the world is a root world or an overlay
 4. which user-facing queries or downstream decisions matter most
 5. whether source files, prepared files, or `prepare-data` outputs are available for a source-to-world audit
 
@@ -40,7 +40,7 @@ cruxible stats
 cruxible evaluate
 ```
 
-If the world is a fork and the review is about overall health, local fit quality, or handoff readiness, include upstream pull compatibility in scope by default.
+If the world is an overlay and the review is about overall health, local fit quality, or handoff readiness, include upstream pull compatibility in scope by default.
 
 ## Phase 2: Inspect the most important surfaces
 
@@ -154,9 +154,9 @@ Use this to answer:
 
 If those source or preparation artifacts are not available, say explicitly that the source-to-world classification audit was not performed.
 
-### Fork pull compatibility
+### Overlay pull compatibility
 
-If the world is a fork and pull compatibility is in scope, inspect:
+If the world is an overlay and pull compatibility is in scope, inspect:
 
 ```bash
 cruxible world pull-preview
@@ -174,7 +174,7 @@ Do not just list problems. For each real issue, classify where the fix belongs:
 
 - `prepare-data`: source file quality, key issues, join issues, grain issues
 - `create-world`: base graph shape, wrong canonical-versus-governed boundary, canonical workflow design, governed design, named queries, or feedback/outcome structure in a root world
-- `fork-and-fit`: local fit boundary, wrong local canonical-versus-governed boundary, local canonical fit, local governed additions, local queries, or fork pull-compatibility issues
+- `overlay-and-fit`: local fit boundary, wrong local canonical-versus-governed boundary, local canonical fit, local governed additions, local queries, or overlay pull-compatibility issues
 - provider or workflow implementation
 - query design
 - review policy, trust, feedback, or outcome configuration
@@ -222,4 +222,4 @@ If the next step is clear:
 
 - use `prepare-data` for source-data issues
 - use `create-world` for root-world build or redesign work
-- use `fork-and-fit` for local adaptation work
+- use `overlay-and-fit` for local adaptation work

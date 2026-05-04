@@ -104,19 +104,26 @@ def handle_init(
     config_path: str | None = None,
     config_yaml: str | None = None,
     data_dir: str | None = None,
+    kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
     uploaded_yaml = config_yaml
     if uploaded_yaml is None and config_path is not None:
         uploaded_yaml = _config_yaml_for_upload(config_path, root_dir=root_dir)
+    def _remote_init(client):
+        kwargs = {
+            "root_dir": root_dir,
+            "config_path": None,
+            "config_yaml": uploaded_yaml,
+            "data_dir": data_dir,
+        }
+        if kit is not None:
+            kwargs["kit"] = kit
+        return client.init(**kwargs)
+
     return _dispatch_remote_or_local(
-        lambda client: client.init(
-            root_dir=root_dir,
-            config_path=None,
-            config_yaml=uploaded_yaml,
-            data_dir=data_dir,
-        ),
-        lambda: local_api._handle_init_local(root_dir, config_path, config_yaml, data_dir),
+        _remote_init,
+        lambda: local_api._handle_init_local(root_dir, config_path, config_yaml, data_dir, kit),
         allow_local=False,
         operation_name="cruxible_init",
     )
@@ -144,25 +151,31 @@ def handle_server_info() -> contracts.ServerInfoResult:
     )
 
 
-def handle_world_fork(
+def handle_create_world_overlay(
     root_dir: str,
     transport_ref: str | None = None,
     world_ref: str | None = None,
     kit: str | None = None,
     no_kit: bool = False,
-) -> contracts.WorldForkResult:
-    """Create a new governed fork from a published world release."""
+) -> contracts.WorldOverlayResult:
+    """Create a new governed overlay from a published world release."""
     return _dispatch_remote_or_local(
-        lambda client: client.world_fork(
+        lambda client: client.create_world_overlay(
             root_dir=root_dir,
             transport_ref=transport_ref,
             world_ref=world_ref,
             kit=kit,
             no_kit=no_kit,
         ),
-        lambda: local_api._handle_world_fork_local(transport_ref, world_ref, kit, no_kit, root_dir),
+        lambda: local_api._handle_create_world_overlay_local(
+            transport_ref,
+            world_ref,
+            kit,
+            no_kit,
+            root_dir,
+        ),
         allow_local=False,
-        operation_name="cruxible_world_fork",
+        operation_name="cruxible_world_create_overlay",
     )
 
 
@@ -1228,7 +1241,7 @@ def handle_world_publish(
 
 
 def handle_world_status(instance_id: str) -> contracts.WorldStatusResult:
-    """Read upstream tracking metadata for a release-backed fork."""
+    """Read upstream tracking metadata for a release-backed overlay."""
     return _dispatch_remote_or_local(
         lambda client: client.world_status(instance_id),
         lambda: local_api._handle_world_status_local(instance_id),
@@ -1236,7 +1249,7 @@ def handle_world_status(instance_id: str) -> contracts.WorldStatusResult:
 
 
 def handle_world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
-    """Preview pulling a new upstream release into a local fork."""
+    """Preview pulling a new upstream release into a local overlay."""
     return _dispatch_remote_or_local(
         lambda client: client.world_pull_preview(instance_id),
         lambda: local_api._handle_world_pull_preview_local(instance_id),
@@ -1247,7 +1260,7 @@ def handle_world_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
 ) -> contracts.WorldPullApplyResult:
-    """Apply a previewed upstream release into a local fork."""
+    """Apply a previewed upstream release into a local overlay."""
     return _dispatch_remote_or_local(
         lambda client: client.world_pull_apply(
             instance_id,

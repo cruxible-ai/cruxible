@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     feedback_cmd: Any
     feedback_profile_cmd: Any
     find_candidates_cmd: Any
-    fork_cmd: Any
+    clone_cmd: Any
     get_entity_cmd: Any
     get_relationship_cmd: Any
     group_group: Any
@@ -94,7 +94,7 @@ else:
     from cruxible_core.cli.commands.wiki import render_wiki_cmd
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
-        fork_cmd,
+        clone_cmd,
         ingest,
         init,
         lock_cmd,
@@ -125,7 +125,7 @@ __all__ = [
     "feedback_cmd",
     "feedback_profile_cmd",
     "find_candidates_cmd",
-    "fork_cmd",
+    "clone_cmd",
     "get_entity_cmd",
     "get_relationship_cmd",
     "group_group",

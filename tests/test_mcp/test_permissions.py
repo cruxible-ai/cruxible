@@ -154,7 +154,7 @@ class TestCheckPermission:
         check_permission("cruxible_lock_workflow")
         check_permission("cruxible_apply_workflow")
         check_permission("cruxible_world_publish")
-        check_permission("cruxible_world_fork")
+        check_permission("cruxible_world_create_overlay")
         check_permission("cruxible_world_pull_apply")
 
     def test_denial_message_includes_modes(self, monkeypatch):

@@ -5,7 +5,7 @@ description: Profile and prepare raw source files before modeling or loading the
 
 # Prepare Data
 
-Use this skill before `create-world`, and before `fork-and-fit` whenever local source files need to be loaded into a fork.
+Use this skill before `create-world`, and before `overlay-and-fit` whenever local source files need to be loaded into an overlay.
 
 Cruxible validates, loads, and evaluates. File cleaning and transforms are external.
 
@@ -144,6 +144,6 @@ Report:
 `recommended_next_step` should usually be one of:
 
 - start `create-world`
-- continue `fork-and-fit`
+- continue `overlay-and-fit`
 - clean specific files first
 - clarify ambiguous source semantics with the user before modeling further

@@ -37,6 +37,28 @@ def test_successful_call_returns_contract_model():
     assert result.status == "initialized"
 
 
+def test_init_serializes_kit():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_123",
+                "status": "initialized",
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.init("/srv/project", kit="kev-reference")
+
+    assert result.instance_id == "inst_123"
+    assert captured["payload"]["kit"] == "kev-reference"
+    assert captured["payload"]["config_yaml"] is None
+
+
 def test_error_response_rehydrates_correct_exception():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -669,11 +691,11 @@ def test_world_endpoints_use_expected_routes():
     def handler(request: httpx.Request) -> httpx.Response:
         payload = request.content.decode() if request.content else None
         captured.append((str(request.url), payload))
-        if request.url.path == "/api/v1/worlds/fork":
+        if request.url.path == "/api/v1/worlds/overlays":
             return httpx.Response(
                 200,
                 json={
-                    "instance_id": "inst_fork",
+                    "instance_id": "inst_overlay",
                     "manifest": {
                         "format_version": 1,
                         "world_id": "case-law",
@@ -752,10 +774,10 @@ def test_world_endpoints_use_expected_routes():
         )
 
     client = _build_client(handler)
-    assert client.world_fork(
+    assert client.create_world_overlay(
         transport_ref="file:///tmp/releases/current",
-        root_dir="/tmp/fork",
-    ).instance_id == "inst_fork"
+        root_dir="/tmp/overlay",
+    ).instance_id == "inst_overlay"
     assert client.world_publish(
         "inst_123",
         transport_ref="file:///tmp/releases/current",
@@ -773,14 +795,14 @@ def test_world_endpoints_use_expected_routes():
         expected_apply_digest="sha256:apply",
     ).pre_pull_snapshot_id == "snap_pre"
 
-    assert captured[0][0].endswith("/api/v1/worlds/fork")
+    assert captured[0][0].endswith("/api/v1/worlds/overlays")
     assert captured[1][0].endswith("/api/v1/inst_123/world/publish")
     assert captured[2][0].endswith("/api/v1/inst_123/world/status")
     assert captured[3][0].endswith("/api/v1/inst_123/world/pull/preview")
     assert captured[4][0].endswith("/api/v1/inst_123/world/pull/apply")
 
 
-def test_world_fork_serializes_world_ref():
+def test_create_world_overlay_serializes_world_ref():
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -789,7 +811,7 @@ def test_world_fork_serializes_world_ref():
         return httpx.Response(
             200,
             json={
-                "instance_id": "inst_fork",
+                "instance_id": "inst_overlay",
                 "manifest": {
                     "format_version": 1,
                     "world_id": "kev-reference",
@@ -804,20 +826,20 @@ def test_world_fork_serializes_world_ref():
         )
 
     client = _build_client(handler)
-    result = client.world_fork(
-        root_dir="/tmp/fork",
+    result = client.create_world_overlay(
+        root_dir="/tmp/overlay",
         world_ref="kev-reference",
         kit="kev-triage",
     )
 
-    assert result.instance_id == "inst_fork"
-    assert captured["path"].endswith("/api/v1/worlds/fork")
+    assert result.instance_id == "inst_overlay"
+    assert captured["path"].endswith("/api/v1/worlds/overlays")
     assert captured["payload"] == {
         "transport_ref": None,
         "world_ref": "kev-reference",
         "kit": "kev-triage",
         "no_kit": False,
-        "root_dir": "/tmp/fork",
+        "root_dir": "/tmp/overlay",
     }
 
 

@@ -45,6 +45,7 @@ def register_tools(server: FastMCP) -> list[str]:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
+        kit: str | None = None,
     ) -> contracts.InitResult:
         """Create or reload a governed daemon-backed instance.
 
@@ -53,7 +54,7 @@ def register_tools(server: FastMCP) -> list[str]:
         uploaded as config content; the daemon stores its own active
         copy. To reload after a restart, omit both.
         """
-        return handlers.handle_init(root_dir, config_path, config_yaml, data_dir)
+        return handlers.handle_init(root_dir, config_path, config_yaml, data_dir, kit)
 
     @_tool
     def cruxible_validate(
@@ -68,15 +69,15 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_validate(config_path, config_yaml)
 
     @_tool
-    def cruxible_world_fork(
+    def cruxible_world_create_overlay(
         root_dir: str,
         transport_ref: str | None = None,
         world_ref: str | None = None,
         kit: str | None = None,
         no_kit: bool = False,
-    ) -> contracts.WorldForkResult:
-        """Create a new governed fork from a published world release."""
-        return handlers.handle_world_fork(
+    ) -> contracts.WorldOverlayResult:
+        """Create a new governed overlay from a published world release."""
+        return handlers.handle_create_world_overlay(
             root_dir=root_dir,
             transport_ref=transport_ref,
             world_ref=world_ref,
@@ -878,14 +879,14 @@ def register_tools(server: FastMCP) -> list[str]:
 
     @_tool
     def cruxible_world_status(instance_id: str) -> contracts.WorldStatusResult:
-        """Return upstream tracking metadata for a release-backed fork."""
+        """Return upstream tracking metadata for a release-backed overlay."""
         return handlers.handle_world_status(instance_id)
 
     @_tool
     def cruxible_world_pull_preview(
         instance_id: str,
     ) -> contracts.WorldPullPreviewResult:
-        """Preview pulling a newer upstream release into a release-backed fork."""
+        """Preview pulling a newer upstream release into a release-backed overlay."""
         return handlers.handle_world_pull_preview(instance_id)
 
     @_tool
@@ -893,7 +894,7 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         expected_apply_digest: str,
     ) -> contracts.WorldPullApplyResult:
-        """Apply a previewed upstream release into a release-backed fork."""
+        """Apply a previewed upstream release into a release-backed overlay."""
         return handlers.handle_world_pull_apply(instance_id, expected_apply_digest)
 
     @_tool

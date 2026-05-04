@@ -433,7 +433,7 @@ contracts:
     overlay.write_text(
         """\
 version: "1.0"
-name: fork
+name: overlay
 extends: base.yaml
 entity_types:
   Asset:
@@ -512,7 +512,7 @@ workflows:
     overlay.write_text(
         """\
 version: "1.0"
-name: fork
+name: overlay
 extends: base.yaml
 entity_types:
   Asset:
@@ -522,7 +522,7 @@ entity_types:
         primary_key: true
 relationships: []
 workflows:
-  build_fork:
+  build_overlay:
     canonical: true
     contract_in: EmptyInput
     returns: EmptyOutput
@@ -533,5 +533,5 @@ workflows:
     composed = load_config_for_rendering(overlay, runtime=True)
 
     assert sorted(composed.entity_types) == ["Asset", "Product"]
-    assert sorted(composed.workflows) == ["build_fork"]
+    assert sorted(composed.workflows) == ["build_overlay"]
     assert "load_reference" not in composed.providers

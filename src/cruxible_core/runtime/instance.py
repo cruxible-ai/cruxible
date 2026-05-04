@@ -212,14 +212,14 @@ class CruxibleInstance(InstanceProtocol):
         return str(value) if value is not None else None
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
-        """Return typed upstream metadata for release-backed fork instances."""
+        """Return typed upstream metadata for release-backed overlay instances."""
         raw = self.metadata.get("upstream")
         if raw is None:
             return None
         return UpstreamMetadata.model_validate(raw)
 
     def set_upstream_metadata(self, metadata: UpstreamMetadata | None) -> None:
-        """Persist upstream metadata for release-backed fork instances."""
+        """Persist upstream metadata for release-backed overlay instances."""
         if metadata is None:
             self.metadata.pop("upstream", None)
         else:
@@ -318,7 +318,7 @@ class CruxibleInstance(InstanceProtocol):
         )
 
     @classmethod
-    def fork_from_snapshot(
+    def clone_from_snapshot(
         cls,
         source_instance: CruxibleInstance,
         snapshot_id: str,

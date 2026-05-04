@@ -127,7 +127,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_lock_workflow": PermissionMode.ADMIN,
     "cruxible_apply_workflow": PermissionMode.ADMIN,
     "cruxible_world_publish": PermissionMode.ADMIN,
-    "cruxible_world_fork": PermissionMode.ADMIN,
+    "cruxible_world_create_overlay": PermissionMode.ADMIN,
     "cruxible_world_pull_apply": PermissionMode.ADMIN,
 }
 

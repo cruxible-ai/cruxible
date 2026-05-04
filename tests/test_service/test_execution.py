@@ -12,8 +12,8 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import (
     service_apply_workflow,
+    service_clone_snapshot,
     service_create_snapshot,
-    service_fork_snapshot,
     service_list_snapshots,
     service_lock,
     service_plan,
@@ -406,7 +406,7 @@ class TestWorkflowExecutionServices:
                 {"campaign_id": "CMP-1"},
             )
 
-    def test_snapshot_create_list_and_fork(
+    def test_snapshot_create_list_and_overlay(
         self, proposal_workflow_instance: CruxibleInstance, tmp_path: Path
     ) -> None:
         service_lock(proposal_workflow_instance)
@@ -430,16 +430,19 @@ class TestWorkflowExecutionServices:
         assert listed.snapshots[0].snapshot_id == created.snapshot.snapshot_id
         assert listed.snapshots[0].label == "baseline"
 
-        fork_root = tmp_path / "forked"
-        fork_result = service_fork_snapshot(
+        overlay_root = tmp_path / "cloned"
+        overlay_result = service_clone_snapshot(
             proposal_workflow_instance,
             created.snapshot.snapshot_id,
-            fork_root,
+            overlay_root,
         )
 
-        assert fork_result.snapshot.snapshot_id == created.snapshot.snapshot_id
-        assert fork_result.instance.get_root_path() == fork_root
-        assert fork_result.instance.metadata["origin_snapshot_id"] == created.snapshot.snapshot_id
-        assert (fork_root / ".cruxible" / "cruxible.lock.yaml").exists()
-        fork_graph = fork_result.instance.load_graph()
-        assert fork_graph.edge_count("recommended_for") == 2
+        assert overlay_result.snapshot.snapshot_id == created.snapshot.snapshot_id
+        assert overlay_result.instance.get_root_path() == overlay_root
+        assert (
+            overlay_result.instance.metadata["origin_snapshot_id"]
+            == created.snapshot.snapshot_id
+        )
+        assert (overlay_root / ".cruxible" / "cruxible.lock.yaml").exists()
+        overlay_graph = overlay_result.instance.load_graph()
+        assert overlay_graph.edge_count("recommended_for") == 2

@@ -100,12 +100,14 @@ class GovernedLocalClient:
         config_path: str | None = None,
         config_yaml: str | None = None,
         data_dir: str | None = None,
+        kit: str | None = None,
     ):
         return local_api._handle_init_governed(
             root_dir=root_dir,
             config_path=config_path,
             config_yaml=config_yaml,
             data_dir=data_dir,
+            kit=kit,
         )
 
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):
@@ -516,7 +518,7 @@ class GovernedLocalClient:
             limit=limit,
         )
 
-    def world_fork(
+    def create_world_overlay(
         self,
         *,
         root_dir: str,
@@ -525,7 +527,7 @@ class GovernedLocalClient:
         kit: str | None = None,
         no_kit: bool = False,
     ):
-        return local_api._handle_world_fork_governed(
+        return local_api._handle_create_world_overlay_governed(
             transport_ref,
             world_ref,
             kit,

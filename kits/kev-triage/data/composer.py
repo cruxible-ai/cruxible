@@ -1,4 +1,4 @@
-"""Explicit base+overlay config composition for release-backed forks."""
+"""Explicit base+overlay config composition for release-backed local instances."""
 
 from __future__ import annotations
 

@@ -75,7 +75,7 @@ class TestInit:
             )
 
     def test_no_config_source_error(self, tmp_path: Path) -> None:
-        with pytest.raises(ConfigError, match="config_path or config_yaml is required"):
+        with pytest.raises(ConfigError, match="config_path, config_yaml, or kit"):
             service_init(tmp_path)
 
     def test_relative_config_path_resolves(self, tmp_path: Path) -> None:
@@ -104,7 +104,7 @@ class TestInit:
         overlay = base_dir / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: base.yaml\n"
             "entity_types: {}\n"
             "relationships:\n"
@@ -125,7 +125,7 @@ class TestInit:
         overlay = tmp_path / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: nonexistent.yaml\n"
             "entity_types: {}\n"
             "relationships: []\n"
@@ -149,7 +149,7 @@ class TestInit:
         )
         inline = (
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             f"extends: {base}\n"
             "entity_types: {}\n"
             "relationships:\n"
@@ -178,7 +178,7 @@ class TestInit:
         overlay = tmp_path / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: base.yaml\n"
             "entity_types:\n"
             "  Case:\n"
@@ -221,7 +221,7 @@ class TestReloadConfigExtends:
         overlay = tmp_path / "overlay.yaml"
         overlay.write_text(
             'version: "1.0"\n'
-            "name: fork\n"
+            "name: overlay\n"
             "extends: base.yaml\n"
             "entity_types: {}\n"
             "relationships:\n"

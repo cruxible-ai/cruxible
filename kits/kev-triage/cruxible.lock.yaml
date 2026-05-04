@@ -1,0 +1,72 @@
+version: '1'
+config_digest: sha256:fc21278027aa3917897622c813a8000af3923f9c09e2b1d740990df005ca7eeb
+lock_digest: sha256:9a76de574145cd752b924b0985e28c50a3890b3721b9f108ce5a02ddff5e6d3f
+generated_at: 2026-05-03 23:40:19.887254+00:00
+artifacts:
+  local_seed_bundle:
+    kind: directory
+    uri: ./data/seed
+    sha256: sha256:774b1b868538903194302b58fdaa073f677ccc7b2b385e0693fb8dcd0ee6083a
+    metadata:
+      description: Synthetic seed data representing CMDB, service catalog, operational
+        system exports, and review material for governed proposals.
+providers:
+  parse_local_seed_bundle:
+    version: 1.0.0
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    provider_entrypoint_sha256: sha256:b2640a1835789e183d747ae4b345ca3a026f2b6916c8bcc7b7da34aa17e909da
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: local_seed_bundle
+    config: {}
+  normalize_local_seed_tables:
+    version: 1.0.0
+    ref: kit://providers/seed.py::normalize_local_seed_tables
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: local_seed_bundle
+    config: {}
+  load_software_inventory:
+    version: 1.0.0
+    ref: kit://providers/seed.py::load_software_inventory
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: local_seed_bundle
+    config: {}
+  match_software_to_products:
+    version: 1.0.0
+    ref: kit://providers/matching.py::match_software_to_products
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_asset_affected:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_asset_affected
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_asset_exposure:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_asset_exposure
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_exposure_reconciliation:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_exposure_reconciliation
+    provider_entrypoint_sha256: sha256:9ba65c0406910b0de930c8a99dc8369838d6699dd3d2d0324cafc37c644712a9
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}

@@ -74,8 +74,8 @@ from cruxible_core.service.queries import (
 )
 from cruxible_core.service.server import service_server_info
 from cruxible_core.service.snapshots import (
+    service_clone_snapshot,
     service_create_snapshot,
-    service_fork_snapshot,
     service_list_snapshots,
 )
 from cruxible_core.service.types import (
@@ -86,6 +86,7 @@ from cruxible_core.service.types import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
     ApplyWorkflowResult,
+    CloneSnapshotResult,
     ConstraintSuggestion,
     DebugPackage,
     DecisionEventListResult,
@@ -95,7 +96,6 @@ from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackGroupSummary,
     FeedbackServiceResult,
-    ForkSnapshotResult,
     GetGroupResult,
     IngestResult,
     InitResult,
@@ -134,14 +134,14 @@ from cruxible_core.service.types import (
     UncodedFeedbackExample,
     UncodedOutcomeExample,
     ValidateServiceResult,
-    WorldForkResult,
+    WorldOverlayResult,
     WorldPublishResult,
     WorldPullApplyResult,
     WorldPullPreviewResult,
     WorldStatusResult,
 )
 from cruxible_core.service.world import (
-    service_fork_world,
+    service_create_world_overlay,
     service_publish_world,
     service_pull_world_apply,
     service_pull_world_preview,
@@ -166,14 +166,14 @@ __all__ = [
     "FeedbackBatchServiceResult",
     "FeedbackGroupSummary",
     "FeedbackServiceResult",
-    "ForkSnapshotResult",
+    "CloneSnapshotResult",
     "GetGroupResult",
     "IngestResult",
     "InspectEntityResult",
     "InspectNeighborResult",
     "InitResult",
     "LockServiceResult",
-    "WorldForkResult",
+    "WorldOverlayResult",
     "WorldPublishResult",
     "WorldPullApplyResult",
     "WorldPullPreviewResult",
@@ -215,7 +215,7 @@ __all__ = [
     "service_lock",
     "service_world_status",
     "service_publish_world",
-    "service_fork_world",
+    "service_create_world_overlay",
     "service_pull_world_preview",
     "service_pull_world_apply",
     "service_plan",
@@ -224,7 +224,7 @@ __all__ = [
     "service_run",
     "service_test",
     "service_create_snapshot",
-    "service_fork_snapshot",
+    "service_clone_snapshot",
     "service_list_snapshots",
     # Analysis
     "service_evaluate",

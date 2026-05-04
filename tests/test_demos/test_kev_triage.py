@@ -3,37 +3,53 @@
 from __future__ import annotations
 
 import csv
+import shutil
 from pathlib import Path
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_config_files
 from cruxible_core.config.loader import save_config
 from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.kits import load_kit_provider_module, write_materialized_kit_metadata
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
 from cruxible_core.service import (
     service_apply_workflow,
-    service_fork_world,
+    service_create_world_overlay,
+    service_init,
     service_lock,
     service_propose_workflow,
     service_publish_world,
     service_query,
-    service_reload_config,
     service_resolve_group,
     service_run,
-)
-from cruxible_kits.kev_triage import (
-    assess_asset_affected,
-    assess_asset_exposure,
-    assess_exposure_reconciliation,
-    load_fork_seed_data,
-    match_software_to_products,
-    normalize_fork_seed_tables,
-    normalize_public_kev_reference,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
+KEV_REFERENCE_KIT_DIR = REPO_ROOT / "kits" / "kev-reference"
+
+_seed_module = load_kit_provider_module(KEV_KIT_DIR / "providers" / "seed.py", KEV_KIT_DIR)
+_reference_module = load_kit_provider_module(
+    KEV_REFERENCE_KIT_DIR / "providers" / "reference.py",
+    KEV_REFERENCE_KIT_DIR,
+)
+_matching_module = load_kit_provider_module(
+    KEV_KIT_DIR / "providers" / "matching.py",
+    KEV_KIT_DIR,
+)
+_assessment_module = load_kit_provider_module(
+    KEV_KIT_DIR / "providers" / "assessment.py",
+    KEV_KIT_DIR,
+)
+
+load_local_seed_data = _seed_module.load_local_seed_data
+normalize_local_seed_tables = _seed_module.normalize_local_seed_tables
+normalize_public_kev_reference = _reference_module.normalize_public_kev_reference
+match_software_to_products = _matching_module.match_software_to_products
+assess_asset_affected = _assessment_module.assess_asset_affected
+assess_asset_exposure = _assessment_module.assess_asset_exposure
+assess_exposure_reconciliation = _assessment_module.assess_exposure_reconciliation
 
 
 def _provider_context(artifact_path: Path | None) -> ProviderContext:
@@ -62,11 +78,15 @@ def _csv_row_count(path: Path) -> int:
 
 def _composed_kev_config_path(tmp_path: Path) -> Path:
     composed = compose_config_files(
-        base_path=KEV_KIT_DIR / "kev-reference.yaml",
+        base_path=KEV_REFERENCE_KIT_DIR / "config.yaml",
         overlay_path=KEV_KIT_DIR / "config.yaml",
     )
     config_path = tmp_path / "config.yaml"
     save_config(composed, config_path)
+    shutil.copy2(KEV_KIT_DIR / "cruxible-kit.yaml", tmp_path / "cruxible-kit.yaml")
+    shutil.copytree(KEV_KIT_DIR / "providers", tmp_path / "providers", dirs_exist_ok=True)
+    shutil.copytree(KEV_KIT_DIR / "data", tmp_path / "data", dirs_exist_ok=True)
+    write_materialized_kit_metadata(tmp_path)
     return config_path
 
 
@@ -105,8 +125,8 @@ def _approve_workflow_group_with_input(
     assert resolved.edges_created > 0
 
 
-def test_load_fork_seed_data_reads_expected_rows() -> None:
-    payload = load_fork_seed_data({}, _provider_context(KEV_KIT_DIR / "data" / "seed"))
+def test_load_local_seed_data_reads_expected_rows() -> None:
+    payload = load_local_seed_data({}, _provider_context(KEV_KIT_DIR / "data" / "seed"))
     assert set(payload) == {
         "assets",
         "business_services",
@@ -124,13 +144,13 @@ def test_load_fork_seed_data_reads_expected_rows() -> None:
     assert payload["assets"][0]["internet_exposed"] is True
 
 
-def test_normalize_fork_seed_tables_accepts_common_tabular_output() -> None:
+def test_normalize_local_seed_tables_accepts_common_tabular_output() -> None:
     parsed = load_tabular_artifact_bundle(
         {"expected_tables": ["assets", "asset_owned_by"]},
         _provider_context(KEV_KIT_DIR / "data" / "seed"),
     )
 
-    payload = normalize_fork_seed_tables(parsed, _provider_context(None))
+    payload = normalize_local_seed_tables(parsed, _provider_context(None))
 
     assert payload["assets"][0]["internet_exposed"] is True
     assert payload["asset_owned_by"][0]["asset_id"]
@@ -145,7 +165,7 @@ def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
                 "nvd_kev_cves",
             ]
         },
-        _provider_context(KEV_KIT_DIR / "data"),
+        _provider_context(KEV_REFERENCE_KIT_DIR / "data"),
     )
 
     payload = normalize_public_kev_reference(parsed, _provider_context(None))
@@ -402,7 +422,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert lock_result.providers_locked >= 7
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
-    _apply_canonical_workflow(instance, "build_fork_state")
+    _apply_canonical_workflow(instance, "build_local_state")
 
     _approve_workflow_group(instance, "propose_asset_products")
     _approve_workflow_group(instance, "propose_asset_exposure")
@@ -533,7 +553,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     service_lock(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
-    _apply_canonical_workflow(instance, "build_fork_state")
+    _apply_canonical_workflow(instance, "build_local_state")
     _approve_workflow_group(instance, "propose_asset_products")
     _approve_workflow_group(instance, "propose_asset_exposure")
 
@@ -592,10 +612,9 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     assert after.total_results == before.total_results - 1
 
 
-def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> None:
+def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -> None:
     reference_root = tmp_path / "reference"
-    reference_root.mkdir()
-    reference = CruxibleInstance.init(reference_root, str(KEV_KIT_DIR / "kev-reference.yaml"))
+    reference = service_init(reference_root, kit="kev-reference").instance
     service_lock(reference)
     _apply_canonical_workflow(reference, "build_public_kev_reference")
     product = reference.load_graph().list_entities("Product")[0]
@@ -610,13 +629,12 @@ def test_release_backed_kev_fork_can_propose_asset_products(tmp_path: Path) -> N
         compatibility="data_only",
     )
 
-    fork_root = tmp_path / "fork"
-    fork = service_fork_world(
+    overlay_root = tmp_path / "overlay"
+    overlay = service_create_world_overlay(
         transport_ref=f"file://{release_dir}",
-        root_dir=fork_root,
+        kit="kev-triage",
+        root_dir=overlay_root,
     ).instance
-    service_reload_config(fork, str(KEV_KIT_DIR / "config.yaml"))
-    service_lock(fork)
 
-    proposed = service_propose_workflow(fork, "propose_asset_products", {})
+    proposed = service_propose_workflow(overlay, "propose_asset_products", {})
     assert proposed.group_id is not None

@@ -126,10 +126,10 @@ def compose_runtime_configs(
     base_config_path: Path | None = None,
     overlay_config_path: Path | None = None,
 ) -> CoreConfig:
-    """Compose a release-backed fork runtime config.
+    """Compose a release-backed overlay runtime config.
 
     Upstream canonical workflows are removed from the base config before
-    composition so downstream forks do not attempt to rebuild upstream
+    composition so downstream overlays do not attempt to rebuild upstream
     reference state or verify build-only artifacts.
     """
     return compose_config_sequence(
@@ -167,7 +167,7 @@ def write_runtime_composed_config(
     overlay_path: Path,
     output_path: Path,
 ) -> CoreConfig:
-    """Compose base+overlay configs for a release-backed fork runtime."""
+    """Compose base+overlay configs for a release-backed overlay runtime."""
     base = load_config(base_path)
     overlay = load_config(overlay_path)
     composed = compose_runtime_configs(
@@ -202,7 +202,7 @@ def compose_runtime_config_files(
     base_path: Path,
     overlay_path: Path,
 ) -> CoreConfig:
-    """Compose two config files for release-backed fork runtime use."""
+    """Compose two config files for release-backed overlay runtime use."""
     base = load_config(base_path)
     overlay = load_config(overlay_path)
     return compose_runtime_configs(

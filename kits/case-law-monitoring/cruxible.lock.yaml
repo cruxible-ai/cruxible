@@ -1,0 +1,78 @@
+version: '1'
+config_digest: sha256:50ae3b7cbf05c1e03b309508fa04f2dbdb5380b54a3092808430f32f678a386b
+lock_digest: sha256:04a0bb8b0154c863b74957731e0517342f053b10f9c37d26c32fdfa06bd9d9a3
+generated_at: 2026-05-03 23:40:19.980110+00:00
+artifacts: {}
+providers:
+  extract_holdings_from_opinions:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::extract_holdings_from_opinions
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  link_holdings_to_statutes:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::link_holdings_to_statutes
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  map_holdings_to_issues:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::map_holdings_to_issues
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  classify_opinion_treatment:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::classify_opinion_treatment
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  assess_argument_impact:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::assess_argument_impact
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  scope_matters_to_statutes:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::scope_matters_to_statutes
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  assess_matter_impact:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::assess_matter_impact
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  assess_filing_response_obligations:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::assess_filing_response_obligations
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}
+  route_review_items:
+    version: 0.1.0
+    ref: kit://providers/case_law_monitoring.py::route_review_items
+    provider_entrypoint_sha256: sha256:03f331717747ce01d92889a59c68bb1a83de11ad507c60fcbf038f51e1635bfc
+    runtime: python
+    deterministic: false
+    side_effects: false
+    config: {}

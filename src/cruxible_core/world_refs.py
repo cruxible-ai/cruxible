@@ -23,7 +23,7 @@ class WorldCatalogEntry:
 
 @dataclass(frozen=True)
 class ResolvedWorldSource:
-    """Resolved world fork source and tracking refs."""
+    """Resolved world overlay source and tracking refs."""
 
     source_ref: str
     pull_transport_ref: str
@@ -53,7 +53,7 @@ def resolve_world_source(
     transport_ref: str | None = None,
     world_ref: str | None = None,
 ) -> ResolvedWorldSource:
-    """Resolve a world fork source from either a raw transport ref or an alias."""
+    """Resolve a world overlay source from either a raw transport ref or an alias."""
     normalized_transport = (transport_ref or "").strip() or None
     normalized_world = (world_ref or "").strip() or None
     if (normalized_transport is None) == (normalized_world is None):

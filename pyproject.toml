@@ -64,7 +64,7 @@ Documentation = "https://github.com/cruxible-ai/cruxible-core/tree/main/docs"
 Repository = "https://github.com/cruxible-ai/cruxible-core"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cruxible_core", "src/cruxible_kits"]
+packages = ["src/cruxible_core"]
 
 [tool.uv.workspace]
 members = ["packages/cruxible-client"]
@@ -87,7 +87,7 @@ select = ["E", "F", "I", "W"]
 python_version = "3.11"
 strict = true
 mypy_path = "src:packages/cruxible-client/src"
-packages = ["cruxible_core", "cruxible_kits", "cruxible_client"]
+packages = ["cruxible_core", "cruxible_client"]
 
 [dependency-groups]
 dev = [

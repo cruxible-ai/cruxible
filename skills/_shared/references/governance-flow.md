@@ -7,9 +7,9 @@ Once a parent skill tells you to use this reference, read it as the source of tr
 This reference is shared by:
 
 - `create-world`, after its initial graph and canonical build phases
-- `fork-and-fit`, after its local canonical fit phase when the inherited world plus selected `kit` are still not enough
+- `overlay-and-fit`, after its local canonical fit phase when the inherited world plus selected `kit` are still not enough
 
-When using this reference in a fork:
+When using this reference in an overlay:
 
 - prefer inherited and `kit` surfaces before adding local ones
 - add only local entries instead of re-declaring inherited ones

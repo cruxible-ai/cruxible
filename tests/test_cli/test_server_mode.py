@@ -117,6 +117,39 @@ def test_server_mode_init_defaults_root_dir_to_cwd(
     assert captured["root_dir"] == str(tmp_path)
 
 
+def test_server_mode_init_sends_kit(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None, kit=None):
+            captured["root_dir"] = root_dir
+            captured["config_yaml"] = config_yaml
+            captured["kit"] = kit
+            return contracts.InitResult(instance_id="inst_abc123", status="initialized")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "init",
+            "--kit",
+            "kev-reference",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["root_dir"] == str(tmp_path)
+    assert captured["config_yaml"] is None
+    assert captured["kit"] == "kev-reference"
+
+
 def test_context_commands_persist_and_show_governed_context(
     monkeypatch,
     runner: CliRunner,
@@ -788,7 +821,7 @@ def test_server_mode_validate_composes_overlay_before_upload(
     overlay = tmp_path / "overlay.yaml"
     overlay.write_text(
         'version: "1.0"\n'
-        "name: fork\n"
+        "name: overlay\n"
         "extends: base.yaml\n"
         "entity_types: {}\n"
         "relationships:\n"
@@ -804,7 +837,7 @@ def test_server_mode_validate_composes_overlay_before_upload(
             captured["config_yaml"] = config_yaml
             return contracts.ValidateResult(
                 valid=True,
-                name="fork",
+                name="overlay",
                 entity_types=["Case"],
                 relationships=["cites", "follows"],
                 named_queries=[],
@@ -829,7 +862,7 @@ def test_server_mode_validate_composes_overlay_before_upload(
     assert "extends:" not in captured["config_yaml"]
     assert "Case:" in captured["config_yaml"]
     assert "follows" in captured["config_yaml"]
-    assert "Config 'fork' is valid." in result.output
+    assert "Config 'overlay' is valid." in result.output
 
 
 def test_server_mode_lint_delegates_to_client_and_exits_one_on_issues(
@@ -1427,7 +1460,7 @@ def test_propose_human_output_prints_suppressed_members(
     assert "Campaign:CMP-1 -[recommended_for]-> Product:SKU-123" in result.output
 
 
-def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
+def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(
     monkeypatch,
     runner: CliRunner,
     tmp_path: Path,
@@ -1483,11 +1516,11 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
                 ]
             )
 
-        def fork_snapshot(self, instance_id, *, snapshot_id, root_dir):
+        def clone_snapshot(self, instance_id, *, snapshot_id, root_dir):
             assert instance_id == "inst_123"
             assert snapshot_id == "snap_1"
-            return contracts.ForkSnapshotResult(
-                instance_id="inst_fork",
+            return contracts.CloneSnapshotResult(
+                instance_id="inst_clone",
                 snapshot=contracts.SnapshotMetadata(
                     snapshot_id="snap_1",
                     created_at="2026-03-21T00:00:00Z",
@@ -1549,22 +1582,22 @@ def test_propose_snapshot_and_fork_delegate_to_client_in_server_mode(
     assert listed.exit_code == 0
     assert "snap_1" in listed.output
 
-    fork = runner.invoke(
+    clone = runner.invoke(
         cli,
         [
             "--server-url",
             "http://server",
             "--instance-id",
             "inst_123",
-            "fork",
+            "clone",
             "--snapshot",
             "snap_1",
             "--root-dir",
-            str(tmp_path / "forked"),
+            str(tmp_path / "cloned"),
         ],
     )
-    assert fork.exit_code == 0
-    assert "instance inst_fork" in fork.output
+    assert clone.exit_code == 0
+    assert "instance inst_clone" in clone.output
 
 
 def test_governed_write_commands_delegate_to_client_in_server_mode(
@@ -1640,7 +1673,7 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     overlay = tmp_path / "overlay.yaml"
     overlay.write_text(
         'version: "1.0"\n'
-        "name: fork\n"
+        "name: overlay\n"
         "extends: base.yaml\n"
         "entity_types: {}\n"
         "relationships:\n"
@@ -1691,8 +1724,15 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
         (["run", "--workflow", "wf"], "run"),
         (["add-entity", "--type", "Vehicle", "--id", "V-1"], "add-entity"),
         (
-            ["world", "fork", "--transport-ref", "file:///tmp/release", "--root-dir", "/tmp/fork"],
-            "world fork",
+            [
+                "world",
+                "create-overlay",
+                "--transport-ref",
+                "file:///tmp/release",
+                "--root-dir",
+                "/tmp/overlay",
+            ],
+            "world create-overlay",
         ),
     ],
 )

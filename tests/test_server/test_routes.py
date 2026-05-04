@@ -17,12 +17,38 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
-from cruxible_core.world_kits import WorldKitEntry
 from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
+
+
+def _write_overlay_kit_manifest(
+    kit_dir: Path,
+    kit_id: str,
+    *,
+    target_world: str = "car-parts",
+) -> None:
+    (kit_dir / "cruxible-kit.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: cruxible.kit.v1",
+                f"kit_id: {kit_id}",
+                "version: 0.2.0",
+                "role: overlay",
+                f"target_world: {target_world}",
+                "entry_config: config.yaml",
+                "provider_paths: []",
+                "copy_paths: []",
+                "requires_extras: []",
+            ]
+        )
+        + "\n"
+    )
+    (kit_dir / "cruxible.lock.yaml").write_text(
+        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
+    )
 
 
 @pytest.fixture
@@ -102,16 +128,24 @@ def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return _make_app_client(tmp_path, monkeypatch)
 
 
-def _init_instance(client: TestClient, root: Path, *, config_yaml: str | None = None) -> str:
+def _init_instance(
+    client: TestClient,
+    root: Path,
+    *,
+    config_yaml: str | None = None,
+    kit: str | None = None,
+) -> str:
     resolved_config_yaml = (
         config_yaml if config_yaml is not None else (root / "config.yaml").read_text()
     )
+    payload = {"root_dir": str(root)}
+    if kit is not None:
+        payload["kit"] = kit
+    else:
+        payload["config_yaml"] = resolved_config_yaml
     response = client.post(
         "/api/v1/instances",
-        json={
-            "root_dir": str(root),
-            "config_yaml": resolved_config_yaml,
-        },
+        json=payload,
     )
     assert response.status_code == 200
     payload = response.json()
@@ -444,6 +478,41 @@ def test_server_init_creates_daemon_owned_governed_instance(
     assert instance.load_config().name == "car_parts_compatibility"
 
 
+def test_server_init_rejects_uploaded_config_with_unmaterialized_kit_refs(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "plain-project"
+    project.mkdir()
+    config_yaml = (
+        "version: '1.0'\n"
+        "name: kit_ref_demo\n"
+        "entity_types:\n"
+        "  Demo:\n"
+        "    properties:\n"
+        "      demo_id: {type: string, primary_key: true}\n"
+        "relationships: []\n"
+        "contracts:\n"
+        "  EmptyInput:\n"
+        "    fields: {}\n"
+        "providers:\n"
+        "  p:\n"
+        "    kind: function\n"
+        "    contract_in: EmptyInput\n"
+        "    contract_out: EmptyInput\n"
+        "    ref: kit://providers/main.py::run\n"
+        "    version: 1.0.0\n"
+    )
+
+    response = app_client.post(
+        "/api/v1/instances",
+        json={"root_dir": str(project), "config_yaml": config_yaml},
+    )
+
+    assert response.status_code == 400
+    assert "Uploaded config contains kit:// provider refs" in response.json()["message"]
+
+
 def test_repeated_init_returns_same_opaque_id(app_client: TestClient, server_project: Path):
     first = _init_instance(app_client, server_project)
     second = app_client.post("/api/v1/instances", json={"root_dir": str(server_project)}).json()
@@ -474,7 +543,7 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     assert response.json()["entities_added"] == 1
 
 
-def test_world_publish_fork_and_status_routes(
+def test_world_publish_overlay_and_status_routes(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -494,25 +563,25 @@ def test_world_publish_fork_and_status_routes(
     assert publish.status_code == 200
     assert publish.json()["manifest"]["release_id"] == "v1.0.0"
 
-    fork_root = tmp_path / "forked-model"
-    fork = app_client.post(
-        "/api/v1/worlds/fork",
+    overlay_root = tmp_path / "cloned-model"
+    overlay = app_client.post(
+        "/api/v1/worlds/overlays",
         json={
             "transport_ref": f"file://{release_dir}",
-            "root_dir": str(fork_root),
+            "root_dir": str(overlay_root),
         },
     )
-    assert fork.status_code == 200
-    fork_instance_id = fork.json()["instance_id"]
-    assert fork_instance_id != str(fork_root)
+    assert overlay.status_code == 200
+    overlay_instance_id = overlay.json()["instance_id"]
+    assert overlay_instance_id != str(overlay_root)
 
-    status = app_client.get(f"/api/v1/{fork_instance_id}/world/status")
+    status = app_client.get(f"/api/v1/{overlay_instance_id}/world/status")
     assert status.status_code == 200
     assert status.json()["upstream"]["world_id"] == "car-parts"
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
 
 
-def test_world_fork_route_accepts_world_ref(
+def test_create_world_overlay_route_accepts_world_ref(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -538,6 +607,7 @@ def test_world_fork_route_accepts_world_ref(
         + "\n"
     )
     (kit_dir / "providers.py").write_text("KIT = True\n")
+    _write_overlay_kit_manifest(kit_dir, "car-parts-overlay")
     publish = app_client.post(
         f"/api/v1/{instance_id}/world/publish",
         json={
@@ -561,64 +631,57 @@ def test_world_fork_route_accepts_world_ref(
         },
     )
     monkeypatch.setattr(
-        "cruxible_core.world_kits.get_world_kit_catalog",
-        lambda: {
-            "car-parts-overlay": WorldKitEntry(
-                kit="car-parts-overlay",
-                source_dir=kit_dir,
-                copy_paths=("providers.py",),
-                world_id="car-parts",
-            )
-        },
+        "cruxible_core.kits.get_kit_catalog",
+        lambda: {"car-parts-overlay": f"file://{kit_dir}"},
     )
 
-    fork_root = tmp_path / "forked-alias-model"
-    fork = app_client.post(
-        "/api/v1/worlds/fork",
+    overlay_root = tmp_path / "cloned-alias-model"
+    overlay = app_client.post(
+        "/api/v1/worlds/overlays",
         json={
             "world_ref": "car-parts",
-            "root_dir": str(fork_root),
+            "root_dir": str(overlay_root),
         },
     )
-    assert fork.status_code == 200
-    fork_instance_id = fork.json()["instance_id"]
+    assert overlay.status_code == 200
+    overlay_instance_id = overlay.json()["instance_id"]
 
-    status = app_client.get(f"/api/v1/{fork_instance_id}/world/status")
+    status = app_client.get(f"/api/v1/{overlay_instance_id}/world/status")
     assert status.status_code == 200
     assert status.json()["upstream"]["requested_source_ref"] == "car-parts"
     assert status.json()["upstream"]["requested_transport_ref"] == f"file://{latest_dir}"
     assert status.json()["upstream"]["transport_ref"] == f"file://{latest_dir}"
-    record = get_registry().get(fork_instance_id)
+    record = get_registry().get(overlay_instance_id)
     assert record is not None
     assert (Path(record.location) / "providers.py").exists()
 
 
-def test_world_fork_route_requires_exactly_one_source(
+def test_create_world_overlay_route_requires_exactly_one_source(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
     response = app_client.post(
-        "/api/v1/worlds/fork",
+        "/api/v1/worlds/overlays",
         json={
             "transport_ref": "file:///tmp/release",
             "world_ref": "car-parts",
-            "root_dir": str(tmp_path / "fork"),
+            "root_dir": str(tmp_path / "overlay"),
         },
     )
     assert response.status_code == 422
 
 
-def test_world_fork_route_rejects_kit_and_no_kit(
+def test_create_world_overlay_route_rejects_kit_and_no_kit(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
     response = app_client.post(
-        "/api/v1/worlds/fork",
+        "/api/v1/worlds/overlays",
         json={
             "world_ref": "car-parts",
             "kit": "car-parts-overlay",
             "no_kit": True,
-            "root_dir": str(tmp_path / "fork"),
+            "root_dir": str(tmp_path / "overlay"),
         },
     )
     assert response.status_code == 422
@@ -916,7 +979,7 @@ def test_feedback_batch_route(
     assert payload["receipt_id"]
 
 
-def test_workflow_propose_snapshot_and_fork_round_trip(
+def test_workflow_propose_snapshot_and_overlay_round_trip(
     app_client: TestClient,
     workflow_server_project: Path,
 ):
@@ -987,22 +1050,22 @@ def test_workflow_propose_snapshot_and_fork_round_trip(
     assert listed.status_code == 200
     assert listed.json()["snapshots"][0]["snapshot_id"] == snapshot_id
 
-    fork_root = workflow_server_project.parent / "forked-server-project"
-    fork = app_client.post(
-        f"/api/v1/{instance_id}/fork",
-        json={"snapshot_id": snapshot_id, "root_dir": str(fork_root)},
+    clone_root = workflow_server_project.parent / "cloned-server-project"
+    clone = app_client.post(
+        f"/api/v1/{instance_id}/clone",
+        json={"snapshot_id": snapshot_id, "root_dir": str(clone_root)},
     )
-    assert fork.status_code == 200
-    assert fork.json()["snapshot"]["snapshot_id"] == snapshot_id
-    fork_instance_id = fork.json()["instance_id"]
-    assert fork_instance_id != instance_id
+    assert clone.status_code == 200
+    assert clone.json()["snapshot"]["snapshot_id"] == snapshot_id
+    clone_instance_id = clone.json()["instance_id"]
+    assert clone_instance_id != instance_id
 
-    fork_list = app_client.get(
-        f"/api/v1/{fork_instance_id}/list/edges",
+    clone_list = app_client.get(
+        f"/api/v1/{clone_instance_id}/list/edges",
         params={"relationship_type": "recommended_for"},
     )
-    assert fork_list.status_code == 200
-    assert fork_list.json()["total"] == 2
+    assert clone_list.status_code == 200
+    assert clone_list.json()["total"] == 2
 
 
 def test_workflow_routes_lock_plan_run_and_test(
@@ -1324,7 +1387,7 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
     assert lock.status_code == 200
 
     _run_canonical_workflow(app_client, instance_id, "build_public_kev_reference")
-    _run_canonical_workflow(app_client, instance_id, "build_fork_state")
+    _run_canonical_workflow(app_client, instance_id, "build_local_state")
 
     for workflow_name in [
         "propose_asset_products",

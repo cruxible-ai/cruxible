@@ -3,9 +3,9 @@
 These documents are synthetic source material for the governed agent flow.
 
 They are intentionally stored alongside the deterministic CSV seed bundle, but
-they are not loaded by `build_fork_state`. The intended use is:
+they are not loaded by `build_local_state`. The intended use is:
 
-1. Run the deterministic workflows to build the internal fork state.
+1. Run the deterministic workflows to build the internal local state.
 2. Read the review material below.
 3. Use `add-entity` for incident, finding, exception, or control records that
    are not already present in the graph.

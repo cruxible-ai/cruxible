@@ -391,7 +391,7 @@ def _build_test_graph() -> EntityGraph:
             from_id="prod-web-01",
             to_type="Owner",
             to_id="owner-seceng",
-            properties={"source": "fork_seed"},
+            properties={"source": "overlay_seed"},
         )
     )
     return graph
