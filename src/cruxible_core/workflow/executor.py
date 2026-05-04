@@ -1883,7 +1883,11 @@ def _execute_provider_step(
         deterministic=locked_provider.deterministic,
         artifact=artifact,
     )
-    provider_fn = resolve_provider(compiled_step.provider_name, provider_schema)
+    provider_fn = resolve_provider(
+        compiled_step.provider_name,
+        provider_schema,
+        config_base_path=config_base_path,
+    )
     started = time.monotonic_ns()
     started_at = datetime.now(timezone.utc)
     status = "success"

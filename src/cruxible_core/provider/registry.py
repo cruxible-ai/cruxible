@@ -15,13 +15,23 @@ import httpx
 
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.kits import (
+    is_kit_provider_ref,
+    load_kit_provider_module,
+    resolve_kit_provider_ref,
+)
 from cruxible_core.provider.types import ProviderCallable, ProviderContext
 
 
-def resolve_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
+def resolve_provider(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    config_base_path: Path | None = None,
+) -> ProviderCallable:
     """Resolve a provider into an executable callable for its declared runtime."""
     if provider.runtime == "python":
-        return _resolve_python_provider(provider_name, provider)
+        return _resolve_python_provider(provider_name, provider, config_base_path=config_base_path)
     if provider.runtime == "http_json":
         return _build_http_json_provider(provider_name, provider)
     if provider.runtime == "command":
@@ -33,12 +43,21 @@ def resolve_provider(provider_name: str, provider: ProviderSchema) -> ProviderCa
     )
 
 
-def get_provider_entrypoint_path(provider_name: str, provider: ProviderSchema) -> Path | None:
+def get_provider_entrypoint_path(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    config_base_path: Path | None = None,
+) -> Path | None:
     """Resolve the provider entrypoint file path when available."""
     if provider.runtime != "python":
         return None
 
-    candidate = _resolve_python_candidate(provider_name, provider)
+    candidate = _resolve_python_candidate(
+        provider_name,
+        provider,
+        config_base_path=config_base_path,
+    )
     if not callable(candidate):
         raise ConfigError(f"Provider '{provider_name}' ref '{provider.ref}' is not callable")
     callable_candidate = cast(Callable[..., Any], candidate)
@@ -50,15 +69,44 @@ def get_provider_entrypoint_path(provider_name: str, provider: ProviderSchema) -
     return Path(source_path)
 
 
-def _resolve_python_provider(provider_name: str, provider: ProviderSchema) -> ProviderCallable:
-    candidate = _resolve_python_candidate(provider_name, provider)
+def _resolve_python_provider(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    config_base_path: Path | None,
+) -> ProviderCallable:
+    candidate = _resolve_python_candidate(
+        provider_name,
+        provider,
+        config_base_path=config_base_path,
+    )
     if not callable(candidate):
         raise ConfigError(f"Provider '{provider_name}' ref '{provider.ref}' is not callable")
     return cast(ProviderCallable, candidate)
 
 
-def _resolve_python_candidate(provider_name: str, provider: ProviderSchema) -> object:
+def _resolve_python_candidate(
+    provider_name: str,
+    provider: ProviderSchema,
+    *,
+    config_base_path: Path | None,
+) -> object:
     ref = provider.ref
+    if is_kit_provider_ref(ref):
+        if config_base_path is None:
+            raise ConfigError(
+                f"Provider '{provider_name}' uses kit:// ref '{ref}', but no config base path "
+                "was provided for kit resolution"
+            )
+        module_path, attr_name, kit_root = resolve_kit_provider_ref(ref, config_base_path)
+        module = load_kit_provider_module(module_path, kit_root)
+        try:
+            return getattr(module, attr_name)
+        except AttributeError as exc:
+            raise ConfigError(
+                f"Provider '{provider_name}' ref '{ref}' does not resolve to an attribute"
+            ) from exc
+
     module_name, sep, attr_name = ref.rpartition(".")
     if not sep:
         raise ConfigError(

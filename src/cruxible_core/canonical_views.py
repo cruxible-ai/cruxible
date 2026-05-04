@@ -1652,6 +1652,8 @@ def _workflow_provider_descriptor(provider: WorkflowProviderSummaryView) -> str:
 
 
 def _provider_source_label(provider: WorkflowProviderSummaryView) -> str:
+    if provider.ref.startswith("kit://"):
+        return provider.ref
     if provider.runtime == "python":
         module_name, separator, attr_name = provider.ref.rpartition(".")
         if separator:
@@ -1659,7 +1661,7 @@ def _provider_source_label(provider: WorkflowProviderSummaryView) -> str:
             if source_path is not None:
                 return f"{source_path}::{attr_name}"
             path = module_name.replace(".", "/")
-            if module_name.startswith(("cruxible_core.", "cruxible_kits.")):
+            if module_name.startswith("cruxible_core."):
                 path = f"src/{path}"
             return f"{path}.py::{attr_name}"
     return provider.ref

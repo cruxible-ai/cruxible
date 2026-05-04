@@ -13,6 +13,7 @@ import yaml
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
 from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
 from cruxible_core.workflow.contracts import validate_contract_payload
 from cruxible_core.workflow.refs import preview_value
@@ -66,7 +67,7 @@ def build_lock(
 ) -> WorkflowLock:
     """Generate a workflow lock from config/provider/artifact declarations."""
     for provider_name, provider in config.providers.items():
-        resolve_provider(provider_name, provider)
+        resolve_provider(provider_name, provider, config_base_path=config_base_path)
 
     canonical_artifact_names = _collect_canonical_artifact_names(config)
     locked_artifacts: dict[str, LockedArtifact] = {}
@@ -103,6 +104,7 @@ def build_lock(
                 provider_entrypoint_sha256=_compute_provider_entrypoint_sha256(
                     provider_name=name,
                     config=config,
+                    config_base_path=config_base_path,
                 ),
                 runtime=provider.runtime,
                 deterministic=provider.deterministic,
@@ -211,6 +213,7 @@ def compile_workflow(
             current_entrypoint_sha = _compute_provider_entrypoint_sha256(
                 provider_name=step.provider,
                 config=config,
+                config_base_path=config_base_path,
             )
             if current_entrypoint_sha != locked.provider_entrypoint_sha256:
                 raise ConfigError(
@@ -450,9 +453,21 @@ def compile_workflow(
     )
 
 
-def _compute_provider_entrypoint_sha256(provider_name: str, config: CoreConfig) -> str | None:
+def _compute_provider_entrypoint_sha256(
+    provider_name: str,
+    config: CoreConfig,
+    *,
+    config_base_path: Path | None = None,
+) -> str | None:
     provider = config.providers[provider_name]
-    path = get_provider_entrypoint_path(provider_name, provider)
+    if is_kit_provider_ref(provider.ref):
+        if config_base_path is None:
+            raise ConfigError(
+                f"Provider '{provider_name}' uses kit:// ref '{provider.ref}', but no config "
+                "base path was provided for lock generation"
+            )
+        return compute_kit_provider_sha256(provider.ref, config_base_path)
+    path = get_provider_entrypoint_path(provider_name, provider, config_base_path=config_base_path)
     if path is None:
         return None
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
