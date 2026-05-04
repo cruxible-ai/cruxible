@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import yaml
 
@@ -61,6 +61,7 @@ from cruxible_core.service import (
     service_ingest,
     service_init,
     service_inspect_entity,
+    service_inspect_view,
     service_lint,
     service_list,
     service_list_decision_events,
@@ -79,6 +80,7 @@ from cruxible_core.service import (
     service_pull_world_preview,
     service_query,
     service_reload_config,
+    service_render_wiki,
     service_resolve_group,
     service_run,
     service_sample,
@@ -91,8 +93,6 @@ from cruxible_core.service import (
     service_world_status,
 )
 from cruxible_core.service.types import OperationContext
-from cruxible_core.wiki import WikiOptions, build_wiki_pages
-from cruxible_core.wiki.generator import WikiScope, parse_subject_ref
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -405,9 +405,9 @@ def _handle_workflow_test_local(
 ) -> contracts.WorkflowTestResult:
     """Execute config-defined workflow tests through the governed service layer."""
     check_permission(
-        "workflow_test",
+        "cruxible_test_workflow",
         instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
+        required_mode=PermissionMode.GOVERNED_WRITE,
     )
     instance = get_manager().get(instance_id)
     result = service_test(instance, test_name=name)
@@ -780,22 +780,20 @@ def _handle_render_wiki_local(
         required_mode=PermissionMode.READ_ONLY,
     )
     instance = get_manager().get(instance_id)
-    options = WikiOptions(
-        output_dir=Path("."),
-        focus=tuple(parse_subject_ref(raw) for raw in (focus or [])),
-        include_types=tuple(include_types or []),
-        scope=cast(WikiScope, scope or ("all" if all_subjects else "evidence")),
+    result = service_render_wiki(
+        instance,
+        focus=focus,
+        include_types=include_types,
+        scope=scope,
         max_per_type=max_per_type,
         all_subjects=all_subjects,
     )
-    pages = build_wiki_pages(instance, options)
-    serialized_pages = [
-        contracts.WikiPageResult(path=path.as_posix(), content=content)
-        for path, content in sorted(pages.items())
-    ]
     return contracts.WikiRenderResult(
-        pages=serialized_pages,
-        page_count=len(serialized_pages),
+        pages=[
+            contracts.WikiPageResult(path=page.path, content=page.content)
+            for page in result.pages
+        ],
+        page_count=result.page_count,
     )
 
 
@@ -1035,7 +1033,7 @@ def _handle_lint_local(
 ) -> contracts.LintResult:
     """Run the aggregate read-only lint pass."""
     check_permission(
-        "cruxible_evaluate",
+        "cruxible_lint",
         instance_id=instance_id,
         required_mode=PermissionMode.READ_ONLY,
     )
@@ -1507,6 +1505,23 @@ def _handle_inspect_entity_local(
         ],
         total_neighbors=result.total_neighbors,
     )
+
+
+def _handle_inspect_view_local(
+    instance_id: str,
+    view: str,
+    *,
+    limit: int = 200,
+) -> contracts.CanonicalViewResult:
+    """Build a canonical structured inspect view."""
+    check_permission(
+        f"cruxible_inspect_{view}",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_inspect_view(instance, view, limit=limit)  # type: ignore[arg-type]
+    return contracts.CanonicalViewResult(view=result.view, payload=result.payload)
 
 
 def _handle_reload_config_local(

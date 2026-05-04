@@ -322,6 +322,11 @@ class InspectEntityResult(BaseModel):
     total_neighbors: int = 0
 
 
+class CanonicalViewResult(BaseModel):
+    view: str
+    payload: dict[str, Any]
+
+
 class ReloadConfigResult(BaseModel):
     config_path: str
     updated: bool

@@ -622,6 +622,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.InspectEntityResult)
 
+    def inspect_view(
+        self,
+        instance_id: str,
+        view: str,
+        *,
+        limit: int = 200,
+    ) -> contracts.CanonicalViewResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/inspect/{view}",
+            params={"limit": limit},
+        )
+        return self._parse_model(response, contracts.CanonicalViewResult)
+
     def reload_config(
         self,
         instance_id: str,

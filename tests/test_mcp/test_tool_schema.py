@@ -153,6 +153,14 @@ class TestInputSchema:
         assert "kit" not in required
         assert "no_kit" not in required
 
+    def test_new_curated_agent_tools_have_expected_inputs(self, server):
+        schemas = _get_tool_schemas(server)
+        assert "limit" in schemas["cruxible_inspect_governance"].inputSchema["properties"]
+        assert "relationship_type" in schemas["cruxible_inspect_entity"].inputSchema["properties"]
+        assert "config_yaml" in schemas["cruxible_reload_config"].inputSchema["properties"]
+        assert "snapshot_id" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
+        assert "root_dir" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
+
 
 class TestOutputSchema:
     """Verify typed returns produce outputSchema with expected keys."""
@@ -202,6 +210,16 @@ class TestOutputSchema:
             ("cruxible_list", {"items", "total"}),
             ("cruxible_find_candidates", {"candidates", "total"}),
             (
+                "cruxible_stats",
+                {
+                    "entity_count",
+                    "edge_count",
+                    "entity_counts",
+                    "relationship_counts",
+                    "head_snapshot_id",
+                },
+            ),
+            (
                 "cruxible_evaluate",
                 {
                     "entity_count",
@@ -212,7 +230,37 @@ class TestOutputSchema:
                     "quality_summary",
                 },
             ),
+            (
+                "cruxible_lint",
+                {
+                    "config_name",
+                    "config_warnings",
+                    "compatibility_warnings",
+                    "evaluation",
+                    "feedback_reports",
+                    "outcome_reports",
+                    "summary",
+                    "has_issues",
+                },
+            ),
             ("cruxible_sample", {"entities", "entity_type", "count"}),
+            (
+                "cruxible_inspect_entity",
+                {
+                    "found",
+                    "entity_type",
+                    "entity_id",
+                    "properties",
+                    "neighbors",
+                    "total_neighbors",
+                },
+            ),
+            ("cruxible_inspect_ontology", {"view", "payload"}),
+            ("cruxible_inspect_workflows", {"view", "payload"}),
+            ("cruxible_inspect_queries", {"view", "payload"}),
+            ("cruxible_inspect_governance", {"view", "payload"}),
+            ("cruxible_inspect_overview", {"view", "payload"}),
+            ("cruxible_render_wiki", {"pages", "page_count"}),
             ("cruxible_add_relationship", {"added", "updated", "receipt_id"}),
             ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
             ("cruxible_add_constraint", {"name", "added", "config_updated", "warnings"}),
@@ -296,6 +344,8 @@ class TestOutputSchema:
                     "traces",
                 },
             ),
+            ("cruxible_test_workflow", {"total", "passed", "failed", "cases"}),
+            ("cruxible_reload_config", {"config_path", "updated", "warnings"}),
             (
                 "cruxible_propose_workflow",
                 {
@@ -315,6 +365,9 @@ class TestOutputSchema:
                     "traces",
                 },
             ),
+            ("cruxible_create_snapshot", {"snapshot"}),
+            ("cruxible_list_snapshots", {"snapshots"}),
+            ("cruxible_clone_snapshot", {"instance_id", "snapshot"}),
             ("cruxible_get_entity", {"found", "entity_type", "entity_id", "properties"}),
             (
                 "cruxible_get_relationship",

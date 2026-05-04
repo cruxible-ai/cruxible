@@ -390,6 +390,16 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert inspect_payload["total_neighbors"] == 2
     assert inspect_payload["neighbors"][0]["relationship_type"] == "fits"
 
+    ontology = app_client.get(
+        f"/api/v1/{instance_id}/inspect/ontology",
+        params={"limit": 25},
+    )
+    assert ontology.status_code == 200
+    ontology_payload = ontology.json()
+    assert ontology_payload["view"] == "ontology"
+    assert ontology_payload["payload"]["entity_count"] == 2
+    assert ontology_payload["payload"]["relationship_count"] == 2
+
 
 def test_query_discovery_routes_return_expected_shapes(
     app_client: TestClient,

@@ -64,16 +64,15 @@ from cruxible_core.errors import CoreError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import GroupResolution
 from cruxible_core.query.candidates import MatchRule
-from cruxible_core.receipt import serializer
 from cruxible_core.service import (
     InspectEntityResult,
     service_analyze_feedback,
     service_analyze_outcomes,
     service_describe_query,
     service_evaluate,
+    service_explain_receipt,
     service_find_candidates,
     service_get_entity,
-    service_get_receipt,
     service_get_relationship,
     service_inspect_entity,
     service_lint,
@@ -402,14 +401,8 @@ def query_describe_cmd(query_name: str, output_json: bool) -> None:
 def explain(receipt_id: str, fmt: str) -> None:
     """Explain a query result using its receipt."""
     instance = _require_local_instance("explain")
-    receipt = service_get_receipt(instance, receipt_id)
-
-    if fmt == "json":
-        click.echo(serializer.to_json(receipt))
-    elif fmt == "mermaid":
-        click.echo(serializer.to_mermaid(receipt))
-    else:
-        click.echo(serializer.to_markdown(receipt))
+    result = service_explain_receipt(instance, receipt_id, format=fmt)  # type: ignore[arg-type]
+    click.echo(result.content)
 
 
 @click.command()

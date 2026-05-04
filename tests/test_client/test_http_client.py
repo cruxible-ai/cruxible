@@ -381,6 +381,26 @@ def test_render_wiki_sends_scope_and_max_per_type():
     }
 
 
+def test_inspect_view_uses_expected_route():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={"view": "ontology", "payload": {"entity_count": 2}},
+        )
+
+    client = _build_client(handler)
+    result = client.inspect_view("inst_123", "ontology", limit=25)
+
+    assert result.view == "ontology"
+    assert result.payload["entity_count"] == 2
+    assert captured["path"].endswith("/api/v1/inst_123/inspect/ontology?limit=25")
+    assert captured["params"] == {"limit": "25"}
+
+
 def test_workflow_apply_uses_expected_route():
     captured: dict[str, Any] = {}
 

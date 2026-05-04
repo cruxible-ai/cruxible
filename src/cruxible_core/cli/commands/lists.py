@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 import click
@@ -28,8 +27,7 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
-from cruxible_core.graph.types import REJECTED_STATUSES
-from cruxible_core.service import service_list
+from cruxible_core.service import service_export_edges, service_list
 
 
 @click.group("list")
@@ -224,41 +222,19 @@ def export_group() -> None:
 def export_edges(output: str, relationship: str | None, exclude_rejected: bool) -> None:
     """Export all edges to CSV."""
     instance = _require_local_instance("export edges")
-    graph = instance.load_graph()
+    result = service_export_edges(
+        instance,
+        relationship=relationship,
+        exclude_rejected=exclude_rejected,
+    )
 
     path = Path(output)
-    fieldnames = [
-        "from_type",
-        "from_id",
-        "to_type",
-        "to_id",
-        "relationship_type",
-        "edge_key",
-        "properties_json",
-    ]
-    count = 0
     try:
         with path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=result.fieldnames)
             writer.writeheader()
-            for edge in graph.iter_edges(relationship_type=relationship):
-                if exclude_rejected:
-                    status = edge["properties"].get("review_status", "")
-                    if status in REJECTED_STATUSES:
-                        continue
-                writer.writerow(
-                    {
-                        "from_type": edge["from_type"],
-                        "from_id": edge["from_id"],
-                        "to_type": edge["to_type"],
-                        "to_id": edge["to_id"],
-                        "relationship_type": edge["relationship_type"],
-                        "edge_key": edge["edge_key"],
-                        "properties_json": json.dumps(edge["properties"], sort_keys=True),
-                    }
-                )
-                count += 1
+            writer.writerows(result.rows)
     except OSError as exc:
         raise ConfigError(f"Failed to write {path}: {exc}") from exc
 
-    click.echo(f"Exported {count} edge(s) to {path}")
+    click.echo(f"Exported {result.count} edge(s) to {path}")

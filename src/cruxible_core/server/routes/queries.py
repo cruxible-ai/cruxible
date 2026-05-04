@@ -215,6 +215,22 @@ async def inspect_entity(
 
 
 @router.get(
+    "/{instance_id}/inspect/{view}",
+    response_model=contracts.CanonicalViewResult,
+)
+async def inspect_view(
+    instance_id: str,
+    view: str,
+    limit: int = Query(200),
+) -> contracts.CanonicalViewResult:
+    return local_api._handle_inspect_view_local(
+        resolve_server_instance_id(instance_id),
+        view,
+        limit=limit,
+    )
+
+
+@router.get(
     "/{instance_id}/relationships/lookup",
     response_model=contracts.GetRelationshipResult,
 )

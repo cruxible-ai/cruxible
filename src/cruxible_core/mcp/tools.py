@@ -150,6 +150,14 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_test_workflow(
+        instance_id: str,
+        name: str | None = None,
+    ) -> contracts.WorkflowTestResult:
+        """Run configured workflow tests for an instance."""
+        return handlers.handle_workflow_test(instance_id, name=name)
+
+    @_tool
     def cruxible_ingest(
         instance_id: str,
         mapping_name: str,
@@ -423,6 +431,28 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_stats(instance_id: str) -> contracts.StatsResult:
+        """Return graph counts, relationship counts, and head snapshot metadata."""
+        return handlers.handle_stats(instance_id)
+
+    @_tool
+    def cruxible_lint(
+        instance_id: str,
+        max_findings: int = 100,
+        analysis_limit: int = 200,
+        min_support: int = 5,
+        exclude_orphan_types: list[str] | None = None,
+    ) -> contracts.LintResult:
+        """Run aggregate read-only config, graph, feedback, and outcome checks."""
+        return handlers.handle_lint(
+            instance_id,
+            max_findings=max_findings,
+            analysis_limit=analysis_limit,
+            min_support=min_support,
+            exclude_orphan_types=exclude_orphan_types,
+        )
+
+    @_tool
     def cruxible_get_feedback_profile(
         instance_id: str,
         relationship_type: str,
@@ -510,6 +540,81 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_sample(instance_id, entity_type, limit)
 
     @_tool
+    def cruxible_inspect_entity(
+        instance_id: str,
+        entity_type: str,
+        entity_id: str,
+        direction: str = "both",
+        relationship_type: str | None = None,
+        limit: int | None = None,
+    ) -> contracts.InspectEntityResult:
+        """Inspect one entity and its immediate incoming/outgoing neighbors."""
+        return handlers.handle_inspect_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            direction=direction,
+            relationship_type=relationship_type,
+            limit=limit,
+        )
+
+    @_tool
+    def cruxible_inspect_ontology(
+        instance_id: str,
+    ) -> contracts.CanonicalViewResult:
+        """Return the structured canonical ontology view for an instance."""
+        return handlers.handle_inspect_view(instance_id, "ontology")
+
+    @_tool
+    def cruxible_inspect_workflows(
+        instance_id: str,
+    ) -> contracts.CanonicalViewResult:
+        """Return the structured canonical workflow view for an instance."""
+        return handlers.handle_inspect_view(instance_id, "workflows")
+
+    @_tool
+    def cruxible_inspect_queries(
+        instance_id: str,
+    ) -> contracts.CanonicalViewResult:
+        """Return the structured canonical query view for an instance."""
+        return handlers.handle_inspect_view(instance_id, "queries")
+
+    @_tool
+    def cruxible_inspect_governance(
+        instance_id: str,
+        limit: int = 200,
+    ) -> contracts.CanonicalViewResult:
+        """Return the structured canonical governance view for an instance."""
+        return handlers.handle_inspect_view(instance_id, "governance", limit=limit)
+
+    @_tool
+    def cruxible_inspect_overview(
+        instance_id: str,
+        limit: int = 200,
+    ) -> contracts.CanonicalViewResult:
+        """Return the structured canonical overview view for an instance."""
+        return handlers.handle_inspect_view(instance_id, "overview", limit=limit)
+
+    @_tool
+    def cruxible_render_wiki(
+        instance_id: str,
+        focus: list[str] | None = None,
+        include_types: list[str] | None = None,
+        scope: str | None = None,
+        max_per_type: int = 50,
+        all_subjects: bool = False,
+    ) -> contracts.WikiRenderResult:
+        """Render local wiki pages and return path/content payloads."""
+        return handlers.handle_render_wiki(
+            instance_id,
+            focus=focus,
+            include_types=include_types,
+            scope=scope,
+            max_per_type=max_per_type,
+            all_subjects=all_subjects,
+        )
+
+    @_tool
     def cruxible_add_relationship(
         instance_id: str,
         relationships: list[contracts.RelationshipInput],
@@ -592,6 +697,19 @@ def register_tools(server: FastMCP) -> list[str]:
             query_name=query_name,
             workflow_name=workflow_name,
             expires_at=expires_at,
+        )
+
+    @_tool
+    def cruxible_reload_config(
+        instance_id: str,
+        config_path: str | None = None,
+        config_yaml: str | None = None,
+    ) -> contracts.ReloadConfigResult:
+        """Reload or replace an instance config after validation."""
+        return handlers.handle_reload_config(
+            instance_id,
+            config_path=config_path,
+            config_yaml=config_yaml,
         )
 
     @_tool
@@ -876,6 +994,30 @@ def register_tools(server: FastMCP) -> list[str]:
             release_id,
             compatibility,
         )
+
+    @_tool
+    def cruxible_create_snapshot(
+        instance_id: str,
+        label: str | None = None,
+    ) -> contracts.SnapshotCreateResult:
+        """Create an immutable snapshot for the current instance."""
+        return handlers.handle_create_snapshot(instance_id, label=label)
+
+    @_tool
+    def cruxible_list_snapshots(
+        instance_id: str,
+    ) -> contracts.SnapshotListResult:
+        """List immutable snapshots for the current instance."""
+        return handlers.handle_list_snapshots(instance_id)
+
+    @_tool
+    def cruxible_clone_snapshot(
+        instance_id: str,
+        snapshot_id: str,
+        root_dir: str,
+    ) -> contracts.CloneSnapshotResult:
+        """Create a point-in-time clone from an immutable snapshot."""
+        return handlers.handle_clone_snapshot(instance_id, snapshot_id, root_dir)
 
     @_tool
     def cruxible_world_status(instance_id: str) -> contracts.WorldStatusResult:

@@ -110,16 +110,14 @@ def handle_init(
     uploaded_yaml = config_yaml
     if uploaded_yaml is None and config_path is not None:
         uploaded_yaml = _config_yaml_for_upload(config_path, root_dir=root_dir)
-    def _remote_init(client):
-        kwargs = {
-            "root_dir": root_dir,
-            "config_path": None,
-            "config_yaml": uploaded_yaml,
-            "data_dir": data_dir,
-        }
-        if kit is not None:
-            kwargs["kit"] = kit
-        return client.init(**kwargs)
+    def _remote_init(client: CruxibleClient) -> contracts.InitResult:
+        return client.init(
+            root_dir=root_dir,
+            config_path=None,
+            config_yaml=uploaded_yaml,
+            data_dir=data_dir,
+            kit=kit,
+        )
 
     return _dispatch_remote_or_local(
         _remote_init,
@@ -273,6 +271,19 @@ def handle_workflow_apply(
         ),
         allow_local=False,
         operation_name="cruxible_apply_workflow",
+    )
+
+
+def handle_workflow_test(
+    instance_id: str,
+    name: str | None = None,
+) -> contracts.WorkflowTestResult:
+    """Run configured workflow tests for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.workflow_test(instance_id, name=name),
+        lambda: local_api._handle_workflow_test_local(instance_id, name),
+        allow_local=False,
+        operation_name="cruxible_test_workflow",
     )
 
 
@@ -874,6 +885,40 @@ def handle_evaluate(
     )
 
 
+def handle_stats(instance_id: str) -> contracts.StatsResult:
+    """Return graph counts and head snapshot metadata."""
+    return _dispatch_remote_or_local(
+        lambda client: client.stats(instance_id),
+        lambda: local_api._handle_stats_local(instance_id),
+    )
+
+
+def handle_lint(
+    instance_id: str,
+    max_findings: int = 100,
+    analysis_limit: int = 200,
+    min_support: int = 5,
+    exclude_orphan_types: list[str] | None = None,
+) -> contracts.LintResult:
+    """Run aggregate read-only lint checks."""
+    return _dispatch_remote_or_local(
+        lambda client: client.lint(
+            instance_id,
+            max_findings=max_findings,
+            analysis_limit=analysis_limit,
+            min_support=min_support,
+            exclude_orphan_types=exclude_orphan_types,
+        ),
+        lambda: local_api._handle_lint_local(
+            instance_id,
+            max_findings=max_findings,
+            analysis_limit=analysis_limit,
+            min_support=min_support,
+            exclude_orphan_types=exclude_orphan_types,
+        ),
+    )
+
+
 def handle_schema(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
     return _dispatch_remote_or_local(
@@ -891,6 +936,105 @@ def handle_sample(
     return _dispatch_remote_or_local(
         lambda client: client.sample(instance_id, entity_type, limit=limit),
         lambda: local_api._handle_sample_local(instance_id, entity_type, limit=limit),
+    )
+
+
+def handle_inspect_entity(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str,
+    *,
+    direction: str = "both",
+    relationship_type: str | None = None,
+    limit: int | None = None,
+) -> contracts.InspectEntityResult:
+    """Inspect one entity and its immediate neighbors."""
+    return _dispatch_remote_or_local(
+        lambda client: client.inspect_entity(
+            instance_id,
+            entity_type,
+            entity_id,
+            direction=direction,
+            relationship_type=relationship_type,
+            limit=limit,
+        ),
+        lambda: local_api._handle_inspect_entity_local(
+            instance_id,
+            entity_type,
+            entity_id,
+            direction=direction,
+            relationship_type=relationship_type,
+            limit=limit,
+        ),
+    )
+
+
+def handle_inspect_view(
+    instance_id: str,
+    view: str,
+    *,
+    limit: int = 200,
+) -> contracts.CanonicalViewResult:
+    """Build a canonical structured inspect view."""
+    return _dispatch_remote_or_local(
+        lambda client: client.inspect_view(instance_id, view, limit=limit),
+        lambda: local_api._handle_inspect_view_local(instance_id, view, limit=limit),
+    )
+
+
+def handle_render_wiki(
+    instance_id: str,
+    *,
+    focus: list[str] | None = None,
+    include_types: list[str] | None = None,
+    scope: str | None = None,
+    max_per_type: int = 50,
+    all_subjects: bool = False,
+) -> contracts.WikiRenderResult:
+    """Render wiki pages for a governed instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.render_wiki(
+            instance_id,
+            focus=focus,
+            include_types=include_types,
+            scope=scope,
+            max_per_type=max_per_type,
+            all_subjects=all_subjects,
+        ),
+        lambda: local_api._handle_render_wiki_local(
+            instance_id,
+            focus=focus,
+            include_types=include_types,
+            scope=scope,
+            max_per_type=max_per_type,
+            all_subjects=all_subjects,
+        ),
+    )
+
+
+def handle_reload_config(
+    instance_id: str,
+    *,
+    config_path: str | None = None,
+    config_yaml: str | None = None,
+) -> contracts.ReloadConfigResult:
+    """Reload or replace an instance config."""
+    uploaded_yaml = config_yaml
+    if uploaded_yaml is None and config_path is not None:
+        uploaded_yaml = _config_yaml_for_upload(config_path)
+    return _dispatch_remote_or_local(
+        lambda client: client.reload_config(
+            instance_id,
+            config_path=None,
+            config_yaml=uploaded_yaml,
+        ),
+        lambda: local_api._handle_reload_config_local(
+            instance_id,
+            config_path=config_path,
+            config_yaml=config_yaml,
+        ),
+        allow_local=False,
+        operation_name="cruxible_reload_config",
     )
 
 
@@ -1237,6 +1381,45 @@ def handle_world_publish(
         ),
         allow_local=False,
         operation_name="cruxible_world_publish",
+    )
+
+
+def handle_create_snapshot(
+    instance_id: str,
+    label: str | None = None,
+) -> contracts.SnapshotCreateResult:
+    """Create an immutable snapshot for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.create_snapshot(instance_id, label=label),
+        lambda: local_api._handle_create_snapshot_local(instance_id, label),
+        allow_local=False,
+        operation_name="cruxible_create_snapshot",
+    )
+
+
+def handle_list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
+    """List snapshots for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.list_snapshots(instance_id),
+        lambda: local_api._handle_list_snapshots_local(instance_id),
+    )
+
+
+def handle_clone_snapshot(
+    instance_id: str,
+    snapshot_id: str,
+    root_dir: str,
+) -> contracts.CloneSnapshotResult:
+    """Create a point-in-time clone from a snapshot."""
+    return _dispatch_remote_or_local(
+        lambda client: client.clone_snapshot(
+            instance_id,
+            snapshot_id=snapshot_id,
+            root_dir=root_dir,
+        ),
+        lambda: local_api._handle_clone_snapshot_governed(instance_id, snapshot_id, root_dir),
+        allow_local=False,
+        operation_name="cruxible_clone_snapshot",
     )
 
 
