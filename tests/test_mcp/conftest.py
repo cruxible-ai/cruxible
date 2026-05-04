@@ -28,7 +28,7 @@ def clear_instances():
 
 
 @pytest.fixture(autouse=True)
-def reset_permission_mode(monkeypatch):
+def reset_permission_mode(monkeypatch, tmp_path: Path):
     """Reset permission mode cache between tests."""
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
@@ -39,7 +39,7 @@ def reset_permission_mode(monkeypatch):
     monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / ".server-state"))
     reset_permissions()
     yield
     reset_permissions()
