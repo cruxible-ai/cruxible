@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config_from_string, save_config
 from cruxible_core.config.schema import (
+    BUILTIN_CONTRACTS,
     AssertSpec,
     BoundsQualityCheck,
     CardinalityQualityCheck,
@@ -45,6 +46,27 @@ class TestPropertySchema:
         assert prop.primary_key is False
         assert prop.optional is False
         assert prop.enum is None
+
+    def test_type_defaults_to_string(self):
+        prop = PropertySchema()
+        assert prop.type == "string"
+        assert prop.optional is False
+
+    def test_required_alias_sets_optional_false(self):
+        prop = PropertySchema(required=True)
+        assert prop.optional is False
+
+    def test_required_false_sets_optional_true(self):
+        prop = PropertySchema(required=False)
+        assert prop.optional is True
+
+    def test_rejects_conflicting_required_optional_aliases(self):
+        with pytest.raises(ValidationError, match="required and optional"):
+            PropertySchema(required=True, optional=True)
+
+    def test_primary_key_cannot_be_optional(self):
+        with pytest.raises(ValidationError, match="primary_key"):
+            PropertySchema(primary_key=True, optional=True)
 
     def test_full(self):
         prop = PropertySchema(
@@ -101,6 +123,21 @@ class TestEnumSchema:
 
 
 class TestEntityTypeSchema:
+    def test_graph_properties_default_optional_and_string(self):
+        entity = EntityTypeSchema(
+            properties={
+                "id": PropertySchema(primary_key=True),
+                "label": PropertySchema(),
+                "hostname": PropertySchema(required=True),
+            }
+        )
+
+        assert entity.properties["id"].type == "string"
+        assert entity.properties["id"].optional is False
+        assert entity.properties["label"].type == "string"
+        assert entity.properties["label"].optional is True
+        assert entity.properties["hostname"].optional is False
+
     def test_constraints_default_empty(self):
         entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
         assert entity.constraints == []
@@ -143,6 +180,17 @@ class TestRelationshipSchema:
         assert rel.properties == {}
         assert rel.reverse_name is None
         assert rel.proposal_identity == "signature"
+
+    def test_relationship_properties_default_optional_and_string(self):
+        rel = RelationshipSchema(
+            name="runs",
+            from_entity="Asset",
+            to_entity="Product",
+            properties={"installed_version": PropertySchema()},
+        )
+        prop = rel.properties["installed_version"]
+        assert prop.type == "string"
+        assert prop.optional is True
 
     def test_relationship_tuple_proposal_identity_requires_matching(self):
         with pytest.raises(ValueError, match="proposal_identity"):
@@ -899,6 +947,26 @@ class TestCoreConfig:
         assert config.providers == {}
         assert config.workflows == {}
         assert config.tests == []
+
+    def test_contract_fields_must_define_type_explicitly(self):
+        with pytest.raises(ValidationError, match="must define type"):
+            ContractSchema(fields={"items": PropertySchema()})
+
+    def test_builtin_contracts_are_available(self):
+        assert "cruxible.EmptyInput" in BUILTIN_CONTRACTS
+        assert BUILTIN_CONTRACTS["cruxible.JsonItems"].fields["items"].type == "json"
+
+    def test_provider_accepts_inline_contracts(self):
+        provider = ProviderSchema(
+            kind="function",
+            contract_in=ContractSchema(fields={"items": PropertySchema(type="json")}),
+            contract_out="cruxible.JsonItems",
+            ref="tests.support.workflow_test_providers.lift_predictor",
+            version="1.0.0",
+        )
+
+        assert isinstance(provider.contract_in, ContractSchema)
+        assert provider.contract_out == "cruxible.JsonItems"
 
     def test_execution_sections_round_trip(self):
         config = CoreConfig(

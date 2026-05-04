@@ -36,6 +36,10 @@ Use common providers for reusable adapters and integrations:
 - normalizing identifiers
 - calling an external parser or model behind an explicit provider contract
 
+Common plumbing contracts are built in. Use `cruxible.JsonObject` for flexible
+provider options, `cruxible.ParsedTabularBundle` for tabular parser output, and
+`cruxible.EmptyInput` when a workflow or provider takes no input.
+
 Providers should return data to the workflow. They should not directly mutate
 Cruxible graph state, SQLite state, snapshots, decision logs, or group stores.
 State changes should go through workflow steps, proposal groups, feedback tools,
@@ -90,8 +94,8 @@ providers:
   parse_seed_bundle:
     kind: function
     description: Parse a pinned source artifact into generic tables.
-    contract_in: TabularParseOptions
-    contract_out: ParsedTabularBundle
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true

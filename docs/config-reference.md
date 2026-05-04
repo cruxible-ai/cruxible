@@ -47,7 +47,7 @@ tests: [ ... ]
 | `named_queries` | dict | no | `{}` | Declarative query definitions |
 | `constraints` | list | no | `[]` | Validation rules |
 | `ingestion` | dict | no | `{}` | Data ingestion mappings (deprecated — use workflows instead) |
-| `integrations` | dict | no | `{}` | Global integration definitions for governed proposals |
+| `integrations` | dict | no | `{}` | Optional metadata catalog for governed proposal signal labels |
 | `quality_checks` | list | no | `[]` | Evaluate-time graph quality checks |
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
 | `outcome_profiles` | dict | no | `{}` | Structured outcome vocabularies for trust calibration |
@@ -81,8 +81,8 @@ entity_types:
   Asset:
     description: Internal asset from CMDB.
     properties:
-      asset_id: {type: string, primary_key: true}
-      hostname: {type: string, indexed: true}
+      asset_id: {primary_key: true}
+      hostname: {indexed: true}
 
 relationships:
   - name: asset_owned_by
@@ -107,7 +107,7 @@ When `extends` is set, `entity_types` may be empty — the base provides them.
 `kind` controls whether the config is a reusable reference ontology or an operational world model.
 
 - `ontology`: reference taxonomy/model only. It may define entities, relationships, queries, constraints, and other static schema, but it may not define ingestion mappings, contracts, artifacts, providers, workflows, or workflow tests.
-- `world_model`: operational model. It can run workflows, use pinned artifacts/providers, load local/company data, and carry governed judgment state on top of the underlying schema.
+- `world_model`: operational model. It can ingest local/company data, run workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
 
 Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
 
@@ -122,24 +122,14 @@ entity_types:
   Vehicle:
     description: "A specific vehicle (year + make + model + trim)"
     properties:
-      vehicle_id:
-        type: string
-        primary_key: true
+      vehicle_id: {primary_key: true}
       year:
         type: int
         indexed: true
-      make:
-        type: string
-        indexed: true
-      model:
-        type: string
-        indexed: true
-      trim:
-        type: string
-        optional: true
-      engine:
-        type: string
-        optional: true
+      make: {indexed: true}
+      model: {indexed: true}
+      trim: {}
+      engine: {}
 ```
 
 ### EntityTypeSchema
@@ -156,10 +146,11 @@ Each property within an entity type (or relationship) is defined with:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `type` | string | **yes** | — | Data type: `string`, `int`, `float`, `number`, `bool`, `date`, `json` |
+| `type` | string | no for graph properties; yes for contract fields | `"string"` for graph properties | Data type: `string`, `int`, `float`, `number`, `bool`, `date`, `json` |
 | `primary_key` | bool | no | `false` | Mark as the entity's unique identifier |
 | `indexed` | bool | no | `false` | Enable fast lookups on this property |
-| `optional` | bool | no | `false` | Allow null/missing values |
+| `optional` | bool | no | graph properties default to `true`; contract fields default to `false` | Allow null/missing values |
+| `required` | bool | no | `null` | Positive alias for `optional: false`; reject conflicting `required`/`optional` values |
 | `default` | any | no | `null` | Default value when not provided |
 | `enum` | list[string] | no | `null` | Restrict to allowed values |
 | `enum_ref` | string | no | `null` | Reference a shared enum defined in top-level `enums` |
@@ -169,7 +160,10 @@ Each property within an entity type (or relationship) is defined with:
 **Rules:**
 - Exactly one property per entity type should have `primary_key: true`.
 - `primary_key` goes on the property, not the entity type.
-- Properties are required by default; set `optional: true` to allow nulls.
+- Entity and relationship properties default to `type: string` and `optional: true`, so `field_name: {}` is valid shorthand.
+- `primary_key: true` implies required and may not be combined with `optional: true`.
+- Contract fields still require an explicit `type` and are required by default.
+- Use `required: true` for non-primary-key graph properties that must be present.
 - `enum` and `enum_ref` are mutually exclusive.
 - `json_schema` is only allowed when `type: json`. Use it to document the expected structure of complex nested data (e.g., version range arrays).
 
@@ -189,8 +183,8 @@ enums:
 entity_types:
   Asset:
     properties:
-      asset_id: {type: string, primary_key: true}
-      status: {type: string, enum_ref: asset_status, optional: true}
+      asset_id: {primary_key: true}
+      status: {enum_ref: asset_status}
 ```
 
 Enum values must be non-empty and unique. With `extends`, overlays may add new
@@ -216,8 +210,8 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      installed_version: {type: string, optional: true}
-      rationale: {type: string, optional: true}
+      installed_version: {}
+      rationale: {}
     matching:
       integrations:
         product_version_evidence:
@@ -266,7 +260,7 @@ matching:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `integrations` | dict[str, IntegrationConfig] | `{}` | Per-integration guardrails keyed by integration name (must exist in top-level `integrations`) |
+| `integrations` | dict[str, IntegrationConfig] | `{}` | Per-signal guardrails keyed by integration/signal label. If the optional top-level `integrations` catalog is non-empty, keys must resolve there; otherwise labels are open. |
 | `auto_resolve_when` | string | `"all_support"` | `"all_support"` or `"no_contradict"` — when to auto-resolve proposals |
 | `auto_resolve_requires_prior_trust` | string | `"trusted_only"` | `"trusted_only"` or `"trusted_or_watch"` — trust level required for auto-resolution |
 | `max_group_size` | int | `1000` | Maximum candidates per group proposal |
@@ -434,21 +428,18 @@ ingestion:
 
 ## integrations
 
-Global integration definitions that declare external signal sources for governed proposals. Integration specs are **immutable by convention** — any semantic change (different model, different metric) requires a new key (e.g., `cosine_similarity_v2`).
+Optional global integration definitions that document external signal sources for governed proposals. This catalog is metadata and validation aid only; relationship-level `matching.integrations` is the behavior-bearing governance policy.
 
-Integrations are referenced by name in relationship `matching` blocks.
+Most configs can omit the top-level `integrations` section and use labels directly in `matching.integrations`. If the catalog is present and non-empty, Cruxible validates that every relationship-level integration key resolves to a catalog entry.
 
 ```yaml
 integrations:
   product_version_evidence:
     kind: product_version_match
-    contract:
-      output: support|unsure|contradict
+    contract: ProductVersionSignal
 
   scanner_evidence:
     kind: scanner_presence
-    contract:
-      output: support|unsure|contradict
     notes: "Advisory signal from vulnerability scanner findings"
 ```
 
@@ -457,12 +448,12 @@ integrations:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `kind` | string | **yes** | — | Integration kind identifier (e.g., `product_version_match`, `engineering_review`) |
-| `contract` | dict | no | `{}` | Stable contract describing the integration's input/output |
+| `contract` | string | no | `null` | Optional named contract reference documenting the integration's input/output |
 | `notes` | string | no | `""` | Human-readable notes |
 
 **Convention:** Integration output is a tri-state signal: `support`, `unsure`, or `contradict`. The contract should document this as `output: support|unsure|contradict`.
 
-**Validation:** If any relationship has a `matching.integrations` block, every integration key referenced there must exist in the top-level `integrations` dict.
+**Validation:** An empty top-level catalog leaves relationship-level signal labels open. A non-empty catalog enables strict cross-reference validation.
 
 ---
 
@@ -806,11 +797,15 @@ decision_policies:
 
 Typed payload contracts for provider inputs and outputs. Contracts define the fields a provider expects to receive and the shape of what it returns.
 
+Common plumbing contracts are built in and do not need to be declared:
+
+- `cruxible.EmptyInput`: no input fields and no extras.
+- `cruxible.JsonObject`: any JSON-serializable object payload.
+- `cruxible.JsonItems`: `{items: <json>}`.
+- `cruxible.ParsedTabularBundle`: `{artifact, tables, files, diagnostics}` from the common tabular parser.
+
 ```yaml
 contracts:
-  EmptyInput:
-    fields: {}
-
   PublicKevRows:
     description: "Rows of joined KEV + NVD + EPSS data"
     fields:
@@ -832,7 +827,8 @@ contracts:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `description` | string | no | `null` | Human-readable description |
-| `fields` | dict[str, PropertySchema] | **yes** | — | Field definitions using the same PropertySchema as entity properties |
+| `fields` | dict[str, PropertySchema] | **yes** | — | Field definitions. Contract fields must define `type` explicitly and are required by default. |
+| `allow_extra` | bool | no | `false` | Allow undeclared JSON-serializable fields; used by `cruxible.JsonObject` |
 
 ---
 
@@ -870,7 +866,7 @@ providers:
     description: >
       Load KEV catalog, EPSS scores, and NVD CPE configurations.
       Emit one row per (CVE, CPE product) pair.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     contract_out: PublicKevRows
     ref: providers.load_public_kev_rows
     version: "1.0.0"
@@ -885,8 +881,8 @@ providers:
 |-------|------|----------|---------|-------------|
 | `kind` | string | **yes** | — | `"function"`, `"model"`, or `"tool"` |
 | `description` | string | no | `null` | What this provider does |
-| `contract_in` | string | **yes** | — | Name of the input contract (must exist in `contracts`) |
-| `contract_out` | string | **yes** | — | Name of the output contract (must exist in `contracts`) |
+| `contract_in` | string or inline ContractSchema | **yes** | — | Input contract reference. May be config-defined, built-in (`cruxible.*`), or an inline contract object. |
+| `contract_out` | string or inline ContractSchema | **yes** | — | Output contract reference. May be config-defined, built-in (`cruxible.*`), or an inline contract object. |
 | `ref` | string | **yes** | — | Callable reference (e.g., `module.function_name`) |
 | `version` | string | **yes** | — | Semantic version for lock-file reproducibility |
 | `deterministic` | bool | no | `true` | Whether the provider produces identical output for identical input |
@@ -907,7 +903,7 @@ workflows:
     canonical: true
     description: >
       Build the canonical public KEV reference layer from bundled data.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: rows
         provider: load_public_kev_rows
@@ -952,7 +948,7 @@ workflows:
 |-------|------|----------|---------|-------------|
 | `description` | string | no | `null` | What this workflow does |
 | `canonical` | bool | no | `false` | Whether this workflow creates accepted canonical state |
-| `contract_in` | string | **yes** | — | Name of the input contract |
+| `contract_in` | string or inline ContractSchema | **yes** | — | Workflow input contract reference. May be config-defined, built-in (`cruxible.*`), or an inline contract object. |
 | `steps` | list[WorkflowStepSchema] | **yes** | — | Ordered list of steps |
 | `returns` | string | **yes** | — | ID of the step whose output is the workflow result |
 
@@ -1110,18 +1106,18 @@ entity_types:
   Asset:
     description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
     properties:
-      asset_id: {type: string, primary_key: true}
-      hostname: {type: string, indexed: true}
-      criticality: {type: string, optional: true}
-      environment: {type: string, optional: true}
-      internet_exposed: {type: bool, optional: true}
+      asset_id: {primary_key: true}
+      hostname: {indexed: true}
+      criticality: {}
+      environment: {}
+      internet_exposed: {type: bool}
 
   Owner:
     description: Team or person responsible for an asset.
     properties:
-      owner_id: {type: string, primary_key: true}
-      name: {type: string}
-      team: {type: string, optional: true}
+      owner_id: {primary_key: true}
+      name: {}
+      team: {}
 
 relationships:
   - name: asset_owned_by
@@ -1134,8 +1130,8 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      installed_version: {type: string, optional: true}
-      rationale: {type: string, optional: true}
+      installed_version: {}
+      rationale: {}
     matching:
       integrations:
         product_version_evidence:
@@ -1181,16 +1177,6 @@ ingestion:
     from_column: asset_id
     to_column: owner_id
 
-integrations:
-  product_version_evidence:
-    kind: product_version_match
-    contract:
-      output: support|unsure|contradict
-
-  scanner_evidence:
-    kind: scanner_presence
-    contract:
-      output: support|unsure|contradict
 ```
 
-See also the reference layer config (`kits/kev-reference/config.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks.
+See also the reference layer config (`kits/kev-reference/config.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks. Relationship-level `matching.integrations` is enough for governed proposal policy; a top-level `integrations` catalog is optional metadata.

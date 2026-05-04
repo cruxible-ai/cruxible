@@ -6,13 +6,19 @@ from typing import Any, Callable
 
 from cruxible_core.config.json_schema_validation import validate_value_against_json_schema
 from cruxible_core.config.property_validation import normalize_value
-from cruxible_core.config.schema import CoreConfig, PropertySchema
+from cruxible_core.config.schema import (
+    BUILTIN_CONTRACTS,
+    ContractReference,
+    ContractSchema,
+    CoreConfig,
+    PropertySchema,
+)
 from cruxible_core.errors import ConfigError, QueryExecutionError
 
 
 def validate_contract_payload(
     config: CoreConfig,
-    contract_name: str,
+    contract_ref: ContractReference,
     payload: dict[str, Any],
     *,
     subject: str,
@@ -20,7 +26,8 @@ def validate_contract_payload(
     empty_payload_hint: str | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize a payload against a named contract."""
-    contract = config.contracts.get(contract_name)
+    contract_name = contract_reference_label(contract_ref)
+    contract = resolve_contract(config, contract_ref)
     if contract is None:
         raise ConfigError(f"Contract '{contract_name}' not found for {subject}")
 
@@ -56,8 +63,21 @@ def validate_contract_payload(
             errors.append(f"field '{field_name}': {exc}")
 
     extra = sorted(set(payload.keys()) - set(contract.fields.keys()))
-    for field_name in extra:
-        errors.append(f"unexpected field '{field_name}'")
+    if contract.allow_extra:
+        json_schema = PropertySchema(type="json", optional=True)
+        for field_name in extra:
+            try:
+                normalized[field_name] = _normalize_contract_field(
+                    config,
+                    field_name,
+                    payload[field_name],
+                    json_schema,
+                )
+            except ValueError as exc:
+                errors.append(f"field '{field_name}': {exc}")
+    else:
+        for field_name in extra:
+            errors.append(f"unexpected field '{field_name}'")
 
     if not payload and required_missing:
         missing = ", ".join(f"'{field_name}'" for field_name in required_missing)
@@ -74,6 +94,23 @@ def validate_contract_payload(
         raise error_factory(f"{subject} failed contract '{contract_name}': {'; '.join(errors)}")
 
     return normalized
+
+
+def resolve_contract(
+    config: CoreConfig,
+    contract_ref: ContractReference,
+) -> ContractSchema | None:
+    """Resolve inline, config-defined, or built-in contract references."""
+    if isinstance(contract_ref, ContractSchema):
+        return contract_ref
+    return config.contracts.get(contract_ref) or BUILTIN_CONTRACTS.get(contract_ref)
+
+
+def contract_reference_label(contract_ref: ContractReference) -> str:
+    """Return a stable label for human-facing contract diagnostics."""
+    if isinstance(contract_ref, ContractSchema):
+        return "<inline>"
+    return contract_ref
 
 
 def _normalize_contract_field(

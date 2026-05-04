@@ -15,7 +15,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
 from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
-from cruxible_core.workflow.contracts import validate_contract_payload
+from cruxible_core.workflow.contracts import contract_reference_label, validate_contract_payload
 from cruxible_core.workflow.refs import preview_value
 from cruxible_core.workflow.types import (
     CompiledPlan,
@@ -443,7 +443,7 @@ def compile_workflow(
 
     return CompiledPlan(
         workflow=workflow_name,
-        contract_in=workflow.contract_in,
+        contract_in=contract_reference_label(workflow.contract_in),
         config_digest=digest,
         lock_digest=lock.lock_digest,
         canonical=workflow.canonical,

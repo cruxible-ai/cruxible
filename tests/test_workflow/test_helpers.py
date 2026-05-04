@@ -90,6 +90,32 @@ class TestContractValidation:
                 error_factory=ConfigError,
             )
 
+    def test_accepts_builtin_json_object_contract(self) -> None:
+        config = _base_config()
+
+        payload = validate_contract_payload(
+            config,
+            "cruxible.JsonObject",
+            {"name": "alpha", "metadata": {"tier": 1}},
+            subject="Provider input",
+            error_factory=ConfigError,
+        )
+
+        assert payload == {"name": "alpha", "metadata": {"tier": 1}}
+
+    def test_accepts_inline_contract(self) -> None:
+        config = _base_config()
+
+        payload = validate_contract_payload(
+            config,
+            ContractSchema(fields={"items": PropertySchema(type="json")}),
+            {"items": [{"id": "A"}]},
+            subject="Provider output",
+            error_factory=ConfigError,
+        )
+
+        assert payload["items"] == [{"id": "A"}]
+
     def test_accepts_json_contract_fields(self) -> None:
         config = _base_config(
             contracts={

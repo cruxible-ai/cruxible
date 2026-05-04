@@ -78,6 +78,11 @@ inspect source data
   -> regenerate generated docs/readme blocks
 ```
 
+When authoring graph schemas, keep configs compact: entity and relationship
+properties default to `type: string` and optional, `{}` is valid for optional
+string fields, and `required: true` is the positive form for required non-ID
+fields. Contract fields are different: they still need explicit `type`.
+
 ## Recipe: Validate And Lock After Edits
 
 Use this after changing `config.yaml`, provider refs, provider code, artifacts,

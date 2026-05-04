@@ -54,12 +54,12 @@ version: "0.2.0"
 entity_types:
   Asset:
     properties:
-      asset_id: {type: string, primary_key: true}
-      hostname: {type: string}
+      asset_id: {primary_key: true}
+      hostname: {}
   Owner:
     properties:
-      owner_id: {type: string, primary_key: true}
-      name: {type: string}
+      owner_id: {primary_key: true}
+      name: {}
 
 relationships:
   - name: asset_owned_by
@@ -153,8 +153,8 @@ or `data/`, then model it in the overlay config:
 entity_types:
   MaintenanceTeam:
     properties:
-      team_id: {type: string, primary_key: true}
-      name: {type: string}
+      team_id: {primary_key: true}
+      name: {}
 
 relationships:
   - name: asset_supported_by_team

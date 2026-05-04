@@ -35,6 +35,7 @@ from cruxible_core.mermaid import (
 )
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.workflow.contracts import contract_reference_label, resolve_contract
 
 MAX_STORE_SCAN = 10_000
 MANIFEST_NAME = ".cruxible-manifest.json"
@@ -1704,7 +1705,7 @@ class _WikiGenerator:
         current_path: Path,
     ) -> list[str]:
         lines: list[str] = []
-        contract = self.config.contracts.get(schema.contract_in)
+        contract = resolve_contract(self.config, schema.contract_in)
         if contract is not None and contract.fields:
             field_names = ", ".join(f"`{field}`" for field in sorted(contract.fields))
             lines.append(f"- Workflow input fields: {field_names}")
@@ -2051,8 +2052,8 @@ class _WikiGenerator:
         lines.append(f"- Runtime: {schema.runtime}")
         lines.append(f"- Version: {schema.version}")
         lines.append(f"- Ref: `{schema.ref}`")
-        lines.append(f"- Contract in: {schema.contract_in}")
-        lines.append(f"- Contract out: {schema.contract_out}")
+        lines.append(f"- Contract in: {contract_reference_label(schema.contract_in)}")
+        lines.append(f"- Contract out: {contract_reference_label(schema.contract_out)}")
         lines.append(f"- Deterministic: {schema.deterministic}")
         if schema.artifact:
             lines.append(f"- Artifact: {schema.artifact}")

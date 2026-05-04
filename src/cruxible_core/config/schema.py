@@ -69,12 +69,18 @@ class EnumSchema(BaseModel):
 
 
 class PropertySchema(BaseModel):
-    """Schema for entity/relationship property definitions."""
+    """Schema for graph properties and contract fields.
 
-    type: str  # string, int, float, bool, date
+    Graph properties may use terse defaults when nested under entity or
+    relationship schemas. Contract fields remain explicit through
+    ``ContractSchema`` validation.
+    """
+
+    type: str = "string"  # string, int, float, bool, date
     primary_key: bool = False
     indexed: bool = False
     optional: bool = False
+    required: bool | None = Field(default=None, exclude=True)
     default: Any | None = None
     enum: list[Any] | None = None
     enum_ref: str | None = None
@@ -83,6 +89,15 @@ class PropertySchema(BaseModel):
 
     @model_validator(mode="after")
     def validate_schema_usage(self) -> PropertySchema:
+        if self.required is not None:
+            required_optional = not self.required
+            if "optional" in self.model_fields_set and self.optional != required_optional:
+                msg = "required and optional are conflicting aliases"
+                raise ValueError(msg)
+            self.optional = required_optional
+        if self.primary_key and self.optional:
+            msg = "primary_key properties may not be optional"
+            raise ValueError(msg)
         if self.enum is not None and self.enum_ref is not None:
             msg = "enum and enum_ref are mutually exclusive"
             raise ValueError(msg)
@@ -121,6 +136,22 @@ class PropertySchema(BaseModel):
         return self
 
 
+def _apply_graph_property_defaults(
+    properties: dict[str, PropertySchema],
+) -> dict[str, PropertySchema]:
+    """Apply graph-only defaults for entity and relationship properties."""
+    normalized: dict[str, PropertySchema] = {}
+    for name, prop in properties.items():
+        if (
+            not prop.primary_key
+            and "optional" not in prop.model_fields_set
+            and "required" not in prop.model_fields_set
+        ):
+            prop = prop.model_copy(update={"optional": True})
+        normalized[name] = prop
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Entity Type Schema
 # ---------------------------------------------------------------------------
@@ -132,6 +163,11 @@ class EntityTypeSchema(BaseModel):
     description: str | None = None
     properties: dict[str, PropertySchema]
     constraints: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def apply_graph_property_defaults(self) -> EntityTypeSchema:
+        self.properties = _apply_graph_property_defaults(self.properties)
+        return self
 
     def get_primary_key(self) -> str | None:
         """Return the primary key property name, if any."""
@@ -202,6 +238,7 @@ class RelationshipSchema(BaseModel):
 
     @model_validator(mode="after")
     def validate_proposal_identity(self) -> RelationshipSchema:
+        self.properties = _apply_graph_property_defaults(self.properties)
         if self.proposal_identity == "relationship_tuple" and self.matching is None:
             msg = "proposal_identity 'relationship_tuple' requires a governed matching section"
             raise ValueError(msg)
@@ -671,6 +708,33 @@ class ContractSchema(BaseModel):
 
     description: str | None = None
     fields: dict[str, PropertySchema]
+    allow_extra: bool = False
+
+    @model_validator(mode="after")
+    def validate_explicit_field_types(self) -> ContractSchema:
+        for name, prop in self.fields.items():
+            if "type" not in prop.model_fields_set:
+                msg = f"Contract field '{name}' must define type explicitly"
+                raise ValueError(msg)
+        return self
+
+
+BUILTIN_CONTRACTS: dict[str, ContractSchema] = {
+    "cruxible.EmptyInput": ContractSchema(fields={}),
+    "cruxible.JsonObject": ContractSchema(fields={}, allow_extra=True),
+    "cruxible.JsonItems": ContractSchema(fields={"items": PropertySchema(type="json")}),
+    "cruxible.ParsedTabularBundle": ContractSchema(
+        fields={
+            "artifact": PropertySchema(type="json"),
+            "tables": PropertySchema(type="json"),
+            "files": PropertySchema(type="json"),
+            "diagnostics": PropertySchema(type="json"),
+        }
+    ),
+}
+
+
+ContractReference = str | ContractSchema
 
 
 class ProviderArtifactSchema(BaseModel):
@@ -687,8 +751,8 @@ class ProviderSchema(BaseModel):
 
     kind: Literal["function", "model", "tool"]
     description: str | None = None
-    contract_in: str
-    contract_out: str
+    contract_in: ContractReference
+    contract_out: ContractReference
     ref: str
     version: str
     deterministic: bool = True
@@ -1117,7 +1181,7 @@ class WorkflowSchema(BaseModel):
     description: str | None = None
     purpose: WorkflowPurpose = "utility"
     canonical: bool = False
-    contract_in: str
+    contract_in: ContractReference
     steps: list[WorkflowStepSchema]
     returns: str
 
@@ -1255,7 +1319,11 @@ class CoreConfig(BaseModel):
     def validate_integration_contracts(self) -> CoreConfig:
         """Check that integration contract refs point to existing contracts."""
         for name, spec in self.integrations.items():
-            if spec.contract is not None and spec.contract not in self.contracts:
+            if (
+                spec.contract is not None
+                and spec.contract not in self.contracts
+                and spec.contract not in BUILTIN_CONTRACTS
+            ):
                 msg = (
                     f"Integration '{name}' references contract '{spec.contract}' "
                     f"which is not defined in contracts"
@@ -1356,7 +1424,23 @@ def _iter_config_properties(config: CoreConfig) -> list[tuple[str, PropertySchem
     for relationship in config.relationships:
         for prop_name, prop in relationship.properties.items():
             properties.append((f"relationships.{relationship.name}.properties.{prop_name}", prop))
-    for contract_name, contract in config.contracts.items():
-        for field_name, prop in contract.fields.items():
+    for contract_name, contract_schema in config.contracts.items():
+        for field_name, prop in contract_schema.fields.items():
             properties.append((f"contracts.{contract_name}.fields.{field_name}", prop))
+    for provider_name, provider in config.providers.items():
+        for direction, contract_ref in (
+            ("contract_in", provider.contract_in),
+            ("contract_out", provider.contract_out),
+        ):
+            if isinstance(contract_ref, ContractSchema):
+                for field_name, prop in contract_ref.fields.items():
+                    properties.append(
+                        (f"providers.{provider_name}.{direction}.fields.{field_name}", prop)
+                    )
+    for workflow_name, workflow in config.workflows.items():
+        if isinstance(workflow.contract_in, ContractSchema):
+            for field_name, prop in workflow.contract_in.fields.items():
+                properties.append(
+                    (f"workflows.{workflow_name}.contract_in.fields.{field_name}", prop)
+                )
     return properties

@@ -104,12 +104,12 @@ that later agents, humans, and software can query and act on.
 entity_types:
   Drug:
     properties:
-      drug_id: { type: string, primary_key: true }
-      name:    { type: string }
+      drug_id: { primary_key: true }
+      name:    {}
   Enzyme:
     properties:
-      enzyme_id: { type: string, primary_key: true }
-      name:      { type: string }
+      enzyme_id: { primary_key: true }
+      name:      {}
 
 relationships:
   - name: same_class

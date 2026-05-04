@@ -63,21 +63,22 @@ If a tool call is denied, the error message indicates the required mode.
 You must write a YAML config before initializing. Sections:
 
 ### entity_types
-- Dict keyed by type name. Each property is `{type: string, ...}`.
+- Dict keyed by type name. Graph properties default to `type: string` and optional.
 - Mark the ID property with `primary_key: true` (on the property, not the entity).
-- Properties support `optional: true`, `enum: [...]`, `indexed: true`.
+- Use `{}` for optional string fields and `required: true` for required non-ID fields.
+- Properties support `enum: [...]`, `enum_ref`, `indexed: true`, and explicit `type`.
 
 Example:
 ```yaml
 entity_types:
   Vehicle:
     properties:
-      vehicle_id: {type: string, primary_key: true}
-      make: {type: string}
+      vehicle_id: {primary_key: true}
+      make: {}
   Part:
     properties:
-      part_number: {type: string, primary_key: true}
-      name: {type: string}
+      part_number: {primary_key: true}
+      name: {}
 ```
 
 ### relationships

@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import CoreConfig
+from cruxible_core.config.schema import BUILTIN_CONTRACTS, ContractSchema, CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import SYSTEM_OWNED_PROPERTIES
 
@@ -47,6 +47,20 @@ def validate_config(config: CoreConfig) -> list[str]:
         )
 
     return warnings
+
+
+def _contract_exists(config: CoreConfig, contract: str | ContractSchema) -> bool:
+    """Return whether a contract reference is inline, config-defined, or built in."""
+    if isinstance(contract, ContractSchema):
+        return True
+    return contract in config.contracts or contract in BUILTIN_CONTRACTS
+
+
+def _contract_label(contract: str | ContractSchema) -> str:
+    """Return a stable label for validation messages."""
+    if isinstance(contract, ContractSchema):
+        return "<inline>"
+    return contract
 
 
 def _validate_relationships(config: CoreConfig, errors: list[str]) -> None:
@@ -513,7 +527,6 @@ def _validate_primary_keys(config: CoreConfig, errors: list[str]) -> None:
 
 def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
     """Validate contracts, artifacts, and providers."""
-    contract_names = set(config.contracts.keys())
     artifact_names = set(config.artifacts.keys())
 
     for artifact_name, artifact in config.artifacts.items():
@@ -521,16 +534,16 @@ def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
             errors.append(f"Artifact '{artifact_name}' is missing required sha256")
 
     for provider_name, provider in config.providers.items():
-        if provider.contract_in not in contract_names:
+        if not _contract_exists(config, provider.contract_in):
             errors.append(
                 "Provider "
-                f"'{provider_name}': contract_in '{provider.contract_in}' "
+                f"'{provider_name}': contract_in '{_contract_label(provider.contract_in)}' "
                 "not found in contracts"
             )
-        if provider.contract_out not in contract_names:
+        if not _contract_exists(config, provider.contract_out):
             errors.append(
                 "Provider "
-                f"'{provider_name}': contract_out '{provider.contract_out}' "
+                f"'{provider_name}': contract_out '{_contract_label(provider.contract_out)}' "
                 "not found in contracts"
             )
         if provider.artifact is not None and provider.artifact not in artifact_names:
@@ -697,7 +710,6 @@ def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
 
 def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     """Validate workflow/provider/query references and reference syntax."""
-    contract_names = set(config.contracts.keys())
     provider_names = set(config.providers.keys())
     query_names = set(config.named_queries.keys())
     entity_names = set(config.entity_types.keys())
@@ -705,10 +717,10 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     integration_names = set(config.integrations.keys())
 
     for workflow_name, workflow in config.workflows.items():
-        if workflow.contract_in not in contract_names:
+        if not _contract_exists(config, workflow.contract_in):
             errors.append(
                 "Workflow "
-                f"'{workflow_name}': contract_in '{workflow.contract_in}' "
+                f"'{workflow_name}': contract_in '{_contract_label(workflow.contract_in)}' "
                 "not found in contracts"
             )
 
@@ -949,7 +961,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 continue
 
             if step.map_signals is not None:
-                if step.map_signals.integration not in integration_names:
+                if integration_names and step.map_signals.integration not in integration_names:
                     errors.append(
                         "Workflow "
                         f"'{workflow_name}' step '{step.id}': map_signals integration "

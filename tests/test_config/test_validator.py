@@ -574,6 +574,37 @@ class TestValidateWorkflowExecution:
         defaults.update(overrides)
         return _minimal_config(**defaults)
 
+    def test_builtin_contract_refs_validate(self):
+        config = self._workflow_config(
+            contracts={},
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="cruxible.JsonObject",
+                    contract_out="cruxible.JsonItems",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="cruxible.EmptyInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={},
+                            **{"as": "loaded"},
+                        )
+                    ],
+                    returns="loaded",
+                )
+            },
+            tests=[],
+        )
+
+        validate_config(config)
+
     def test_missing_provider_contract(self):
         config = self._workflow_config(contracts={})
         with pytest.raises(ConfigError) as exc_info:
@@ -755,6 +786,35 @@ class TestValidateWorkflowExecution:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any("map_signals integration 'missing'" in error for error in exc_info.value.errors)
+
+    def test_map_signals_open_mode_allows_labels_without_global_registry(self):
+        config = self._workflow_config(
+            integrations={},
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="signals",
+                            map_signals={
+                                "integration": "agent_check",
+                                "items": [],
+                                "from_id": "$input.id",
+                                "to_id": "$input.id",
+                                "enum": {
+                                    "path": "verdict",
+                                    "map": {"support": "support"},
+                                },
+                            },
+                            **{"as": "signals"},
+                        )
+                    ],
+                    returns="signals",
+                )
+            },
+        )
+
+        validate_config(config)
 
     def test_propose_relationship_group_rejects_unknown_aliases(self):
         config = self._workflow_config(

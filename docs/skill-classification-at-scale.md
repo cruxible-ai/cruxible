@@ -66,28 +66,16 @@ One entity type per dataset. Properties should capture everything needed for mat
 entity_types:
   CatalogPart:
     properties:
-      part_number:
-        type: string
-        primary_key: true
-      short_desc:
-        type: string
-      long_desc:
-        type: string
-        optional: true
-      category:
-        type: string
-        optional: true
-      sub_category:
-        type: string
-        optional: true
+      part_number: {primary_key: true}
+      short_desc: {}
+      long_desc: {}
+      category: {}
+      sub_category: {}
 
   TaxonomyType:
     properties:
-      type_id:
-        type: string
-        primary_key: true
-      type_name:
-        type: string
+      type_id: {primary_key: true}
+      type_name: {}
       category_name:
         type: string
       sub_category_name:
@@ -156,11 +144,8 @@ relationships:
     from: CatalogPart
     to: TaxonomyType
     properties:
-      confidence_basis:
-        type: string
-      match_detail:
-        type: string
-        optional: true
+      confidence_basis: {}
+      match_detail: {}
     matching:
       integrations:
         keyword_extract_v1:
