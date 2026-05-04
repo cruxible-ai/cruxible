@@ -163,6 +163,38 @@ class InspectEntityResult:
 
 
 @dataclass
+class CanonicalViewResult:
+    view: str
+    payload: dict[str, Any]
+
+
+@dataclass
+class RenderWikiPageResult:
+    path: str
+    content: str
+
+
+@dataclass
+class RenderWikiResult:
+    pages: list[RenderWikiPageResult] = field(default_factory=list)
+    page_count: int = 0
+
+
+@dataclass
+class ReceiptExplanationResult:
+    receipt_id: str
+    format: Literal["json", "markdown", "mermaid"]
+    content: str
+
+
+@dataclass
+class ExportEdgesResult:
+    fieldnames: list[str]
+    rows: list[dict[str, Any]]
+    count: int
+
+
+@dataclass
 class ReloadConfigResult:
     config_path: str
     updated: bool
