@@ -11,29 +11,29 @@ entity_types:
   Vendor:
     description: Vendor or software publisher, identified by CPE vendor string.
     properties:
-      vendor_id: {type: string, primary_key: true}
-      name: {type: string, indexed: true}
+      vendor_id: {primary_key: true}
+      name: {indexed: true}
 
   Product:
     description: Product identified by CPE vendor and product strings.
     properties:
-      product_id: {type: string, primary_key: true}
-      vendor_id: {type: string, optional: true}
-      vendor_name: {type: string, optional: true}
-      product_name: {type: string, indexed: true}
-      cpe_vendor: {type: string, optional: true}
-      cpe_product: {type: string, optional: true}
-      cpe_part: {type: string, optional: true}
+      product_id: {primary_key: true}
+      vendor_id: {}
+      vendor_name: {}
+      product_name: {indexed: true}
+      cpe_vendor: {}
+      cpe_product: {}
+      cpe_part: {}
 
   Vulnerability:
     description: Public vulnerability record from CISA KEV catalog.
     properties:
-      cve_id: {type: string, primary_key: true}
-      description: {type: string, optional: true}
-      cvss_score: {type: number, optional: true}
-      epss_score: {type: number, optional: true}
-      kev_due_date: {type: string, optional: true}
-      known_ransomware_use: {type: string, optional: true}
+      cve_id: {primary_key: true}
+      description: {}
+      cvss_score: {type: number}
+      epss_score: {type: number}
+      kev_due_date: {}
+      known_ransomware_use: {}
 
 relationships:
   - name: product_from_vendor
@@ -50,7 +50,6 @@ relationships:
     properties:
       affected_versions:
         type: json
-        optional: true
         description: >
           List of affected version ranges from NVD CPE match data.
         json_schema:
@@ -63,7 +62,7 @@ relationships:
               version_end_including: {type: string}
               version_end_excluding: {type: string}
               fixed_version: {type: string}
-      fixed_version: {type: string, optional: true}
+      fixed_version: {}
 
 named_queries:
   vulnerability_products:
@@ -136,57 +135,6 @@ quality_checks:
     min_count: 1
     max_count: 1
 
-contracts:
-  EmptyInput:
-    fields: {}
-  TabularParseOptions:
-    description: Options for common tabular artifact parsing.
-    fields:
-      expected_tables: {type: json, optional: true}
-      table_names: {type: json, optional: true}
-      extensions: {type: json, optional: true}
-      normalize_headers: {type: bool, optional: true}
-  ParsedTabularBundle:
-    description: Generic parsed table bundle produced by common tabular providers.
-    fields:
-      artifact: {type: json}
-      tables: {type: json}
-      files: {type: json}
-      diagnostics: {type: json}
-  PublicKevRows:
-    fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              vendor_id: {type: string}
-              vendor_name: {type: string}
-              product_id: {type: string}
-              product_name: {type: string}
-              cpe_vendor: {type: string}
-              cpe_product: {type: string}
-              cpe_part: {type: string}
-              cve_id: {type: string}
-              description: {type: string}
-              cvss_score: {type: number}
-              epss_score: {type: number}
-              kev_due_date: {type: string}
-              known_ransomware_use: {type: string}
-              affected_versions:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    version_start_including: {type: string}
-                    version_start_excluding: {type: string}
-                    version_end_including: {type: string}
-                    version_end_excluding: {type: string}
-                    fixed_version: {type: string}
-              fixed_version: {type: string}
-
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -199,8 +147,8 @@ providers:
     description: >
       Parse the pinned public KEV artifact into generic provenance-rich
       tabular rows. Domain normalization happens in the next workflow step.
-    contract_in: TabularParseOptions
-    contract_out: ParsedTabularBundle
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true
@@ -214,8 +162,8 @@ providers:
       CVE ID, extract CPE-based product identity and version ranges, and
       emit one row per (CVE, CPE product) pair with aggregated
       affected_versions.
-    contract_in: ParsedTabularBundle
-    contract_out: PublicKevRows
+    contract_in: cruxible.ParsedTabularBundle
+    contract_out: cruxible.JsonItems
     ref: kit://providers/reference.py::normalize_public_kev_reference
     version: "1.0.0"
     deterministic: true
@@ -228,7 +176,7 @@ workflows:
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: raw_tables
         provider: parse_public_kev_bundle

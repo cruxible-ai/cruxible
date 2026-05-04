@@ -15,67 +15,36 @@ entity_types:
   Asset:
     description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
     properties:
-      asset_id:
-        type: string
-        primary_key: true
-      hostname:
-        type: string
-        indexed: true
-      asset_type:
-        type: string
-        optional: true
-      criticality:
-        type: string
-        optional: true
-      environment:
-        type: string
-        optional: true
+      asset_id: {primary_key: true}
+      hostname: {indexed: true}
+      asset_type: {}
+      criticality: {}
+      environment: {}
       internet_exposed:
         type: bool
-        optional: true
 
   BusinessService:
     description: Internal business or technical service depending on assets.
     properties:
-      service_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      tier:
-        type: string
-        optional: true
+      service_id: {primary_key: true}
+      name: {indexed: true}
+      tier: {}
 
   Owner:
     description: Team or person responsible for an asset or service.
     properties:
-      owner_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-      team:
-        type: string
-        optional: true
-      email:
-        type: string
-        optional: true
+      owner_id: {primary_key: true}
+      name: {}
+      team: {}
+      email: {}
 
   CompensatingControl:
     description: Control that can reduce or block exploitability.
     properties:
-      control_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-      control_type:
-        type: string
-        optional: true
-      status:
-        type: string
-        optional: true
+      control_id: {primary_key: true}
+      name: {}
+      control_type: {}
+      status: {}
 
   VulnerabilityClass:
     description: >
@@ -83,106 +52,55 @@ entity_types:
       and scenario analysis. This is local-layer classification rather than
       reference-layer public data.
     properties:
-      class_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      description:
-        type: string
-        optional: true
-      attack_vector:
-        type: string
-        optional: true
+      class_id: {primary_key: true}
+      name: {indexed: true}
+      description: {}
+      attack_vector: {}
 
   Exception:
     description: Approved patch or remediation exception.
     properties:
-      exception_id:
-        type: string
-        primary_key: true
-      reason:
-        type: string
-        optional: true
-      review_due_at:
-        type: string
-        optional: true
-      status:
-        type: string
-        optional: true
+      exception_id: {primary_key: true}
+      reason: {}
+      review_due_at: {}
+      status: {}
 
   PatchWindow:
     description: Operational patching schedule or change window.
     properties:
-      patch_window_id:
-        type: string
-        primary_key: true
-      cadence:
-        type: string
-        optional: true
-      next_window_at:
-        type: string
-        optional: true
-      freeze_status:
-        type: string
-        optional: true
+      patch_window_id: {primary_key: true}
+      cadence: {}
+      next_window_at: {}
+      freeze_status: {}
 
   Incident:
     description: A security event from a SIEM, PagerDuty, or manual report.
     properties:
-      incident_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
+      incident_id: {primary_key: true}
+      title: {indexed: true}
       severity:
-        type: string
-        optional: true
         enum: [critical, high, medium, low]
       status:
-        type: string
-        optional: true
         enum: [open, investigating, resolved, closed]
       occurred_at:
         type: date
-        optional: true
       resolved_at:
         type: date
-        optional: true
-      source:
-        type: string
-        optional: true
-      summary:
-        type: string
-        optional: true
+      source: {}
+      summary: {}
 
   Finding:
     description: A root cause or contributing factor identified during incident investigation.
     properties:
-      finding_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      category:
-        type: string
-        optional: true
-      detail:
-        type: string
-        optional: true
+      finding_id: {primary_key: true}
+      title: {indexed: true}
+      category: {}
+      detail: {}
       status:
-        type: string
-        optional: true
         enum: [open, remediated, accepted_risk]
-      remediation_action:
-        type: string
-        optional: true
+      remediation_action: {}
       remediated_at:
         type: date
-        optional: true
 
 # ─── Local: deterministic internal mappings ────────────────────────────
 
@@ -227,12 +145,8 @@ relationships:
     from: Asset
     to: Product
     properties:
-      installed_version:
-        type: string
-        optional: true
-      evidence_source:
-        type: string
-        optional: true
+      installed_version: {}
+      evidence_source: {}
     matching:
       integrations:
         software_product_match:
@@ -247,27 +161,13 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      priority:
-        type: string
-        optional: true
-      due_by:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
-      product_id:
-        type: string
-        optional: true
-      installed_version:
-        type: string
-        optional: true
-      affected_rationale:
-        type: string
-        optional: true
-      evidence_source:
-        type: string
-        optional: true
+      priority: {}
+      due_by: {}
+      rationale: {}
+      product_id: {}
+      installed_version: {}
+      affected_rationale: {}
+      evidence_source: {}
     matching:
       integrations:
         product_version_evidence:
@@ -285,15 +185,9 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      exception_id:
-        type: string
-        optional: true
-      review_due_at:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      exception_id: {}
+      review_due_at: {}
+      rationale: {}
     matching:
       integrations:
         policy_review:
@@ -306,12 +200,8 @@ relationships:
     from: Vulnerability
     to: VulnerabilityClass
     properties:
-      basis:
-        type: string
-        optional: true
-      source:
-        type: string
-        optional: true
+      basis: {}
+      source: {}
     matching:
       integrations:
         vulnerability_classification:
@@ -323,12 +213,8 @@ relationships:
     from: CompensatingControl
     to: VulnerabilityClass
     properties:
-      validation_basis:
-        type: string
-        optional: true
-      expires_at:
-        type: string
-        optional: true
+      validation_basis: {}
+      expires_at: {}
     matching:
       integrations:
         control_effectiveness:
@@ -340,21 +226,11 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      remediation_type:
-        type: string
-        optional: true
-      verified_at:
-        type: string
-        optional: true
-      evidence_source:
-        type: string
-        optional: true
-      ticket_id:
-        type: string
-        optional: true
-      rationale:
-        type: string
-        optional: true
+      remediation_type: {}
+      verified_at: {}
+      evidence_source: {}
+      ticket_id: {}
+      rationale: {}
     matching:
       integrations:
         remediation_verification:
@@ -372,9 +248,7 @@ relationships:
     from: Incident
     to: Owner
     properties:
-      rationale:
-        type: string
-        optional: true
+      rationale: {}
     matching:
       integrations:
         incident_attribution:
@@ -386,12 +260,8 @@ relationships:
     to: Asset
     properties:
       role:
-        type: string
-        optional: true
         description: How the asset was involved (target, lateral_movement, staging, etc.)
-      rationale:
-        type: string
-        optional: true
+      rationale: {}
     matching:
       integrations:
         incident_attribution:
@@ -403,12 +273,8 @@ relationships:
     to: Vulnerability
     properties:
       evidence:
-        type: string
-        optional: true
         description: Summary of evidence linking this CVE to the incident.
-      rationale:
-        type: string
-        optional: true
+      rationale: {}
     matching:
       integrations:
         incident_attribution:
@@ -419,9 +285,7 @@ relationships:
     from: Finding
     to: Incident
     properties:
-      rationale:
-        type: string
-        optional: true
+      rationale: {}
     matching:
       integrations:
         incident_attribution:
@@ -696,375 +560,88 @@ quality_checks:
     property: hostname
     rule: non_empty
 
-# ─── Local: integrations for governed relationships ────────────────────
-
-integrations:
-  software_product_match:
-    kind: software_product_fuzzy_match
-    contract: null
-    notes: >
-      Fuzzy matching between internal software inventory names
-      (e.g. "Apache HTTP Server 2.4.49") and reference-layer CPE
-      product identifiers. Runs against the software_inventory.csv
-      evidence source.
-
-  product_version_evidence:
-    kind: product_version_match
-    contract: null
-    notes: >
-      Matches installed product version against NVD affected version
-      ranges to determine if an asset is actually affected.
-
-  exploitability_signal:
-    kind: exploitability_assessment
-    contract: null
-    notes: >
-      Assesses whether a vulnerability is practically exploitable on
-      a specific asset given its environment and exposure posture.
-
-  control_effectiveness:
-    kind: compensating_control_review
-    contract: null
-    notes: >
-      Reviews whether a compensating control materially reduces
-      exploitability for the specific vulnerability class.
-
-  vulnerability_classification:
-    kind: vulnerability_classification
-    contract: null
-    notes: >
-      Reviews whether a vulnerability belongs to a local operational
-      class used for control coverage and scenario analysis.
-
-  policy_review:
-    kind: remediation_policy_review
-    contract: null
-    notes: >
-      Reviews whether a patch exception is still valid per
-      organizational remediation policy.
-
-  incident_attribution:
-    kind: incident_investigation
-    contract: null
-    notes: >
-      Agent or human judgment linking incidents to assets,
-      vulnerabilities, and findings based on investigation
-      evidence. Typically proposed one at a time via group
-      propose after reading incident reports or post-mortems.
-
-  remediation_verification:
-    kind: remediation_verification
-    contract: null
-    notes: >
-      Reviews whether a specific asset-vulnerability pair has
-      been remediated or verified closed based on scanner
-      evidence, change tickets, upgrade confirmation,
-      decommissioning, or manual validation.
-
 # ─── Contracts ────────────────────────────────────────────────────────
 
 contracts:
   LocalSeedData:
     description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
     fields:
-      assets:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              hostname: {type: string}
-              asset_type: {type: string}
-              criticality: {type: string}
-              environment: {type: string}
-              internet_exposed: {type: boolean}
-      business_services:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              service_id: {type: string}
-              name: {type: string}
-              tier: {type: string}
-      owners:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              owner_id: {type: string}
-              name: {type: string}
-              team: {type: string}
-              email: {type: string}
-      compensating_controls:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              control_id: {type: string}
-              name: {type: string}
-              control_type: {type: string}
-              status: {type: string}
-      vulnerability_classes:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              class_id: {type: string}
-              name: {type: string}
-              description: {type: string}
-              attack_vector: {type: string}
-      exceptions:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              exception_id: {type: string}
-              reason: {type: string}
-              review_due_at: {type: string}
-              status: {type: string}
-      patch_windows:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              patch_window_id: {type: string}
-              cadence: {type: string}
-              next_window_at: {type: string}
-              freeze_status: {type: string}
-      service_depends_on_asset:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              service_id: {type: string}
-              asset_id: {type: string}
-      asset_owned_by:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              owner_id: {type: string}
-      asset_has_control:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              control_id: {type: string}
-      asset_has_exception:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              exception_id: {type: string}
-      asset_patch_window:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              patch_window_id: {type: string}
+      assets: {type: json}
+      business_services: {type: json}
+      owners: {type: json}
+      compensating_controls: {type: json}
+      vulnerability_classes: {type: json}
+      exceptions: {type: json}
+      patch_windows: {type: json}
+      service_depends_on_asset: {type: json}
+      asset_owned_by: {type: json}
+      asset_has_control: {type: json}
+      asset_has_exception: {type: json}
+      asset_patch_window: {type: json}
 
   SoftwareInventory:
     description: Raw software inventory from CMDB and inventory tools with business-friendly names.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              software_name: {type: string}
-              vendor: {type: string}
-              version: {type: string}
-              evidence_source: {type: string}
-              last_seen: {type: string}
+      items: {type: json}
 
   SoftwareMatchInput:
     description: Software inventory rows plus canonical reference products to match against.
     fields:
-      inventory_items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-      reference_products:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
+      inventory_items: {type: json}
+      reference_products: {type: json}
 
   SoftwareMatchResults:
     description: Fuzzy match results mapping software inventory rows to reference products.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              product_id: {type: string}
-              installed_version: {type: string}
-              evidence_source: {type: string}
-              match_confidence: {type: number}
-              verdict: {type: string}
+      items: {type: json}
 
   AssetAffectedAssessmentInput:
     description: Approved asset-product mappings plus public vulnerability-product edges.
     fields:
-      asset_product_edges:
-        type: json
-      vulnerability_product_edges:
-        type: json
+      asset_product_edges: {type: json}
+      vulnerability_product_edges: {type: json}
 
   AssetAffectedAssessmentResults:
     description: Candidate asset-vulnerability judgments derived from version-range comparison.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              cve_id: {type: string}
-              product_id: {type: string}
-              installed_version: {type: string}
-              source: {type: string}
-              rationale: {type: string}
-              verdict: {type: string}
+      items: {type: json}
 
   AssetExposureAssessmentInput:
     description: Transient affected candidates plus asset posture and control context.
     fields:
-      affected_items:
-        type: json
-      assets:
-        type: json
-      asset_control_edges:
-        type: json
-      controls:
-        type: json
+      affected_items: {type: json}
+      assets: {type: json}
+      asset_control_edges: {type: json}
+      controls: {type: json}
 
   AssetExposureAssessmentResults:
     description: Candidate asset exposure judgments with exploitability and control signals.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              cve_id: {type: string}
-              priority: {type: string}
-              due_by: {type: string}
-              rationale: {type: string}
-              product_id: {type: string}
-              installed_version: {type: string}
-              affected_rationale: {type: string}
-              evidence_source: {type: string}
-              affected_verdict: {type: string}
-              exploitability_verdict: {type: string}
-              control_verdict: {type: string}
+      items: {type: json}
 
   VulnerabilityClassificationProposalInput:
     description: Agent-selected vulnerability classification proposals.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              cve_id: {type: string}
-              class_id: {type: string}
-              basis: {type: string}
-              source: {type: string}
-              verdict: {type: string}
+      items: {type: json}
 
   ControlMitigatesClassProposalInput:
     description: Agent-selected control-to-vulnerability-class mitigation proposals.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              control_id: {type: string}
-              class_id: {type: string}
-              validation_basis: {type: string}
-              verdict: {type: string}
+      items: {type: json}
 
   ExposureReconciliationInput:
     description: Accepted exposure state plus product-derived current affected candidates.
     fields:
-      accepted_exposure_edges:
-        type: json
-      affected_items:
-        type: json
-      asset_product_edges:
-        type: json
-      vulnerability_product_edges:
-        type: json
-      remediated_edges:
-        type: json
+      accepted_exposure_edges: {type: json}
+      affected_items: {type: json}
+      asset_product_edges: {type: json}
+      vulnerability_product_edges: {type: json}
+      remediated_edges: {type: json}
 
   ExposureReconciliationResults:
     description: Closure proposals for accepted exposure edges no longer supported by current product-derived evidence.
     fields:
-      items:
-        type: json
-        json_schema:
-          type: array
-          items:
-            type: object
-            properties:
-              asset_id: {type: string}
-              cve_id: {type: string}
-              remediation_type: {type: string}
-              evidence_source: {type: string}
-              rationale: {type: string}
-              verdict: {type: string}
-
-# ─── Artifacts ────────────────────────────────────────────────────────
+      items: {type: json}
 
 artifacts:
   local_seed_bundle:
@@ -1082,8 +659,8 @@ providers:
     description: >
       Parse the pinned local seed artifact into generic provenance-rich
       tabular rows. Domain normalization happens in the next workflow step.
-    contract_in: TabularParseOptions
-    contract_out: ParsedTabularBundle
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true
@@ -1095,7 +672,7 @@ providers:
     description: >
       Normalize parsed local seed tables into deterministic KEV entities and
       relationship rows keyed by entity and relationship type.
-    contract_in: ParsedTabularBundle
+    contract_in: cruxible.ParsedTabularBundle
     contract_out: LocalSeedData
     ref: kit://providers/seed.py::normalize_local_seed_tables
     version: "1.0.0"
@@ -1109,7 +686,7 @@ providers:
       Load raw software inventory from the seed data bundle. Returns
       rows with business-friendly software names, versions, and
       evidence sources.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     contract_out: SoftwareInventory
     ref: kit://providers/seed.py::load_software_inventory
     version: "1.0.0"
@@ -1177,7 +754,7 @@ workflows:
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference
       layer's build_public_kev_reference workflow.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: raw_tables
         provider: parse_local_seed_bundle
@@ -1391,7 +968,7 @@ workflows:
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
       governed group resolution flow.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: inventory
         provider: load_software_inventory
@@ -1454,7 +1031,7 @@ workflows:
       Derive affected asset-vulnerability candidates from approved
       asset-product mappings, then propose the asset exposure edges that
       should drive action.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: asset_products
         list_relationships:
@@ -1674,7 +1251,7 @@ workflows:
       current affected candidate set through Asset -> Product <- Vulnerability
       and propose remediation/closure for accepted exposure edges that are no
       longer supported.
-    contract_in: EmptyInput
+    contract_in: cruxible.EmptyInput
     steps:
       - id: asset_products
         list_relationships:
