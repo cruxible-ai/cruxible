@@ -104,8 +104,10 @@ Create a new instance or reload an existing one.
 | `config_path` | string | conditional | Path to a YAML config file (new instance) |
 | `config_yaml` | string | conditional | Raw YAML string (new instance) |
 | `data_dir` | string | no | Directory for data files |
+| `kit` | string | conditional | Standalone kit alias or ref to materialize |
 
-To create a new instance, provide exactly one of `config_path` or `config_yaml`. To reload, omit both.
+To create a new instance, provide exactly one of `config_path`, `config_yaml`, or `kit`.
+`kit` accepts standalone kits only. To reload, omit all three.
 
 **Returns:** `InitResult`
 

@@ -266,6 +266,25 @@ planner, not by turning every useful view into a governed relationship.
 | Complements For Shopping Mission | Product | Mission Includes Category (Outgoing) -> Product In Category (Incoming) -> Product Complements Product (Outgoing) | Starting from a shopping mission, find products connected through mission categories and reviewed complement edges. |
 <!-- CRUXIBLE:END query-catalog -->
 
+## Schema Reference
+
+This README keeps schema detail at the diagram and table level so the kit
+remains usable as a drafting surface. The config remains the source of truth
+for full entity, relationship, and contract properties. For a generated
+Markdown schema catalog, run:
+
+```bash
+uv run cruxible config-views --config kits/retail-catalog/config.yaml --runtime --view schema-catalog
+```
+
+When the kit is loaded into a local instance, generate navigable reference
+pages under `wiki/reference/` with:
+
+```bash
+uv run cruxible render-wiki --output wiki --scope local
+```
+
+
 ## Compounding Knowledge Procedure
 
 1. Register the canonical catalog state: products, SKUs, brands, categories,

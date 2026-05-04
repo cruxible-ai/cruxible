@@ -9,7 +9,7 @@ version: "1.0"
 name: "my_domain"
 kind: world_model
 description: "Optional description of this decision domain"
-# extends: base-config.yaml  # release-backed fork composition (see below)
+# extends: base-config.yaml  # release-backed overlay composition (see below)
 
 entity_types: { ... }
 relationships: [ ... ]
@@ -36,7 +36,7 @@ tests: [ ... ]
 | `name` | string | **yes** | — | Unique name for this domain |
 | `kind` | string | no | `"world_model"` | `"ontology"` or `"world_model"` |
 | `description` | string | no | `null` | Human-readable description |
-| `extends` | string | no | `null` | Path to a base config for release-backed fork composition (see [Config Composition](#config-composition)) |
+| `extends` | string | no | `null` | Path to a base config for release-backed overlay composition (see [Config Composition](#config-composition)) |
 | `cruxible_version` | string | no | `null` | Version of cruxible-core that produced this config (auto-stamped on save) |
 | `entity_types` | dict | **yes**\* | — | Entity type definitions (\*optional when `extends` is set) |
 | `relationships` | list | no | `[]` | Relationship definitions |
@@ -59,19 +59,19 @@ tests: [ ... ]
 
 ## Config Composition
 
-The `extends` field enables a **fork pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream fork adds its own internal extensions without duplicating the base.
+The `extends` field enables a **overlay pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
 
 **How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
 
-At runtime, the release-backed fork flow (`service_reload_config`) materializes the composed config to disk as the active config the instance uses.
+At runtime, the release-backed overlay flow (`service_reload_config`) materializes the composed config to disk as the active config the instance uses.
 
 ```yaml
 # overlay config — validated by composing with the base automatically
 version: "1.0"
 name: kev_triage
-extends: kev-reference.yaml
+extends: ../kev-reference/config.yaml
 description: >
-  Fork of the KEV reference world model for internal vulnerability triage.
+  Overlay of the KEV reference world model for internal vulnerability triage.
 
 entity_types:
   Asset:
@@ -1092,15 +1092,15 @@ tests:
 
 ## Full Example
 
-The KEV triage fork config (`kits/kev-triage/config.yaml`) demonstrates a release-backed fork overlay that extends a reference layer with governed judgment relationships. **Note:** This config requires composition with its base (`kev-reference.yaml`) before it can be validated or loaded — `Vulnerability`, `Product`, and other reference types are defined in the base, not here:
+The KEV triage overlay config (`kits/kev-triage/config.yaml`) demonstrates a release-backed overlay that extends a reference layer with governed judgment relationships. **Note:** This config requires composition with its base (`kits/kev-reference/config.yaml`) before it can be validated or loaded — `Vulnerability`, `Product`, and other reference types are defined in the base, not here:
 
 ```yaml
 version: "1.0"
 name: kev_triage
 kind: world_model
-extends: kev-reference.yaml
+extends: ../kev-reference/config.yaml
 description: >
-  Fork of the KEV reference world model for internal vulnerability triage.
+  Overlay of the KEV reference world model for internal vulnerability triage.
 
 entity_types:
   Asset:
@@ -1189,4 +1189,4 @@ integrations:
       output: support|unsure|contradict
 ```
 
-See also the reference layer config (`kits/kev-triage/kev-reference.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks.
+See also the reference layer config (`kits/kev-reference/config.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks.

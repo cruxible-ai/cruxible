@@ -1,6 +1,6 @@
 # Cruxible Kits
 
-Kits are maintained Cruxible world models intended to be used, forked, and
+Kits are maintained Cruxible world models intended to be used, overlaid, and
 iterated with agents. Each kit includes a YAML config and a README with generated
 views for the ontology, governed relationships, workflows, and named queries.
 

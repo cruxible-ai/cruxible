@@ -1,6 +1,6 @@
 # KEV Triage
 
-Forkable cyber world model for vulnerability and KEV triage.
+Localable cyber world model for vulnerability and KEV triage.
 
 ## Skills
 
@@ -11,15 +11,15 @@ Forkable cyber world model for vulnerability and KEV triage.
 
 ## Structure
 
-This demo has two configs that represent the two layers:
+This demo has two kit directories that represent the two layers:
 
-- **`kev-reference.yaml`** — the published upstream world model. Contains only
+- **`../kev-reference/config.yaml`** — the published upstream world model. Contains only
   public entity types (Vendor, Product, Vulnerability), deterministic reference
   relationships, plus a canonical workflow that builds accepted reference state
   from the bundled hashed KEV/NVD/EPSS artifact. This is what Cruxible hosts
-  and keeps updated from public feeds. Read-only to forks.
+  and keeps updated from public feeds. Read-only to local instances.
 
-- **`config.yaml`** — a customer fork that uses `extends: kev-reference.yaml`.
+- **`config.yaml`** — a customer local that uses `extends: ../kev-reference/config.yaml`.
   Adds internal entity types, deterministic internal mappings, governed judgment
   relationships, feedback and outcome profiles, quality checks, and named queries
   that traverse across both layers.
@@ -98,24 +98,24 @@ flowchart LR
   classDef canonicalWorkflow fill:#4a90d9,stroke:#2c5f8a,color:#fff
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
-  workflow_pipeline_build_fork_state["1. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_build_local_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
   workflow_pipeline_propose_asset_exposure["3. Asset Exposed To Vulnerability<br/>Governed proposal"]
   workflow_pipeline_propose_control_mitigates_class["4. Control Mitigates Class<br/>Governed proposal"]
   workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
   workflow_pipeline_propose_vulnerability_classification["6. Vulnerability Classified As<br/>Governed proposal"]
-  workflow_pipeline_build_fork_state --> workflow_pipeline_propose_asset_products
+  workflow_pipeline_build_local_state --> workflow_pipeline_propose_asset_products
   workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_asset_exposure
   workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_control_mitigates_class
   workflow_pipeline_propose_control_mitigates_class --> workflow_pipeline_propose_exposure_reconciliation
   workflow_pipeline_propose_exposure_reconciliation --> workflow_pipeline_propose_vulnerability_classification
-  class workflow_pipeline_build_fork_state canonicalWorkflow
+  class workflow_pipeline_build_local_state canonicalWorkflow
   class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_control_mitigates_class,workflow_pipeline_propose_exposure_reconciliation,workflow_pipeline_propose_vulnerability_classification governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
 <!-- CRUXIBLE:BEGIN workflow-summary -->
-### 1. Build Fork State
+### 1. Build Local State
 
 **Role:** Canonical seed
 
@@ -127,8 +127,8 @@ flowchart LR
 - Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Service Depends On Asset
 
 **Provider source**
-- Normalize Fork Seed Tables (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/seed.py::normalize_fork_seed_tables`; artifact: Fork Seed Bundle
-- Parse Fork Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Fork Seed Bundle
+- Normalize Local Seed Tables (Python Function, v1.0.0); source: `kit://providers/seed.py::normalize_local_seed_tables`; artifact: Local Seed Bundle
+- Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 
 ### 2. Propose Asset Products
 
@@ -141,8 +141,8 @@ flowchart LR
 - Proposed relationships: Asset Runs Product
 
 **Provider source**
-- Load Software Inventory (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/seed.py::load_software_inventory`; artifact: Fork Seed Bundle
-- Match Software To Products (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/matching.py::match_software_to_products`
+- Load Software Inventory (Python Function, v1.0.0); source: `kit://providers/seed.py::load_software_inventory`; artifact: Local Seed Bundle
+- Match Software To Products (Python Function, v1.0.0); source: `kit://providers/matching.py::match_software_to_products`
 
 ### 3. Propose Asset Exposure
 
@@ -156,8 +156,8 @@ flowchart LR
 - Proposed relationships: Asset Exposed To Vulnerability
 
 **Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_affected`
-- Assess Asset Exposure (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_exposure`
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
 
 ### 4. Propose Control Mitigates Class
 
@@ -183,8 +183,8 @@ flowchart LR
 - Proposed relationships: Asset Remediated Vulnerability
 
 **Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_asset_affected`
-- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `src/cruxible_kits/kev_triage/assessment.py::assess_exposure_reconciliation`
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_exposure_reconciliation`
 
 ### 6. Propose Vulnerability Classification
 
@@ -593,7 +593,7 @@ system.
 
 Source material for governed agent actions lives under
 `data/seed/review_material/`. Those files are not loaded by
-`build_fork_state`; they are synthetic incident reports, waiver requests, and
+`build_local_state`; they are synthetic incident reports, waiver requests, and
 control reviews meant to drive `add-entity` and `group propose`.
 
 ## Incident History Layer

@@ -37,17 +37,24 @@ Initialize a new `.cruxible/` instance in the current directory.
 
 ```bash
 cruxible init --config <path> [--data-dir <dir>]
+cruxible init --kit <standalone-kit>
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `--config` | **yes** | Path to config YAML file |
+| `--config` | conditional | Path to config YAML file |
+| `--kit` | conditional | Standalone kit alias or ref to materialize |
 | `--data-dir` | no | Directory for data files |
+
+Provide exactly one of `--config` or `--kit`.
 
 **Example:**
 
 ```bash
 cruxible init --config config.yaml --data-dir ./data
+# Initialized .cruxible/ in /path/to/project
+
+cruxible init --kit kev-reference
 # Initialized .cruxible/ in /path/to/project
 ```
 
