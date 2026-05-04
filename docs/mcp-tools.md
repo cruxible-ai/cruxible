@@ -1,593 +1,1546 @@
 # MCP Tools Reference
 
-Cruxible Core exposes MCP tools through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). AI agents (Claude Code, Cursor, Codex, etc.) use these tools to orchestrate the full decision lifecycle: validate configs, lock and execute workflows, query the graph, provide feedback, and evaluate quality.
-
-For local instances, MCP and CLI are the same shape over the same runtime. For remote or governed instances, the authenticated HTTP API is the primary execution surface and MCP is one client adapter over it.
-
-## Setup
-
-Install the MCP runtime with:
-
-```bash
-pip install "cruxible-core[mcp]"
-```
-
-If you are writing a separate HTTP client that talks to an already-running daemon, install `cruxible-client` in that agent environment instead of `cruxible-core`.
-
-Add to your MCP client config (Claude Code / Cursor use `.mcp.json`; see [README](../README.md#mcp-setup) for Codex):
-
-```json
-{
-  "mcpServers": {
-    "cruxible": {
-      "command": "cruxible-mcp",
-      "env": {
-        "CRUXIBLE_MODE": "admin"
-      }
-    }
-  }
-}
-```
+This is the full searchable reference for Cruxible MCP tools. MCP is a curated agent connector, not full CLI parity. The HTTP API/client remain the broader remote product surface; CLI keeps shell-only utilities such as `context`, `config-views --update-readme`, `export edges`, and local receipt `explain`.
 
 ## Permission Modes
 
-Each tool requires a minimum permission tier. Set via the `CRUXIBLE_MODE` environment variable.
+| Mode | Env value | Meaning |
+| --- | --- | --- |
+| READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, and proposal groups. |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation and group resolution/trust updates. |
+| ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, world publication/pull, ingest, constraints, policies. |
 
-| Mode | Env Value | Description |
-|------|-----------|-------------|
-| `READ_ONLY` | `read_only` | Query, inspect, validate — no mutations |
-| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + receipt-persisting workflow runs, governed proposal, feedback |
-| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + raw graph mutation and proposal resolution |
-| `ADMIN` | `admin` | All tools including canonical workflow apply, ingest, and config mutation |
+## cruxible_version
 
-Default is `ADMIN` if unset.
+**Permission:** `READ_ONLY`
 
-These tiers are enforced at the daemon boundary. They are meaningful when an agent talks to a running Cruxible daemon through MCP/HTTP, not when it can import `cruxible-core` runtime modules directly in the same environment.
+**Purpose:** Return the cruxible-core version. Use this to confirm which build is running.
 
----
+**Arguments:** none.
 
-## Utility Tools
+**Returns:** Returns a JSON object with dynamic keys.
 
-### cruxible_version
+**Side Effects:** Read-only.
 
-Return the cruxible-core version. Use this to confirm which build is running.
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Permission:** READ_ONLY
+## cruxible_server_info
 
-_No parameters._
+**Permission:** `READ_ONLY`
 
-**Returns:**
+**Purpose:** Return live daemon metadata such as agent mode, state dir, and instance count.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `version` | string | Installed cruxible-core version (e.g., `"0.3.3"`) |
+**Arguments:** none.
 
----
+**Returns:** Top-level fields: `agent_mode`, `state_dir`, `version`, `instance_count`
 
-## Lifecycle Tools
+**Side Effects:** Read-only.
 
-### cruxible_validate
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Validate a config without creating an instance. Always run this before `cruxible_init`.
+## cruxible_init
 
-**Permission:** READ_ONLY
+**Permission:** `READ_ONLY`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `config_path` | string | conditional | Path to a YAML config file |
-| `config_yaml` | string | conditional | Raw YAML string |
+**Purpose:** Create or reload a governed daemon-backed instance. Provide `config_path` or `config_yaml` when creating a new instance. In server mode, `config_path` is read locally and uploaded as config content; the daemon stores its own active copy. To reload after a restart, omit both.
 
-Provide exactly one of `config_path` or `config_yaml`.
+**Arguments:**
 
-**Returns:** `ValidateResult`
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `root_dir` | yes | string |  |
+| `config_path` | no | string | null |  |
+| `config_yaml` | no | string | null |  |
+| `data_dir` | no | string | null |  |
+| `kit` | no | string | null |  |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `valid` | bool | Whether the config passed validation |
-| `name` | string | Config name |
-| `entity_types` | list[string] | Entity type names |
-| `relationships` | list[string] | Relationship names |
-| `named_queries` | list[string] | Query names |
-| `warnings` | list[string] | Non-fatal warnings |
+**Returns:** Top-level fields: `instance_id`, `status`, `warnings`
 
----
+**Side Effects:** Read-only.
 
-### cruxible_init
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Create a new instance or reload an existing one.
+## cruxible_validate
 
-**Permission:** READ_ONLY (reload) / ADMIN (create)
+**Permission:** `READ_ONLY`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `root_dir` | string | **yes** | Directory for the `.cruxible/` instance |
-| `config_path` | string | conditional | Path to a YAML config file (new instance) |
-| `config_yaml` | string | conditional | Raw YAML string (new instance) |
-| `data_dir` | string | no | Directory for data files |
-| `kit` | string | conditional | Standalone kit alias or ref to materialize |
+**Purpose:** Validate a config file or inline YAML without creating an instance. Provide exactly one of `config_path` (path to a YAML file) or `config_yaml` (raw YAML string).
 
-To create a new instance, provide exactly one of `config_path`, `config_yaml`, or `kit`.
-`kit` accepts standalone kits only. To reload, omit all three.
+**Arguments:**
 
-**Returns:** `InitResult`
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `config_path` | no | string | null |  |
+| `config_yaml` | no | string | null |  |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `instance_id` | string | Unique instance identifier (use in all subsequent calls) |
-| `status` | string | `"initialized"` or `"loaded"` |
+**Returns:** Top-level fields: `valid`, `name`, `entity_types`, `relationships`, `named_queries`, `warnings`
 
----
+**Side Effects:** Read-only.
 
-### cruxible_lock_workflow
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Generate the workflow lock file for the current instance config.
+## cruxible_world_create_overlay
 
-**Permission:** ADMIN
+**Permission:** `ADMIN`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID from `cruxible_init` |
+**Purpose:** Create a new governed overlay from a published world release.
 
-Use this after changing workflow config, providers, or artifacts and before planning or executing workflows.
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `root_dir` | yes | string |  |
+| `transport_ref` | no | string | null |  |
+| `world_ref` | no | string | null |  |
+| `kit` | no | string | null |  |
+| `no_kit` | no | boolean |  |
 
-### cruxible_plan_workflow
+**Returns:** Top-level fields: `instance_id`, `manifest`
 
-Compile a configured workflow into a concrete execution plan.
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-**Permission:** READ_ONLY
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Workflow name from config |
-| `input_payload` | dict | no | Structured workflow input |
+## cruxible_lock_workflow
 
----
+**Permission:** `ADMIN`
 
-### cruxible_run_workflow
+**Purpose:** Generate the workflow lock file for the current instance config. Run this after changing providers, artifacts, or workflow config and before planning or executing workflows.
 
-Execute a configured workflow and return its output, receipt, and traces.
+**Arguments:**
 
-**Permission:** GOVERNED_WRITE
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `force` | no | boolean |  |
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Workflow name from config |
-| `input_payload` | dict | no | Structured workflow input |
+**Returns:** Top-level fields: `lock_path`, `config_digest`, `providers_locked`, `artifacts_locked`
 
-Canonical workflows run in preview mode and return `apply_digest` plus `head_snapshot_id`. Pass those to `cruxible_apply_workflow` to commit.
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
----
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-### cruxible_apply_workflow
+## cruxible_plan_workflow
 
-Apply a canonical workflow after verifying the preview identity.
+**Permission:** `READ_ONLY`
 
-**Permission:** ADMIN
+**Purpose:** Compile a configured workflow into a concrete execution plan.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `workflow_name` | string | **yes** | Canonical workflow name |
-| `expected_apply_digest` | string | **yes** | Preview digest from `cruxible_run_workflow` |
-| `expected_head_snapshot_id` | string | no | Snapshot ID returned by preview |
-| `input_payload` | dict | no | Structured workflow input |
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `workflow_name` | yes | string |  |
+| `input_payload` | no | object | null |  |
 
-### cruxible_ingest
+**Returns:** Top-level fields: `plan`
 
-Ingest data through a named ingestion mapping.
+**Side Effects:** Read-only.
 
-**Permission:** ADMIN
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID from `cruxible_init` |
-| `mapping_name` | string | **yes** | Ingestion mapping name from config |
-| `file_path` | string | conditional | Path to a CSV or JSON file |
-| `data_csv` | string | conditional | Inline CSV string |
-| `data_json` | string or list | conditional | Inline JSON array of row objects |
-| `data_ndjson` | string | conditional | Inline NDJSON string (one JSON object per line) |
-| `upload_id` | string | conditional | Reserved for cloud mode |
+## cruxible_run_workflow
 
-Deprecated for new configs: prefer workflow-based deterministic loading with `cruxible_lock_workflow`, `cruxible_run_workflow`, and `cruxible_apply_workflow`.
+**Permission:** `GOVERNED_WRITE`
 
-Provide exactly one data source. Ingest entity mappings before relationship mappings.
+**Purpose:** Execute a configured workflow and return receipts, traces, and output. Canonical workflows run in preview mode and return an `apply_digest` plus the current `head_snapshot_id`. To commit a canonical workflow, call `cruxible_apply_workflow` with those values.
 
-**Returns:** `IngestResult`
+**Arguments:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `records_ingested` | int | Number of records loaded |
-| `mapping` | string | Mapping name used |
-| `entity_type` | string or null | Entity type (if entity mapping) |
-| `relationship_type` | string or null | Relationship type (if relationship mapping) |
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `workflow_name` | yes | string |  |
+| `input_payload` | no | object | null |  |
+| `decision_record_id` | no | string | null |  |
 
----
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
 
-## Query Tools
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-### cruxible_query
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Run a named query and return results with a receipt.
+## cruxible_apply_workflow
 
-**Permission:** READ_ONLY
+**Permission:** `ADMIN`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `query_name` | string | **yes** | Named query from config |
-| `params` | dict | no | Query parameters (e.g., `{"drug_id": "warfarin"}`) |
-| `limit` | int | no | Maximum results to return |
+**Purpose:** Apply a canonical workflow after verifying the preview identity.
 
-**Returns:** `QueryToolResult`
+**Arguments:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `results` | list[dict] | Matched entities with properties |
-| `receipt_id` | string or null | Receipt ID for provenance tracking |
-| `receipt` | dict or null | Inline receipt data |
-| `total_results` | int | Total number of results |
-| `steps_executed` | int | Number of traversal steps executed |
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `workflow_name` | yes | string |  |
+| `expected_apply_digest` | yes | string |  |
+| `expected_head_snapshot_id` | no | string | null |  |
+| `input_payload` | no | object | null |  |
+| `decision_record_id` | no | string | null |  |
 
----
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
 
-### cruxible_receipt
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-Fetch a stored receipt from a previous query.
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Permission:** READ_ONLY
+## cruxible_test_workflow
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `receipt_id` | string | **yes** | Receipt ID from a prior `cruxible_query` |
+**Permission:** `GOVERNED_WRITE`
 
-**Returns:** Full receipt dict with traversal evidence, timestamps, and provenance chain.
+**Purpose:** Run configured workflow tests for an instance.
 
----
+**Arguments:**
 
-### cruxible_find_candidates
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `name` | no | string | null |  |
 
-Find missing-relationship candidates using deterministic strategies.
+**Returns:** Top-level fields: `total`, `passed`, `failed`, `cases`
 
-**Permission:** READ_ONLY
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `relationship_type` | string | **yes** | Relationship type to find candidates for |
-| `strategy` | string | **yes** | `"property_match"` or `"shared_neighbors"` |
-| `match_rules` | list[dict] | conditional | Rules for `property_match` (each: `{from_property, to_property, operator}`) |
-| `via_relationship` | string | conditional | Relationship for `shared_neighbors` |
-| `min_overlap` | float | no | Minimum neighbor overlap (default: `0.5`) |
-| `min_confidence` | float | no | Minimum confidence threshold (default: `0.5`) |
-| `limit` | int | no | Maximum candidates to return (default: `20`) |
-| `min_distinct_neighbors` | int | no | Minimum neighbors per entity for `shared_neighbors` (default: `2`) |
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Strategy: `property_match`** — Requires `match_rules`. Operators:
-- `equals` (default): Type-strict hash-join, O(n+m)
-- `iequals`: Case-insensitive hash-join, O(n+m)
-- `contains`: Substring match, brute-force scan
+## cruxible_ingest
 
-**Strategy: `shared_neighbors`** — Requires `via_relationship`. Finds entity pairs sharing common neighbors through the specified relationship.
+**Permission:** `ADMIN`
 
-**Returns:** `CandidatesResult`
+**Purpose:** Ingest data through a legacy ingestion mapping. Deprecated for new configs: prefer workflow-based deterministic loading via `cruxible_lock_workflow`, `cruxible_run_workflow`, and `cruxible_apply_workflow`. For deterministic relationships only (explicit in source data). For inferred relationships (matching, classification), use ``cruxible_add_relationship`` instead. Provide exactly one data source: - ``file_path``: path to a CSV, JSON, or NDJSON (.jsonl/.ndjson) file on disk. Files with ``.json`` extension containing NDJSON content are auto-detected. - ``data_csv``: inline CSV string - ``data_json``: inline JSON array of row objects (e.g. ``[{"id": "1", "name": "x"}, ...]``) - ``data_ndjson``: inline NDJSON string (one JSON object per line) - ``upload_id``: reserved for cloud mode (not supported locally) Ingest entity mappings before relationship mappings. Re-ingesting existing relationships updates provided properties; omitted properties are preserved. For large relationship sets (10K+ edges), CSV file ingestion is recommended — it streams rows and avoids MCP payload size limits.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `candidates` | list[dict] | Candidate relationship pairs with confidence scores |
-| `total` | int | Total candidates found |
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `mapping_name` | yes | string |  |
+| `file_path` | no | string | null |  |
+| `data_csv` | no | string | null |  |
+| `data_json` | no | string | array | null |  |
+| `data_ndjson` | no | string | null |  |
+| `upload_id` | no | string | null |  |
 
-## Feedback Tools
+**Returns:** Top-level fields: `records_ingested`, `records_updated`, `mapping`, `entity_type`, `relationship_type`, `receipt_id`
 
-### cruxible_feedback
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-Record edge-level feedback tied to a receipt.
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Permission:** GRAPH_WRITE
+## cruxible_query
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `receipt_id` | string | **yes** | Receipt ID the feedback applies to |
-| `action` | string | **yes** | `"approve"`, `"reject"`, `"correct"`, or `"flag"` |
-| `source` | string | **yes** | `"human"` or `"agent"` |
-| `from_type` | string | **yes** | Source entity type |
-| `from_id` | string | **yes** | Source entity ID |
-| `relationship` | string | **yes** | Relationship type |
-| `to_type` | string | **yes** | Target entity type |
-| `to_id` | string | **yes** | Target entity ID |
-| `edge_key` | int | no | Edge key for multi-edge disambiguation |
-| `reason` | string | no | Reason for the feedback (default: `""`) |
-| `corrections` | dict | no | Property corrections (for `action="correct"`) |
+**Permission:** `READ_ONLY`
 
-**Returns:** `FeedbackResult`
+**Purpose:** Run a named query and return results plus a receipt. `params` must include the primary-key field of the query's entry_point entity type (e.g. if entry_point is Vehicle and its primary key is vehicle_id, pass {"vehicle_id": "V-123"}). Use `cruxible_schema` to find primary key fields. `receipt_id` is also promoted to top-level for follow-up tools. After querying, use `cruxible_receipt` to inspect the traversal proof showing exactly how results were derived. Use `limit` to cap the number of returned results and omit the inline receipt (fetch it later via `cruxible_receipt`).
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `feedback_id` | string | Unique feedback record ID |
-| `applied` | bool | Whether the feedback was applied to the graph edge |
+**Arguments:**
 
-**Behavior:**
-- `reject`: Excluded from future query results
-- `approve`: Trusted in traversals
-- `correct`: Updates edge properties (pass `corrections` dict)
-- `flag`: Marks for review without changing behavior
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `query_name` | yes | string |  |
+| `params` | no | object | null |  |
+| `limit` | no | integer | null |  |
+| `decision_record_id` | no | string | null |  |
 
----
+**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `truncated`, `steps_executed`, `param_hints`, `policy_summary`
 
-### cruxible_outcome
+**Side Effects:** Read-only.
 
-Record the outcome of a decision (query result accuracy).
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Permission:** GRAPH_WRITE
+## cruxible_list_queries
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `receipt_id` | string | **yes** | Receipt ID |
-| `outcome` | string | **yes** | `"correct"`, `"incorrect"`, `"partial"`, or `"unknown"` |
-| `detail` | dict | no | Additional outcome details |
+**Permission:** `READ_ONLY`
 
-**Returns:** `OutcomeResult`
+**Purpose:** List named queries with their entry points, required params, and example IDs.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `outcome_id` | string | Unique outcome record ID |
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
 
-## Inspection Tools
+**Returns:** Top-level fields: `queries`
 
-### cruxible_list
+**Side Effects:** Read-only.
 
-List entities, edges, receipts, feedback, or outcomes with optional filters.
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Permission:** READ_ONLY
+## cruxible_describe_query
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `resource_type` | string | **yes** | `"entities"`, `"edges"`, `"receipts"`, `"feedback"`, or `"outcomes"` |
-| `entity_type` | string | conditional | Required when `resource_type="entities"` |
-| `relationship_type` | string | no | Filter edges by relationship type (only for `resource_type="edges"`) |
-| `query_name` | string | no | Filter receipts by query name |
-| `receipt_id` | string | no | Filter feedback/outcomes by receipt |
-| `limit` | int | no | Maximum items (default: `50`) |
-| `property_filter` | dict | no | Exact property matches, AND semantics (entities and edges only) |
+**Permission:** `READ_ONLY`
 
-**Returns:** `ListResult`
+**Purpose:** Describe one named query with the details needed to invoke it correctly.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `items` | list[dict] | Resource items |
-| `total` | int | Total count |
+**Arguments:**
 
-**Edge items** (when `resource_type="edges"`):
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `query_name` | yes | string |  |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `from_type` | string | Source entity type |
-| `from_id` | string | Source entity ID |
-| `to_type` | string | Target entity type |
-| `to_id` | string | Target entity ID |
-| `relationship_type` | string | Relationship type |
-| `edge_key` | int | Edge key for use with `cruxible_feedback` |
-| `properties` | dict | [Edge properties](concepts.md#edge-properties) |
+**Returns:** Top-level fields: `name`, `entry_point`, `required_params`, `returns`, `description`, `example_ids`
 
----
+**Side Effects:** Read-only.
 
-### cruxible_schema
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Return the active config schema for an instance.
+## cruxible_receipt
 
-**Permission:** READ_ONLY
+**Permission:** `READ_ONLY`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
+**Purpose:** Fetch a stored receipt by `receipt_id` from a previous query.
 
-**Returns:** Full config schema dict including entity types, relationships, queries, and constraints.
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `receipt_id` | yes | string |  |
 
-### cruxible_sample
+**Returns:** Returns a JSON object with dynamic keys.
 
-Return a sample of entities for quick data inspection.
+**Side Effects:** Read-only.
 
-**Permission:** READ_ONLY
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `entity_type` | string | **yes** | Entity type to sample |
-| `limit` | int | no | Max entities (default: `5`) |
+## cruxible_feedback
 
-**Returns:** `SampleResult`
+**Permission:** `GOVERNED_WRITE`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `entities` | list[dict] | Sampled entity records |
-| `entity_type` | string | Entity type sampled |
-| `count` | int | Number returned |
+**Purpose:** Record edge-level feedback tied to a receipt. ``source`` identifies who produced this feedback: ``"human"`` for human review, ``"agent"`` for AI agent review. Rejected edges are excluded from future query results. Approved edges are trusted in traversals. Use `corrections` with `action="correct"` and set `edge_key` only when disambiguation is needed. `applied=False` means the record was saved but the graph edge was not updated. Set `group_override=True` to stamp the edge with a group_override property, marking it as pre-approved for group resolve. The edge must already exist in the graph.
 
----
+**Arguments:**
 
-### cruxible_evaluate
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `receipt_id` | yes | string |  |
+| `action` | yes | enum: approve, reject, correct, flag |  |
+| `source` | yes | enum: human, agent |  |
+| `from_type` | yes | string |  |
+| `from_id` | yes | string |  |
+| `relationship` | yes | string |  |
+| `to_type` | yes | string |  |
+| `to_id` | yes | string |  |
+| `edge_key` | no | integer | null |  |
+| `reason` | no | string |  |
+| `reason_code` | no | string | null |  |
+| `scope_hints` | no | object | null |  |
+| `corrections` | no | object | null |  |
+| `group_override` | no | boolean |  |
 
-Run graph quality checks: orphan entities, coverage gaps, constraint violations,
-candidate opportunities, governed support state, and unreviewed co-members.
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
 
-**Permission:** READ_ONLY
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `max_findings` | int | no | Maximum findings to return (default: `100`) |
-| `exclude_orphan_types` | list[string] | no | Entity types to skip in orphan checks (for reference/taxonomy types) |
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-**Returns:** `EvaluateResult`
+## cruxible_feedback_batch
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `entity_count` | int | Total entities in graph |
-| `edge_count` | int | Total edges in graph |
-| `findings` | list[dict] | Quality findings (orphans, gaps, violations) |
-| `summary` | dict | Counts by finding category |
+**Permission:** `GOVERNED_WRITE`
 
----
+**Purpose:** Record batch edge feedback under one top-level mutation receipt.
 
-### cruxible_get_entity
+**Arguments:**
 
-Look up a specific entity by type and ID.
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `items` | yes | array |  |
+| `source` | no | enum: human, agent |  |
 
-**Permission:** READ_ONLY
+**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `entity_type` | string | **yes** | Entity type |
-| `entity_id` | string | **yes** | Entity ID |
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-**Returns:** `GetEntityResult`
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `found` | bool | Whether the entity exists |
-| `entity_type` | string | Entity type |
-| `entity_id` | string | Entity ID |
-| `properties` | dict | Entity properties |
+## cruxible_outcome
 
----
+**Permission:** `GOVERNED_WRITE`
 
-### cruxible_get_relationship
+**Purpose:** Record a structured outcome for a receipt or proposal resolution.
 
-Look up a specific relationship by its endpoints and type.
+**Arguments:**
 
-**Permission:** READ_ONLY
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `outcome` | yes | enum: correct, incorrect, partial, unknown |  |
+| `receipt_id` | no | string | null |  |
+| `anchor_type` | no | enum: resolution, receipt |  |
+| `anchor_id` | no | string | null |  |
+| `source` | no | enum: human, agent |  |
+| `outcome_code` | no | string | null |  |
+| `scope_hints` | no | object | null |  |
+| `outcome_profile_key` | no | string | null |  |
+| `detail` | no | object | null |  |
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `from_type` | string | **yes** | Source entity type |
-| `from_id` | string | **yes** | Source entity ID |
-| `relationship_type` | string | **yes** | Relationship type |
-| `to_type` | string | **yes** | Target entity type |
-| `to_id` | string | **yes** | Target entity ID |
-| `edge_key` | int | no | Edge key for multi-edge disambiguation |
+**Returns:** Top-level fields: `outcome_id`
 
-Pass `edge_key` when multiple same-type edges exist between the same endpoints. Without it, an error is raised if ambiguous.
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
-**Returns:** `GetRelationshipResult`
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `found` | bool | Whether the relationship exists |
-| `from_type` | string | Source entity type |
-| `from_id` | string | Source entity ID |
-| `relationship_type` | string | Relationship type |
-| `to_type` | string | Target entity type |
-| `to_id` | string | Target entity ID |
-| `edge_key` | int or null | Edge key |
-| `properties` | dict | [Edge properties](concepts.md#edge-properties) |
+## cruxible_list
 
----
+**Permission:** `READ_ONLY`
 
-## Mutation Tools
+**Purpose:** List `entities|edges|receipts|feedback|outcomes` with optional filters. `entity_type` is required for `resource_type="entities"`. `relationship_type` filters edges by type for `resource_type="edges"`. `property_filter` filters by exact property matches (AND semantics). Applies to `resource_type="entities"` and `resource_type="edges"`. `operation_type` filters receipts (e.g. "query", "add_entity", "ingest"). Edge items include `edge_key` for use with `cruxible_feedback` when multiple edges exist between the same endpoints.
 
-### cruxible_add_entity
+**Arguments:**
 
-Add or update entities in the graph (upsert).
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `resource_type` | yes | enum: entities, edges, receipts, feedback, outcomes |  |
+| `entity_type` | no | string | null |  |
+| `relationship_type` | no | string | null |  |
+| `query_name` | no | string | null |  |
+| `receipt_id` | no | string | null |  |
+| `limit` | no | integer |  |
+| `property_filter` | no | object | null |  |
+| `operation_type` | no | string | null |  |
 
-**Permission:** GRAPH_WRITE
+**Returns:** Top-level fields: `items`, `total`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `entities` | list[EntityInput] | **yes** | Entities to add/update |
+**Side Effects:** Read-only.
 
-Each `EntityInput`:
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `entity_type` | string | **yes** | Entity type name |
-| `entity_id` | string | **yes** | Entity ID |
-| `properties` | dict | no | Entity properties (default: `{}`) |
+## cruxible_find_candidates
 
-Re-submitting an existing entity replaces all its properties (full overwrite, not merge).
+**Permission:** `READ_ONLY`
 
-**Returns:** `AddEntityResult`
+**Purpose:** Find missing-relationship candidates. `strategy="property_match"` requires `match_rules`. Each rule: `{from_property, to_property, operator}`. Operators: `equals` (type-strict), `iequals` (case-insensitive), `contains` (substring, forces brute-force scan). `strategy="shared_neighbors"` requires `via_relationship`. `min_distinct_neighbors` (default 2) skips pairs where both entities have fewer than this many neighbors — filters degenerate cases.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `entities_added` | int | New entities created |
-| `entities_updated` | int | Existing entities updated |
+**Arguments:**
 
----
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | yes | string |  |
+| `strategy` | yes | enum: property_match, shared_neighbors |  |
+| `match_rules` | no | array | null |  |
+| `via_relationship` | no | string | null |  |
+| `min_overlap` | no | number |  |
+| `min_confidence` | no | number |  |
+| `limit` | no | integer |  |
+| `min_distinct_neighbors` | no | integer |  |
 
-### cruxible_add_relationship
+**Returns:** Top-level fields: `candidates`, `total`
 
-Add or update relationships in the graph (upsert).
+**Side Effects:** Read-only.
 
-**Permission:** GRAPH_WRITE
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `relationships` | list[RelationshipInput] | **yes** | Relationships to add/update |
+## cruxible_evaluate
 
-Each `RelationshipInput`:
+**Permission:** `READ_ONLY`
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `from_type` | string | **yes** | Source entity type |
-| `from_id` | string | **yes** | Source entity ID |
-| `relationship` | string | **yes** | Relationship type name |
-| `to_type` | string | **yes** | Target entity type |
-| `to_id` | string | **yes** | Target entity ID |
-| `properties` | dict | no | [Edge properties](concepts.md#edge-properties) (default: `{}`) |
+**Purpose:** Run graph quality checks (orphans, gaps, violations, co-members). Checks: orphan entities, coverage gaps, constraint violations, candidate opportunities, governed support state, and unreviewed co-members (entities sharing an intermediary with a cross-referenced entity but lacking a cross-reference edge themselves). Use `exclude_orphan_types` to skip reference/taxonomy entity types (e.g. ``["PCDBPartType"]``) that are expected to be unconnected.
 
-Entities must already exist. Re-submitting an existing edge merges declared domain
-properties while preserving system review metadata. Properties must be declared
-by the relationship schema. For governed judgment relationships, prefer
-candidate group proposal flows so Cruxible can preserve tri-state integration
-signals and review history.
+**Arguments:**
 
-**Returns:** `AddRelationshipResult`
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `max_findings` | no | integer |  |
+| `exclude_orphan_types` | no | array | null |  |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `added` | int | New relationships created |
-| `updated` | int | Existing relationships updated |
+**Returns:** Top-level fields: `entity_count`, `edge_count`, `findings`, `summary`, `constraint_summary`, `quality_summary`
 
----
+**Side Effects:** Read-only.
 
-### cruxible_add_constraint
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-Add a constraint rule to the config and write it back to YAML.
+## cruxible_stats
 
-**Permission:** ADMIN
+**Permission:** `READ_ONLY`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `instance_id` | string | **yes** | Instance ID |
-| `name` | string | **yes** | Unique constraint name |
-| `rule` | string | **yes** | Rule expression (see [Config Reference](config-reference.md#rule-syntax)) |
-| `severity` | string | no | `"warning"` (default) or `"error"` |
-| `description` | string | no | Human-readable description |
+**Purpose:** Return graph counts, relationship counts, and head snapshot metadata.
 
-**Returns:** `AddConstraintResult`
+**Arguments:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Constraint name |
-| `added` | bool | Whether the constraint was added |
-| `config_updated` | bool | Whether the YAML file was updated |
-| `warnings` | list[string] | Warnings (e.g., unknown property names) |
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `entity_count`, `edge_count`, `entity_counts`, `relationship_counts`, `head_snapshot_id`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_lint
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Run aggregate read-only config, graph, feedback, and outcome checks.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `max_findings` | no | integer |  |
+| `analysis_limit` | no | integer |  |
+| `min_support` | no | integer |  |
+| `exclude_orphan_types` | no | array | null |  |
+
+**Returns:** Top-level fields: `config_name`, `config_warnings`, `compatibility_warnings`, `evaluation`, `feedback_reports`, `outcome_reports`, `summary`, `has_issues`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_feedback_profile
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the configured feedback profile for one relationship type.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | yes | string |  |
+
+**Returns:** Top-level fields: `found`, `relationship_type`, `profile`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_analyze_feedback
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Analyze structured feedback into deterministic remediation suggestions.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | yes | string |  |
+| `limit` | no | integer |  |
+| `min_support` | no | integer |  |
+| `decision_surface_type` | no | string | null |  |
+| `decision_surface_name` | no | string | null |  |
+| `property_pairs` | no | array | null |  |
+
+**Returns:** Top-level fields: `relationship_type`, `feedback_count`, `action_counts`, `source_counts`, `reason_code_counts`, `coded_groups`, `uncoded_feedback_count`, `uncoded_examples`, `constraint_suggestions`, `decision_policy_suggestions`, `quality_check_candidates`, `provider_fix_candidates`, `warnings`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_outcome_profile
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the configured outcome profile for one anchor context.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `anchor_type` | yes | enum: resolution, receipt |  |
+| `relationship_type` | no | string | null |  |
+| `workflow_name` | no | string | null |  |
+| `surface_type` | no | string | null |  |
+| `surface_name` | no | string | null |  |
+
+**Returns:** Top-level fields: `found`, `profile_key`, `anchor_type`, `profile`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_analyze_outcomes
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Analyze structured outcomes into trust and debugging suggestions.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `anchor_type` | yes | enum: resolution, receipt |  |
+| `relationship_type` | no | string | null |  |
+| `workflow_name` | no | string | null |  |
+| `query_name` | no | string | null |  |
+| `surface_type` | no | string | null |  |
+| `surface_name` | no | string | null |  |
+| `limit` | no | integer |  |
+| `min_support` | no | integer |  |
+
+**Returns:** Top-level fields: `anchor_type`, `outcome_count`, `outcome_counts`, `outcome_code_counts`, `coded_groups`, `uncoded_outcome_count`, `uncoded_examples`, `trust_adjustment_suggestions`, `workflow_review_policy_suggestions`, `query_policy_suggestions`, `provider_fix_candidates`, `debug_packages`, `workflow_debug_packages`, `warnings`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_schema
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the active config schema for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Returns a JSON object with dynamic keys.
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_sample
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return up to `limit` entities for quick data inspection.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `entities`, `entity_type`, `count`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_entity
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Inspect one entity and its immediate incoming/outgoing neighbors.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string |  |
+| `entity_id` | yes | string |  |
+| `direction` | no | string |  |
+| `relationship_type` | no | string | null |  |
+| `limit` | no | integer | null |  |
+
+**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `neighbors`, `total_neighbors`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_ontology
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the structured canonical ontology view for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `view`, `payload`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_workflows
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the structured canonical workflow view for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `view`, `payload`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_queries
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the structured canonical query view for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `view`, `payload`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_governance
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the structured canonical governance view for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `view`, `payload`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_inspect_overview
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return the structured canonical overview view for an instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `view`, `payload`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_render_wiki
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Render local wiki pages and return path/content payloads.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `focus` | no | array | null |  |
+| `include_types` | no | array | null |  |
+| `scope` | no | string | null |  |
+| `max_per_type` | no | integer |  |
+| `all_subjects` | no | boolean |  |
+
+**Returns:** Top-level fields: `pages`, `page_count`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_add_relationship
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer candidate group proposal flows so Cruxible can preserve tri-state integration signals (support, unsure, contradict) and review history. Batch size: practical limit is ~500 relationships per call. For bulk ingestion of 10K+ relationships, use ``cruxible_ingest`` with CSV files instead.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationships` | yes | array |  |
+
+**Returns:** Top-level fields: `added`, `updated`, `receipt_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_add_entity
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Add or update entities in the graph (upsert). Each entity needs: entity_type, entity_id. Optional properties dict. Re-submitting an existing entity replaces all its properties (full overwrite, not merge). Use for entities from free text or external sources when CSV ingestion is not available.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entities` | yes | array |  |
+
+**Returns:** Top-level fields: `entities_added`, `entities_updated`, `receipt_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_add_constraint
+
+**Permission:** `ADMIN`
+
+**Purpose:** Add a constraint rule to the config. Writes the updated config to YAML. Constraints are evaluated by cruxible_evaluate to flag edges that violate them. Rule format: RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property Supported operators: ==, !=, >, >=, <, <= Identifiers may contain letters, digits, underscores, and hyphens. Example: classified_as.FROM.Category == classified_as.TO.CategoryName
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `name` | yes | string |  |
+| `rule` | yes | string |  |
+| `severity` | no | enum: warning, error |  |
+| `description` | no | string | null |  |
+
+**Returns:** Top-level fields: `name`, `added`, `config_updated`, `warnings`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_add_decision_policy
+
+**Permission:** `ADMIN`
+
+**Purpose:** Add a decision policy to the config for query/workflow execution.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `name` | yes | string |  |
+| `applies_to` | yes | enum: query, workflow |  |
+| `relationship_type` | yes | string |  |
+| `effect` | yes | enum: suppress, require_review |  |
+| `match` | no | DecisionPolicyMatchInput | null |  |
+| `description` | no | string | null |  |
+| `rationale` | no | string |  |
+| `query_name` | no | string | null |  |
+| `workflow_name` | no | string | null |  |
+| `expires_at` | no | string | null |  |
+
+**Returns:** Top-level fields: `name`, `added`, `config_updated`, `warnings`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_reload_config
+
+**Permission:** `ADMIN`
+
+**Purpose:** Reload or replace an instance config after validation.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `config_path` | no | string | null |  |
+| `config_yaml` | no | string | null |  |
+
+**Returns:** Top-level fields: `config_path`, `updated`, `warnings`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_propose_workflow
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Execute a configured workflow and bridge its output into a governed relationship group. Use this when a repeated decision procedure should propose relationship state through Cruxible's proposal/review/trust boundary instead of writing edges directly. The workflow must return a relationship proposal artifact from a `propose_relationship_group` step.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `workflow_name` | yes | string |  |
+| `input_payload` | no | object | null |  |
+| `decision_record_id` | no | string | null |  |
+
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_create_decision_record
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Open a decision record that can collect query and workflow receipts.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `question` | yes | string |  |
+| `subject_type` | no | string | null |  |
+| `subject_id` | no | string | null |  |
+| `opened_by` | no | string |  |
+
+**Returns:** Top-level fields: `record`, `events`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_decision_record
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Fetch one decision record, optionally including its logged events.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `decision_record_id` | yes | string |  |
+| `include_events` | no | boolean |  |
+
+**Returns:** Top-level fields: `record`, `events`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_list_decision_records
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List decision records with lifecycle and subject filters.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `status` | no | string | null |  |
+| `subject_type` | no | string | null |  |
+| `subject_id` | no | string | null |  |
+| `decision_class` | no | string | null |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `records`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_list_decision_events
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List decision-record events by record, receipt, trace, or status.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `decision_record_id` | no | string | null |  |
+| `receipt_id` | no | string | null |  |
+| `trace_id` | no | string | null |  |
+| `status` | no | string | null |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `events`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_finalize_decision_record
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Finalize a decision record with an indexed decision class and rationale.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `decision_record_id` | yes | string |  |
+| `final_decision` | yes | string |  |
+| `decision_class` | yes | enum: recommended, rejected, deferred, escalated |  |
+| `rationale` | no | string |  |
+
+**Returns:** Top-level fields: `record`, `events`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_abandon_decision_record
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Abandon an open decision record without finalizing a recommendation.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `decision_record_id` | yes | string |  |
+| `reason` | no | string |  |
+
+**Returns:** Top-level fields: `record`, `events`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_propose_group
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared integrations. The group carries a thesis (structured facts that get hashed into a deterministic signature) and optional analysis_state (opaque agent data, NOT hashed). If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | yes | string |  |
+| `members` | yes | array |  |
+| `thesis_text` | no | string |  |
+| `thesis_facts` | no | object | null |  |
+| `analysis_state` | no | object | null |  |
+| `integrations_used` | no | array | null |  |
+| `proposed_by` | no | enum: human, agent |  |
+| `suggested_priority` | no | string | null |  |
+
+**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_resolve_group
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Resolve a candidate group by approving or rejecting it. Approve creates edges in the graph for valid members (skipping members whose edges already exist). Reject records the resolution without graph mutation. Both persist the resolution for audit and future auto-resolve precedent.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `group_id` | yes | string |  |
+| `action` | yes | enum: approve, reject |  |
+| `expected_pending_version` | yes | integer |  |
+| `rationale` | no | string |  |
+| `resolved_by` | no | enum: human, agent |  |
+
+**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_update_trust_status
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Update the trust status on a confirmed approved resolution. Trust is thesis-scoped: the latest confirmed approval for a signature governs auto-resolve eligibility. Promote ``watch`` to ``trusted`` to enable auto-resolve. Set ``invalidated`` to block auto-resolve and escalate future proposals to critical priority.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `resolution_id` | yes | string |  |
+| `trust_status` | yes | enum: trusted, watch, invalidated |  |
+| `reason` | no | string |  |
+
+**Returns:** Top-level fields: `resolution_id`, `trust_status`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_group
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Get a candidate group by ID, including its members and resolution. Returns the group metadata (thesis, status, review_priority) and the full list of members with their signals. If the group has been resolved, includes the resolution details (action, trust_status, rationale).
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `group_id` | yes | string |  |
+
+**Returns:** Top-level fields: `group`, `members`, `resolution`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_list_groups
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List candidate groups with optional filters. Results are sorted by review_priority descending (critical first). Use ``status`` to filter by lifecycle state (pending_review, auto_resolved, applying, resolved). Use ``relationship_type`` to filter by edge type.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | no | string | null |  |
+| `status` | no | enum: pending_review, auto_resolved, applying, resolved, suppressed | null |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `groups`, `total`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_list_resolutions
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List group resolutions with optional filters. Returns stored resolutions including analysis_state (for agent reuse), thesis_facts, trust_status, and trust_reason. Use ``action`` to filter by approve/reject. Use ``relationship_type`` to scope to a specific edge type.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `relationship_type` | no | string | null |  |
+| `action` | no | enum: approve, reject | null |  |
+| `limit` | no | integer |  |
+
+**Returns:** Top-level fields: `resolutions`, `total`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_group_status
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Show lifecycle status for a signature bucket or concrete group.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `group_id` | no | string | null |  |
+| `signature` | no | string | null |  |
+
+**Returns:** Top-level fields: `signature`, `relationship_type`, `thesis_text`, `thesis_facts`, `latest_trust_status`, `accepted_tuple_count`, `pending_delta_count`, `pending_group_id`, `pending_version`, `latest_approved_resolution_id`, `approved_history`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_world_publish
+
+**Permission:** `ADMIN`
+
+**Purpose:** Publish a root world-model instance as an immutable release bundle.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `transport_ref` | yes | string |  |
+| `world_id` | yes | string |  |
+| `release_id` | yes | string |  |
+| `compatibility` | yes | enum: data_only, additive_schema, breaking |  |
+
+**Returns:** Top-level fields: `manifest`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_create_snapshot
+
+**Permission:** `ADMIN`
+
+**Purpose:** Create an immutable snapshot for the current instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `label` | no | string | null |  |
+
+**Returns:** Top-level fields: `snapshot`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_list_snapshots
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List immutable snapshots for the current instance.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `snapshots`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_clone_snapshot
+
+**Permission:** `ADMIN`
+
+**Purpose:** Create a point-in-time clone from an immutable snapshot.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `snapshot_id` | yes | string |  |
+| `root_dir` | yes | string |  |
+
+**Returns:** Top-level fields: `instance_id`, `snapshot`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_world_status
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return upstream tracking metadata for a release-backed overlay.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `upstream`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_world_pull_preview
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Preview pulling a newer upstream release into a release-backed overlay.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+
+**Returns:** Top-level fields: `current_release_id`, `target_release_id`, `compatibility`, `apply_digest`, `warnings`, `conflicts`, `lock_changed`, `upstream_entity_delta`, `upstream_edge_delta`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_world_pull_apply
+
+**Permission:** `ADMIN`
+
+**Purpose:** Apply a previewed upstream release into a release-backed overlay.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `expected_apply_digest` | yes | string |  |
+
+**Returns:** Top-level fields: `release_id`, `apply_digest`, `pre_pull_snapshot_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_entity
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Look up a specific entity by type and ID. Returns its properties.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string |  |
+| `entity_id` | yes | string |  |
+
+**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_get_relationship
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Look up a specific relationship by its endpoints and type. Returns its properties. If multiple same-type edges exist between the same endpoints, pass edge_key to select a specific one. Without edge_key, raises an error if ambiguous.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `from_type` | yes | string |  |
+| `from_id` | yes | string |  |
+| `relationship_type` | yes | string |  |
+| `to_type` | yes | string |  |
+| `to_id` | yes | string |  |
+| `edge_key` | no | integer | null |  |
+
+**Returns:** Top-level fields: `found`, `from_type`, `from_id`, `relationship_type`, `to_type`, `to_id`, `edge_key`, `properties`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.

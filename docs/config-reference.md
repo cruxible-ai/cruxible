@@ -1,6 +1,10 @@
 # Config Reference
 
-Cruxible Core configs are YAML files that define a decision domain: entity types, relationships, named queries, constraints, ingestion mappings, and — for governed workflows — integrations, quality checks, feedback profiles, decision policies, providers, and workflows. AI agents generate these configs; Core validates and executes against them.
+Cruxible Core configs are YAML files that define a decision domain: entity
+types, relationships, named queries, constraints, workflows, providers,
+artifacts, integrations, quality checks, feedback profiles, decision policies,
+and legacy ingestion mappings. AI agents generate these configs; Core validates
+and executes against them.
 
 ## Top-Level Structure
 
@@ -59,7 +63,7 @@ tests: [ ... ]
 
 ## Config Composition
 
-The `extends` field enables a **overlay pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
+The `extends` field enables an **overlay pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
 
 **How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
 
@@ -103,7 +107,7 @@ When `extends` is set, `entity_types` may be empty — the base provides them.
 `kind` controls whether the config is a reusable reference ontology or an operational world model.
 
 - `ontology`: reference taxonomy/model only. It may define entities, relationships, queries, constraints, and other static schema, but it may not define ingestion mappings, contracts, artifacts, providers, workflows, or workflow tests.
-- `world_model`: operational model. It can ingest local/company data, run workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
+- `world_model`: operational model. It can run workflows, use pinned artifacts/providers, load local/company data, and carry governed judgment state on top of the underlying schema.
 
 Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
 

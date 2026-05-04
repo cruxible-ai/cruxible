@@ -4,6 +4,8 @@ A Cruxible kit is a versioned bundle with a `cruxible-kit.yaml` manifest,
 an entry config, provider code, optional data, and a bundled
 `cruxible.lock.yaml`.
 
+For runnable examples, see [Kit Walkthroughs](kit-walkthroughs.md).
+
 Minimal manifest:
 
 ```yaml

@@ -1,534 +1,1825 @@
 # CLI Reference
 
-Cruxible Core provides a command-line interface for all core operations. The CLI mirrors the MCP tools for terminal usage.
-
-```bash
-cruxible --help
-cruxible --version
-```
-
----
-
-## cruxible validate
-
-Validate a config YAML file without creating an instance.
-
-```bash
-cruxible validate --config <path>
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--config` | **yes** | Path to config YAML file |
-
-**Example:**
-
-```bash
-cruxible validate --config demos/drug-interactions/config.yaml
-# Config 'drug_interactions_demo' is valid.
-#   2 entity types, 5 relationships, 4 queries
-```
-
----
-
-## cruxible init
-
-Initialize a new `.cruxible/` instance in the current directory.
-
-```bash
-cruxible init --config <path> [--data-dir <dir>]
-cruxible init --kit <standalone-kit>
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--config` | conditional | Path to config YAML file |
-| `--kit` | conditional | Standalone kit alias or ref to materialize |
-| `--data-dir` | no | Directory for data files |
-
-Provide exactly one of `--config` or `--kit`.
-
-**Example:**
-
-```bash
-cruxible init --config config.yaml --data-dir ./data
-# Initialized .cruxible/ in /path/to/project
-
-cruxible init --kit kev-reference
-# Initialized .cruxible/ in /path/to/project
-```
-
----
-
-## cruxible ingest
-
-Ingest data from a file using a named mapping from the config.
-
-```bash
-cruxible ingest --mapping <name> --file <path>
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--mapping` | **yes** | Ingestion mapping name from config |
-| `--file` | **yes** | Path to a CSV or JSON data file |
-
-Ingest entity mappings before relationship mappings — edges reference entity IDs.
-
-**Example:**
-
-```bash
-cruxible ingest --mapping drugs --file data/drugs.csv
-# Ingested 46 records via mapping 'drugs'.
-
-cruxible ingest --mapping interactions --file data/interactions.csv
-# Ingested 484 records via mapping 'interactions'.
-```
-
----
-
-## cruxible query
-
-Execute a named query and save the receipt.
-
-```bash
-cruxible query --query <name> [--param KEY=VALUE ...]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--query` | **yes** | Named query from config |
-| `--param` | no | Query parameter as `KEY=VALUE` (repeatable) |
-| `--limit` | no | Maximum results to display |
-
-**Example:**
-
-```bash
-cruxible query --query check_interactions --param drug_id=warfarin
-# [table of interacting drugs with severity]
-# 12 result(s), 1 step(s) executed.
-# Receipt: RCP-abc123
-```
-
----
-
-## cruxible explain
-
-Explain a query result using its receipt. Supports JSON, Markdown, and Mermaid output.
-
-```bash
-cruxible explain --receipt <receipt_id> [--format json|markdown|mermaid]
-```
-
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--receipt` | **yes** | — | Receipt ID to explain |
-| `--format` | no | `markdown` | Output format: `json`, `markdown`, or `mermaid` |
-
-**Example:**
-
-```bash
-cruxible explain --receipt RCP-abc123 --format mermaid
-```
-
----
-
-## cruxible feedback
-
-Submit feedback on a specific edge from a query result.
-
-```bash
-cruxible feedback --receipt <id> --action <action> \
-  --from-type <type> --from-id <id> \
-  --relationship <rel> \
-  --to-type <type> --to-id <id> \
-  [--edge-key <int>] [--reason <text>] [--corrections <json>] \
-  [--source <human|agent>]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--receipt` | **yes** | Receipt ID |
-| `--action` | **yes** | `approve`, `reject`, `correct`, or `flag` |
-| `--from-type` | **yes** | Source entity type |
-| `--from-id` | **yes** | Source entity ID |
-| `--relationship` | **yes** | Relationship type |
-| `--to-type` | **yes** | Target entity type |
-| `--to-id` | **yes** | Target entity ID |
-| `--edge-key` | no | Edge key for multi-edge disambiguation |
-| `--reason` | no | Reason for feedback |
-| `--corrections` | no | JSON object of edge property corrections (for `correct`) |
-| `--source` | no | `human` (default) or `agent` |
-
-**Example:**
-
-```bash
-cruxible feedback --receipt RCP-abc123 --action reject \
-  --from-type Drug --from-id fluoxetine \
-  --relationship inhibits \
-  --to-type Enzyme --to-id CYP2D6 \
-  --reason "Confidence too low, insufficient evidence"
-# Feedback fb-xyz789 applied to graph.
-```
-
----
-
-## cruxible outcome
-
-Record the outcome of a decision.
-
-```bash
-cruxible outcome --receipt <id> --outcome <value> [--detail <json>]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--receipt` | **yes** | Receipt ID |
-| `--outcome` | **yes** | `correct`, `incorrect`, `partial`, or `unknown` |
-| `--detail` | no | JSON string with outcome details |
-
-**Example:**
-
-```bash
-cruxible outcome --receipt RCP-abc123 --outcome correct
-# Outcome out-def456 recorded.
-```
-
----
-
-## cruxible get-entity
-
-Look up a specific entity by type and ID.
-
-```bash
-cruxible get-entity --type <entity_type> --id <entity_id>
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--type` | **yes** | Entity type |
-| `--id` | **yes** | Entity ID |
-
-Prints "Not found." and exits 0 when the entity doesn't exist.
-
-**Example:**
-
-```bash
-cruxible get-entity --type Drug --id warfarin
-# [table showing entity properties]
-
-cruxible get-entity --type Drug --id NONEXISTENT
-# Not found.
-```
-
----
-
-## cruxible get-relationship
-
-Look up a specific relationship by its endpoints and type.
-
-```bash
-cruxible get-relationship --from-type <type> --from-id <id> \
-  --relationship <rel> --to-type <type> --to-id <id> [--edge-key <int>]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--from-type` | **yes** | Source entity type |
-| `--from-id` | **yes** | Source entity ID |
-| `--relationship` | **yes** | Relationship type |
-| `--to-type` | **yes** | Target entity type |
-| `--to-id` | **yes** | Target entity ID |
-| `--edge-key` | no | Edge key for multi-edge disambiguation |
-
-Prints "Not found." and exits 0 when the relationship doesn't exist. Errors with exit 1 when multiple edges exist and `--edge-key` is not specified.
-
-**Example:**
-
-```bash
-cruxible get-relationship --from-type Drug --from-id warfarin \
-  --relationship interacts_with --to-type Drug --to-id simvastatin
-# [table showing relationship properties]
-```
-
----
-
-## cruxible add-entity
-
-Add or update an entity in the graph (upsert).
-
-```bash
-cruxible add-entity --type <entity_type> --id <entity_id> [--props <json>]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--type` | **yes** | Entity type (must exist in config) |
-| `--id` | **yes** | Entity ID |
-| `--props` | no | JSON object of entity properties |
-
-**Example:**
-
-```bash
-cruxible add-entity --type Drug --id metoprolol \
-  --props '{"drug_id": "metoprolol", "name": "Metoprolol", "therapeutic_class": "beta_blockers"}'
-# Entity Drug:metoprolol added.
-```
-
----
-
-## cruxible add-relationship
-
-Add or update a relationship in the graph (upsert).
-
-```bash
-cruxible add-relationship --from-type <type> --from-id <id> \
-  --relationship <rel> --to-type <type> --to-id <id> [--props <json>]
-```
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--from-type` | **yes** | Source entity type |
-| `--from-id` | **yes** | Source entity ID |
-| `--relationship` | **yes** | Relationship type (must exist in config) |
-| `--to-type` | **yes** | Target entity type |
-| `--to-id` | **yes** | Target entity ID |
-| `--props` | no | JSON object of [edge properties](concepts.md#edge-properties) |
-
-Both endpoint entities must exist. Direction must match config (from_type matches the relationship's `from` entity).
-
-**Example:**
-
-```bash
-cruxible add-relationship --from-type Drug --from-id metoprolol \
-  --relationship metabolized_by --to-type Enzyme --to-id CYP2D6 \
-  --props '{"source": "manual"}'
-# Relationship added: Drug:metoprolol -[metabolized_by]-> Enzyme:CYP2D6
-```
-
----
+This is the full searchable reference for the `cruxible` command line. Walkthroughs and agent recipes live elsewhere; this file is intentionally detailed so an agent can look up command names, flags, side effects, and failure modes without shelling out to `--help` first.
+
+## Runtime Model
+
+- Use `--server-url`, `--server-socket`, and `--instance-id` for daemon-backed instances.
+- The CLI context commands remember those selectors for shell users; MCP does not use CLI context.
+- Commands that mutate governed state are blocked locally when the command requires a daemon surface.
+- `init --kit` accepts standalone kits. Overlay kits are created with `world create-overlay --kit`.
+- `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
+- `explain` and `export edges` are direct-local file/rendering utilities. Use receipts and list/query tools for daemon/MCP flows.
 
 ## cruxible add-constraint
 
-Add a constraint rule to the config YAML.
+**Usage:** `cruxible add-constraint [OPTIONS]`
 
-```bash
-cruxible add-constraint --name <name> --rule <rule> \
-  [--severity warning|error] [--description <text>]
-```
+**Purpose:** Add a constraint rule to the config.
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--name` | **yes** | — | Constraint name (must be unique) |
-| `--rule` | **yes** | — | Rule expression |
-| `--severity` | no | `warning` | `warning` or `error` |
-| `--description` | no | — | Description of the constraint |
+**Options And Arguments:**
 
-Rule syntax: `RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property`
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--name` | yes | `Sentinel.UNSET` | text | Constraint name. |
+| `--rule` | yes | `Sentinel.UNSET` | text | Constraint rule expression. |
+| `--severity` | no | `warning` | choice | Severity level (default: warning). |
+| `--description` | no | `` | text | Optional description. |
 
-Supported operators: `==`, `!=`, `>`, `>=`, `<`, `<=`
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-**Example:**
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-```bash
-cruxible add-constraint --name no_self_interaction \
-  --rule "interacts_with.FROM.drug_id != interacts_with.TO.drug_id" \
-  --severity error \
-  --description "A drug should not interact with itself"
-# Constraint 'no_self_interaction' added to config.
-```
+## cruxible add-decision-policy
 
----
+**Usage:** `cruxible add-decision-policy [OPTIONS]`
 
-## cruxible list
+**Purpose:** Add a decision policy to the config.
 
-List entities, edges, receipts, feedback, or outcomes.
+**Options And Arguments:**
 
-### cruxible list entities
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--name` | yes | `Sentinel.UNSET` | text | Decision policy name. |
+| `--applies-to` | yes | `Sentinel.UNSET` | choice | Policy application surface. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--effect` | yes | `Sentinel.UNSET` | choice | Policy effect. |
+| `--query-name` | no | `` | text | Named query for query policies. |
+| `--workflow-name` | no | `` | text | Workflow name for workflow policies. |
+| `--match` | no | `{}` | text | JSON object for exact-match selectors. |
+| `--description` | no | `` | text | Optional description. |
+| `--rationale` | no | `` | text | Policy rationale. |
+| `--expires-at` | no | `` | text | Optional ISO timestamp/date. |
 
-```bash
-cruxible list entities --type <entity_type> [--limit <n>]
-```
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--type` | **yes** | — | Entity type to list |
-| `--limit` | no | `50` | Max entities to show |
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-### cruxible list edges
+## cruxible add-entity
 
-```bash
-cruxible list edges [--relationship <type>] [--limit <n>]
-```
+**Usage:** `cruxible add-entity [OPTIONS]`
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--relationship` | no | — | Filter by relationship type |
-| `--limit` | no | `50` | Max edges to show |
+**Purpose:** Add or update an entity in the graph.
 
-### cruxible list receipts
+**Options And Arguments:**
 
-```bash
-cruxible list receipts [--query-name <name>] [--limit <n>]
-```
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--props` | no | `` | text | JSON object of properties. |
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--query-name` | no | — | Filter by query name |
-| `--limit` | no | `50` | Max receipts to show |
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-### cruxible list feedback
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-```bash
-cruxible list feedback [--receipt <id>] [--limit <n>]
-```
+## cruxible add-relationship
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--receipt` | no | — | Filter by receipt ID |
-| `--limit` | no | `50` | Max records to show |
+**Usage:** `cruxible add-relationship [OPTIONS]`
 
-### cruxible list outcomes
+**Purpose:** Add or update a relationship in the graph.
 
-```bash
-cruxible list outcomes [--receipt <id>] [--limit <n>]
-```
+**Options And Arguments:**
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--receipt` | no | — | Filter by receipt ID |
-| `--limit` | no | `50` | Max records to show |
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--props` | no | `` | text | JSON object of edge properties. |
 
----
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-## cruxible export
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-Export graph data to files. Unlike `list` (which renders Rich tables to stdout with a default limit of 50), `export` writes all matching data to a file.
+## cruxible analyze-feedback
 
-### cruxible export edges
+**Usage:** `cruxible analyze-feedback [OPTIONS]`
 
-Export all edges to CSV.
+**Purpose:** Analyze structured feedback and print remediation suggestions.
 
-```bash
-cruxible export edges -o <path> [--relationship <type>] [--exclude-rejected]
-```
+**Options And Arguments:**
 
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--output` / `-o` | **yes** | Output file path |
-| `--relationship` | no | Filter by relationship type |
-| `--exclude-rejected` | no | Omit edges with `human_rejected` or `agent_rejected` review status |
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--limit` | no | `200` | integer range | Rows to inspect. |
+| `--min-support` | no | `5` | integer range | Minimum support for suggestions. |
+| `--decision-surface-type` | no | `` | choice | Optional decision surface type filter. |
+| `--decision-surface-name` | no | `` | text | Optional decision surface name filter. |
+| `--pair` | no | `Sentinel.UNSET` | text | Explicit mismatch pair as FROM_PROP=TO_PROP. |
 
-**Columns:** `from_type`, `from_id`, `to_type`, `to_id`, `relationship_type`, `edge_key`, `properties_json`
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
 
-The `properties_json` column is the full edge properties dict as JSON with deterministic key ordering (`sort_keys=True`). This includes config-defined properties, `review_status`, and `_provenance`. See [Edge Properties](concepts.md#edge-properties) for what these contain.
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-By default all edges are exported regardless of `review_status`. Use `--exclude-rejected` to omit rejected edges.
+## cruxible analyze-outcomes
 
-**Example:**
+**Usage:** `cruxible analyze-outcomes [OPTIONS]`
 
-```bash
-cruxible export edges -o edges.csv
-# Exported 704 edge(s) to edges.csv
+**Purpose:** Analyze structured outcomes and print trust/debugging suggestions.
 
-cruxible export edges -o metabolized.csv --relationship metabolized_by
-# Exported 58 edge(s) to metabolized.csv
+**Options And Arguments:**
 
-# Verify round-trip:
-python -c "import csv, json; [json.loads(r['properties_json']) for r in csv.DictReader(open('edges.csv'))]; print('OK')"
-```
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--anchor-type` | yes | `Sentinel.UNSET` | choice | Outcome anchor type to analyze. |
+| `--relationship` | no | `` | text | Relationship type. |
+| `--workflow` | no | `` | text | Workflow name filter. |
+| `--query` | no | `` | text | Query name filter. |
+| `--surface-type` | no | `` | choice | Explicit surface type filter. |
+| `--surface-name` | no | `` | text | Explicit surface name filter. |
+| `--limit` | no | `200` | integer range | Rows to inspect. |
+| `--min-support` | no | `5` | integer range | Minimum support for suggestions. |
 
----
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
 
-## cruxible find-candidates
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-Find candidate relationships using deterministic strategies.
+## cruxible apply
 
-```bash
-cruxible find-candidates --relationship <type> --strategy <strategy> \
-  [--rule FROM_PROP=TO_PROP ...] [--via <relationship>] [--limit <n>]
-```
+**Usage:** `cruxible apply [OPTIONS]`
 
-| Option | Required | Description |
-|--------|----------|-------------|
-| `--relationship` | **yes** | Relationship type to find candidates for |
-| `--strategy` | **yes** | `property_match` or `shared_neighbors` |
-| `--rule` | conditional | Match rule as `FROM_PROP=TO_PROP` (repeatable, for `property_match`) |
-| `--via` | conditional | Via relationship (for `shared_neighbors`) |
-| `--limit` | no | Max candidates (default: `20`) |
+**Purpose:** Apply a canonical workflow after verifying preview identity.
 
-**Example:**
+**Options And Arguments:**
 
-```bash
-cruxible find-candidates --relationship interacts_with \
-  --strategy shared_neighbors \
-  --via metabolized_by
-# [table of candidate drug pairs sharing enzymes]
-# 15 candidate(s) found.
-```
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--workflow` | no | `` | text | Workflow name from config. |
+| `--input` | no | `` | text | Inline JSON or YAML workflow input. |
+| `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
+| `--apply-digest` | no | `` | text | Preview apply digest from workflow run. |
+| `--head-snapshot` | no | `` | text | Expected head snapshot ID from workflow preview. |
+| `--preview-file` | no | `` | file | Read preview state from a file saved by run --save-preview. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
----
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-## cruxible schema
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-Display the config schema for the current instance.
+## cruxible clone
 
-```bash
-cruxible schema
-```
+**Usage:** `cruxible clone [OPTIONS]`
 
-No options. Reads the `.cruxible/` instance in the current directory.
+**Purpose:** Create a new local instance from a chosen snapshot.
 
----
+**Options And Arguments:**
 
-## cruxible sample
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--snapshot` | yes | `Sentinel.UNSET` | text | Snapshot ID to clone from. |
+| `--root-dir` | yes | `Sentinel.UNSET` | text | Root directory for the new cloned instance. |
 
-Show a sample of entities of a given type for quick inspection.
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
-```bash
-cruxible sample --type <entity_type> [--limit <n>]
-```
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--type` | **yes** | — | Entity type to sample |
-| `--limit` | no | `5` | Number of entities to show |
+## cruxible config-views
 
-**Example:**
+**Usage:** `cruxible config-views [OPTIONS]`
 
-```bash
-cruxible sample --type Drug --limit 3
-# [table showing 3 sample drugs]
-```
+**Purpose:** Render canonical Mermaid/Markdown views for a Cruxible config.
 
----
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | yes | `Sentinel.UNSET` | file | Path to config YAML file. |
+| `--view` | no | `all` | choice | View to render. 'all' emits the standard config-drafting diagrams. |
+| `--bare` | no | `False` | boolean | Emit the raw selected view without Markdown wrapping. |
+| `--update-readme` | no | `Sentinel.UNSET` | file | Replace matching CRUXIBLE marker blocks in a README. |
+| `--runtime` | no | `False` | boolean | Compose extends overlays as a runtime composed view. This includes inherited ontology/query surfaces but strips upstream build-only workflows. |
+
+**Output And Side Effects:**
+- Produces documentation or file output; graph state is not changed.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible context
+
+**Usage:** `cruxible context [OPTIONS]`
+
+**Purpose:** Manage remembered governed server and instance context.
+
+**Subcommands:**
+
+- `cruxible context clear` - Clear remembered governed CLI context.
+- `cruxible context connect` - Persist the current governed transport and optional instance.
+- `cruxible context show` - Show the remembered CLI context.
+- `cruxible context use` - Remember the current governed instance ID.
+
+**Output And Side Effects:**
+- Mutates only the remembered CLI context file, not graph state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible context clear
+
+**Usage:** `cruxible context clear [OPTIONS]`
+
+**Purpose:** Clear remembered governed CLI context.
+
+**Output And Side Effects:**
+- Mutates only the remembered CLI context file, not graph state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible context connect
+
+**Usage:** `cruxible context connect [OPTIONS]`
+
+**Purpose:** Persist the current governed transport and optional instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--server-url` | no | `` | text | Remote Cruxible server base URL. |
+| `--server-socket` | no | `` | text | Local Cruxible server Unix socket path. |
+| `--instance-id` | no | `` | text | Optional opaque server-mode instance ID. |
+
+**Output And Side Effects:**
+- Mutates only the remembered CLI context file, not graph state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible context show
+
+**Usage:** `cruxible context show [OPTIONS]`
+
+**Purpose:** Show the remembered CLI context.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Mutates only the remembered CLI context file, not graph state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible context use
+
+**Usage:** `cruxible context use [OPTIONS]`
+
+**Purpose:** Remember the current governed instance ID.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `instance_id` | yes | `Sentinel.UNSET` | text | Positional argument. |
+
+**Output And Side Effects:**
+- Mutates only the remembered CLI context file, not graph state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record
+
+**Usage:** `cruxible decision-record [OPTIONS]`
+
+**Purpose:** Manage decision records and their logged receipts.
+
+**Subcommands:**
+
+- `cruxible decision-record abandon` - Abandon an open decision record.
+- `cruxible decision-record create` - Create an open decision record.
+- `cruxible decision-record events` - List decision-record events.
+- `cruxible decision-record finalize` - Finalize an open decision record.
+- `cruxible decision-record get` - Fetch one decision record.
+- `cruxible decision-record list` - List decision records.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record abandon
+
+**Usage:** `cruxible decision-record abandon [OPTIONS]`
+
+**Purpose:** Abandon an open decision record.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--id` | yes | `Sentinel.UNSET` | text | Decision record ID. |
+| `--reason` | no | `` | text | Reason for abandoning the record. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record create
+
+**Usage:** `cruxible decision-record create [OPTIONS]`
+
+**Purpose:** Create an open decision record.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--question` | yes | `Sentinel.UNSET` | text | Question or decision being evaluated. |
+| `--subject-type` | no | `` | text | Optional subject type. |
+| `--subject-id` | no | `` | text | Optional subject identifier. |
+| `--opened-by` | no | `human` | choice |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record events
+
+**Usage:** `cruxible decision-record events [OPTIONS]`
+
+**Purpose:** List decision-record events.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--id` | no | `` | text | Decision record ID. |
+| `--receipt` | no | `` | text | Receipt ID. |
+| `--trace` | no | `` | text | Trace ID. |
+| `--status` | no | `` | choice |  |
+| `--limit` | no | `100` | integer range |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record finalize
+
+**Usage:** `cruxible decision-record finalize [OPTIONS]`
+
+**Purpose:** Finalize an open decision record.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--id` | yes | `Sentinel.UNSET` | text | Decision record ID. |
+| `--final-decision` | yes | `Sentinel.UNSET` | text | Final decision text. |
+| `--decision-class` | yes | `Sentinel.UNSET` | choice |  |
+| `--rationale` | no | `` | text | Decision rationale. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record get
+
+**Usage:** `cruxible decision-record get [OPTIONS]`
+
+**Purpose:** Fetch one decision record.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--id` | yes | `Sentinel.UNSET` | text | Decision record ID. |
+| `--events, --no-events` | no | `True` | boolean |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible decision-record list
+
+**Usage:** `cruxible decision-record list [OPTIONS]`
+
+**Purpose:** List decision records.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--status` | no | `` | choice |  |
+| `--subject-type` | no | `` | text |  |
+| `--subject-id` | no | `` | text |  |
+| `--decision-class` | no | `` | choice |  |
+| `--limit` | no | `100` | integer range |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
 ## cruxible evaluate
 
-Assess graph quality: orphan entities, coverage gaps, constraint violations,
-candidate opportunities, governed support state, and unreviewed co-members.
+**Usage:** `cruxible evaluate [OPTIONS]`
 
-```bash
-cruxible evaluate [--limit <n>]
-```
+**Purpose:** Assess graph quality: orphans, gaps, violations, unreviewed co-members.
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--limit` | no | `100` | Max findings to show |
+**Options And Arguments:**
 
-**Example:**
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--limit` | no | `100` | integer | Max findings to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
-```bash
-cruxible evaluate
-# Graph: 52 entities, 704 edges
-# Findings: 3
-#   orphan: 1
-#   constraint_violation: 2
-#   [ERROR] interacts_with edge warfarin → warfarin violates no_self_interaction
-```
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
 
----
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## Error Handling
+## cruxible explain
 
-All commands catch `CoreError` exceptions and print a user-friendly error message to stderr with a non-zero exit code. Use `--help` on any command for usage details.
+**Usage:** `cruxible explain [OPTIONS]`
+
+**Purpose:** Explain a query result using its receipt.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID to explain. |
+| `--format` | no | `markdown` | choice | Output format. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible export
+
+**Usage:** `cruxible export [OPTIONS]`
+
+**Purpose:** Export graph data to files.
+
+**Subcommands:**
+
+- `cruxible export edges` - Export all edges to CSV.
+
+**Output And Side Effects:**
+- Produces documentation or file output; graph state is not changed.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible export edges
+
+**Usage:** `cruxible export edges [OPTIONS]`
+
+**Purpose:** Export all edges to CSV.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--output, -o` | yes | `Sentinel.UNSET` | file | Output file path. |
+| `--relationship` | no | `` | text | Filter by relationship type. |
+| `--exclude-rejected` | no | `False` | boolean | Exclude edges with rejected review_status. |
+
+**Output And Side Effects:**
+- Produces documentation or file output; graph state is not changed.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible feedback
+
+**Usage:** `cruxible feedback [OPTIONS]`
+
+**Purpose:** Submit feedback on a specific edge from a query result.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--reason` | no | `` | text | Reason for feedback. |
+| `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
+| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
+| `--group-override` | no | `False` | boolean | Stamp edge with group_override property (edge must exist). |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible feedback-batch
+
+**Usage:** `cruxible feedback-batch [OPTIONS]`
+
+**Purpose:** Submit a batch of edge feedback with one top-level receipt.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--items-file` | no | `` | path | JSON or YAML file with batch feedback items. |
+| `--items` | no | `` | text | Inline JSON array of feedback items. |
+| `--source` | no | `human` | choice | Who produced this feedback batch (default: human). |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible feedback-profile
+
+**Usage:** `cruxible feedback-profile [OPTIONS]`
+
+**Purpose:** Display the configured feedback profile for one relationship type.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible find-candidates
+
+**Usage:** `cruxible find-candidates [OPTIONS]`
+
+**Purpose:** Find candidate relationships using a deterministic strategy.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type to find candidates for. |
+| `--strategy` | yes | `Sentinel.UNSET` | choice | Detection strategy. |
+| `--rule` | no | `Sentinel.UNSET` | text | Match rule as FROM_PROP=TO_PROP (for property_match strategy). |
+| `--via` | no | `` | text | Via relationship (shared_neighbors) |
+| `--limit` | no | `20` | integer | Max candidates to show. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible get-entity
+
+**Usage:** `cruxible get-entity [OPTIONS]`
+
+**Purpose:** Look up a specific entity by type and ID.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible get-relationship
+
+**Usage:** `cruxible get-relationship [OPTIONS]`
+
+**Purpose:** Look up a specific relationship by its endpoints and type.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group
+
+**Usage:** `cruxible group [OPTIONS]`
+
+**Purpose:** Manage candidate groups for batch edge review.
+
+**Subcommands:**
+
+- `cruxible group get` - Get details of a candidate group.
+- `cruxible group list` - List candidate groups.
+- `cruxible group propose` - Propose a candidate group of edges for batch review.
+- `cruxible group resolutions` - List group resolutions.
+- `cruxible group resolve` - Resolve a candidate group (approve or reject).
+- `cruxible group status` - Show lifecycle status for a signature bucket.
+- `cruxible group trust` - Update trust status on a resolution.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group get
+
+**Usage:** `cruxible group get [OPTIONS]`
+
+**Purpose:** Get details of a candidate group.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--group` | yes | `Sentinel.UNSET` | text | Group ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group list
+
+**Usage:** `cruxible group list [OPTIONS]`
+
+**Purpose:** List candidate groups.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | no | `` | text | Filter by relationship type. |
+| `--status` | no | `` | choice | Filter by status. |
+| `--limit` | no | `50` | integer | Max groups to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group propose
+
+**Usage:** `cruxible group propose [OPTIONS]`
+
+**Purpose:** Propose a candidate group of edges for batch review.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type for the group. |
+| `--members-file` | no | `` | path | JSON file with member list. |
+| `--members` | no | `` | text | Inline JSON array of members. |
+| `--thesis` | no | `` | text | Human-readable thesis text. |
+| `--thesis-facts` | no | `` | text | JSON object of structured thesis facts. |
+| `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
+| `--integration` | no | `Sentinel.UNSET` | text | Integration name used in this proposal. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group resolutions
+
+**Usage:** `cruxible group resolutions [OPTIONS]`
+
+**Purpose:** List group resolutions.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | no | `` | text | Filter by relationship type. |
+| `--action` | no | `` | choice | Filter by action. |
+| `--limit` | no | `50` | integer | Max resolutions to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group resolve
+
+**Usage:** `cruxible group resolve [OPTIONS]`
+
+**Purpose:** Resolve a candidate group (approve or reject).
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--group` | yes | `Sentinel.UNSET` | text | Group ID to resolve. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Resolution action. |
+| `--rationale` | no | `` | text | Rationale for this resolution. |
+| `--source` | no | `human` | choice | Who resolved (default: human). |
+| `--expected-pending-version` | yes | `Sentinel.UNSET` | integer | Pending version the reviewer saw when deciding. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group status
+
+**Usage:** `cruxible group status [OPTIONS]`
+
+**Purpose:** Show lifecycle status for a signature bucket.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--group` | no | `` | text | Concrete group ID. |
+| `--signature` | no | `` | text | Signature bucket ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible group trust
+
+**Usage:** `cruxible group trust [OPTIONS]`
+
+**Purpose:** Update trust status on a resolution.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--resolution` | yes | `Sentinel.UNSET` | text | Resolution ID. |
+| `--status` | yes | `Sentinel.UNSET` | choice | Trust status to set. |
+| `--reason` | no | `` | text | Reason for trust status change. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible ingest
+
+**Usage:** `cruxible ingest [OPTIONS]`
+
+**Purpose:** Ingest data from a file using a named mapping.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--mapping` | yes | `Sentinel.UNSET` | text | Ingestion mapping name from config. |
+| `--file` | yes | `Sentinel.UNSET` | path | Data file. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible init
+
+**Usage:** `cruxible init [OPTIONS]`
+
+**Purpose:** Initialize a new instance or governed server-backed workspace.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | no | `` | text | Path to config YAML file. |
+| `--kit` | no | `` | text | Standalone kit alias or ref to materialize. |
+| `--root-dir` | no | `` | text | Workspace root for config/artifact provenance (defaults to current directory). |
+| `--data-dir` | no | `` | text | Directory for data files. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect
+
+**Usage:** `cruxible inspect [OPTIONS]`
+
+**Purpose:** Inspect entities plus canonical read-only system views.
+
+**Subcommands:**
+
+- `cruxible inspect entity` - Inspect an entity and its immediate neighbors.
+- `cruxible inspect governance` - Show the canonical governance view for the current instance.
+- `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
+- `cruxible inspect overview` - Show the generated config overview built from canonical views.
+- `cruxible inspect queries` - Show the canonical query view for the current instance config.
+- `cruxible inspect workflows` - Show the canonical workflow view for the current instance config.
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect entity
+
+**Usage:** `cruxible inspect entity [OPTIONS]`
+
+**Purpose:** Inspect an entity and its immediate neighbors.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--direction` | no | `both` | choice | Neighbor traversal direction. |
+| `--relationship` | no | `` | text | Optional relationship filter. |
+| `--limit` | no | `` | integer range | Max neighbors to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect governance
+
+**Usage:** `cruxible inspect governance [OPTIONS]`
+
+**Purpose:** Show the canonical governance view for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--format` | no | `markdown` | choice | Output format. |
+| `--limit` | no | `200` | integer range | Max pending groups and resolutions to inspect. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect ontology
+
+**Usage:** `cruxible inspect ontology [OPTIONS]`
+
+**Purpose:** Show the canonical ontology view for the current instance config.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--format` | no | `markdown` | choice | Output format. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect overview
+
+**Usage:** `cruxible inspect overview [OPTIONS]`
+
+**Purpose:** Show the generated config overview built from canonical views.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--format` | no | `markdown` | choice | Output format. |
+| `--limit` | no | `200` | integer range | Max pending groups and resolutions to inspect. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect queries
+
+**Usage:** `cruxible inspect queries [OPTIONS]`
+
+**Purpose:** Show the canonical query view for the current instance config.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--format` | no | `markdown` | choice | Output format. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect workflows
+
+**Usage:** `cruxible inspect workflows [OPTIONS]`
+
+**Purpose:** Show the canonical workflow view for the current instance config.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--format` | no | `markdown` | choice | Output format. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible lint
+
+**Usage:** `cruxible lint [OPTIONS]`
+
+**Purpose:** Run the aggregate read-only corpus lint pass.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--max-findings` | no | `100` | integer | Max graph findings to include. |
+| `--analysis-limit` | no | `200` | integer | Rows to inspect for feedback and outcome analysis. |
+| `--min-support` | no | `5` | integer | Minimum support for lint suggestions. |
+| `--exclude-orphan-type` | no | `Sentinel.UNSET` | text | Entity type to exclude from orphan checks. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list
+
+**Usage:** `cruxible list [OPTIONS]`
+
+**Purpose:** List entities, receipts, or feedback.
+
+**Subcommands:**
+
+- `cruxible list edges` - List edges in the graph.
+- `cruxible list entities` - List entities of a given type.
+- `cruxible list feedback` - List feedback records.
+- `cruxible list outcomes` - List outcome records.
+- `cruxible list receipts` - List receipt summaries.
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list edges
+
+**Usage:** `cruxible list edges [OPTIONS]`
+
+**Purpose:** List edges in the graph.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--relationship` | no | `` | text | Filter by relationship type. |
+| `--limit` | no | `50` | integer | Max edges to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list entities
+
+**Usage:** `cruxible list entities [OPTIONS]`
+
+**Purpose:** List entities of a given type.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type to list. |
+| `--limit` | no | `50` | integer | Max entities to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list feedback
+
+**Usage:** `cruxible list feedback [OPTIONS]`
+
+**Purpose:** List feedback records.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | no | `` | text | Filter by receipt ID. |
+| `--limit` | no | `50` | integer | Max records to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list outcomes
+
+**Usage:** `cruxible list outcomes [OPTIONS]`
+
+**Purpose:** List outcome records.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | no | `` | text | Filter by receipt ID. |
+| `--limit` | no | `50` | integer | Max records to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list receipts
+
+**Usage:** `cruxible list receipts [OPTIONS]`
+
+**Purpose:** List receipt summaries.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--query-name` | no | `` | text | Filter by query name. |
+| `--operation-type` | no | `` | text | Filter by operation type. |
+| `--limit` | no | `50` | integer | Max receipts to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible lock
+
+**Usage:** `cruxible lock [OPTIONS]`
+
+**Purpose:** Generate a workflow lock file for the current instance config.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--force` | no | `False` | boolean | Accept live canonical artifact hashes when regenerating the lock. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible outcome
+
+**Usage:** `cruxible outcome [OPTIONS]`
+
+**Purpose:** Record the outcome of a decision.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID. |
+| `--outcome` | yes | `Sentinel.UNSET` | choice | Outcome of the decision. |
+| `--detail` | no | `` | text | JSON string with outcome details. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible outcome-profile
+
+**Usage:** `cruxible outcome-profile [OPTIONS]`
+
+**Purpose:** Display the configured outcome profile for one anchor context.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--anchor-type` | yes | `Sentinel.UNSET` | choice | Anchor type to resolve. |
+| `--relationship` | no | `` | text | Relationship type. |
+| `--workflow` | no | `` | text | Workflow name. |
+| `--surface-type` | no | `` | choice | Receipt surface type. |
+| `--surface-name` | no | `` | text | Receipt surface name. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible plan
+
+**Usage:** `cruxible plan [OPTIONS]`
+
+**Purpose:** Compile a workflow plan for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--workflow` | yes | `Sentinel.UNSET` | text | Workflow name from config. |
+| `--input` | no | `` | text | Inline JSON or YAML workflow input. |
+| `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible propose
+
+**Usage:** `cruxible propose [OPTIONS]`
+
+**Purpose:** Execute a workflow and bridge its output into a candidate group.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--workflow` | yes | `Sentinel.UNSET` | text | Workflow name from config. |
+| `--input` | no | `` | text | Inline JSON or YAML workflow input. |
+| `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible query
+
+**Usage:** `cruxible query [OPTIONS]`
+
+**Purpose:** Execute a named query, or discover the query surfaces on this instance.
+
+**Subcommands:**
+
+- `cruxible query describe` - Describe one named query with required params and example IDs.
+- `cruxible query list` - List named queries with entry points and required params.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--query` | no | `Sentinel.UNSET` | text | Named query from config. |
+| `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
+| `--limit` | no | `` | integer range | Max results to display. |
+| `--count` | no | `False` | boolean | Show only summary metadata. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible query describe
+
+**Usage:** `cruxible query describe [OPTIONS]`
+
+**Purpose:** Describe one named query with required params and example IDs.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--query` | yes | `Sentinel.UNSET` | text | Named query from config. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible query list
+
+**Usage:** `cruxible query list [OPTIONS]`
+
+**Purpose:** List named queries with entry points and required params.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible reload-config
+
+**Usage:** `cruxible reload-config [OPTIONS]`
+
+**Purpose:** Validate the active config or repoint the instance to a new config file.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | no | `` | text | Optional new config path. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible render-wiki
+
+**Usage:** `cruxible render-wiki [OPTIONS]`
+
+**Purpose:** Render a deterministic Markdown wiki from the current world state.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--output` | yes | `Sentinel.UNSET` | directory | Directory to write the rendered wiki into. |
+| `--focus` | no | `Sentinel.UNSET` | text | Render a focused wiki around EntityType:EntityId. |
+| `--include-type` | no | `Sentinel.UNSET` | text | Limit rendered subject pages to specific entity types. |
+| `--scope` | no | `` | choice | Wiki projection scope. Defaults to local for CLI renders. |
+| `--max-per-type` | no | `50` | integer range | Maximum subject links or high-fanout neighbors to render per type. |
+| `--all-subjects` | no | `False` | boolean | Deprecated alias for --scope all. |
+
+**Output And Side Effects:**
+- Produces documentation or file output; graph state is not changed.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible run
+
+**Usage:** `cruxible run [OPTIONS]`
+
+**Purpose:** Execute a workflow for the current instance. For workflows that produce group proposals, use 'cruxible propose' instead.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--workflow` | yes | `Sentinel.UNSET` | text | Workflow name from config. |
+| `--input` | no | `` | text | Inline JSON or YAML workflow input. |
+| `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
+| `--save-preview` | no | `` | file | Save preview state to a JSON file for use with apply --preview-file. |
+| `--apply, --no-apply` | no | `False` | boolean | Immediately apply a canonical workflow after preview verification. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible sample
+
+**Usage:** `cruxible sample [OPTIONS]`
+
+**Purpose:** Show a sample of entities of a given type.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type to sample. |
+| `--limit` | no | `5` | integer | Number of entities to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible schema
+
+**Usage:** `cruxible schema [OPTIONS]`
+
+**Purpose:** Display the config schema for this instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible server
+
+**Usage:** `cruxible server [OPTIONS]`
+
+**Purpose:** Inspect live daemon state.
+
+**Subcommands:**
+
+- `cruxible server info` - Show live daemon metadata such as agent mode and state dir.
+
+**Output And Side Effects:**
+- Command-specific output only.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible server info
+
+**Usage:** `cruxible server info [OPTIONS]`
+
+**Purpose:** Show live daemon metadata such as agent mode and state dir.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Command-specific output only.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible snapshot
+
+**Usage:** `cruxible snapshot [OPTIONS]`
+
+**Purpose:** Manage immutable world-model snapshots.
+
+**Subcommands:**
+
+- `cruxible snapshot create` - Create an immutable full snapshot for the current instance.
+- `cruxible snapshot list` - List snapshots for the current instance.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible snapshot create
+
+**Usage:** `cruxible snapshot create [OPTIONS]`
+
+**Purpose:** Create an immutable full snapshot for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--label` | no | `` | text | Optional human label for the snapshot. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible snapshot list
+
+**Usage:** `cruxible snapshot list [OPTIONS]`
+
+**Purpose:** List snapshots for the current instance.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible stats
+
+**Usage:** `cruxible stats [OPTIONS]`
+
+**Purpose:** Display entity and relationship counts for this instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible test
+
+**Usage:** `cruxible test [OPTIONS]`
+
+**Purpose:** Execute config-defined workflow tests for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--name` | no | `` | text | Run only a named workflow test. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible validate
+
+**Usage:** `cruxible validate [OPTIONS]`
+
+**Purpose:** Validate a config YAML file without creating an instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | yes | `Sentinel.UNSET` | text | Path to config YAML file. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world
+
+**Usage:** `cruxible world [OPTIONS]`
+
+**Purpose:** Publish immutable worlds and manage pullable overlays.
+
+**Subcommands:**
+
+- `cruxible world create-overlay` - Create a new local overlay instance from a published world release.
+- `cruxible world publish` - Publish the current root world-model instance as an immutable release bundle.
+- `cruxible world pull-apply` - Apply a previewed upstream release into the current overlay.
+- `cruxible world pull-preview` - Preview pulling a newer upstream release into the current overlay.
+- `cruxible world status` - Show upstream tracking metadata for the current instance.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world create-overlay
+
+**Usage:** `cruxible world create-overlay [OPTIONS]`
+
+**Purpose:** Create a new local overlay instance from a published world release.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--transport-ref` | no | `Sentinel.UNSET` | text | Transport ref, e.g. file://... or oci://... |
+| `--world-ref` | no | `Sentinel.UNSET` | text | World alias, e.g. kev-reference or kev-reference@2026-03-27. |
+| `--kit` | no | `Sentinel.UNSET` | text | Apply a checked-in local overlay kit, e.g. kev-triage. |
+| `--no-kit` | no | `False` | boolean | Skip automatic kit application and create a bare overlay. |
+| `--root-dir` | no | `` | text | Workspace root for the new overlay (defaults to current directory in server mode). |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world publish
+
+**Usage:** `cruxible world publish [OPTIONS]`
+
+**Purpose:** Publish the current root world-model instance as an immutable release bundle.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--transport-ref` | yes | `Sentinel.UNSET` | text | Transport ref, e.g. file://... or oci://... |
+| `--world-id` | yes | `Sentinel.UNSET` | text | Stable published world identifier. |
+| `--release-id` | yes | `Sentinel.UNSET` | text | User-supplied release identifier. |
+| `--compatibility` | no | `data_only` | choice | Compatibility classification for the published release. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world pull-apply
+
+**Usage:** `cruxible world pull-apply [OPTIONS]`
+
+**Purpose:** Apply a previewed upstream release into the current overlay.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--apply-digest` | yes | `Sentinel.UNSET` | text | Apply digest returned by pull-preview. |
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world pull-preview
+
+**Usage:** `cruxible world pull-preview [OPTIONS]`
+
+**Purpose:** Preview pulling a newer upstream release into the current overlay.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible world status
+
+**Usage:** `cruxible world status [OPTIONS]`
+
+**Purpose:** Show upstream tracking metadata for the current instance.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.

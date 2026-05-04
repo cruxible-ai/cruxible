@@ -8,7 +8,8 @@ views for the ontology, governed relationships, workflows, and named queries.
 
 | Kit | Domain | Purpose |
 |---|---|---|
-| [kev-triage](kev-triage/) | Cybersecurity | KEV reference and internal asset triage workflows. |
+| [kev-reference](kev-reference/) | Cybersecurity | Standalone public KEV, NVD, EPSS, vendor, product, and vulnerability reference world. |
+| [kev-triage](kev-triage/) | Cybersecurity | Overlay kit for local assets, exposure triage, remediation, incidents, and controls. |
 | [supply-chain-blast-radius](supply-chain-blast-radius/) | Supply Chain | Supplier, component, product, shipment, and incident blast-radius modeling. |
 | [case-law-monitoring](case-law-monitoring/) | Legal | Matter-centered case-law monitoring and authority impact modeling. |
 | [retail-catalog](retail-catalog/) | Retail | Product catalog relationships, substitutes, complements, and downstream retail planning surfaces. |
@@ -24,6 +25,9 @@ uv run cruxible config-views --config kits/<kit>/config.yaml --update-readme kit
 
 For layered kits such as KEV triage, include `--runtime` so generated views use
 the composed runtime config.
+
+Standalone kits can be initialized with `cruxible init --kit <kit>`. Overlay
+kits are created with `cruxible world create-overlay --kit <kit>`.
 
 When rendering a runtime wiki for a layered kit, use local scope so only the
 local world state plus directly used upstream context is emitted:

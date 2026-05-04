@@ -34,7 +34,7 @@ result or proposal was produced.
                        │ calls
 ┌──────────────────────▼───────────────────────────────────────┐
 │  MCP Tools                                                   │
-│  init · validate · ingest · query · feedback · evaluate ...  │
+│  init · validate · workflow · query · feedback · evaluate    │
 └──────────────────────┬───────────────────────────────────────┘
                        │ executes
 ┌──────────────────────▼───────────────────────────────────────┐
@@ -87,7 +87,7 @@ state, and outcomes.
 
 The core loop is:
 
-1. Build or ingest domain state.
+1. Build or refresh domain state through workflows.
 2. Run workflows that apply or propose changes.
 3. Review uncertain proposals.
 4. Query and use accepted state from agents, apps, and downstream workflows.
@@ -248,7 +248,7 @@ Add the MCP server to your AI agent:
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin",
+        "CRUXIBLE_MODE": "governed_write",
         "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
       }
     }
@@ -263,32 +263,34 @@ Add the MCP server to your AI agent:
 command = "cruxible-mcp"
 
 [mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "admin"
+CRUXIBLE_MODE = "governed_write"
 CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
 ```
 
-### Try a demo
+### Try a kit
 
 ```bash
 git clone https://github.com/cruxible-ai/cruxible-core
-cd cruxible-core/demos/drug-interactions
+cd cruxible-core
+cruxible --server-url http://127.0.0.1:8100 init --kit kev-reference
 ```
 
-Each demo is an exploratory workspace with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
+`kev-reference` is a standalone kit. It materializes a versioned bundle with
+config, providers, data, and a bundled lock. From there, run the canonical
+reference refresh, query KEV/product relationships, and inspect receipts.
 
-Treat the demo flow as local evaluation mode. For a real process boundary, run against a separate daemon instead of relying on a same-machine local runtime boundary.
+For local cyber triage, create the overlay kit:
 
-First, load the instance:
+```bash
+cruxible --server-url http://127.0.0.1:8100 world create-overlay \
+  --world-ref kev-reference \
+  --kit kev-triage \
+  --root-dir "$PWD/kev-triage-workspace"
+```
 
-> "You have access to the cruxible MCP, load the cruxible instance"
-
-Then try:
-
-- "Check interactions for warfarin"
-- "What's the enzyme impact of fluoxetine?"
-- "Suggest an alternative to simvastatin"
-
-Every query produces a receipt you can inspect.
+The overlay adds customer-owned assets, services, controls, incidents,
+findings, remediation, and governed proposal workflows on top of the public KEV
+reference world.
 
 ## Why Not Just Use Prompts, Docs, Memory, or a Knowledge Base?
 
@@ -332,11 +334,11 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 - **Constraint system:** define validation rules that are checked by `evaluate`. Feedback patterns can be encoded as constraints.
 - **Feedback loop:** approve, reject, correct, or flag individual edges. Rejected edges are excluded from future queries.
 - **Candidate detection:** property matching and shared-neighbor strategies for discovering missing relationships at scale.
-- **YAML-driven config:** define entity types, relationships, queries, constraints, and ingestion mappings in one file.
+- **YAML-driven config:** define entity types, relationships, queries, constraints, workflows, and governed policies in one file.
 - **Zero LLM dependencies:** purely deterministic runtime. No API keys, no token costs during execution.
 - **Full MCP server:** complete lifecycle via [Model Context Protocol](docs/mcp-tools.md) for AI agent orchestration.
 - **CLI mirror:** core MCP tools have [CLI equivalents](docs/cli-reference.md) for terminal workflows.
-- **Permission modes:** READ_ONLY, GRAPH_WRITE, ADMIN tiers control what tools a session can access.
+- **Permission modes:** READ_ONLY, GOVERNED_WRITE, GRAPH_WRITE, and ADMIN tiers control what tools a session can access.
 
 ## Kits
 
@@ -360,10 +362,12 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 - [Quickstart](docs/quickstart.md) — 5-minute install to first query
 - [Concepts](docs/concepts.md) — Architecture and primitives
 - [Config Reference](docs/config-reference.md) — Every YAML field explained
-- [Common Provider Catalog](docs/common-providers.md) — Placeholder for reusable provider refs and contract snippets
+- [Common Providers And Dataflow Steps](docs/common-providers.md) — Reusable providers versus built-in workflow step types
 - [MCP Tools Reference](docs/mcp-tools.md) — All tools with parameters and return types
 - [CLI Reference](docs/cli-reference.md) — Terminal commands
 - [AI Agent Guide](docs/for-ai-agents.md) — Orchestration workflows for Claude Code, Cursor, Codex, and other MCP clients
+- [Kit Walkthroughs](docs/kit-walkthroughs.md) — Author standalone and overlay kits
+- [Local State And Backups](docs/local-state-and-backups.md) — SQLite, daemon state, and portability
 
 ## Technology
 

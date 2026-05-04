@@ -1,64 +1,139 @@
 # Quickstart
 
-Get from install to first query in 5 minutes.
+Get from install to a governed kit-backed world model in a few minutes.
+
+The recommended `0.2` shape is a local `cruxible-server` daemon. The daemon
+owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
+through Cruxible surfaces.
 
 ## Prerequisites
 
 - Python 3.11 or later
-- An MCP-capable AI agent (Claude Code, Cursor, Codex)
+- An MCP-capable AI agent if you want agent orchestration
 
-## Install
-
-### Local Daemon Runtime
+## Install And Start The Daemon
 
 ```bash
 pip install "cruxible-core[server,mcp]"
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
 
-> Or use `uv tool install "cruxible-core[server,mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
-
-For a simple local hardening layer, add:
+The daemon binds locally by default. For a simple local hardening layer, start
+it with:
 
 ```bash
 CRUXIBLE_SERVER_AUTH=true
 CRUXIBLE_SERVER_TOKEN=change-me
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
 
-### Client-Only Agent Environment
+Use `cruxible-client` in a separate agent environment when the agent should not
+import the runtime directly:
 
 ```bash
 pip install cruxible-client
 ```
 
-Use `cruxible-client` when the agent talks to a separate Cruxible daemon over HTTP and does not need local runtime access.
+## Create A Reference World
 
-If permission modes matter, do not install `cruxible-core` in that agent environment.
-
-If you need a real runtime boundary rather than advisory local permissions, see [Isolated Deployment](isolated-deployment.md).
-
-## Point the CLI at the Daemon
-
-Initialize a daemon-owned instance from your local config:
+Initialize the standalone KEV reference kit. This materializes the kit bundle,
+loads its config, and gives you an instance ID.
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 init --root-dir "$(pwd)" --config config.yaml
+cruxible --server-url http://127.0.0.1:8100 init --kit kev-reference
 ```
 
-Then keep using the daemon-backed interface:
+Keep the returned `instance_id`; every server-backed command after init uses it.
+
+Then lock and preview the canonical reference refresh:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> stats
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query --query <query-name>
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> lock
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> run \
+  --workflow build_public_kev_reference \
+  --save-preview kev-reference-preview.json
 ```
 
-## MCP Setup
+Canonical workflows preview state first. Apply the preview only after checking
+the `apply_digest`, changed counts, receipt ID, and trace IDs:
 
-Add the MCP server to your AI agent:
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> apply \
+  --preview-file kev-reference-preview.json
+```
 
-This is the convenience path for local development. Point MCP at the same local daemon the CLI uses.
+Run a query and inspect its receipt:
 
-**Claude Code / Cursor** (project `.mcp.json` or `~/.claude.json` / `.cursor/mcp.json`):
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query \
+  --query vulnerability_products \
+  --param cve_id=CVE-2020-1472
+```
+
+Every query returns a receipt ID. In MCP, fetch the full proof with
+`cruxible_receipt(instance_id, "<receipt-id>")`. The CLI `explain` command
+renders receipts for direct local instances.
+
+## Create A Local Overlay
+
+The KEV triage kit is an overlay kit. It tracks the published KEV reference
+world and adds local assets, services, controls, exceptions, remediation,
+incidents, findings, and governed proposal workflows.
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 world create-overlay \
+  --world-ref kev-reference \
+  --kit kev-triage \
+  --root-dir "$PWD/kev-triage-workspace"
+```
+
+`--world-ref kev-reference` resolves through the published world catalog. In a
+source checkout before published OCI reference worlds are available, publish the
+reference instance to a local `file://` transport and pass `--transport-ref`
+instead of `--world-ref`.
+
+The command returns a new overlay `instance_id`. Lock the overlay, preview the
+local canonical state refresh, and apply it:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> lock
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> run \
+  --workflow build_local_state \
+  --save-preview kev-local-preview.json
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> apply \
+  --preview-file kev-local-preview.json
+```
+
+Run a governed proposal workflow and inspect the pending group:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> propose \
+  --workflow propose_asset_products
+
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group list \
+  --status pending_review
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group get \
+  --group <group-id>
+```
+
+Approve or reject only after reviewing the group thesis, member signals,
+receipt, trace IDs, and pending version:
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 --instance-id <overlay-instance-id> group resolve \
+  --group <group-id> \
+  --action approve \
+  --expected-pending-version <pending-version> \
+  --rationale "Reviewed source evidence and accepted the proposed mappings"
+```
+
+## Point An Agent At Cruxible
+
+Bootstrap and canonical apply usually require an admin surface. Day-to-day
+agent work should use `governed_write` unless the agent is explicitly acting as
+an administrator.
+
+**Claude Code / Cursor**:
 
 ```json
 {
@@ -66,7 +141,7 @@ This is the convenience path for local development. Point MCP at the same local 
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin",
+        "CRUXIBLE_MODE": "governed_write",
         "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
       }
     }
@@ -74,71 +149,43 @@ This is the convenience path for local development. Point MCP at the same local 
 }
 ```
 
-**Codex** (`~/.codex/config.toml`):
+**Codex**:
 
 ```toml
 [mcp_servers.cruxible]
 command = "cruxible-mcp"
 
 [mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "admin"
+CRUXIBLE_MODE = "governed_write"
 CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
 ```
 
-## Try a Demo
-
-```bash
-git clone https://github.com/cruxible-ai/cruxible-core
-cd cruxible-core/demos/drug-interactions
-```
-
-Each demo includes a config, prebuilt graph, and `.mcp.json`. Open your agent in a demo directory.
-
-First, load the instance:
-
-> "You have access to the cruxible MCP, load the cruxible instance"
-
-Then try:
-
-- "Suggest an alternative to simvastatin"
-- "Check interactions for warfarin"
-- "What's the enzyme impact of fluoxetine?"
-
-Every query produces a receipt. Ask your agent to inspect it with `cruxible_receipt`.
+If the agent should not have direct state access, keep
+`CRUXIBLE_SERVER_STATE_DIR` outside the workspace and install only
+`cruxible-client` in the agent environment. See
+[Isolated Deployment](isolated-deployment.md) for stronger local separation.
 
 ## Build Your Own
 
-### 1. Prepare your data
+Use kits for repeatable work:
 
-Make sure all your data files (CSVs, JSONs) are accessible in the repo where your agent can read them.
+- A **standalone kit** creates a world model by itself.
+- An **overlay kit** extends a published reference world.
+- Provider refs use `kit://...::callable`.
+- Deterministic state loading should be workflow-based: parse source artifacts,
+  shape/filter/join/dedupe rows, make graph objects, preview, then apply.
+- Inference, matching, classification, and reviewable judgment should go
+  through proposal workflows and candidate groups.
 
-### 2. Explore the data with your agent
-
-> "Explore the data files in /data. I want to build a graph that can answer: [your goals]. Here are the queries I care about: [list them]"
-
-The agent will profile your data, propose entity types and relationships, and draft named queries. Iterate until you're happy with the domain model.
-
-### 3. Let the agent build
-
-Once you've agreed on entities, relationships, and queries, the agent writes the YAML config and calls Cruxible's MCP tools to validate the schema, initialize the graph instance, and ingest your data.
-
-### 4. Query
-
-Run your named queries and inspect the receipts. Every answer comes with a proof.
-
-### 5. Review and refine
-
-> "Review the graph quality" or "I want to provide feedback on edges"
-
-The agent will run evaluations, surface pending or weakly supported governed
-relationships for review, and record your approve/correct/reject decisions.
-Accepted domain state compounds in the world model across sessions.
+For hands-on kit creation, see [Kit Walkthroughs](kit-walkthroughs.md). For the
+manifest and distribution rules, see [Kit Authoring And Distribution](kit-authoring.md).
 
 ## Next Steps
 
-- [Concepts](concepts.md) — Architecture and primitives
-- [Config Reference](config-reference.md) — Every YAML field explained
-- [MCP Tools Reference](mcp-tools.md) — All tools with parameters and return types
-- [CLI Reference](cli-reference.md) — Terminal commands
-- [AI Agent Guide](for-ai-agents.md) — Orchestration workflows and best practices
-- [Isolated Deployment](isolated-deployment.md) — Advanced setup for a real runtime boundary
+- [Concepts](concepts.md) - Architecture and vocabulary
+- [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
+- [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
+- [Local State And Backups](local-state-and-backups.md) - SQLite and droplet operations
+- [Config Reference](config-reference.md) - YAML schema
+- [MCP Tools Reference](mcp-tools.md) - MCP surface
+- [CLI Reference](cli-reference.md) - Terminal commands

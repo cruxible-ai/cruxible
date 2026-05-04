@@ -1,6 +1,11 @@
 # KEV Triage
 
-Localable cyber world model for vulnerability and KEV triage.
+Overlay cyber world model for vulnerability and KEV triage.
+
+This kit is the reference Cruxible story for `0.2`: public KEV reference state
+is refreshed deterministically, local operational state is loaded through a
+canonical workflow, and uncertain mappings or judgments become governed
+proposal groups instead of direct graph writes.
 
 ## Skills
 
@@ -19,7 +24,7 @@ This demo has two kit directories that represent the two layers:
   from the bundled hashed KEV/NVD/EPSS artifact. This is what Cruxible hosts
   and keeps updated from public feeds. Read-only to local instances.
 
-- **`config.yaml`** — a customer local that uses `extends: ../kev-reference/config.yaml`.
+- **`config.yaml`** — a customer local overlay that uses `extends: ../kev-reference/config.yaml`.
   Adds internal entity types, deterministic internal mappings, governed judgment
   relationships, feedback and outcome profiles, quality checks, and named queries
   that traverse across both layers.
@@ -598,40 +603,22 @@ control reviews meant to drive `add-entity` and `group propose`.
 
 ## Incident History Layer
 
-Adds incident investigation knowledge that compounds across triage cycles. The
-vulnerability triage layer tells you what's exposed *now*. The incident layer
-tells you what's been exploited *before* — and what you learned from it.
+Incident and finding state is part of the kit, not a future sketch. The
+vulnerability triage layer tells you what is exposed now. The incident layer
+tells you what has been exploited before and what the organization learned.
 
-### Why this compounds
+When a new CVE drops, the triage agent can query `incident_history_for_product`
+and `prior_exploitation_context` before summarizing priority. If a product or
+CVE has appeared in a prior incident, the agent can cite affected assets, open
+findings, remediation state, and ownership history from governed state.
 
-When a new CVE drops and the triage agent runs the exposure assessment, it can
-also query `incident_history_for_product` to check: "has this product been
-exploited before in our environment?" If yes, the triage summary includes what
-happened last time — which assets were hit, what the root cause was, what
-findings are still open. The priority isn't just CVSS × EPSS anymore; it's
-informed by organizational history.
+`Incident` and `Finding` are local operational entities. Attribution
+relationships such as `incident_involved_asset`,
+`incident_exploited_vulnerability`, `finding_from_incident`, and
+`incident_owned_by` are governed relationships because they usually require
+reading an incident report, post-mortem, SIEM narrative, or reviewer note.
 
-### Proposed entity types
-
-| Entity | Properties | Source |
-|---|---|---|
-| `Incident` | incident_id (PK), title, severity, status (open/investigating/resolved/closed), occurred_at, resolved_at, source, summary | PagerDuty export, SIEM, manual |
-| `Finding` | finding_id (PK), title, category, detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
-
-### Proposed relationships
-
-| Relationship | From → To | Governed? | How it's created |
-|---|---|---|---|
-| `incident_owned_by` | Incident → Owner | Yes | Agent proposes accountable owner for incident |
-| `incident_involved_asset` | Incident → Asset | Yes | Agent reads incident report, proposes link |
-| `incident_exploited_vulnerability` | Incident → Vulnerability | Yes | Agent reads post-mortem, proposes CVE attribution |
-| `finding_from_incident` | Finding → Incident | Yes | Agent extracts findings from post-mortem |
-
-### Proposed named queries
-
-| Query | Traversal | What it answers |
-|---|---|---|
-| `incident_history_for_product` | Product ← vulnerability_affects_product ← incident_exploited_vulnerability | "Has this product been exploited before?" |
-| `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status = open) | "What open findings still need action for this asset?" |
-| `prior_exploitation_context` | Vulnerability ← incident_exploited_vulnerability → finding_from_incident | "What did we learn last time this CVE was exploited?" |
-| `finding_status_for_incident` | Incident ← finding_from_incident | "Are all findings from this incident remediated?" |
+The review material in `data/seed/review_material/` is intentionally not loaded
+by `build_local_state`. It exists so the agent can propose incident,
+remediation, waiver, and control-effectiveness state through Cruxible's
+proposal and review surfaces.
