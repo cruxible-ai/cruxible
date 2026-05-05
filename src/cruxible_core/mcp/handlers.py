@@ -1216,6 +1216,38 @@ def handle_get_relationship(
     )
 
 
+def handle_relationship_lineage(
+    instance_id: str,
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None = None,
+) -> contracts.RelationshipLineageResult:
+    """Look up a relationship and follow group provenance when available."""
+    return _dispatch_remote_or_local(
+        lambda client: client.get_relationship_lineage(
+            instance_id,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        ),
+        lambda: local_api._handle_relationship_lineage_local(
+            instance_id,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+            edge_key=edge_key,
+        ),
+    )
+
+
 def handle_propose_group(
     instance_id: str,
     relationship_type: str,

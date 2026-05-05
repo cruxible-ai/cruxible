@@ -58,6 +58,7 @@ from cruxible_core.service import (
     service_get_outcome_profile,
     service_get_receipt,
     service_get_relationship,
+    service_get_relationship_lineage,
     service_get_trace,
     service_group_status,
     service_ingest,
@@ -1804,6 +1805,51 @@ def _handle_get_relationship_local(
         to_id=relationship.to_id,
         edge_key=relationship.edge_key,
         properties=relationship.properties,
+    )
+
+
+def _handle_relationship_lineage_local(
+    instance_id: str,
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None = None,
+) -> contracts.RelationshipLineageResult:
+    """Look up a relationship and follow group provenance when available."""
+    check_permission(
+        "cruxible_relationship_lineage",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_get_relationship_lineage(
+        instance,
+        from_type=from_type,
+        from_id=from_id,
+        relationship_type=relationship_type,
+        to_type=to_type,
+        to_id=to_id,
+        edge_key=edge_key,
+    )
+    return contracts.RelationshipLineageResult(
+        found=result.found,
+        relationship=(
+            result.relationship.model_dump(mode="json")
+            if result.relationship is not None
+            else None
+        ),
+        provenance=result.provenance,
+        group=result.group.model_dump(mode="json") if result.group is not None else None,
+        resolution=(
+            result.resolution.model_dump(mode="json")
+            if result.resolution is not None
+            else None
+        ),
+        source_workflow_receipt_id=result.source_workflow_receipt_id,
+        source_trace_ids=result.source_trace_ids,
+        warnings=result.warnings,
     )
 
 

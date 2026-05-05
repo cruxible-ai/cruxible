@@ -99,6 +99,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_find_candidates": PermissionMode.READ_ONLY,
     "cruxible_get_entity": PermissionMode.READ_ONLY,
     "cruxible_get_relationship": PermissionMode.READ_ONLY,
+    "cruxible_relationship_lineage": PermissionMode.READ_ONLY,
     "cruxible_inspect_entity": PermissionMode.READ_ONLY,
     "cruxible_inspect_ontology": PermissionMode.READ_ONLY,
     "cruxible_inspect_workflows": PermissionMode.READ_ONLY,

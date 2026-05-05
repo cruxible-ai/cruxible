@@ -966,6 +966,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
 - `cruxible inspect queries` - Show the canonical query view for the current instance config.
+- `cruxible inspect relationship-lineage` - Inspect a relationship's stored provenance lineage.
 - `cruxible inspect trace` - Inspect a full provider execution trace by ID.
 - `cruxible inspect workflows` - Show the canonical workflow view for the current instance config.
 
@@ -1043,6 +1044,32 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Trace ID not found.
 - Permission mode too low for read operations.
+
+## cruxible inspect relationship-lineage
+
+**Usage:** `cruxible inspect relationship-lineage [OPTIONS]`
+
+**Purpose:** Inspect a relationship's stored provenance lineage.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Returns the matching relationship, `_provenance`, linked proposal group/resolution when provenance points to a group, source workflow receipt ID, source trace IDs, and warnings for missing or non-group provenance.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for read operations.
+- Ambiguous relationship tuple without `--edge-key`.
 
 ## cruxible inspect ontology
 

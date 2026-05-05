@@ -659,6 +659,18 @@ class GetGroupResult:
 
 
 @dataclass
+class RelationshipLineageResult:
+    found: bool
+    relationship: RelationshipInstance | None = None
+    provenance: dict[str, Any] | None = None
+    group: CandidateGroup | None = None
+    resolution: GroupResolution | None = None
+    source_workflow_receipt_id: str | None = None
+    source_trace_ids: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ListGroupsResult:
     groups: list[CandidateGroup]
     total: int

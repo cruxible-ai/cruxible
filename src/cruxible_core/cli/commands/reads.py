@@ -74,6 +74,7 @@ from cruxible_core.service import (
     service_find_candidates,
     service_get_entity,
     service_get_relationship,
+    service_get_relationship_lineage,
     service_get_trace,
     service_inspect_entity,
     service_lint,
@@ -1045,6 +1046,72 @@ def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
         lambda client, instance_id: client.get_trace(instance_id, trace_id),
         lambda instance: service_get_trace(instance, trace_id).model_dump(mode="json"),
     )
+    if output_json:
+        _emit_json(payload)
+        return
+    click.echo(yaml.safe_dump(payload, sort_keys=False))
+
+
+@inspect_group.command("relationship-lineage")
+@click.option("--from-type", required=True, help="Source entity type.")
+@click.option("--from-id", required=True, help="Source entity ID.")
+@click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
+@click.option("--to-type", required=True, help="Target entity type.")
+@click.option("--to-id", required=True, help="Target entity ID.")
+@click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
+@json_option
+@handle_errors
+def inspect_relationship_lineage_cmd(
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None,
+    output_json: bool,
+) -> None:
+    """Inspect a relationship's stored provenance lineage."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.get_relationship_lineage(
+            instance_id,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        ),
+        lambda instance: service_get_relationship_lineage(
+            instance,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        ),
+    )
+    if isinstance(result, contracts.RelationshipLineageResult):
+        payload = result.model_dump(mode="python", by_alias=True)
+    else:
+        payload = {
+            "found": result.found,
+            "relationship": (
+                result.relationship.model_dump(mode="python")
+                if result.relationship is not None
+                else None
+            ),
+            "_provenance": result.provenance,
+            "group": result.group.model_dump(mode="python") if result.group is not None else None,
+            "resolution": (
+                result.resolution.model_dump(mode="python")
+                if result.resolution is not None
+                else None
+            ),
+            "source_workflow_receipt_id": result.source_workflow_receipt_id,
+            "source_trace_ids": result.source_trace_ids,
+            "warnings": result.warnings,
+        }
     if output_json:
         _emit_json(payload)
         return

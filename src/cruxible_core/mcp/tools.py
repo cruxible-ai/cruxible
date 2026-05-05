@@ -1092,4 +1092,25 @@ def register_tools(server: FastMCP) -> list[str]:
             instance_id, from_type, from_id, relationship_type, to_type, to_id, edge_key
         )
 
+    @_tool
+    def cruxible_relationship_lineage(
+        instance_id: str,
+        from_type: str,
+        from_id: str,
+        relationship_type: str,
+        to_type: str,
+        to_id: str,
+        edge_key: int | None = None,
+    ) -> contracts.RelationshipLineageResult:
+        """Look up a relationship and follow group provenance when available."""
+        return handlers.handle_relationship_lineage(
+            instance_id,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+            edge_key,
+        )
+
     return registered

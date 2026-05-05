@@ -265,6 +265,19 @@ class GetRelationshipResult(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class RelationshipLineageResult(BaseModel):
+    found: bool
+    relationship: dict[str, Any] | None = None
+    provenance: dict[str, Any] | None = Field(default=None, alias="_provenance")
+    group: dict[str, Any] | None = None
+    resolution: dict[str, Any] | None = None
+    source_workflow_receipt_id: str | None = None
+    source_trace_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
 class QueryParamHints(BaseModel):
     entry_point: str
     required_params: list[str] = Field(default_factory=list)

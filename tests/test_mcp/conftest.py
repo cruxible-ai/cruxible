@@ -413,6 +413,27 @@ class GovernedLocalClient:
             edge_key=edge_key,
         )
 
+    def get_relationship_lineage(
+        self,
+        instance_id: str,
+        *,
+        from_type: str,
+        from_id: str,
+        relationship_type: str,
+        to_type: str,
+        to_id: str,
+        edge_key: int | None = None,
+    ):
+        return local_api._handle_relationship_lineage_local(
+            instance_id,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+        )
+
     def propose_group(
         self,
         instance_id: str,

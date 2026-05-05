@@ -14,6 +14,7 @@ from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
     ResolveGroupResult,
+    service_get_relationship_lineage,
     service_propose_group,
     service_resolve_group,
 )
@@ -183,6 +184,46 @@ class TestApproveBasic:
         assert rel is not None
         assert rel.properties.get("_provenance", {}).get("source") == "group_resolve"
         assert rel.properties.get("_provenance", {}).get("source_ref") == f"group:{group_id}"
+
+    def test_relationship_lineage_links_to_group_resolution_and_traces(
+        self,
+        instance: CruxibleInstance,
+    ) -> None:
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts={"style": "casual"},
+            source_workflow_receipt_id="RCP-source",
+            source_trace_ids=["TRC-source"],
+        )
+        resolved = service_resolve_group(
+            instance,
+            proposed.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        lineage = service_get_relationship_lineage(
+            instance,
+            from_type="Part",
+            from_id="BP-1",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-1",
+        )
+
+        assert lineage.found is True
+        assert lineage.provenance is not None
+        assert lineage.provenance["source_ref"] == f"group:{proposed.group_id}"
+        assert lineage.group is not None
+        assert lineage.group.group_id == proposed.group_id
+        assert lineage.resolution is not None
+        assert lineage.resolution.resolution_id == resolved.resolution_id
+        assert lineage.source_workflow_receipt_id == "RCP-source"
+        assert lineage.source_trace_ids == ["TRC-source"]
+        assert lineage.warnings == []
 
     def test_multiple_members_approved(self, instance: CruxibleInstance) -> None:
         members = [_member("BP-1", "V-1"), _member("BP-2", "V-2")]

@@ -1101,6 +1101,20 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert all(
         edge["properties"]["_provenance"]["source_ref"] == f"group:{group_id}" for edge in edges
     )
+    lineage = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lineage",
+        params={
+            "from_type": "Campaign",
+            "from_id": "CMP-1",
+            "relationship_type": "recommended_for",
+            "to_type": "Product",
+            "to_id": "SKU-123",
+        },
+    )
+    assert lineage.status_code == 200
+    lineage_payload = lineage.json()
+    assert lineage_payload["group"]["group_id"] == group_id
+    assert lineage_payload["source_trace_ids"]
 
     snapshot = app_client.post(f"/api/v1/{instance_id}/snapshots", json={"label": "baseline"})
     assert snapshot.status_code == 200

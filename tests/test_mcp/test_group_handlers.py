@@ -722,6 +722,47 @@ class TestReadPermissions:
         )
         assert result["total"] == 0
 
+    def test_relationship_lineage_read_only(self, server, instance_id, monkeypatch):
+        proposed = call_tool(
+            server,
+            "cruxible_propose_group",
+            {
+                "instance_id": instance_id,
+                "relationship_type": "fits",
+                "members": [_member()],
+                "thesis_facts": {"k": "v"},
+            },
+        )
+        call_tool(
+            server,
+            "cruxible_resolve_group",
+            {
+                "instance_id": instance_id,
+                "group_id": proposed["group_id"],
+                "action": "approve",
+                "expected_pending_version": 1,
+            },
+        )
+
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        result = call_tool(
+            server,
+            "cruxible_relationship_lineage",
+            {
+                "instance_id": instance_id,
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+            },
+        )
+
+        assert result["found"] is True
+        assert result["group"]["group_id"] == proposed["group_id"]
+        assert result["_provenance"]["source_ref"] == f"group:{proposed['group_id']}"
+
 
 class TestFeedbackGroupOverride:
     def test_feedback_with_group_override(self, server, instance_id):

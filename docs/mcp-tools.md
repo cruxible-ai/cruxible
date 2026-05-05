@@ -1591,3 +1591,30 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Unknown `instance_id` or missing daemon configuration.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_relationship_lineage
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Look up a relationship and follow group provenance when available.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID or local instance root. |
+| `from_type` | yes | string | Source entity type. |
+| `from_id` | yes | string | Source entity ID. |
+| `relationship_type` | yes | string | Relationship type. |
+| `to_type` | yes | string | Target entity type. |
+| `to_id` | yes | string | Target entity ID. |
+| `edge_key` | no | integer | null | Edge key for multi-edge disambiguation. |
+
+**Returns:** Top-level fields: `found`, `relationship`, `_provenance`, `group`, `resolution`, `source_workflow_receipt_id`, `source_trace_ids`, `warnings`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Ambiguous relationship tuple without `edge_key`.

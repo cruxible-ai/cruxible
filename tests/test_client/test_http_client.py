@@ -584,6 +584,42 @@ def test_get_group_preserves_review_payload():
     assert result.member_review[0]["current_edge_count"] == 0
 
 
+def test_get_relationship_lineage_uses_expected_route():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "found": True,
+                "relationship": {"relationship_type": "fits"},
+                "_provenance": {"source_ref": "group:GRP-1"},
+                "group": {"group_id": "GRP-1"},
+                "resolution": {"resolution_id": "RES-1"},
+                "source_workflow_receipt_id": "RCP-1",
+                "source_trace_ids": ["TRC-1"],
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.get_relationship_lineage(
+        "inst_123",
+        from_type="Part",
+        from_id="BP-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        edge_key=7,
+    )
+
+    assert result.provenance == {"source_ref": "group:GRP-1"}
+    assert result.group == {"group_id": "GRP-1"}
+    assert "relationships/lineage" in captured["path"]
+    assert "edge_key=7" in captured["path"]
+
+
 def test_get_group_status_by_group_uses_expected_route():
     captured: dict[str, Any] = {}
 

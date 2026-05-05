@@ -49,6 +49,7 @@ from cruxible_core.service.types import (
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
+    RelationshipLineageResult,
     StatsServiceResult,
     TraceListResult,
 )
@@ -258,6 +259,81 @@ def service_get_relationship(
         to_id=to_id,
         edge_key=edge_key,
     )
+
+
+def service_get_relationship_lineage(
+    instance: InstanceProtocol,
+    from_type: str,
+    from_id: str,
+    relationship_type: str,
+    to_type: str,
+    to_id: str,
+    edge_key: int | None = None,
+) -> RelationshipLineageResult:
+    """Look up a relationship and follow group provenance when present."""
+    relationship = service_get_relationship(
+        instance,
+        from_type=from_type,
+        from_id=from_id,
+        relationship_type=relationship_type,
+        to_type=to_type,
+        to_id=to_id,
+        edge_key=edge_key,
+    )
+    if relationship is None:
+        return RelationshipLineageResult(
+            found=False,
+            warnings=["relationship_not_found"],
+        )
+
+    warnings: list[str] = []
+    provenance = relationship.properties.get("_provenance")
+    if not isinstance(provenance, dict):
+        return RelationshipLineageResult(
+            found=True,
+            relationship=relationship,
+            warnings=["missing_provenance"],
+        )
+
+    source_ref = provenance.get("source_ref")
+    if not isinstance(source_ref, str) or not source_ref.startswith("group:"):
+        warnings.append("non_group_provenance")
+        return RelationshipLineageResult(
+            found=True,
+            relationship=relationship,
+            provenance=dict(provenance),
+            warnings=warnings,
+        )
+
+    group_id = source_ref.removeprefix("group:")
+    group_store = instance.get_group_store()
+    try:
+        group = group_store.get_group(group_id)
+        if group is None:
+            warnings.append("missing_group")
+            return RelationshipLineageResult(
+                found=True,
+                relationship=relationship,
+                provenance=dict(provenance),
+                warnings=warnings,
+            )
+        resolution = (
+            group_store.get_resolution(group.resolution_id)
+            if group.resolution_id is not None
+            else None
+        )
+        return RelationshipLineageResult(
+            found=True,
+            relationship=relationship,
+            provenance=dict(provenance),
+            group=group,
+            resolution=resolution,
+            source_workflow_receipt_id=group.source_workflow_receipt_id,
+            source_trace_ids=list(group.source_trace_ids),
+            warnings=warnings,
+        )
+    finally:
+        group_store.close()
 
 
 def service_get_receipt(

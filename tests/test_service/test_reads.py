@@ -23,6 +23,7 @@ from cruxible_core.service import (
     service_get_entity,
     service_get_receipt,
     service_get_relationship,
+    service_get_relationship_lineage,
     service_get_trace,
     service_init,
     service_inspect_entity,
@@ -513,6 +514,23 @@ class TestGetRelationship:
                 to_type="Vehicle",
                 to_id="V-2024-CIVIC-EX",
             )
+
+    def test_lineage_warns_on_missing_provenance(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        lineage = service_get_relationship_lineage(
+            populated_instance,
+            from_type="Part",
+            from_id="BP-1001",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
+        )
+
+        assert lineage.found is True
+        assert lineage.relationship is not None
+        assert lineage.warnings == ["missing_provenance"]
 
 
 # ---------------------------------------------------------------------------

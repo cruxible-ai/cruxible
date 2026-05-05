@@ -950,6 +950,30 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.GetRelationshipResult)
 
+    def get_relationship_lineage(
+        self,
+        instance_id: str,
+        *,
+        from_type: str,
+        from_id: str,
+        relationship_type: str,
+        to_type: str,
+        to_id: str,
+        edge_key: int | None = None,
+    ) -> contracts.RelationshipLineageResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/relationships/lineage",
+            params={
+                "from_type": from_type,
+                "from_id": from_id,
+                "relationship_type": relationship_type,
+                "to_type": to_type,
+                "to_id": to_id,
+                "edge_key": edge_key,
+            },
+        )
+        return self._parse_model(response, contracts.RelationshipLineageResult)
+
     def propose_group(
         self,
         instance_id: str,

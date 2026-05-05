@@ -256,6 +256,31 @@ async def inspect_view(
 
 
 @router.get(
+    "/{instance_id}/relationships/lineage",
+    response_model=contracts.RelationshipLineageResult,
+)
+async def get_relationship_lineage(
+    instance_id: str,
+    from_type: str = Query(...),
+    from_id: str = Query(...),
+    relationship_type: str = Query(...),
+    to_type: str = Query(...),
+    to_id: str = Query(...),
+    edge_key: int | None = None,
+) -> contracts.RelationshipLineageResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return local_api._handle_relationship_lineage_local(
+        instance_id=resolved_instance_id,
+        from_type=from_type,
+        from_id=from_id,
+        relationship_type=relationship_type,
+        to_type=to_type,
+        to_id=to_id,
+        edge_key=edge_key,
+    )
+
+
+@router.get(
     "/{instance_id}/relationships/lookup",
     response_model=contracts.GetRelationshipResult,
 )

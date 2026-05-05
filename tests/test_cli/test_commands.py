@@ -2292,6 +2292,39 @@ class TestGroupGetCLI:
         assert payload["bucket_status"]["pending_group_id"] == group_id
         assert payload["member_review"][0]["current_edge_count"] == 0
 
+    def test_inspect_relationship_lineage_json(
+        self,
+        runner: CliRunner,
+        group_instance: CruxibleInstance,
+    ) -> None:
+        group_id = _seed_group(group_instance, resolve=True)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "inspect",
+                "relationship-lineage",
+                "--from-type",
+                "Part",
+                "--from-id",
+                "BP-1",
+                "--relationship",
+                "fits",
+                "--to-type",
+                "Vehicle",
+                "--to-id",
+                "V-1",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["found"] is True
+        assert payload["group"]["group_id"] == group_id
+        assert payload["_provenance"]["source_ref"] == f"group:{group_id}"
+
 
 class TestGroupListCLI:
     def test_list(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
