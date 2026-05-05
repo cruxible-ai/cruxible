@@ -9,7 +9,10 @@ Controls which tools an MCP session can invoke, enforced via the
 - ``GRAPH_WRITE``: raw graph mutation and proposal resolution
 - ``ADMIN``: apply canonical workflows, ingest data, add constraints, create new instances
 
-Default is ``ADMIN`` (backward compatible).
+Default is ``ADMIN`` (backward compatible), except when ``CRUXIBLE_AGENT_MODE=1``
+is active and ``CRUXIBLE_MODE`` is unset. In agent mode, the default is
+``GOVERNED_WRITE`` so agents use governed proposal surfaces unless explicitly
+granted broader permissions.
 
 Audit logging uses structlog to stderr so it never interferes with the
 MCP stdio transport on stdout. A safe stderr default is configured at
@@ -31,6 +34,7 @@ from pathlib import Path
 import structlog
 
 from cruxible_core.errors import ConfigError, PermissionDeniedError
+from cruxible_core.server.config import is_agent_mode
 
 # ---------------------------------------------------------------------------
 # Safe stderr default for structlog — never write to stdout (MCP stdio)
@@ -203,7 +207,11 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     else:
         raw = os.environ.get("CRUXIBLE_MODE")
         if raw is None:
-            _cached_mode = PermissionMode.ADMIN
+            _cached_mode = (
+                PermissionMode.GOVERNED_WRITE
+                if is_agent_mode()
+                else PermissionMode.ADMIN
+            )
         else:
             resolved = _MODE_NAMES.get(raw.lower())
             if resolved is None:
