@@ -174,6 +174,12 @@ class ReceiptNotFoundError(CoreError):
         super().__init__(f"Receipt '{receipt_id}' not found")
 
 
+class TraceNotFoundError(CoreError):
+    def __init__(self, trace_id: str):
+        self.trace_id = trace_id
+        super().__init__(f"Trace '{trace_id}' not found")
+
+
 class OutcomeNotFoundError(CoreError):
     def __init__(self, receipt_id: str):
         self.receipt_id = receipt_id
@@ -266,6 +272,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         )
     elif body.error_type == "ReceiptNotFoundError":
         exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))
+    elif body.error_type == "TraceNotFoundError":
+        exc = TraceNotFoundError(context.get("trace_id", "unknown"))
     elif body.error_type == "OutcomeNotFoundError":
         exc = OutcomeNotFoundError(context.get("receipt_id", "unknown"))
     elif body.error_type == "InstanceNotFoundError":

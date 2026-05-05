@@ -966,6 +966,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
 - `cruxible inspect queries` - Show the canonical query view for the current instance config.
+- `cruxible inspect trace` - Inspect a full provider execution trace by ID.
 - `cruxible inspect workflows` - Show the canonical workflow view for the current instance config.
 
 **Output And Side Effects:**
@@ -1021,6 +1022,27 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect trace
+
+**Usage:** `cruxible inspect trace [OPTIONS] TRACE_ID`
+
+**Purpose:** Inspect a full provider execution trace by ID.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `trace_id` | yes | `Sentinel.UNSET` | text | Positional argument. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Returns the full persisted provider execution trace, including provider metadata, input/output payloads, status, timings, and error details when present.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Trace ID not found.
+- Permission mode too low for read operations.
 
 ## cruxible inspect ontology
 
@@ -1140,6 +1162,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `cruxible list feedback` - List feedback records.
 - `cruxible list outcomes` - List outcome records.
 - `cruxible list receipts` - List receipt summaries.
+- `cruxible list traces` - List provider execution trace summaries.
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
@@ -1259,6 +1282,30 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible list traces
+
+**Usage:** `cruxible list traces [OPTIONS]`
+
+**Purpose:** List provider execution trace summaries.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--workflow` | no | `` | text | Filter by workflow name. |
+| `--provider` | no | `` | text | Filter by provider name. |
+| `--limit` | no | `100` | integer range | Max traces to show. |
+| `--offset` | no | `0` | integer range | Rows to skip. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Returns trace summary rows with trace ID, workflow, step, provider, runtime, and creation time.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for read operations.
+- Invalid limit or offset.
 
 ## cruxible lock
 

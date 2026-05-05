@@ -252,6 +252,31 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_receipt(instance_id, receipt_id)
 
     @_tool
+    def cruxible_get_trace(
+        instance_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        """Fetch a full provider execution trace by `trace_id`."""
+        return handlers.handle_get_trace(instance_id, trace_id)
+
+    @_tool
+    def cruxible_list_traces(
+        instance_id: str,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.TraceListResult:
+        """List provider execution trace summaries with optional workflow/provider filters."""
+        return handlers.handle_list_traces(
+            instance_id,
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
     def cruxible_feedback(
         instance_id: str,
         receipt_id: str,

@@ -6,9 +6,15 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, QueryNotFoundError, ReceiptNotFoundError
+from cruxible_core.errors import (
+    ConfigError,
+    QueryNotFoundError,
+    ReceiptNotFoundError,
+    TraceNotFoundError,
+)
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.read_surface import (
     get_entity as read_get_entity,
 )
@@ -44,6 +50,7 @@ from cruxible_core.service.types import (
     QueryParamHints,
     QueryServiceResult,
     StatsServiceResult,
+    TraceListResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -269,6 +276,50 @@ def service_get_receipt(
     if receipt is None:
         raise ReceiptNotFoundError(receipt_id)
     return receipt
+
+
+def service_get_trace(
+    instance: InstanceProtocol,
+    trace_id: str,
+) -> ExecutionTrace:
+    """Retrieve a stored provider execution trace by ID.
+
+    Raises TraceNotFoundError if not found.
+    """
+    store = instance.get_receipt_store()
+    try:
+        trace = store.get_trace(trace_id)
+    finally:
+        store.close()
+    if trace is None:
+        raise TraceNotFoundError(trace_id)
+    return trace
+
+
+def service_list_traces(
+    instance: InstanceProtocol,
+    *,
+    workflow_name: str | None = None,
+    provider_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> TraceListResult:
+    """List stored provider execution trace summaries."""
+    if limit < 1:
+        raise ConfigError("limit must be at least 1")
+    if offset < 0:
+        raise ConfigError("offset must be non-negative")
+    store = instance.get_receipt_store()
+    try:
+        traces = store.list_traces(
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        )
+    finally:
+        store.close()
+    return TraceListResult(traces=traces, count=len(traces))
 
 
 # ---------------------------------------------------------------------------

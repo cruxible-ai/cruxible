@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
 from cruxible_core.kits.world_refs import WorldCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.app import create_app
@@ -165,6 +167,8 @@ def test_server_info_endpoint_returns_live_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
     _init_instance(app_client, server_project)
 
     response = app_client.get("/api/v1/server/info")
@@ -419,6 +423,46 @@ def test_query_discovery_routes_return_expected_shapes(
     assert described_payload["name"] == "parts_for_vehicle"
     assert described_payload["entry_point"] == "Vehicle"
     assert described_payload["required_params"] == ["vehicle_id"]
+
+
+def test_trace_routes_return_trace_payloads(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trace = ExecutionTrace(
+        trace_id="TRC-route-001",
+        workflow_name="wf",
+        step_id="step",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload={"input": True},
+        output_payload={"rows": 3},
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    store = get_manager().get(instance_id).get_receipt_store()
+    try:
+        store.save_trace(trace)
+    finally:
+        store.close()
+
+    fetched = app_client.get(f"/api/v1/{instance_id}/traces/{trace.trace_id}")
+    listed = app_client.get(f"/api/v1/{instance_id}/traces", params={"workflow_name": "wf"})
+    missing = app_client.get(f"/api/v1/{instance_id}/traces/TRC-missing")
+
+    assert fetched.status_code == 200
+    assert fetched.json()["output_payload"]["rows"] == 3
+    assert listed.status_code == 200
+    assert listed.json()["traces"][0]["trace_id"] == trace.trace_id
+    assert missing.status_code == 404
+    assert missing.json()["error_type"] == "TraceNotFoundError"
 
 
 def test_workflow_run_route_rejects_proposal_workflows(

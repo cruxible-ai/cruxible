@@ -320,6 +320,30 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/receipts/{receipt_id}")
         return self._parse_json(response)
 
+    def get_trace(self, instance_id: str, trace_id: str) -> dict[str, Any]:
+        response = self._client.get(f"/api/v1/{instance_id}/traces/{trace_id}")
+        return self._parse_json(response)
+
+    def list_traces(
+        self,
+        instance_id: str,
+        *,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> contracts.TraceListResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/traces",
+            params={
+                "workflow_name": workflow_name,
+                "provider_name": provider_name,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return self._parse_model(response, contracts.TraceListResult)
+
     def feedback(
         self,
         instance_id: str,

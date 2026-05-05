@@ -188,6 +188,12 @@ class ReceiptExplanationResult:
 
 
 @dataclass
+class TraceListResult:
+    traces: list[dict[str, Any]] = field(default_factory=list)
+    count: int = 0
+
+
+@dataclass
 class ExportEdgesResult:
     fieldnames: list[str]
     rows: list[dict[str, Any]]

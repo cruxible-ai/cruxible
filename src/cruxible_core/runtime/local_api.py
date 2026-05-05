@@ -57,6 +57,7 @@ from cruxible_core.service import (
     service_get_outcome_profile,
     service_get_receipt,
     service_get_relationship,
+    service_get_trace,
     service_group_status,
     service_ingest,
     service_init,
@@ -70,6 +71,7 @@ from cruxible_core.service import (
     service_list_queries,
     service_list_resolutions,
     service_list_snapshots,
+    service_list_traces,
     service_lock,
     service_outcome,
     service_plan,
@@ -803,6 +805,43 @@ def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
     instance = get_manager().get(instance_id)
     receipt = service_get_receipt(instance, receipt_id)
     return receipt.model_dump(mode="json")
+
+
+def _handle_get_trace_local(instance_id: str, trace_id: str) -> dict[str, Any]:
+    """Retrieve a stored provider execution trace by ID."""
+    check_permission(
+        "cruxible_get_trace",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    trace = service_get_trace(instance, trace_id)
+    return trace.model_dump(mode="json")
+
+
+def _handle_list_traces_local(
+    instance_id: str,
+    *,
+    workflow_name: str | None = None,
+    provider_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.TraceListResult:
+    """List provider execution trace summaries."""
+    check_permission(
+        "cruxible_list_traces",
+        instance_id=instance_id,
+        required_mode=PermissionMode.READ_ONLY,
+    )
+    instance = get_manager().get(instance_id)
+    result = service_list_traces(
+        instance,
+        workflow_name=workflow_name,
+        provider_name=provider_name,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.TraceListResult(traces=result.traces, count=result.count)
 
 
 def _handle_feedback_local(

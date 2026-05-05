@@ -71,6 +71,31 @@ async def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     )
 
 
+@router.get("/{instance_id}/traces/{trace_id}")
+async def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
+    return local_api._handle_get_trace_local(
+        instance_id=resolve_server_instance_id(instance_id),
+        trace_id=trace_id,
+    )
+
+
+@router.get("/{instance_id}/traces", response_model=contracts.TraceListResult)
+async def list_traces(
+    instance_id: str,
+    workflow_name: str | None = None,
+    provider_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.TraceListResult:
+    return local_api._handle_list_traces_local(
+        instance_id=resolve_server_instance_id(instance_id),
+        workflow_name=workflow_name,
+        provider_name=provider_name,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/{instance_id}/list/{resource_type}", response_model=contracts.ListResult)
 async def list_resources(
     instance_id: str,

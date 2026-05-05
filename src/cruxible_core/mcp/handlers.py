@@ -561,6 +561,40 @@ def handle_receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     )
 
 
+def handle_get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
+    """Retrieve a stored provider execution trace by ID."""
+    return _dispatch_remote_or_local(
+        lambda client: client.get_trace(instance_id, trace_id),
+        lambda: local_api._handle_get_trace_local(instance_id, trace_id),
+    )
+
+
+def handle_list_traces(
+    instance_id: str,
+    workflow_name: str | None = None,
+    provider_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> contracts.TraceListResult:
+    """List stored provider execution trace summaries."""
+    return _dispatch_remote_or_local(
+        lambda client: client.list_traces(
+            instance_id,
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: local_api._handle_list_traces_local(
+            instance_id,
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
 def handle_feedback(
     instance_id: str,
     receipt_id: str,

@@ -270,6 +270,14 @@ class ReceiptNotFoundError(CoreError):
         super().__init__(f"Receipt '{receipt_id}' not found")
 
 
+class TraceNotFoundError(CoreError):
+    """Execution trace ID not found in store."""
+
+    def __init__(self, trace_id: str):
+        self.trace_id = trace_id
+        super().__init__(f"Trace '{trace_id}' not found")
+
+
 class OutcomeNotFoundError(CoreError):
     """Outcome for a receipt was not found in the feedback store."""
 

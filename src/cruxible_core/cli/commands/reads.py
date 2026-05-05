@@ -74,6 +74,7 @@ from cruxible_core.service import (
     service_find_candidates,
     service_get_entity,
     service_get_relationship,
+    service_get_trace,
     service_inspect_entity,
     service_lint,
     service_list_groups,
@@ -1032,6 +1033,22 @@ def inspect_entity_cmd(
     click.echo(f"Neighbors: {inspect_result.total_neighbors}")
     if neighbor_rows:
         console.print(inspect_neighbors_table(neighbor_rows))
+
+
+@inspect_group.command("trace")
+@click.argument("trace_id")
+@json_option
+@handle_errors
+def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
+    """Inspect a full provider execution trace by ID."""
+    payload = _dispatch_cli_instance(
+        lambda client, instance_id: client.get_trace(instance_id, trace_id),
+        lambda instance: service_get_trace(instance, trace_id).model_dump(mode="json"),
+    )
+    if output_json:
+        _emit_json(payload)
+        return
+    click.echo(yaml.safe_dump(payload, sort_keys=False))
 
 
 @click.command("get-entity")

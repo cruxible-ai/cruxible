@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.handlers import handle_query
 from cruxible_core.mcp.server import create_server
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.mutations import service_ingest
 
@@ -144,6 +146,49 @@ def test_query_and_receipt_work_locally_for_seeded_dev_instance(
     )
     assert receipt["receipt_id"] == query["receipt_id"]
     assert receipt["query_name"] == "parts_for_vehicle"
+
+
+def test_trace_tools_work_locally_for_dev_instance(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trace = ExecutionTrace(
+        trace_id="TRC-mcp-001",
+        workflow_name="wf",
+        step_id="step",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload={"input": True},
+        output_payload={"rows": 4},
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    instance = CruxibleInstance.load(Path(dev_graph_instance_id))
+    store = instance.get_receipt_store()
+    try:
+        store.save_trace(trace)
+    finally:
+        store.close()
+
+    fetched = call_tool(
+        server,
+        "cruxible_get_trace",
+        {"instance_id": dev_graph_instance_id, "trace_id": trace.trace_id},
+    )
+    listed = call_tool(
+        server,
+        "cruxible_list_traces",
+        {"instance_id": dev_graph_instance_id, "workflow_name": "wf"},
+    )
+
+    assert fetched["output_payload"]["rows"] == 4
+    assert listed["traces"][0]["trace_id"] == trace.trace_id
 
 
 def test_list_sample_schema_and_getters_work_locally_for_dev_instance(

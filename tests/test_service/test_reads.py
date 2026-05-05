@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, ReceiptNotFoundError, RelationshipAmbiguityError
+from cruxible_core.errors import (
+    ConfigError,
+    ReceiptNotFoundError,
+    RelationshipAmbiguityError,
+    TraceNotFoundError,
+)
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import (
     service_add_constraint,
     service_add_decision_policy,
@@ -16,9 +23,11 @@ from cruxible_core.service import (
     service_get_entity,
     service_get_receipt,
     service_get_relationship,
+    service_get_trace,
     service_init,
     service_inspect_entity,
     service_list,
+    service_list_traces,
     service_query,
     service_reload_config,
     service_sample,
@@ -536,6 +545,68 @@ class TestGetReceipt:
         # Should be able to open store again
         store = populated_instance.get_receipt_store()
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# service_get_trace / service_list_traces
+# ---------------------------------------------------------------------------
+
+
+def _trace(
+    *,
+    trace_id: str,
+    workflow_name: str = "load_assets",
+    provider_name: str = "asset_loader",
+) -> ExecutionTrace:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return ExecutionTrace(
+        trace_id=trace_id,
+        workflow_name=workflow_name,
+        step_id="load",
+        provider_name=provider_name,
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.asset_loader",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload={"source": "fixture"},
+        output_payload={"rows": 2},
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+
+
+class TestTraceReads:
+    def test_get_trace_found(self, populated_instance: CruxibleInstance) -> None:
+        trace = _trace(trace_id="TRC-service-001")
+        store = populated_instance.get_receipt_store()
+        try:
+            store.save_trace(trace)
+        finally:
+            store.close()
+
+        loaded = service_get_trace(populated_instance, trace.trace_id)
+
+        assert loaded.trace_id == trace.trace_id
+        assert loaded.output_payload["rows"] == 2
+
+    def test_get_trace_not_found(self, populated_instance: CruxibleInstance) -> None:
+        with pytest.raises(TraceNotFoundError):
+            service_get_trace(populated_instance, "TRC-missing")
+
+    def test_list_traces_with_filters(self, populated_instance: CruxibleInstance) -> None:
+        store = populated_instance.get_receipt_store()
+        try:
+            store.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
+            store.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
+        finally:
+            store.close()
+
+        result = service_list_traces(populated_instance, workflow_name="wf_a", limit=10)
+
+        assert result.count == 1
+        assert result.traces[0]["trace_id"] == "TRC-a"
 
 
 # ---------------------------------------------------------------------------

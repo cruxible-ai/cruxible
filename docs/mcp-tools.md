@@ -351,6 +351,53 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_get_trace
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Fetch a full provider execution trace by `trace_id`.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID or local instance root. |
+| `trace_id` | yes | string | Provider execution trace ID, usually returned by workflow run/apply/propose results. |
+
+**Returns:** Returns the full persisted trace payload with provider metadata, input/output payloads, status, timings, and error details when present.
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Trace ID not found.
+- Permission mode too low for this tool.
+
+## cruxible_list_traces
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** List provider execution trace summaries with optional workflow/provider filters.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID or local instance root. |
+| `workflow_name` | no | string | null | Filter by workflow name. |
+| `provider_name` | no | string | null | Filter by provider name. |
+| `limit` | no | integer | Maximum trace summaries to return. |
+| `offset` | no | integer | Number of summaries to skip. |
+
+**Returns:** Top-level fields: `traces`, `count`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Invalid limit or offset.
+
 ## cruxible_feedback
 
 **Permission:** `GOVERNED_WRITE`

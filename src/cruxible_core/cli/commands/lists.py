@@ -27,7 +27,7 @@ from cruxible_core.cli.formatting import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import ConfigError
-from cruxible_core.service import service_export_edges, service_list
+from cruxible_core.service import service_export_edges, service_list, service_list_traces
 
 
 @click.group("list")
@@ -103,6 +103,53 @@ def list_receipts(
         return
     console.print(receipts_table(result.items))
     click.echo(f"{len(result.items)} receipt(s) shown.")
+
+
+@list_group.command("traces")
+@click.option("--workflow", "workflow_name", default=None, help="Filter by workflow name.")
+@click.option("--provider", "provider_name", default=None, help="Filter by provider name.")
+@click.option("--limit", default=100, type=click.IntRange(min=1), help="Max traces to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
+@json_option
+@handle_errors
+def list_traces(
+    workflow_name: str | None,
+    provider_name: str | None,
+    limit: int,
+    offset: int,
+    output_json: bool,
+) -> None:
+    """List provider execution trace summaries."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.list_traces(
+            instance_id,
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda instance: service_list_traces(
+            instance,
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    traces = result.traces
+    if output_json:
+        _emit_json({"traces": traces, "count": result.count})
+        return
+    if not traces:
+        click.echo("No traces found.")
+        return
+    for trace in traces:
+        click.echo(
+            "{trace_id}  {workflow_name}:{step_id}  {provider_name}  {created_at}".format(
+                **trace
+            )
+        )
+    click.echo(f"{result.count} trace(s) shown.")
 
 
 @list_group.command("feedback")

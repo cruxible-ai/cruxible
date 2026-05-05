@@ -26,6 +26,7 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
+    TraceNotFoundError,
 )
 
 __all__ = ["ErrorResponse", "error_to_response", "response_to_error"]
@@ -53,6 +54,7 @@ def _status_for_error(exc: CoreError) -> int:
             EntityNotFoundError,
             ReceiptNotFoundError,
             OutcomeNotFoundError,
+            TraceNotFoundError,
             InstanceNotFoundError,
             GroupNotFoundError,
         ),
@@ -99,6 +101,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["relationship"] = exc.relationship_type
     if isinstance(exc, ReceiptNotFoundError | OutcomeNotFoundError):
         context["receipt_id"] = exc.receipt_id
+    if isinstance(exc, TraceNotFoundError):
+        context["trace_id"] = exc.trace_id
     if isinstance(exc, InstanceNotFoundError):
         context["instance_id"] = exc.instance_id
     if isinstance(exc, InstanceScopeError):

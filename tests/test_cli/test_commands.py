@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from cruxible_core.cli.main import cli
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import service_propose_group, service_resolve_group
 
 
@@ -41,6 +43,32 @@ def _assert_local_mutation_disabled(
     result = _chdir_run(runner, directory, args)
     assert result.exit_code == 2
     assert f"Local mutation disabled for {label}" in result.output
+
+
+def _save_trace(instance: CruxibleInstance, trace_id: str = "TRC-cli-001") -> str:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trace = ExecutionTrace(
+        trace_id=trace_id,
+        workflow_name="wf",
+        step_id="step",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload={"input": True},
+        output_payload={"rows": 5},
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    store = instance.get_receipt_store()
+    try:
+        store.save_trace(trace)
+    finally:
+        store.close()
+    return trace.trace_id
 
 
 @pytest.fixture
@@ -386,6 +414,22 @@ class TestStatsInspectReload:
         assert "Neighbors: 2" in result.output
         assert "Part:BP-1001" in result.output
         assert "fits" in result.output
+
+    def test_inspect_trace_outputs_payload(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id = _save_trace(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "trace", trace_id, "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["trace_id"] == trace_id
+        assert payload["output_payload"]["rows"] == 5
 
     def test_reload_config_repoints_instance(
         self,
@@ -1002,6 +1046,22 @@ class TestList:
         )
         assert result.exit_code == 0
         assert "1 receipt" in result.output
+
+    def test_list_traces(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id = _save_trace(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "traces", "--workflow", "wf", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["traces"][0]["trace_id"] == trace_id
+        assert payload["count"] == 1
 
     def test_list_feedback(
         self,

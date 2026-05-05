@@ -100,6 +100,48 @@ def test_validation_error_preserves_errors_list():
     assert exc_info.value.errors == ["wrong type"]
 
 
+def test_trace_methods_call_trace_routes():
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        if request.url.path.endswith("/TRC-1"):
+            return httpx.Response(200, json={"trace_id": "TRC-1", "workflow_name": "wf"})
+        return httpx.Response(
+            200,
+            json={
+                "traces": [
+                    {
+                        "trace_id": "TRC-1",
+                        "workflow_name": "wf",
+                        "provider_name": "provider",
+                    }
+                ],
+                "count": 1,
+            },
+        )
+
+    client = _build_client(handler)
+
+    trace = client.get_trace("inst_123", "TRC-1")
+    listed = client.list_traces(
+        "inst_123",
+        workflow_name="wf",
+        provider_name="provider",
+        limit=25,
+        offset=5,
+    )
+
+    assert trace["trace_id"] == "TRC-1"
+    assert listed.traces[0]["provider_name"] == "provider"
+    assert seen[0] == ("GET", "http://cruxible/api/v1/inst_123/traces/TRC-1")
+    expected_url = (
+        "http://cruxible/api/v1/inst_123/traces?"
+        "workflow_name=wf&provider_name=provider&limit=25&offset=5"
+    )
+    assert seen[1][1] == expected_url
+
+
 def test_file_upload_uses_multipart(tmp_path: Path):
     captured: dict[str, Any] = {}
 

@@ -193,6 +193,11 @@ class ListResult(BaseModel):
     total: int
 
 
+class TraceListResult(BaseModel):
+    traces: list[dict[str, Any]] = Field(default_factory=list)
+    count: int
+
+
 class CandidatesResult(BaseModel):
     candidates: list[dict[str, Any]]
     total: int
