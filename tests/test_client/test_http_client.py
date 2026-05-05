@@ -539,6 +539,51 @@ def test_resolve_group_sends_expected_pending_version():
     assert captured["payload"]["action"] == "approve"
 
 
+def test_get_group_preserves_review_payload():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "group": {"group_id": "GRP-1", "status": "pending_review"},
+                "members": [{"from_id": "BP-1", "to_id": "V-1"}],
+                "resolution": None,
+                "bucket_status": {
+                    "signature": "sigv1:abc",
+                    "relationship_type": "fits",
+                    "thesis_text": "",
+                    "thesis_facts": {},
+                    "latest_trust_status": None,
+                    "accepted_tuple_count": 0,
+                    "pending_delta_count": 1,
+                    "pending_group_id": "GRP-1",
+                    "pending_version": 1,
+                    "latest_approved_resolution_id": None,
+                    "approved_history": [],
+                },
+                "member_review": [
+                    {
+                        "proposed_tuple": {"from_id": "BP-1"},
+                        "proposed_properties": {},
+                        "current_edge_count": 0,
+                        "property_delta": {
+                            "added": [],
+                            "removed": [],
+                            "changed": [],
+                            "unchanged": [],
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.get_group("inst_123", "GRP-1")
+
+    assert result.bucket_status is not None
+    assert result.bucket_status["pending_group_id"] == "GRP-1"
+    assert result.member_review[0]["current_edge_count"] == 0
+
+
 def test_get_group_status_by_group_uses_expected_route():
     captured: dict[str, Any] = {}
 

@@ -481,6 +481,9 @@ class TestGetGroup:
         assert result["group"]["group_id"] == pr["group_id"]
         assert len(result["members"]) == 2
         assert result["group"]["thesis_text"] == "brake pads"
+        assert result["bucket_status"]["pending_group_id"] == pr["group_id"]
+        assert len(result["member_review"]) == 2
+        assert result["member_review"][0]["current_edge_count"] == 0
 
     def test_get_group_not_found(self, server, instance_id):
         error = call_tool_expect_error(

@@ -17,7 +17,11 @@ from cruxible_core.errors import (
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import validate_relationship
-from cruxible_core.graph.types import REJECTED_STATUSES, RelationshipInstance
+from cruxible_core.graph.types import (
+    REJECTED_STATUSES,
+    SYSTEM_OWNED_PROPERTIES,
+    RelationshipInstance,
+)
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
@@ -26,10 +30,12 @@ from cruxible_core.service._helpers import MutationReceiptContext, mutation_rece
 from cruxible_core.service.mutations import service_add_relationships
 from cruxible_core.service.types import (
     GetGroupResult,
+    GroupMemberReviewResult,
     GroupStatusHistoryItem,
     GroupStatusResult,
     ListGroupsResult,
     ListResolutionsResult,
+    PropertyDeltaResult,
     ProposeGroupResult,
     ResolveGroupResult,
     SuppressedProposalMember,
@@ -1142,6 +1148,86 @@ def service_resolve_group(
     return result
 
 
+def _member_tuple_payload(member: CandidateMember) -> dict[str, str]:
+    return {
+        "from_type": member.from_type,
+        "from_id": member.from_id,
+        "to_type": member.to_type,
+        "to_id": member.to_id,
+        "relationship_type": member.relationship_type,
+    }
+
+
+def _property_delta(
+    proposed: dict[str, Any],
+    current: dict[str, Any],
+) -> PropertyDeltaResult:
+    proposed = {
+        key: value for key, value in proposed.items() if key not in SYSTEM_OWNED_PROPERTIES
+    }
+    current = {
+        key: value for key, value in current.items() if key not in SYSTEM_OWNED_PROPERTIES
+    }
+    proposed_keys = set(proposed)
+    current_keys = set(current)
+    shared = proposed_keys & current_keys
+    return PropertyDeltaResult(
+        added=sorted(proposed_keys - current_keys),
+        removed=sorted(current_keys - proposed_keys),
+        changed=sorted(key for key in shared if proposed[key] != current[key]),
+        unchanged=sorted(key for key in shared if proposed[key] == current[key]),
+    )
+
+
+def _current_edges_for_member(
+    graph: EntityGraph,
+    member: CandidateMember,
+) -> list[dict[str, Any]]:
+    return [
+        edge
+        for edge in graph.iter_edges(relationship_type=member.relationship_type)
+        if edge["from_type"] == member.from_type
+        and edge["from_id"] == member.from_id
+        and edge["to_type"] == member.to_type
+        and edge["to_id"] == member.to_id
+    ]
+
+
+def _member_review_state(
+    graph: EntityGraph,
+    member: CandidateMember,
+) -> GroupMemberReviewResult:
+    current_edges = _current_edges_for_member(graph, member)
+    proposed_properties = dict(member.properties)
+    current_properties: dict[str, Any] | None = None
+    current_edge_key: int | None = None
+    current_review_status: str | None = None
+    if len(current_edges) == 1:
+        current = current_edges[0]
+        current_properties = dict(current["properties"])
+        raw_edge_key = current.get("edge_key")
+        current_edge_key = raw_edge_key if isinstance(raw_edge_key, int) else None
+        raw_review_status = current_properties.get("review_status")
+        current_review_status = (
+            raw_review_status if isinstance(raw_review_status, str) else None
+        )
+        property_delta = _property_delta(proposed_properties, current_properties)
+    elif not current_edges:
+        property_delta = _property_delta(proposed_properties, {})
+    else:
+        property_delta = PropertyDeltaResult()
+
+    return GroupMemberReviewResult(
+        proposed_tuple=_member_tuple_payload(member),
+        proposed_properties=proposed_properties,
+        current_edge_count=len(current_edges),
+        current_edge_key=current_edge_key,
+        current_properties=current_properties,
+        current_review_status=current_review_status,
+        property_delta=property_delta,
+    )
+
+
 def service_get_group(
     instance: InstanceProtocol,
     group_id: str,
@@ -1156,9 +1242,17 @@ def service_get_group(
         resolution: GroupResolution | None = None
         if group.resolution_id is not None:
             resolution = group_store.get_resolution(group.resolution_id)
-        return GetGroupResult(group=group, members=members, resolution=resolution)
     finally:
         group_store.close()
+    bucket_status = service_group_status(instance, group_id=group_id)
+    graph = instance.load_graph()
+    return GetGroupResult(
+        group=group,
+        members=members,
+        resolution=resolution,
+        bucket_status=bucket_status,
+        member_review=[_member_review_state(graph, member) for member in members],
+    )
 
 
 def service_group_status(

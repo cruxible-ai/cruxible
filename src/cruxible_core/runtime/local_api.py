@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -1937,6 +1938,8 @@ def _handle_get_group_local(
             if result.resolution is not None
             else None
         ),
+        bucket_status=asdict(result.bucket_status) if result.bucket_status is not None else None,
+        member_review=[asdict(item) for item in result.member_review],
     )
 
 

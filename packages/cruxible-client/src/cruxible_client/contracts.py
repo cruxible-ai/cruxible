@@ -719,6 +719,8 @@ class GetGroupToolResult(BaseModel):
     group: dict[str, Any]
     members: list[dict[str, Any]]
     resolution: dict[str, Any] | None = None
+    bucket_status: dict[str, Any] | None = None
+    member_review: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ListGroupsToolResult(BaseModel):

@@ -27,12 +27,12 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--description` | no | `` | text | Optional description. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Read-only. Returns group metadata, members, optional resolution, bucket lifecycle status, and member review state showing proposed tuples, current edge counts, current edge details when unambiguous, and property deltas.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+- Permission mode too low for read operations.
+- Group ID not found.
 
 ## cruxible add-decision-policy
 

@@ -1072,6 +1072,12 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert propose.status_code == 200
     group_id = propose.json()["group_id"]
 
+    group_get = app_client.get(f"/api/v1/{instance_id}/groups/{group_id}")
+    assert group_get.status_code == 200
+    group_payload = group_get.json()
+    assert group_payload["bucket_status"]["pending_group_id"] == group_id
+    assert group_payload["member_review"]
+
     resolve = app_client.post(
         f"/api/v1/{instance_id}/groups/{group_id}/resolve",
         json={

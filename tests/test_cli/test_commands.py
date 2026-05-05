@@ -2274,6 +2274,24 @@ class TestGroupGetCLI:
         assert result.exit_code == 0
         assert group_id in result.output
 
+    def test_get_json_includes_review_payload(
+        self,
+        runner: CliRunner,
+        group_instance: CruxibleInstance,
+    ) -> None:
+        group_id = _seed_group(group_instance)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "get", "--group", group_id, "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["bucket_status"]["pending_group_id"] == group_id
+        assert payload["member_review"][0]["current_edge_count"] == 0
+
 
 class TestGroupListCLI:
     def test_list(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:

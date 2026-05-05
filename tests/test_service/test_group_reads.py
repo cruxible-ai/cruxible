@@ -9,6 +9,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import GroupNotFoundError
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.service import (
@@ -123,7 +124,7 @@ def instance(tmp_path: Path) -> CruxibleInstance:
     return inst
 
 
-def _member(from_id="BP-1", to_id="V-1"):
+def _member(from_id="BP-1", to_id="V-1", properties: dict | None = None):
     return CandidateMember(
         from_type="Part",
         from_id=from_id,
@@ -131,6 +132,7 @@ def _member(from_id="BP-1", to_id="V-1"):
         to_id=to_id,
         relationship_type="fits",
         signals=[CandidateSignal(integration="check_v1", signal="support")],
+        properties=properties or {},
     )
 
 
@@ -152,6 +154,49 @@ class TestGetGroup:
         assert get_result.group.group_id == result.group_id
         assert len(get_result.members) == 2
         assert get_result.group.thesis_text == "test thesis"
+        assert get_result.bucket_status is not None
+        assert get_result.bucket_status.pending_group_id == result.group_id
+        assert len(get_result.member_review) == 2
+        assert get_result.member_review[0].current_edge_count == 0
+
+    def test_member_review_includes_current_edge_delta(
+        self,
+        instance: CruxibleInstance,
+    ) -> None:
+        graph = instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={
+                    "verified": False,
+                    "source": "catalog",
+                    "review_status": "pending_review",
+                },
+            )
+        )
+        instance.save_graph(graph)
+        result = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1", {"verified": True, "source": "agent"})],
+            thesis_facts={"k": "v"},
+        )
+
+        get_result = service_get_group(instance, result.group_id)
+        review = get_result.member_review[0]
+
+        assert review.proposed_tuple["from_id"] == "BP-1"
+        assert review.current_edge_count == 1
+        assert review.current_edge_key is not None
+        assert review.current_review_status == "pending_review"
+        assert review.current_properties is not None
+        assert review.current_properties["source"] == "catalog"
+        assert review.property_delta.changed == ["source", "verified"]
+        assert review.property_delta.removed == []
 
     def test_resolution_populated_as_full_dict(self, instance: CruxibleInstance) -> None:
         result = service_propose_group(

@@ -1298,7 +1298,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Get a candidate group by ID, including its members and resolution. Returns the group metadata (thesis, status, review_priority) and the full list of members with their signals. If the group has been resolved, includes the resolution details (action, trust_status, rationale).
+**Purpose:** Get a candidate group by ID, including its members, optional resolution, bucket lifecycle status, and per-member review state. The member review payload includes proposed tuples/properties, current edge count, current edge details when exactly one matching edge exists, and deterministic property deltas.
 
 **Arguments:**
 
@@ -1307,7 +1307,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `instance_id` | yes | string |  |
 | `group_id` | yes | string |  |
 
-**Returns:** Top-level fields: `group`, `members`, `resolution`
+**Returns:** Top-level fields: `group`, `members`, `resolution`, `bucket_status`, `member_review`
 
 **Side Effects:** Read-only.
 

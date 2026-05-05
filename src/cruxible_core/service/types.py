@@ -631,10 +631,31 @@ class ResolveGroupResult:
 
 
 @dataclass
+class PropertyDeltaResult:
+    added: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    changed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GroupMemberReviewResult:
+    proposed_tuple: dict[str, str]
+    proposed_properties: dict[str, Any]
+    current_edge_count: int
+    current_edge_key: int | None = None
+    current_properties: dict[str, Any] | None = None
+    current_review_status: str | None = None
+    property_delta: PropertyDeltaResult = field(default_factory=PropertyDeltaResult)
+
+
+@dataclass
 class GetGroupResult:
     group: CandidateGroup
     members: list[CandidateMember]
     resolution: GroupResolution | None = None
+    bucket_status: "GroupStatusResult | None" = None
+    member_review: list[GroupMemberReviewResult] = field(default_factory=list)
 
 
 @dataclass

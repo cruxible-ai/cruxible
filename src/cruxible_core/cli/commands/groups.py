@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
@@ -298,20 +299,44 @@ def group_get(group_id: str, output_json: bool) -> None:
             if result.resolution is not None
             else None
         )
+        bucket_status = result.bucket_status
+        member_review = result.member_review
     else:
         group = result.group
         members = result.members
         resolution = result.resolution
+        bucket_status = asdict(result.bucket_status) if result.bucket_status is not None else None
+        member_review = [asdict(item) for item in result.member_review]
     if output_json:
         payload: dict[str, Any] = {
             "group": group.model_dump(mode="python"),
             "members": [m.model_dump(mode="python") for m in members],
+            "bucket_status": bucket_status,
+            "member_review": member_review,
         }
         if resolution is not None:
             payload["resolution"] = resolution.model_dump(mode="python")
         _emit_json(payload)
         return
     console.print(group_detail_table(group, members, resolution))
+    if bucket_status is not None:
+        click.echo(
+            "Bucket: "
+            f"accepted={bucket_status['accepted_tuple_count']}, "
+            f"pending_delta={bucket_status['pending_delta_count']}, "
+            f"latest_trust={bucket_status['latest_trust_status'] or 'none'}"
+        )
+    if member_review:
+        click.echo("Member review:")
+        for item in member_review:
+            proposed = item["proposed_tuple"]
+            click.echo(
+                "  "
+                f"{proposed['from_type']}:{proposed['from_id']} -> "
+                f"{proposed['to_type']}:{proposed['to_id']} "
+                f"({proposed['relationship_type']}): "
+                f"current_edges={item['current_edge_count']}"
+            )
 
 
 @group_group.command("list")
