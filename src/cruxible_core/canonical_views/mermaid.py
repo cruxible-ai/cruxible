@@ -8,6 +8,12 @@ from cruxible_core.canonical_views.labels import (
     _humanize_traversal_summary,
     _query_return_entity,
 )
+from cruxible_core.canonical_views.mermaid_utils import (
+    escape_mermaid_label as _shared_escape_mermaid_label,
+)
+from cruxible_core.canonical_views.mermaid_utils import (
+    mermaid_id as _shared_mermaid_id,
+)
 from cruxible_core.canonical_views.models import (
     OntologyRelationshipView,
     OntologyView,
@@ -21,12 +27,6 @@ from cruxible_core.canonical_views.workflow_labels import (
     _workflow_step_label,
     _workflow_story_label,
     _workflow_story_order,
-)
-from cruxible_core.mermaid import (
-    escape_mermaid_label as _shared_escape_mermaid_label,
-)
-from cruxible_core.mermaid import (
-    mermaid_id as _shared_mermaid_id,
 )
 
 

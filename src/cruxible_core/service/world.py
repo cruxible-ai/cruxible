@@ -16,6 +16,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import materialize_kit
+from cruxible_core.kits.world_refs import resolve_world_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
 from cruxible_core.service.snapshots import service_create_snapshot
@@ -33,7 +34,6 @@ from cruxible_core.snapshot.types import (
 )
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
-from cruxible_core.world_refs import resolve_world_source
 
 
 def service_publish_world(

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.config.loader import load_config_from_string
-from cruxible_core.config_views import (
+from cruxible_core.canonical_views.config import (
     DEFAULT_VIEW_ORDER,
     load_config_for_rendering,
     render_config_views,
     update_readme_file,
 )
+from cruxible_core.config.loader import load_config_from_string
 
 
 def test_update_readme_replaces_empty_marker_block(

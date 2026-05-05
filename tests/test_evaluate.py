@@ -16,11 +16,11 @@ from cruxible_core.config.schema import (
     RelationshipSchema,
     UniquenessQualityCheck,
 )
-from cruxible_core.evaluate import evaluate_graph
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.query.evaluate import evaluate_graph
 
 
 def _minimal_config(**overrides) -> CoreConfig:

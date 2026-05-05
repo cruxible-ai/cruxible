@@ -19,13 +19,13 @@ from cruxible_core.provider.types import (
     ProviderContext,
     ResolvedArtifact,
 )
-from cruxible_core.read_surface import (
+from cruxible_core.query.read_surface import (
     list_entities as read_list_entities,
 )
-from cruxible_core.read_surface import (
+from cruxible_core.query.read_surface import (
     list_relationships as read_list_relationships,
 )
-from cruxible_core.read_surface import (
+from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
 from cruxible_core.receipt.builder import ReceiptBuilder

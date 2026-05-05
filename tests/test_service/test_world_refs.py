@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.errors import ConfigError
-from cruxible_core.world_refs import WorldCatalogEntry, resolve_world_source
+from cruxible_core.kits.world_refs import WorldCatalogEntry, resolve_world_source
 
 
 def test_transport_ref_passthrough() -> None:
@@ -20,7 +20,7 @@ def test_transport_ref_passthrough() -> None:
 
 def test_world_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",
@@ -43,7 +43,7 @@ def test_world_ref_latest_uses_tracking_ref(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_world_ref_specific_release_still_tracks_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "kev-reference": WorldCatalogEntry(
                 alias="kev-reference",
@@ -61,7 +61,7 @@ def test_world_ref_specific_release_still_tracks_latest(monkeypatch: pytest.Monk
 
 
 def test_world_ref_requires_known_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cruxible_core.world_refs.get_world_catalog", lambda: {})
+    monkeypatch.setattr("cruxible_core.kits.world_refs.get_world_catalog", lambda: {})
 
     with pytest.raises(ConfigError, match="Unknown world_ref alias"):
         resolve_world_source(world_ref="missing")
@@ -83,7 +83,7 @@ def test_world_ref_rejects_malformed_parts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",

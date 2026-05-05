@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from cruxible_core.composition_ownership import (
+from cruxible_core.canonical_views.mermaid_utils import (
+    MermaidLegendItem,
+    escape_mermaid_label,
+    mermaid_id,
+    render_mermaid_inline_legend,
+)
+from cruxible_core.config.composition_ownership import (
     resolve_composition_for_instance,
 )
 from cruxible_core.config.property_validation import enum_values
@@ -27,12 +33,6 @@ from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.mermaid import (
-    MermaidLegendItem,
-    escape_mermaid_label,
-    mermaid_id,
-    render_mermaid_inline_legend,
-)
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.workflow.contracts import contract_reference_label, resolve_contract

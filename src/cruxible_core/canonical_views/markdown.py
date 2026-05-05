@@ -11,6 +11,7 @@ from cruxible_core.canonical_views.mermaid import (
     render_ontology_mermaid,
     render_workflow_mermaid,
 )
+from cruxible_core.canonical_views.mermaid_utils import MermaidLegendItem, render_mermaid_legend
 from cruxible_core.canonical_views.models import (
     GovernanceView,
     OntologyView,
@@ -43,7 +44,6 @@ from cruxible_core.canonical_views.workflow_labels import (
     _workflow_table_role,
 )
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.mermaid import MermaidLegendItem, render_mermaid_legend
 
 
 def render_ontology_markdown(view: OntologyView) -> str:

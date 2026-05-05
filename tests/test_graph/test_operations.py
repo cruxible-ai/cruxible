@@ -36,6 +36,7 @@ relationships:
     properties:
       confidence:
         type: float
+        required: true
       note:
         type: string
         optional: true

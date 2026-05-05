@@ -91,7 +91,7 @@ def get_kit_catalog() -> dict[str, str]:
 
 def _discover_local_kit_catalog() -> dict[str, str]:
     """Return source-checkout kit aliases mapped to file refs."""
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[3]
     kits_dir = repo_root / "kits"
     catalog: dict[str, str] = {}
     if not kits_dir.exists():

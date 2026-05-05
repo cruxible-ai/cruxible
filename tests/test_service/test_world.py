@@ -12,6 +12,7 @@ from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, Work
 from cruxible_core.errors import OwnershipError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.kits.world_refs import WorldCatalogEntry
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
@@ -28,7 +29,6 @@ from cruxible_core.service import (
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
-from cruxible_core.world_refs import WorldCatalogEntry
 
 WORLD_MODEL_YAML = """\
 version: "1.0"
@@ -185,7 +185,7 @@ def test_overlay_world_ref_specific_release_tracks_latest_ref(
     version_dir = releases_dir / "v1.0.0"
     shutil.copytree(current_dir, version_dir)
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",
@@ -297,7 +297,7 @@ def test_overlay_world_ref_uses_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",
@@ -349,7 +349,7 @@ def test_explicit_kit_overrides_world_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",
@@ -428,7 +428,7 @@ def test_no_kit_skips_world_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "case-law": WorldCatalogEntry(
                 alias="case-law",

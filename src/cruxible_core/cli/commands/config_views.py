@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from cruxible_core.config_views import (
+from cruxible_core.canonical_views.config import (
     MissingReadmeMarkersError,
     available_view_keys,
     load_config_for_rendering,

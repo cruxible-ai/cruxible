@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
+from cruxible_core.kits.world_refs import WorldCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -17,7 +18,6 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
-from cruxible_core.world_refs import WorldCatalogEntry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -630,7 +630,7 @@ def test_create_world_overlay_route_accepts_world_ref(
     assert publish.status_code == 200
     shutil.copytree(version_dir, latest_dir)
     monkeypatch.setattr(
-        "cruxible_core.world_refs.get_world_catalog",
+        "cruxible_core.kits.world_refs.get_world_catalog",
         lambda: {
             "car-parts": WorldCatalogEntry(
                 alias="car-parts",

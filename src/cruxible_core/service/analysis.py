@@ -8,10 +8,10 @@ from typing import Any, Literal
 from cruxible_core.config.schema import FeedbackRemediationHint, OutcomeRemediationHint
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
-from cruxible_core.evaluate import EvaluationReport, evaluate_graph
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.candidates import CandidateMatch, MatchRule, find_candidates
+from cruxible_core.query.evaluate import EvaluationReport, evaluate_graph
 from cruxible_core.service.types import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
