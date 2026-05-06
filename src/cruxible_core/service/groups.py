@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json as _json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -25,6 +23,7 @@ from cruxible_core.graph.types import (
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
+from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.service._helpers import MutationReceiptContext, mutation_receipt
 from cruxible_core.service.mutations import service_add_relationships
@@ -296,12 +295,10 @@ def service_propose_group(
                 f"relationship '{relationship_type}' which expects '{rel_schema.to_entity}'"
             )
 
-    # 4. thesis_facts serialization check
+    # 4. thesis_facts serialization check (canonical_json rejects NaN/Infinity).
     try:
-        _json.dumps(thesis_facts, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    except TypeError as exc:
-        raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
-    except ValueError as exc:
+        canonical_json(thesis_facts)
+    except (TypeError, ValueError) as exc:
         raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
 
     # 5. Duplicate member check
@@ -593,7 +590,7 @@ def service_propose_group(
             assert result is not None
             return result
 
-        group_id = f"GRP-{uuid.uuid4().hex[:12]}"
+        group_id = new_id("GRP")
         group = CandidateGroup(
             group_id=group_id,
             relationship_type=relationship_type,

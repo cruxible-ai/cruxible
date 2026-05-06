@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+from cruxible_core.primitives import new_id
 
 ProviderRuntime = Literal["python", "http_json", "command"]
 """How the provider callable is invoked.
@@ -48,7 +49,7 @@ class ExecutionTrace(BaseModel):
     construction-time defaults.
     """
 
-    trace_id: str = Field(default_factory=lambda: f"TRC-{uuid.uuid4().hex[:12]}")
+    trace_id: str = Field(default_factory=lambda: new_id("TRC"))
     workflow_name: str
     step_id: str
     provider_name: str

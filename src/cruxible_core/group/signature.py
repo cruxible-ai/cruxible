@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
+
+from cruxible_core.primitives import canonical_json
 
 
 def compute_group_signature(
@@ -16,10 +17,7 @@ def compute_group_signature(
     Only thesis_facts is hashed, not analysis_state. This ensures signature
     stability — LLM rationales and varying centroids don't break auto-resolve.
     """
-    payload = json.dumps(
-        {"relationship_type": relationship_type, "thesis_facts": thesis_facts},
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
+    payload = canonical_json(
+        {"relationship_type": relationship_type, "thesis_facts": thesis_facts}
     )
     return f"sigv1:{hashlib.sha256(payload.encode()).hexdigest()}"

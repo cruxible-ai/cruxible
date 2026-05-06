@@ -7,11 +7,12 @@ passed or failed, and what produced the final result.
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from cruxible_core.primitives import new_id
 
 OperationType = Literal[
     "query",
@@ -82,7 +83,7 @@ class EvidenceEdge(BaseModel):
 class Receipt(BaseModel):
     """A complete receipt for a query execution."""
 
-    receipt_id: str = Field(default_factory=lambda: f"RCP-{uuid.uuid4().hex[:12]}")
+    receipt_id: str = Field(default_factory=lambda: new_id("RCP"))
     query_name: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
     nodes: list[ReceiptNode]

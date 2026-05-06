@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Mapping
 
 from cruxible_core.config.schema import CoreConfig, PropertySchema
 from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, EntityInstance
+from cruxible_core.primitives import canonical_json
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,7 @@ def normalize_value(value: Any, schema: PropertySchema, config: CoreConfig) -> A
 
     if type_name == "json":
         try:
-            json.dumps(value, sort_keys=True)
+            canonical_json(value)
         except (TypeError, ValueError) as exc:
             raise ValueError("must be JSON-serializable") from exc
         return value

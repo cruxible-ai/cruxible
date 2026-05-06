@@ -6,7 +6,6 @@ import json
 import math
 from typing import Any
 
-from cruxible_core.canonical_json import canonical_json
 from cruxible_core.config.schema import (
     DedupeItemsSpec,
     FilterItemsSpec,
@@ -15,6 +14,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import QueryExecutionError
 from cruxible_core.predicate import evaluate_comparison, normalize_comparison_op
+from cruxible_core.primitives import canonical_json
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (

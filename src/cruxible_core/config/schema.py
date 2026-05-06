@@ -30,10 +30,11 @@ Hierarchy:
 
 from __future__ import annotations
 
-import json as _json
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from cruxible_core.primitives import canonical_json
 
 _PATH_TOKEN = r"[\w-]+"
 _FEEDBACK_PATH_PATTERN = rf"^(FROM|TO|EDGE)\.({_PATH_TOKEN})$"
@@ -111,7 +112,7 @@ class PropertySchema(BaseModel):
             seen: set[str] = set()
             for index, value in enumerate(self.enum):
                 try:
-                    key = _json.dumps(value, sort_keys=True)
+                    key = canonical_json(value)
                 except (TypeError, ValueError) as exc:
                     msg = f"enum value at index {index} must be JSON-serializable"
                     raise ValueError(msg) from exc
@@ -129,7 +130,7 @@ class PropertySchema(BaseModel):
             msg = "json_schema is only allowed on properties with type 'json'"
             raise ValueError(msg)
         try:
-            _json.dumps(self.json_schema, sort_keys=True)
+            canonical_json(self.json_schema)
         except (TypeError, ValueError) as exc:
             msg = f"json_schema must be JSON-serializable: {exc}"
             raise ValueError(msg) from exc

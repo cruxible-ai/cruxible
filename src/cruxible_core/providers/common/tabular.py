@@ -11,7 +11,7 @@ from typing import Any
 
 import polars as pl
 
-from cruxible_core.canonical_json import canonical_json
+from cruxible_core.primitives import canonical_json
 from cruxible_core.provider.types import ProviderContext
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xls"}
@@ -491,11 +491,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _row_hash(row: dict[str, Any]) -> str:
-    return f"sha256:{hashlib.sha256(_canonical_json(row).encode()).hexdigest()}"
-
-
-def _canonical_json(value: Any) -> str:
-    return canonical_json(value)
+    return f"sha256:{hashlib.sha256(canonical_json(row).encode()).hexdigest()}"
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -603,7 +599,7 @@ def _index_rows(
 
 def _row_key(row: dict[str, Any], keys: list[str]) -> str:
     payload = {key: row.get(key) for key in keys}
-    return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
+    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
 def _key_payload(keys: list[str], row: dict[str, Any]) -> dict[str, Any]:

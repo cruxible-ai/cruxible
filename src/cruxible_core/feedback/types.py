@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -15,12 +14,13 @@ from cruxible_core.config.schema import (
     OutcomeRemediationHint,
 )
 from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.primitives import new_id
 
 
 class FeedbackRecord(BaseModel):
     """Human or AI feedback on a query result or specific relationship."""
 
-    feedback_id: str = Field(default_factory=lambda: f"FB-{uuid.uuid4().hex[:12]}")
+    feedback_id: str = Field(default_factory=lambda: new_id("FB"))
     receipt_id: str
     action: Literal["approve", "reject", "correct", "flag"]
     target: RelationshipInstance
@@ -54,7 +54,7 @@ class FeedbackBatchItem(BaseModel):
 class OutcomeRecord(BaseModel):
     """Record of what actually happened after a decision was made."""
 
-    outcome_id: str = Field(default_factory=lambda: f"OUT-{uuid.uuid4().hex[:12]}")
+    outcome_id: str = Field(default_factory=lambda: new_id("OUT"))
     receipt_id: str
     anchor_type: OutcomeAnchorType = "receipt"
     anchor_id: str | None = None

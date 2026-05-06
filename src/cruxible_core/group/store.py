@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from cruxible_core.group.types import (
     GroupResolution,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
+from cruxible_core.primitives import new_id
 
 logger = logging.getLogger(__name__)
 
@@ -611,7 +611,7 @@ class GroupStore(GroupStoreProtocol):
         confirmed: bool = False,
     ) -> str:
         """Persist a resolution. Does NOT commit. Returns resolution_id."""
-        resolution_id = f"RES-{uuid.uuid4().hex[:12]}"
+        resolution_id = new_id("RES")
         self._conn.execute(
             "INSERT INTO group_resolutions "
             "(resolution_id, relationship_type, group_signature, action, rationale, "

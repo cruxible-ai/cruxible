@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping
 
 from cruxible_core.config.property_validation import enum_ref_values
+from cruxible_core.primitives import canonical_json
 
 SUPPORTED_KEYWORDS = frozenset(
     {
@@ -125,7 +125,7 @@ def _validate_inline_enum(values: Any, path: str) -> None:
     seen: set[str] = set()
     for index, value in enumerate(values):
         try:
-            key = json.dumps(value, sort_keys=True)
+            key = canonical_json(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{path}.enum[{index}]: must be JSON-serializable") from exc
         if key in seen:

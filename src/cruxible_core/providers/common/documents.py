@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import html
 import importlib
-import json
 import os
 import re
 from html.parser import HTMLParser
@@ -14,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from cruxible_core.primitives import canonical_json
 from cruxible_core.provider.types import ProviderContext
 
 
@@ -418,7 +418,7 @@ def _sha256_text(text: str) -> str:
 
 
 def _sha256_json(value: Any) -> str:
-    blob = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    blob = canonical_json(value)
     return f"sha256:{hashlib.sha256(blob.encode()).hexdigest()}"
 
 

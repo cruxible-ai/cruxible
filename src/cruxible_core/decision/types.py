@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from cruxible_core.primitives import new_id
 
 DecisionStatus = Literal["open", "finalized", "abandoned"]
 DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
@@ -16,7 +17,7 @@ DecisionEventStatus = Literal["success", "error"]
 class DecisionRecord(BaseModel):
     """A durable record scoped to one decision or inquiry."""
 
-    decision_record_id: str = Field(default_factory=lambda: f"DR-{uuid.uuid4().hex[:12]}")
+    decision_record_id: str = Field(default_factory=lambda: new_id("DR"))
     question: str
     subject_type: str | None = None
     subject_id: str | None = None
@@ -40,7 +41,7 @@ class DecisionRecord(BaseModel):
 class DecisionEvent(BaseModel):
     """Append-only event captured while supporting a decision."""
 
-    decision_event_id: str = Field(default_factory=lambda: f"DE-{uuid.uuid4().hex[:12]}")
+    decision_event_id: str = Field(default_factory=lambda: new_id("DE"))
     decision_record_id: str
     sequence: int = 0
     command: str
