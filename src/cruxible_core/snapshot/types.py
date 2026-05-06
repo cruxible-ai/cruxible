@@ -20,8 +20,12 @@ WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
 
 
 def _validate_path_safe_id(value: str, field_name: str) -> str:
-    if not _RELEASE_ID_PATTERN.fullmatch(value):
-        raise ValueError(f"{field_name} must match [a-zA-Z0-9._-]+")
+    if (
+        not _RELEASE_ID_PATTERN.fullmatch(value)
+        or value in {"", ".", ".."}
+        or value.startswith(".")
+    ):
+        raise ValueError(f"{field_name} must match [a-zA-Z0-9._-]+ and cannot be dot-relative")
     return value
 
 

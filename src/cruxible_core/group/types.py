@@ -53,7 +53,7 @@ class CandidateMember(RelationshipInstance):
 class GroupResolution(BaseModel):
     """Persisted resolution of a candidate group (approve or reject)."""
 
-    resolution_id: str  # RES-{uuid[:12]}
+    resolution_id: str  # RES-{12 lowercase hex chars}
     relationship_type: str
     group_signature: str
     action: ResolutionAction
@@ -71,7 +71,7 @@ class GroupResolution(BaseModel):
 class CandidateGroup(BaseModel):
     """A group of candidate edges proposed before they exist in the graph."""
 
-    group_id: str  # GRP-{uuid[:12]}
+    group_id: str  # GRP-{12 lowercase hex chars}
     relationship_type: str
     signature: str
     status: GroupStatus = "pending_review"

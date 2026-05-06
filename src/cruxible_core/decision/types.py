@@ -32,9 +32,18 @@ class DecisionRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> DecisionRecord:
-        if self.status == "finalized" and self.decision_class is None:
-            msg = "finalized decision records require decision_class"
-            raise ValueError(msg)
+        if self.status == "finalized":
+            missing: list[str] = []
+            if self.decision_class is None:
+                missing.append("decision_class")
+            if self.final_decision is None:
+                missing.append("final_decision")
+            if self.finalized_at is None:
+                missing.append("finalized_at")
+            if missing:
+                joined = ", ".join(missing)
+                msg = f"finalized decision records require {joined}"
+                raise ValueError(msg)
         return self
 
 
@@ -57,5 +66,5 @@ class DecisionEvent(BaseModel):
     error_message: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None
     request_id: str | None = None
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    finished_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime
+    finished_at: datetime

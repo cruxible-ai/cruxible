@@ -13,6 +13,7 @@ errors (runtime data), making it easy to catch by category.
     ├── GraphError (runtime data problems)
     │   ├── EntityNotFoundError
     │   ├── DataValidationError
+    │   ├── RelationshipAmbiguityError
     │   └── ConstraintViolationError
     ├── ExecutionError (operation failures)
     │   ├── IngestionError
@@ -20,6 +21,13 @@ errors (runtime data), making it easy to catch by category.
     │   ├── QueryExecutionError
     │   └── TransportError
     ├── OwnershipError (overlay type-level ownership)
+    ├── ReceiptNotFoundError (receipt store lookup)
+    ├── TraceNotFoundError (trace store lookup)
+    ├── OutcomeNotFoundError (feedback store lookup)
+    ├── InstanceNotFoundError (instance registry lookup)
+    ├── GroupNotFoundError (group store lookup)
+    ├── AuthenticationError (HTTP/API credential failure)
+    ├── InstanceScopeError (HTTP/API credential scope mismatch)
     └── PermissionDeniedError (MCP permission mode)
 """
 
@@ -56,6 +64,14 @@ class SchemaError(CoreError):
 _MAX_DISPLAY_ERRORS = 10
 
 
+def _format_capped_errors(errors: list[str]) -> str:
+    shown = errors[:_MAX_DISPLAY_ERRORS]
+    detail = "; ".join(shown)
+    if len(errors) > _MAX_DISPLAY_ERRORS:
+        detail += f" ... and {len(errors) - _MAX_DISPLAY_ERRORS} more error(s)"
+    return detail
+
+
 class ConfigError(SchemaError):
     """Invalid configuration YAML.
 
@@ -76,12 +92,8 @@ class ConfigError(SchemaError):
     def __str__(self) -> str:
         if not self.errors:
             return self.summary + self._receipt_suffix()
-        shown = self.errors[:_MAX_DISPLAY_ERRORS]
-        detail = "; ".join(shown)
-        suffix = ""
-        if len(self.errors) > _MAX_DISPLAY_ERRORS:
-            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        detail = _format_capped_errors(self.errors)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
 class EntityTypeNotFoundError(SchemaError):
@@ -149,12 +161,8 @@ class DataValidationError(GraphError):
     def __str__(self) -> str:
         if not self.errors:
             return self.summary + self._receipt_suffix()
-        shown = self.errors[:_MAX_DISPLAY_ERRORS]
-        detail = "; ".join(shown)
-        suffix = ""
-        if len(self.errors) > _MAX_DISPLAY_ERRORS:
-            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        detail = _format_capped_errors(self.errors)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
 class RelationshipAmbiguityError(GraphError):
@@ -197,7 +205,7 @@ class ConstraintViolationError(GraphError):
     def __str__(self) -> str:
         if not self.violations:
             return self.summary + self._receipt_suffix()
-        detail = "; ".join(self.violations)
+        detail = _format_capped_errors(self.violations)
         return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 

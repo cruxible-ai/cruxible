@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
@@ -204,6 +206,8 @@ def test_closed_record_auto_log_race_is_best_effort(
 
     store = populated_instance.get_decision_store()
     try:
+        started_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(timezone.utc)
         with pytest.raises(ConfigError, match="is not open"):
             store.append_event(
                 DecisionEvent(
@@ -212,6 +216,8 @@ def test_closed_record_auto_log_race_is_best_effort(
                     status="success",
                     input_digest="sha256:input",
                     input_summary="{}",
+                    started_at=started_at,
+                    finished_at=finished_at,
                 )
             )
     finally:

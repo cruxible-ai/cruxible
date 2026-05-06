@@ -82,6 +82,15 @@ class TestErrorMessageCapping:
         assert "config error 10" not in msg
         assert "and 15 more error(s)" in msg
 
+    def test_constraint_violation_error_caps_display(self):
+        violations = [f"violation {i}" for i in range(25)]
+        exc = ConstraintViolationError("Constraints failed", violations=violations)
+        msg = str(exc)
+        assert "violation 0" in msg
+        assert "violation 9" in msg
+        assert "violation 10" not in msg
+        assert "and 15 more error(s)" in msg
+
     def test_small_error_list_no_cap(self):
         errors = [f"error {i}" for i in range(5)]
         exc = DataValidationError("Validation failed", errors=errors)

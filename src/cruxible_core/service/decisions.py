@@ -176,14 +176,18 @@ def _append_event_if_context(
     command: str,
     status: str,
     input_payload: Any,
+    started_at: datetime,
     output_payload: Any | None = None,
     receipt_id: str | None = None,
     trace_ids: list[str] | None = None,
     head_snapshot_id: str | None = None,
     error: BaseException | None = None,
-    started_at: datetime | None = None,
 ) -> None:
-    """Best-effort append of an operation event when a decision context exists."""
+    """Best-effort append of an operation event when a decision context exists.
+
+    ``started_at`` must be captured by the caller before doing the work so
+    duration reflects real elapsed time. ``finished_at`` is captured here.
+    """
     if context is None or context.decision_record_id is None:
         return
     input_digest, input_summary = digest_payload(input_payload)
@@ -206,7 +210,7 @@ def _append_event_if_context(
         error_message=str(error) if error is not None else None,
         surface=context.surface,
         request_id=context.request_id,
-        started_at=started_at or datetime.now(timezone.utc),
+        started_at=started_at,
         finished_at=datetime.now(timezone.utc),
     )
     store = None
