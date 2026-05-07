@@ -28,7 +28,7 @@ Common providers are reusable Python providers under `cruxible_core.providers`
 that remain opaque to the workflow engine. Configs still declare contracts,
 provider entries, artifacts, and workflow steps explicitly.
 
-Use common providers for reusable adapters and integrations:
+Use common providers for reusable adapters and external source mechanics:
 
 - parsing a pinned artifact into generic source rows
 - converting documents into Markdown

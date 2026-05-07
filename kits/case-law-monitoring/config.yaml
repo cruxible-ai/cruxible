@@ -403,8 +403,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         matter_statute_match:
           role: required
           always_review_on_unsure: true
@@ -424,8 +424,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         holding_extractor:
           role: required
           always_review_on_unsure: true
@@ -445,8 +445,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         statute_interpretation_extractor:
           role: required
           always_review_on_unsure: true
@@ -467,8 +467,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         issue_mapper:
           role: required
           always_review_on_unsure: true
@@ -488,8 +488,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         citation_treatment_classifier:
           role: required
           always_review_on_unsure: true
@@ -510,8 +510,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         argument_impact_assessor:
           role: required
           always_review_on_unsure: true
@@ -532,8 +532,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         argument_impact_assessor:
           role: required
           always_review_on_unsure: true
@@ -557,8 +557,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         matter_impact_assessor:
           role: required
           always_review_on_unsure: true
@@ -582,8 +582,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         review_item_router:
           role: required
           always_review_on_unsure: true
@@ -603,8 +603,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         review_item_router:
           role: required
           always_review_on_unsure: true
@@ -628,8 +628,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         filing_obligation_assessor:
           role: required
           always_review_on_unsure: true
@@ -887,72 +887,6 @@ quality_checks:
     property: response_type
     rule: required
     severity: error
-
-# ─── Integrations ────────────────────────────────────────────────────
-
-integrations:
-  matter_statute_match:
-    kind: legal_matter_scope_match
-    contract: null
-    notes: Links tracked matters to statutes, rules, or doctrines referenced in matter scope.
-
-  holding_extractor:
-    kind: legal_holding_extraction
-    contract: null
-    notes: Extracts candidate holdings and scope limitations from opinions.
-
-  statute_interpretation_extractor:
-    kind: legal_statute_interpretation
-    contract: null
-    notes: Maps holdings to statutes, rules, and interpretation types.
-
-  issue_mapper:
-    kind: legal_issue_mapping
-    contract: null
-    notes: Maps holdings to firm-tracked legal issues.
-
-  citation_treatment_classifier:
-    kind: legal_citation_treatment
-    contract: null
-    notes: Classifies how an opinion treats cited authority.
-
-  argument_impact_assessor:
-    kind: legal_argument_impact
-    contract: null
-    notes: Judges whether reviewed holdings support or undermine firm arguments.
-
-  matter_impact_assessor:
-    kind: legal_matter_impact
-    contract: null
-    notes: Judges whether a legal development affects a matter.
-
-  jurisdiction_overlap:
-    kind: legal_authority_weighting
-    contract: null
-    notes: Weighs binding, persuasive, or irrelevant authority based on matter jurisdiction.
-
-  review_item_router:
-    kind: legal_review_routing
-    contract: null
-    notes: Creates review obligations for attorneys from accepted impact signals.
-
-  filing_obligation_assessor:
-    kind: legal_filing_obligation
-    contract: null
-    notes: Determines whether a filing creates a response obligation or deadline.
-
-  docket_matter_match:
-    kind: legal_docket_matter_resolution
-    contract: null
-    notes: Matches a filing or docket event to the correct tracked matter.
-
-  attorney_review:
-    kind: human_review
-    contract: null
-    notes: Attorney review signal used for work-product acceptance and trust calibration.
-
-# ─── Contracts and providers ─────────────────────────────────────────
-
 contracts:
   EmptyInput:
     fields: {}
@@ -1091,94 +1025,76 @@ contracts:
 
 providers:
   extract_holdings_from_opinions:
-    kind: function
     description: Extract candidate holdings from monitored legal opinions.
     contract_in: OpinionAnalysisInput
     contract_out: OpinionAnalysisOutput
     ref: kit://providers/case_law_monitoring.py::extract_holdings_from_opinions
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   link_holdings_to_statutes:
-    kind: function
     description: Link holdings to interpreted statutes, rules, or regulations.
     contract_in: StatuteInterpretationInput
     contract_out: StatuteInterpretationOutput
     ref: kit://providers/case_law_monitoring.py::link_holdings_to_statutes
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   map_holdings_to_issues:
-    kind: function
     description: Map holdings to firm-tracked legal issues.
     contract_in: IssueMappingInput
     contract_out: IssueMappingOutput
     ref: kit://providers/case_law_monitoring.py::map_holdings_to_issues
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   classify_opinion_treatment:
-    kind: function
     description: Classify treatment of cited opinions.
     contract_in: OpinionTreatmentInput
     contract_out: OpinionTreatmentOutput
     ref: kit://providers/case_law_monitoring.py::classify_opinion_treatment
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   assess_argument_impact:
-    kind: function
     description: Assess whether holdings support or undermine firm arguments.
     contract_in: ArgumentImpactInput
     contract_out: ArgumentImpactOutput
     ref: kit://providers/case_law_monitoring.py::assess_argument_impact
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   scope_matters_to_statutes:
-    kind: function
     description: Extract or normalize statutory and doctrinal scope for tracked matters.
     contract_in: MatterScopeInput
     contract_out: MatterScopeOutput
     ref: kit://providers/case_law_monitoring.py::scope_matters_to_statutes
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   assess_matter_impact:
-    kind: function
     description: Assess whether opinions affect firm matters.
     contract_in: MatterImpactInput
     contract_out: MatterImpactOutput
     ref: kit://providers/case_law_monitoring.py::assess_matter_impact
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   assess_filing_response_obligations:
-    kind: function
     description: Assess whether filings require responses, deadlines, or client updates.
     contract_in: FilingResponseInput
     contract_out: FilingResponseOutput
     ref: kit://providers/case_law_monitoring.py::assess_filing_response_obligations
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
   route_review_items:
-    kind: function
     description: Create candidate review obligations from impact and treatment signals.
     contract_in: ReviewItemInput
     contract_out: ReviewItemOutput
     ref: kit://providers/case_law_monitoring.py::route_review_items
     version: "0.1.0"
     deterministic: false
-    runtime: python
 
 workflows:
   propose_holdings_from_opinion:
@@ -1210,7 +1126,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: holding_extractor
+          signal_source: holding_extractor
           items: $steps.holdings.items
           from_id: $item.opinion_id
           to_id: $item.holding_id
@@ -1279,7 +1195,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: statute_interpretation_extractor
+          signal_source: statute_interpretation_extractor
           items: $steps.interpretations.items
           from_id: $item.holding_id
           to_id: $item.statute_id
@@ -1343,7 +1259,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: issue_mapper
+          signal_source: issue_mapper
           items: $steps.issue_links.items
           from_id: $item.holding_id
           to_id: $item.issue_id
@@ -1402,7 +1318,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: citation_treatment_classifier
+          signal_source: citation_treatment_classifier
           items: $steps.treatments.items
           from_id: $item.source_opinion_id
           to_id: $item.cited_opinion_id
@@ -1471,7 +1387,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: argument_impact_assessor
+          signal_source: argument_impact_assessor
           items: $steps.impacts.items
           from_id: $item.holding_id
           to_id: $item.argument_id
@@ -1540,7 +1456,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: argument_impact_assessor
+          signal_source: argument_impact_assessor
           items: $steps.impacts.items
           from_id: $item.holding_id
           to_id: $item.argument_id
@@ -1599,7 +1515,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: matter_statute_match
+          signal_source: matter_statute_match
           items: $steps.scope_matches.items
           from_id: $item.matter_id
           to_id: $item.statute_id
@@ -1679,7 +1595,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: matter_impact_assessor
+          signal_source: matter_impact_assessor
           items: $steps.impacts.items
           from_id: $item.opinion_id
           to_id: $item.matter_id
@@ -1744,7 +1660,7 @@ workflows:
         as: candidates
       - id: obligation_signals
         map_signals:
-          integration: filing_obligation_assessor
+          signal_source: filing_obligation_assessor
           items: $steps.obligations.items
           from_id: $item.filing_id
           to_id: $item.matter_id
@@ -1758,7 +1674,7 @@ workflows:
         as: obligation_signals
       - id: routing_signals
         map_signals:
-          integration: docket_matter_match
+          signal_source: docket_matter_match
           items: $steps.obligations.items
           from_id: $item.filing_id
           to_id: $item.matter_id
@@ -1827,7 +1743,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: review_item_router
+          signal_source: review_item_router
           items: $steps.review_items.items
           from_id: $item.opinion_id
           to_id: $item.review_item_id
@@ -1901,7 +1817,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: review_item_router
+          signal_source: review_item_router
           items: $steps.review_items.items
           from_id: $item.review_item_id
           to_id: $item.matter_id

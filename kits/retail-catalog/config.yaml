@@ -286,8 +286,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         basket_affinity:
           role: required
           always_review_on_unsure: true
@@ -315,8 +315,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         catalog_attribute_similarity:
           role: required
           always_review_on_unsure: true
@@ -352,8 +352,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         demand_displacement_model:
           role: required
           always_review_on_unsure: true
@@ -380,8 +380,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         segment_fit_model:
           role: required
           always_review_on_unsure: true
@@ -411,8 +411,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         promo_performance_model:
           role: required
           always_review_on_unsure: true
@@ -701,62 +701,6 @@ quality_checks:
     property: fit_basis
     rule: required
     severity: warning
-
-# Integrations
-
-integrations:
-  basket_affinity:
-    kind: retail_basket_affinity
-    contract: null
-    notes: Uses basket co-occurrence, attach rate, or bundle behavior to support complement judgments.
-
-  catalog_complement_classifier:
-    kind: retail_catalog_semantic_match
-    contract: null
-    notes: Uses product attributes, taxonomy, and shopping mission context to classify complements.
-
-  catalog_attribute_similarity:
-    kind: retail_catalog_similarity
-    contract: null
-    notes: Uses structured attributes and semantic product data to support substitute judgments.
-
-  category_price_overlap:
-    kind: retail_price_band_overlap
-    contract: null
-    notes: Checks category, size, pack, and price-band compatibility for substitution or cannibalization.
-
-  search_substitution_behavior:
-    kind: retail_search_session_switching
-    contract: null
-    notes: Uses search, PDP, or session switching behavior as advisory substitution evidence.
-
-  demand_displacement_model:
-    kind: retail_demand_displacement
-    contract: null
-    notes: Uses sales, promotion, placement, or recommendation outcomes to support cannibalization judgments.
-
-  segment_fit_model:
-    kind: retail_segment_fit
-    contract: null
-    notes: Uses segment behavior and merchandising rules to judge product fit for a segment.
-
-  promo_performance_model:
-    kind: retail_promotion_performance
-    contract: null
-    notes: Uses promotion results or forecasts to judge product lift.
-
-  inventory_capacity_check:
-    kind: retail_inventory_capacity
-    contract: null
-    notes: Checks whether inventory availability can support promotion or substitution recommendations.
-
-  merchant_review:
-    kind: human_review
-    contract: null
-    notes: Merchant, category manager, or planner review signal used for accepted commercial judgment.
-
-# Feedback and outcomes
-
 feedback_profiles:
   product_complements_product:
     version: 1

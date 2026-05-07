@@ -64,22 +64,5 @@ constraints: []
   #   severity: warning
   #   description: "Related entities should share a category"
 
-# Ingestion mappings tell Core how to load CSV/JSON into the graph.
-# For entities: set entity_type + id_column.
-# For relationships: set relationship_type + from_column + to_column.
-# Use column_map when CSV column names don't match property names.
-ingestion: {}
-  # my_entities:
-  #   description: "Source data for ExampleEntity"
-  #   entity_type: ExampleEntity
-  #   id_column: id
-  #   column_map:
-  #     csv_column_name: property_name
-  # my_edges:
-  #   description: "Source data for relates_to relationships"
-  #   relationship_type: relates_to
-  #   from_column: source_id
-  #   to_column: target_id
-  #   column_map:
-  #     csv_confidence: confidence
-  #     csv_source: source
+# Load state through workflows that parse source artifacts, shape rows, and
+# apply_entities/apply_relationships into the graph.

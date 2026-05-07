@@ -10,7 +10,6 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
-from cruxible_core.query.candidates import CandidateMatch
 
 
 def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
@@ -45,25 +44,6 @@ def receipts_table(receipts: list[dict[str, Any]]) -> Table:
             r["created_at"],
             f"{r['duration_ms']:.1f}",
         )
-
-    return table
-
-
-def candidates_table(candidates: list[CandidateMatch]) -> Table:
-    """Build a Rich table for candidate matches."""
-    table = Table(title="Candidate Matches")
-    table.add_column("From", style="cyan")
-    table.add_column("To", style="cyan")
-    table.add_column("Confidence", justify="right")
-    table.add_column("Evidence")
-
-    for c in candidates:
-        from_label = f"{c.from_entity.entity_type}:{c.from_entity.entity_id}"
-        to_label = f"{c.to_entity.entity_type}:{c.to_entity.entity_id}"
-        evidence_str = ", ".join(
-            f"{k}={v}" for k, v in c.evidence.items() if isinstance(v, str | int | float)
-        )
-        table.add_row(from_label, to_label, f"{c.confidence:.2f}", evidence_str)
 
     return table
 
@@ -272,7 +252,7 @@ def group_detail_table(
 
     for m in members:
         edge = f"{m.from_type}:{m.from_id} → {m.to_type}:{m.to_id}"
-        signals_str = ", ".join(f"{s.integration}={s.signal}" for s in m.signals)
+        signals_str = ", ".join(f"{s.signal_source}={s.signal}" for s in m.signals)
         table.add_row("  Member", f"{edge}  [{signals_str}]")
 
     return table
@@ -340,12 +320,6 @@ def schema_table(config: CoreConfig) -> Table:
             for field_name, field_schema in contract.fields.items()
         )
         table.add_row("Contract", name, f"fields=[{fields}]")
-
-    for name, m in config.ingestion.items():
-        if m.is_entity:
-            table.add_row("Ingestion", name, f"entity={m.entity_type}")
-        else:
-            table.add_row("Ingestion", name, f"relationship={m.relationship_type}")
 
     return table
 

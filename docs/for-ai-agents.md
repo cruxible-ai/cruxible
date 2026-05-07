@@ -233,7 +233,7 @@ Useful commands:
 
 ```bash
 cruxible config-views --config config.yaml --runtime --view workflow-steps
-cruxible config-views --config config.yaml --runtime --view integration-catalog
+cruxible config-views --config config.yaml --runtime --view signal-policy-catalog
 cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> decision-record events \
   --trace <trace-id>
 ```
@@ -288,7 +288,7 @@ Use Cruxible for shared operational truth:
 Keep temporary reasoning in the agent. Commit only state that future agents,
 humans, or software should rely on.
 
-Use providers for source adapters, external integrations, model calls, and
+Use providers for source adapters, external services, model calls, and
 domain-specific policy. Use built-in step types for generic deterministic
 mechanics such as shaping rows, joining item sets, filtering, deduping, building
 graph objects, and applying canonical state.

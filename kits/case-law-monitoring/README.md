@@ -28,7 +28,7 @@ for humans and agents reading the kit.
 ## Modeling Notes
 
 This first pass intentionally avoids a reference world. CourtListener, PACER, or
-firm DMS integrations can supply opinions and filings later, but this config is
+firm DMS providers can supply opinions and filings later, but this config is
 about the local legal-workflow layer: which authorities matter to this firm,
 which clients and matters they affect, which arguments they support or
 undermine, what filing obligations they create, and what review work follows.
@@ -297,7 +297,7 @@ flowchart LR
 
 ## Governed Relationships
 
-This table is generated from matching, decision policy, feedback, and outcome
+This table is generated from proposal policy, decision policy, feedback, and outcome
 profile config. It shows the reviewed legal-judgment layer the agent can use as
 durable context.
 
@@ -317,27 +317,27 @@ durable context.
 | Review Item For Matter | Review Item -> Matter | Workflow: Propose Review Item Matter Links | Attorney Review, Review Item Router | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
-### Integration Signal Notes
+### Signal Policy Notes
 
-This catalog is generated from configured integrations and the governed
-relationships that consume them.
+This catalog is generated from relationship-local signal policy and the
+governed relationships that consume each signal source.
 
-<!-- CRUXIBLE:BEGIN integration-catalog -->
-| Integration | Kind | Used By | Notes |
-| --- | --- | --- | --- |
-| `argument_impact_assessor` | legal_argument_impact | Holding Supports Argument, Holding Undermines Argument | Judges whether reviewed holdings support or undermine firm arguments. |
-| `attorney_review` | human_review | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Review Item, Opinion Has Holding, Opinion Treats Opinion, Review Item For Matter | Attorney review signal used for work-product acceptance and trust calibration. |
-| `citation_treatment_classifier` | legal_citation_treatment | Opinion Treats Opinion | Classifies how an opinion treats cited authority. |
-| `docket_matter_match` | legal_docket_matter_resolution | Filing Requires Response | Matches a filing or docket event to the correct tracked matter. |
-| `filing_obligation_assessor` | legal_filing_obligation | Filing Requires Response | Determines whether a filing creates a response obligation or deadline. |
-| `holding_extractor` | legal_holding_extraction | Opinion Has Holding | Extracts candidate holdings and scope limitations from opinions. |
-| `issue_mapper` | legal_issue_mapping | Holding Addresses Issue | Maps holdings to firm-tracked legal issues. |
-| `jurisdiction_overlap` | legal_authority_weighting | Opinion Affects Matter | Weighs binding, persuasive, or irrelevant authority based on matter jurisdiction. |
-| `matter_impact_assessor` | legal_matter_impact | Opinion Affects Matter | Judges whether a legal development affects a matter. |
-| `matter_statute_match` | legal_matter_scope_match | Matter Turns On Statute | Links tracked matters to statutes, rules, or doctrines referenced in matter scope. |
-| `review_item_router` | legal_review_routing | Opinion Creates Review Item, Review Item For Matter | Creates review obligations for attorneys from accepted impact signals. |
-| `statute_interpretation_extractor` | legal_statute_interpretation | Holding Interprets Statute | Maps holdings to statutes, rules, and interpretation types. |
-<!-- CRUXIBLE:END integration-catalog -->
+<!-- CRUXIBLE:BEGIN signal-policy-catalog -->
+| Signal Source | Role | Review Unsure | Used By | Notes |
+| --- | --- | --- | --- | --- |
+| `argument_impact_assessor` | required | yes | Holding Supports Argument, Holding Undermines Argument | - |
+| `attorney_review` | advisory | yes | Filing Requires Response, Holding Addresses Issue, Holding Interprets Statute, Holding Supports Argument, Holding Undermines Argument, Matter Turns On Statute, Opinion Affects Matter, Opinion Creates Review Item, Opinion Has Holding, Opinion Treats Opinion, Review Item For Matter | - |
+| `citation_treatment_classifier` | required | yes | Opinion Treats Opinion | - |
+| `docket_matter_match` | required | yes | Filing Requires Response | - |
+| `filing_obligation_assessor` | required | yes | Filing Requires Response | - |
+| `holding_extractor` | required | yes | Opinion Has Holding | - |
+| `issue_mapper` | required | yes | Holding Addresses Issue | - |
+| `jurisdiction_overlap` | advisory | yes | Opinion Affects Matter | - |
+| `matter_impact_assessor` | required | yes | Opinion Affects Matter | - |
+| `matter_statute_match` | required | yes | Matter Turns On Statute | - |
+| `review_item_router` | required | yes | Opinion Creates Review Item, Review Item For Matter | - |
+| `statute_interpretation_extractor` | required | yes | Holding Interprets Statute | - |
+<!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Query Map
 

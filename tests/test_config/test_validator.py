@@ -15,15 +15,15 @@ from cruxible_core.config.schema import (
     EntityTypeSchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
-    IngestionMapping,
-    IntegrationSchema,
     NamedQuerySchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
     PropertySchema,
+    ProposalPolicySchema,
     ProviderArtifactSchema,
     ProviderSchema,
     RelationshipSchema,
+    SignalPolicySchema,
     TraversalStep,
     WorkflowSchema,
     WorkflowStepSchema,
@@ -430,94 +430,6 @@ class TestValidateMultiRelationshipStep:
             TraversalStep(relationship=[], direction="outgoing")
 
 
-class TestValidateIngestion:
-    def test_valid_entity_mapping(self):
-        config = _minimal_config(
-            ingestion={
-                "items": IngestionMapping(entity_type="A", id_column="id"),
-            }
-        )
-        validate_config(config)
-
-    def test_valid_relationship_mapping(self):
-        config = _minimal_config(
-            ingestion={
-                "edges": IngestionMapping(
-                    relationship_type="links",
-                    from_column="a_id",
-                    to_column="b_id",
-                ),
-            }
-        )
-        validate_config(config)
-
-    def test_invalid_entity_column_map_target(self):
-        config = _minimal_config(
-            ingestion={
-                "items": IngestionMapping(
-                    entity_type="A",
-                    id_column="id",
-                    column_map={"STATE": "statuz"},
-                ),
-            }
-        )
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-        assert any("column_map target 'statuz'" in e for e in exc_info.value.errors)
-
-    def test_invalid_relationship_column_map_target(self):
-        config = _minimal_config(
-            ingestion={
-                "edges": IngestionMapping(
-                    relationship_type="links",
-                    from_column="A_ID",
-                    to_column="B_ID",
-                    column_map={"WEIGHT": "weight"},
-                ),
-            }
-        )
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-        assert any("column_map target 'weight'" in e for e in exc_info.value.errors)
-
-    def test_relationship_column_map_allows_renamed_endpoints(self):
-        config = _minimal_config(
-            ingestion={
-                "edges": IngestionMapping(
-                    relationship_type="links",
-                    from_column="A_ID",
-                    to_column="B_ID",
-                    column_map={"A_ID": "a_id", "B_ID": "b_id", "SCORE": "score"},
-                ),
-            }
-        )
-        validate_config(config)
-
-    def test_invalid_entity_type(self):
-        config = _minimal_config(
-            ingestion={
-                "bad": IngestionMapping(entity_type="Missing", id_column="id"),
-            }
-        )
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-        assert any("Missing" in e for e in exc_info.value.errors)
-
-    def test_invalid_relationship_type(self):
-        config = _minimal_config(
-            ingestion={
-                "bad": IngestionMapping(
-                    relationship_type="missing",
-                    from_column="a",
-                    to_column="b",
-                ),
-            }
-        )
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-        assert any("missing" in e for e in exc_info.value.errors)
-
-
 class TestValidatePrimaryKeys:
     def test_errors_on_missing_primary_key(self):
         config = _minimal_config(
@@ -536,9 +448,6 @@ class TestValidateWorkflowExecution:
         defaults = dict(
             contracts={
                 "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
-            },
-            integrations={
-                "catalog": IntegrationSchema(kind="heuristic"),
             },
             artifacts={
                 "artifact": ProviderArtifactSchema(
@@ -758,8 +667,18 @@ class TestValidateWorkflowExecution:
             for error in exc_info.value.errors
         )
 
-    def test_map_signals_rejects_unknown_integration(self):
+    def test_proposal_relationship_group_rejects_undeclared_signal_source(self):
         config = self._workflow_config(
+            relationships=[
+                RelationshipSchema(
+                    name="links",
+                    from_entity="A",
+                    to_entity="B",
+                    proposal_policy=ProposalPolicySchema(
+                        signals={"catalog": SignalPolicySchema(role="required")}
+                    ),
+                ),
+            ],
             workflows={
                 "wf": WorkflowSchema(
                     contract_in="WorkflowInput",
@@ -767,7 +686,7 @@ class TestValidateWorkflowExecution:
                         WorkflowStepSchema(
                             id="signals",
                             map_signals={
-                                "integration": "missing",
+                                "signal_source": "missing",
                                 "items": [],
                                 "from_id": "$input.id",
                                 "to_id": "$input.id",
@@ -777,19 +696,31 @@ class TestValidateWorkflowExecution:
                                 },
                             },
                             **{"as": "signals"},
-                        )
+                        ),
+                        WorkflowStepSchema(
+                            id="proposal",
+                            propose_relationship_group={
+                                "relationship_type": "links",
+                                "candidates_from": "signals",
+                                "signals_from": ["signals"],
+                            },
+                            **{"as": "proposal"},
+                        ),
                     ],
-                    returns="signals",
+                    returns="proposal",
                 )
             }
         )
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
-        assert any("map_signals integration 'missing'" in error for error in exc_info.value.errors)
+        assert any(
+            "map_signals signal_source 'missing'" in error
+            and "proposal_policy.signals" in error
+            for error in exc_info.value.errors
+        )
 
-    def test_map_signals_open_mode_allows_labels_without_global_registry(self):
+    def test_map_signals_open_mode_allows_labels_without_relationship_policy(self):
         config = self._workflow_config(
-            integrations={},
             workflows={
                 "wf": WorkflowSchema(
                     contract_in="WorkflowInput",
@@ -797,7 +728,7 @@ class TestValidateWorkflowExecution:
                         WorkflowStepSchema(
                             id="signals",
                             map_signals={
-                                "integration": "agent_check",
+                                "signal_source": "agent_check",
                                 "items": [],
                                 "from_id": "$input.id",
                                 "to_id": "$input.id",

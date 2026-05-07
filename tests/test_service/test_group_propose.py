@@ -12,8 +12,8 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.schema import (
     DecisionPolicyMatch,
     DecisionPolicySchema,
-    IntegrationGuardrailSchema,
-    MatchingSchema,
+    ProposalPolicySchema,
+    SignalPolicySchema,
 )
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -42,28 +42,13 @@ def _fake_resolution(
     )
 
 # ---------------------------------------------------------------------------
-# Config YAML with matching section for integration testing
+# Config YAML with proposal_policy section for group testing
 # ---------------------------------------------------------------------------
 
 MATCHING_CONFIG_YAML = """\
 version: "1.0"
 name: car_parts_matching
-description: Vehicle-to-part fitment with matching config
-
-integrations:
-  bolt_pattern_check:
-    kind: physical_compatibility
-    contract: bolt_pattern_io
-    notes: "authoritative physical compatibility"
-  year_range_check:
-    kind: temporal_compatibility
-    contract: year_range_io
-  description_fit_v1:
-    kind: llm_classification
-    contract: llm_classify_io
-  style_tags_v1:
-    kind: keyword_match
-    contract: keyword_match_io
+description: Vehicle-to-part fitment with proposal policy config
 
 contracts:
   bolt_pattern_io:
@@ -127,8 +112,8 @@ relationships:
       raw_score:
         type: float
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         bolt_pattern_check:
           role: blocking
           note: "Authoritative — physical compatibility"
@@ -153,13 +138,12 @@ relationships:
         type: float
 
 constraints: []
-ingestion: {}
 """
 
 NO_MATCHING_CONFIG_YAML = """\
 version: "1.0"
 name: car_parts_no_matching
-description: No matching section
+description: No proposal policy section
 
 entity_types:
   Vehicle:
@@ -209,7 +193,6 @@ relationships:
         type: float
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -220,7 +203,7 @@ ingestion: {}
 
 @pytest.fixture
 def matching_instance(tmp_path: Path) -> CruxibleInstance:
-    """Instance with matching config."""
+    """Instance with proposal policy config."""
     (tmp_path / "config.yaml").write_text(MATCHING_CONFIG_YAML)
     return CruxibleInstance.init(tmp_path, "config.yaml")
 
@@ -229,8 +212,8 @@ def matching_instance(tmp_path: Path) -> CruxibleInstance:
 def tuple_identity_instance(tmp_path: Path) -> CruxibleInstance:
     """Instance where fits dedupes pending proposals by relationship tuple."""
     config = MATCHING_CONFIG_YAML.replace(
-        "    matching:\n      integrations:",
-        "    proposal_identity: relationship_tuple\n    matching:\n      integrations:",
+        "    proposal_policy:\n      signals:",
+        "    proposal_identity: relationship_tuple\n    proposal_policy:\n      signals:",
         1,
     )
     (tmp_path / "config.yaml").write_text(config)
@@ -239,7 +222,7 @@ def tuple_identity_instance(tmp_path: Path) -> CruxibleInstance:
 
 @pytest.fixture
 def no_matching_instance(tmp_path: Path) -> CruxibleInstance:
-    """Instance without matching config."""
+    """Instance without proposal policy config."""
     (tmp_path / "config.yaml").write_text(NO_MATCHING_CONFIG_YAML)
     return CruxibleInstance.init(tmp_path, "config.yaml")
 
@@ -265,16 +248,16 @@ def _member(
 def _all_support_signals() -> list[CandidateSignal]:
     """All blocking + required signals as support."""
     return [
-        CandidateSignal(integration="bolt_pattern_check", signal="support", evidence="match"),
-        CandidateSignal(integration="year_range_check", signal="support", evidence="in range"),
-        CandidateSignal(integration="description_fit_v1", signal="support", evidence="fits"),
+        CandidateSignal(signal_source="bolt_pattern_check", signal="support", evidence="match"),
+        CandidateSignal(signal_source="year_range_check", signal="support", evidence="in range"),
+        CandidateSignal(signal_source="description_fit_v1", signal="support", evidence="fits"),
     ]
 
 
 def _all_support_with_advisory() -> list[CandidateSignal]:
     """All blocking + required + advisory signals as support."""
     return _all_support_signals() + [
-        CandidateSignal(integration="style_tags_v1", signal="support", evidence="tags match"),
+        CandidateSignal(signal_source="style_tags_v1", signal="support", evidence="tags match"),
     ]
 
 
@@ -389,7 +372,7 @@ class TestBasicProposal:
             stored = store.get_members(result.group_id)
             assert len(stored) == 1
             assert len(stored[0].signals) == 3
-            assert stored[0].signals[0].integration == "bolt_pattern_check"
+            assert stored[0].signals[0].signal_source == "bolt_pattern_check"
         finally:
             store.close()
 
@@ -404,7 +387,7 @@ class TestBasicProposal:
         assert result.member_count == 2
 
     def test_no_matching_section_open_mode(self, no_matching_instance: CruxibleInstance) -> None:
-        """No matching section → guardrails skipped, signals not required."""
+        """No proposal policy section → guardrails skipped, signals not required."""
         members = [_member()]  # no signals
         result = service_propose_group(
             no_matching_instance, "fits", members, thesis_facts={"open": True}
@@ -745,43 +728,43 @@ class TestValidationErrors:
 class TestSignalValidation:
     def test_undeclared_integration_signal(self, matching_instance: CruxibleInstance) -> None:
         sigs = _all_support_signals() + [
-            CandidateSignal(integration="unknown_integration", signal="support"),
+            CandidateSignal(signal_source="unknown_integration", signal="support"),
         ]
         members = [_member(signals=sigs)]
-        with pytest.raises(ConfigError, match="undeclared integration 'unknown_integration'"):
+        with pytest.raises(ConfigError, match="undeclared signal source 'unknown_integration'"):
             service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_duplicate_signals_same_integration(self, matching_instance: CruxibleInstance) -> None:
         sigs = _all_support_signals() + [
-            CandidateSignal(integration="bolt_pattern_check", signal="contradict"),
+            CandidateSignal(signal_source="bolt_pattern_check", signal="contradict"),
         ]
         members = [_member(signals=sigs)]
         with pytest.raises(
-            ConfigError, match="duplicate signals from integration 'bolt_pattern_check'"
+            ConfigError, match="duplicate signals from signal source 'bolt_pattern_check'"
         ):
             service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_missing_blocking_signal(self, matching_instance: CruxibleInstance) -> None:
         # Only provide year_range_check and description_fit_v1 (missing bolt_pattern_check)
         sigs = [
-            CandidateSignal(integration="year_range_check", signal="support"),
-            CandidateSignal(integration="description_fit_v1", signal="support"),
+            CandidateSignal(signal_source="year_range_check", signal="support"),
+            CandidateSignal(signal_source="description_fit_v1", signal="support"),
         ]
         members = [_member(signals=sigs)]
         with pytest.raises(
-            ConfigError, match="missing signal from blocking integration 'bolt_pattern_check'"
+            ConfigError, match="missing signal from blocking signal source 'bolt_pattern_check'"
         ):
             service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
     def test_missing_required_signal(self, matching_instance: CruxibleInstance) -> None:
-        # Only provide blocking integrations (missing description_fit_v1 which is required)
+        # Only provide blocking signal sources (missing description_fit_v1 which is required)
         sigs = [
-            CandidateSignal(integration="bolt_pattern_check", signal="support"),
-            CandidateSignal(integration="year_range_check", signal="support"),
+            CandidateSignal(signal_source="bolt_pattern_check", signal="support"),
+            CandidateSignal(signal_source="year_range_check", signal="support"),
         ]
         members = [_member(signals=sigs)]
         with pytest.raises(
-            ConfigError, match="missing signal from required integration 'description_fit_v1'"
+            ConfigError, match="missing signal from required signal source 'description_fit_v1'"
         ):
             service_propose_group(matching_instance, "fits", members, thesis_facts={"test": True})
 
@@ -791,14 +774,14 @@ class TestSignalValidation:
         result = service_propose_group(matching_instance, "fits", members, thesis_facts={"test": 1})
         assert result.group_id.startswith("GRP-")
 
-    def test_integrations_used_undeclared(self, matching_instance: CruxibleInstance) -> None:
+    def test_signal_sources_used_undeclared(self, matching_instance: CruxibleInstance) -> None:
         members = [_member(signals=_all_support_signals())]
-        with pytest.raises(ConfigError, match="Integration 'unknown' not declared"):
+        with pytest.raises(ConfigError, match="Signal source 'unknown' not declared"):
             service_propose_group(
                 matching_instance,
                 "fits",
                 members,
-                integrations_used=["unknown"],
+                signal_sources_used=["unknown"],
                 thesis_facts={"test": True},
             )
 
@@ -1579,9 +1562,9 @@ class TestAutoResolve:
         facts = {"style": "casual"}
         _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
-            CandidateSignal(integration="bolt_pattern_check", signal="contradict"),
-            CandidateSignal(integration="year_range_check", signal="support"),
-            CandidateSignal(integration="description_fit_v1", signal="support"),
+            CandidateSignal(signal_source="bolt_pattern_check", signal="contradict"),
+            CandidateSignal(signal_source="year_range_check", signal="support"),
+            CandidateSignal(signal_source="description_fit_v1", signal="support"),
         ]
         members = [_member(signals=sigs)]
         result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
@@ -1643,9 +1626,9 @@ class TestAutoResolve:
         facts = {"style": "casual"}
         _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
-            CandidateSignal(integration="bolt_pattern_check", signal="support"),
-            CandidateSignal(integration="year_range_check", signal="support"),
-            CandidateSignal(integration="description_fit_v1", signal="unsure"),
+            CandidateSignal(signal_source="bolt_pattern_check", signal="support"),
+            CandidateSignal(signal_source="year_range_check", signal="support"),
+            CandidateSignal(signal_source="description_fit_v1", signal="unsure"),
         ]
         members = [_member(signals=sigs)]
         result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
@@ -1661,10 +1644,6 @@ version: "1.0"
 name: permissive_matching
 description: trusted_or_watch policy
 
-integrations:
-  check_v1:
-    kind: generic
-
 entity_types:
   Part:
     properties:
@@ -1696,15 +1675,14 @@ relationships:
       verified:
         type: bool
         default: false
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
       auto_resolve_when: all_support
       auto_resolve_requires_prior_trust: trusted_or_watch
 
 constraints: []
-ingestion: {}
 """
 
     @pytest.fixture
@@ -1717,7 +1695,7 @@ ingestion: {}
     ) -> None:
         facts = {"k": "v"}
         _create_prior_resolution(permissive_instance, thesis_facts=facts, trust_status="watch")
-        sigs = [CandidateSignal(integration="check_v1", signal="support")]
+        sigs = [CandidateSignal(signal_source="check_v1", signal="support")]
         members = [_member(signals=sigs)]
         result = service_propose_group(permissive_instance, "fits", members, thesis_facts=facts)
         assert result.status == "auto_resolved"
@@ -1731,12 +1709,6 @@ version: "1.0"
 name: no_contradict_matching
 description: no_contradict policy
 
-integrations:
-  blocker:
-    kind: generic
-  required_check:
-    kind: generic
-
 entity_types:
   Part:
     properties:
@@ -1768,8 +1740,8 @@ relationships:
       verified:
         type: bool
         default: false
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         blocker:
           role: blocking
         required_check:
@@ -1778,7 +1750,6 @@ relationships:
       auto_resolve_requires_prior_trust: trusted_only
 
 constraints: []
-ingestion: {}
 """
 
     @pytest.fixture
@@ -1790,8 +1761,8 @@ ingestion: {}
         facts = {"k": "v"}
         _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
-            CandidateSignal(integration="blocker", signal="support"),
-            CandidateSignal(integration="required_check", signal="unsure"),
+            CandidateSignal(signal_source="blocker", signal="support"),
+            CandidateSignal(signal_source="required_check", signal="unsure"),
         ]
         members = [_member(signals=sigs)]
         result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
@@ -1803,8 +1774,8 @@ ingestion: {}
         facts = {"k": "v"}
         _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
-            CandidateSignal(integration="blocker", signal="contradict"),
-            CandidateSignal(integration="required_check", signal="support"),
+            CandidateSignal(signal_source="blocker", signal="contradict"),
+            CandidateSignal(signal_source="required_check", signal="support"),
         ]
         members = [_member(signals=sigs)]
         result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
@@ -1818,74 +1789,74 @@ ingestion: {}
 
 class TestDeriveReviewPriority:
     def test_blocking_contradict_critical(self) -> None:
-        matching = MatchingSchema(
-            integrations={"blocker": IntegrationGuardrailSchema(role="blocking")}
+        matching = ProposalPolicySchema(
+            signals={"blocker": SignalPolicySchema(role="blocking")}
         )
-        members = [_member(signals=[CandidateSignal(integration="blocker", signal="contradict")])]
+        members = [_member(signals=[CandidateSignal(signal_source="blocker", signal="contradict")])]
         assert derive_review_priority(members, matching, None) == "critical"
 
     def test_invalidated_prior_critical(self) -> None:
-        matching = MatchingSchema(
-            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        matching = ProposalPolicySchema(
+            signals={"check": SignalPolicySchema(role="required")}
         )
-        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         prior = _fake_resolution("invalidated")
         assert derive_review_priority(members, matching, prior) == "critical"
 
     def test_always_review_on_unsure_review(self) -> None:
-        matching = MatchingSchema(
-            integrations={
-                "check": IntegrationGuardrailSchema(
+        matching = ProposalPolicySchema(
+            signals={
+                "check": SignalPolicySchema(
                     role="required",
                     always_review_on_unsure=True,
                 )
             }
         )
-        members = [_member(signals=[CandidateSignal(integration="check", signal="unsure")])]
+        members = [_member(signals=[CandidateSignal(signal_source="check", signal="unsure")])]
         prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_blocking_review(self) -> None:
-        matching = MatchingSchema(
-            integrations={"blocker": IntegrationGuardrailSchema(role="blocking")}
+        matching = ProposalPolicySchema(
+            signals={"blocker": SignalPolicySchema(role="blocking")}
         )
-        members = [_member(signals=[CandidateSignal(integration="blocker", signal="unsure")])]
+        members = [_member(signals=[CandidateSignal(signal_source="blocker", signal="unsure")])]
         prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_required_review(self) -> None:
-        matching = MatchingSchema(integrations={"req": IntegrationGuardrailSchema(role="required")})
-        members = [_member(signals=[CandidateSignal(integration="req", signal="unsure")])]
+        matching = ProposalPolicySchema(signals={"req": SignalPolicySchema(role="required")})
+        members = [_member(signals=[CandidateSignal(signal_source="req", signal="unsure")])]
         prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_no_prior_review(self) -> None:
-        matching = MatchingSchema(
-            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        matching = ProposalPolicySchema(
+            signals={"check": SignalPolicySchema(role="required")}
         )
-        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         assert derive_review_priority(members, matching, None) == "review"
 
     def test_prior_watch_review(self) -> None:
-        matching = MatchingSchema(
-            integrations={"check": IntegrationGuardrailSchema(role="required")}
+        matching = ProposalPolicySchema(
+            signals={"check": SignalPolicySchema(role="required")}
         )
-        members = [_member(signals=[CandidateSignal(integration="check", signal="support")])]
+        members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         prior = _fake_resolution("watch")
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_all_support_trusted_normal(self) -> None:
-        matching = MatchingSchema(
-            integrations={
-                "blocker": IntegrationGuardrailSchema(role="blocking"),
-                "req": IntegrationGuardrailSchema(role="required"),
+        matching = ProposalPolicySchema(
+            signals={
+                "blocker": SignalPolicySchema(role="blocking"),
+                "req": SignalPolicySchema(role="required"),
             }
         )
         members = [
             _member(
                 signals=[
-                    CandidateSignal(integration="blocker", signal="support"),
-                    CandidateSignal(integration="req", signal="support"),
+                    CandidateSignal(signal_source="blocker", signal="support"),
+                    CandidateSignal(signal_source="req", signal="support"),
                 ]
             )
         ]
@@ -1894,17 +1865,17 @@ class TestDeriveReviewPriority:
 
     def test_advisory_ignored_for_priority(self) -> None:
         """Advisory contradict does NOT escalate priority."""
-        matching = MatchingSchema(
-            integrations={
-                "req": IntegrationGuardrailSchema(role="required"),
-                "adv": IntegrationGuardrailSchema(role="advisory"),
+        matching = ProposalPolicySchema(
+            signals={
+                "req": SignalPolicySchema(role="required"),
+                "adv": SignalPolicySchema(role="advisory"),
             }
         )
         members = [
             _member(
                 signals=[
-                    CandidateSignal(integration="req", signal="support"),
-                    CandidateSignal(integration="adv", signal="contradict"),
+                    CandidateSignal(signal_source="req", signal="support"),
+                    CandidateSignal(signal_source="adv", signal="contradict"),
                 ]
             )
         ]
@@ -1921,17 +1892,17 @@ class TestDeriveReviewPriority:
 
     def test_critical_beats_review(self) -> None:
         """When both critical and review conditions exist, critical wins."""
-        matching = MatchingSchema(
-            integrations={
-                "blocker": IntegrationGuardrailSchema(role="blocking"),
-                "req": IntegrationGuardrailSchema(role="required"),
+        matching = ProposalPolicySchema(
+            signals={
+                "blocker": SignalPolicySchema(role="blocking"),
+                "req": SignalPolicySchema(role="required"),
             }
         )
         members = [
             _member(
                 signals=[
-                    CandidateSignal(integration="blocker", signal="contradict"),
-                    CandidateSignal(integration="req", signal="unsure"),
+                    CandidateSignal(signal_source="blocker", signal="contradict"),
+                    CandidateSignal(signal_source="req", signal="unsure"),
                 ]
             )
         ]

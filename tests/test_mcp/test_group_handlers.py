@@ -17,11 +17,6 @@ version: "1.0"
 name: group_mcp_tests
 description: For MCP group tool tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -59,8 +54,8 @@ relationships:
       source:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
       auto_resolve_when: all_support
@@ -76,7 +71,6 @@ named_queries:
     returns: "list[Part]"
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -104,7 +98,7 @@ def server(governed_client):
 
 @pytest.fixture
 def group_project(tmp_path):
-    """Create a project with matching config + seeded entities."""
+    """Create a project with proposal policy config + seeded entities."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(GROUP_CONFIG_YAML)
     return tmp_path
@@ -116,8 +110,8 @@ def tuple_identity_group_project(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         GROUP_CONFIG_YAML.replace(
-            "    matching:\n",
-            "    proposal_identity: relationship_tuple\n    matching:\n",
+            "    proposal_policy:\n",
+            "    proposal_identity: relationship_tuple\n    proposal_policy:\n",
             1,
         )
     )
@@ -200,7 +194,7 @@ def _member(from_id="BP-1", to_id="V-1"):
         "to_type": "Vehicle",
         "to_id": to_id,
         "relationship_type": "fits",
-        "signals": [{"integration": "check_v1", "signal": "support"}],
+        "signals": [{"signal_source": "check_v1", "signal": "support"}],
     }
 
 

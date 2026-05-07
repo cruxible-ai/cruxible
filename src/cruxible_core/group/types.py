@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from cruxible_core.graph.types import RelationshipInstance
 
 SignalValue = Literal["support", "contradict", "unsure"]
-"""Tri-state signal value produced by an integration about a candidate."""
+"""Tri-state signal value produced by a signal source about a candidate."""
 
 ResolutionAction = Literal["approve", "reject"]
 """Action taken on a candidate group: approve (apply) or reject (discard)."""
@@ -29,12 +29,12 @@ ReviewPriority = Literal["critical", "review", "normal"]
 
 
 class CandidateSignal(BaseModel):
-    """Tri-state signal from an integration, attached to a candidate member.
+    """Tri-state signal from a signal source, attached to a candidate member.
 
     Pair identity is implicit in the containing member.
     """
 
-    integration: str
+    signal_source: str
     signal: SignalValue
     evidence: str = ""
 
@@ -42,7 +42,7 @@ class CandidateSignal(BaseModel):
 class CandidateMember(RelationshipInstance):
     """A candidate edge within a group proposal.
 
-    Extends ``RelationshipInstance`` with integration signals. ``edge_key``
+    Extends ``RelationshipInstance`` with signal-source evidence. ``edge_key``
     is inherited but stays ``None`` for candidates since the edge does not
     yet exist in the graph.
     """
@@ -79,7 +79,7 @@ class CandidateGroup(BaseModel):
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     analysis_state: dict[str, Any] = Field(default_factory=dict)
-    integrations_used: list[str] = Field(default_factory=list)
+    signal_sources_used: list[str] = Field(default_factory=list)
     proposed_by: Literal["human", "agent"] = "agent"
     member_count: int = 0
     pending_version: int = 1

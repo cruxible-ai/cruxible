@@ -48,7 +48,6 @@ named_queries:
     returns: "list[Part]"
 
 constraints: []
-ingestion: {}
 """
 
 

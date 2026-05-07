@@ -157,7 +157,7 @@ class TestWorkflowCompiler:
         assert plan.steps[2].make_candidates_spec is not None
         assert plan.steps[2].make_candidates_spec.relationship_type == "recommended_for"
         assert plan.steps[3].map_signals_spec is not None
-        assert plan.steps[3].map_signals_spec.integration == "catalog"
+        assert plan.steps[3].map_signals_spec.signal_source == "catalog"
         assert plan.steps[4].propose_relationship_group_spec is not None
         assert plan.steps[4].propose_relationship_group_spec.signals_from == ["catalog_signals"]
 

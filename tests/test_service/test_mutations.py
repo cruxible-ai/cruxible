@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
-    service_ingest,
 )
 
 
@@ -185,68 +182,3 @@ class TestAddRelationships:
         assert prov["source"] == "agent_review"
         assert prov["source_ref"] == "review-123"
 
-
-# ---------------------------------------------------------------------------
-# service_ingest
-# ---------------------------------------------------------------------------
-
-
-class TestIngest:
-    def test_file(self, initialized_instance: CruxibleInstance, tmp_project: Path) -> None:
-        csv_path = tmp_project / "vehicles.csv"
-        csv_path.write_text(
-            "vehicle_id,year,make,model\n"
-            "V-2024-CIVIC-EX,2024,Honda,Civic\n"
-            "V-2024-ACCORD-SPORT,2024,Honda,Accord\n"
-        )
-        result = service_ingest(initialized_instance, "vehicles", file_path=str(csv_path))
-        assert result.records_ingested == 2
-        assert result.mapping == "vehicles"
-        assert result.entity_type == "Vehicle"
-
-    def test_csv_string(self, initialized_instance: CruxibleInstance) -> None:
-        csv_data = "vehicle_id,year,make,model\nV-2024-CIVIC-EX,2024,Honda,Civic\n"
-        result = service_ingest(initialized_instance, "vehicles", data_csv=csv_data)
-        assert result.records_ingested == 1
-        assert result.entity_type == "Vehicle"
-
-    def test_no_source_error(self, initialized_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="Provide exactly one"):
-            service_ingest(initialized_instance, "vehicles")
-
-    def test_multi_source_error(self, initialized_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="Provide exactly one"):
-            service_ingest(
-                initialized_instance,
-                "vehicles",
-                file_path="/some/file.csv",
-                data_csv="a,b\n1,2",
-            )
-
-    def test_upload_id_rejected(self, initialized_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="upload_id is not supported"):
-            service_ingest(initialized_instance, "vehicles", upload_id="upload-123")
-
-    def test_json_rows_list(self, initialized_instance: CruxibleInstance) -> None:
-        """Pre-parsed list[dict] (MCP pass-through) ingests correctly."""
-        rows = [
-            {
-                "vehicle_id": "V-2024-CIVIC-EX",
-                "year": 2024,
-                "make": "Honda",
-                "model": "Civic",
-            },
-            {
-                "vehicle_id": "V-2024-ACCORD-SPORT",
-                "year": 2024,
-                "make": "Honda",
-                "model": "Accord",
-            },
-        ]
-        result = service_ingest(initialized_instance, "vehicles", data_json=rows)
-        assert result.records_ingested == 2
-        assert result.entity_type == "Vehicle"
-
-        graph = initialized_instance.load_graph()
-        assert graph.get_entity("Vehicle", "V-2024-CIVIC-EX") is not None
-        assert graph.get_entity("Vehicle", "V-2024-ACCORD-SPORT") is not None

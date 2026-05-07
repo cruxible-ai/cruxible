@@ -44,11 +44,6 @@ class TestInputSchema:
         outcome = schemas["cruxible_outcome"].inputSchema["properties"]["outcome"]
         assert outcome["enum"] == ["correct", "incorrect", "partial", "unknown"]
 
-    def test_find_candidates_strategy_enum(self, server):
-        schemas = _get_tool_schemas(server)
-        strategy = schemas["cruxible_find_candidates"].inputSchema["properties"]["strategy"]
-        assert strategy["enum"] == ["property_match", "shared_neighbors"]
-
     def test_list_resource_type_enum(self, server):
         schemas = _get_tool_schemas(server)
         resource_type = schemas["cruxible_list"].inputSchema["properties"]["resource_type"]
@@ -100,19 +95,6 @@ class TestInputSchema:
         assert "config_path" not in required
         assert "config_yaml" not in required
 
-    def test_ingest_optional_data_params(self, server):
-        """cruxible_ingest data params (file_path, data_csv, etc.) are all optional."""
-        schemas = _get_tool_schemas(server)
-        schema = schemas["cruxible_ingest"].inputSchema
-        for param in ("file_path", "data_csv", "data_json", "data_ndjson", "upload_id"):
-            assert param in schema["properties"]
-        required = set(schema.get("required", []))
-        for param in ("file_path", "data_csv", "data_json", "data_ndjson", "upload_id"):
-            assert param not in required
-        # instance_id and mapping_name remain required
-        assert "instance_id" in required
-        assert "mapping_name" in required
-
     def test_list_has_property_filter(self, server):
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_list"].inputSchema["properties"]
@@ -122,11 +104,6 @@ class TestInputSchema:
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_evaluate"].inputSchema["properties"]
         assert "exclude_orphan_types" in props
-
-    def test_find_candidates_has_min_distinct_neighbors(self, server):
-        schemas = _get_tool_schemas(server)
-        props = schemas["cruxible_find_candidates"].inputSchema["properties"]
-        assert "min_distinct_neighbors" in props
 
     def test_init_optional_config_yaml(self, server):
         """cruxible_init has config_yaml in properties, not required."""
@@ -181,17 +158,6 @@ class TestOutputSchema:
                 },
             ),
             (
-                "cruxible_ingest",
-                {
-                    "records_ingested",
-                    "records_updated",
-                    "mapping",
-                    "entity_type",
-                    "relationship_type",
-                    "receipt_id",
-                },
-            ),
-            (
                 "cruxible_query",
                 {
                     "results",
@@ -208,7 +174,6 @@ class TestOutputSchema:
             ("cruxible_outcome", {"outcome_id"}),
             ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
             ("cruxible_list", {"items", "total"}),
-            ("cruxible_find_candidates", {"candidates", "total"}),
             (
                 "cruxible_stats",
                 {
@@ -414,35 +379,6 @@ class TestErrorPropagation:
                     {"instance_id": str(tmp_project), "receipt_id": "RCP-missing"},
                 )
             )
-
-    def test_ingest_error_includes_details(self, server, governed_client, tmp_project):
-        """DataValidationError details survive MCP propagation."""
-        del governed_client
-        init_result = asyncio.run(
-            server.call_tool(
-                "cruxible_init",
-                {"root_dir": str(tmp_project), "config_path": "config.yaml"},
-            )
-        )
-        if isinstance(init_result, tuple):
-            instance_id = init_result[1]["instance_id"]
-        else:
-            instance_id = init_result["instance_id"]
-        bad_csv = tmp_project / "bad_vehicles.csv"
-        bad_csv.write_text("wrong_col,another_col\nfoo,bar\n")
-        with pytest.raises(ToolError) as exc_info:
-            asyncio.run(
-                server.call_tool(
-                    "cruxible_ingest",
-                    {
-                        "instance_id": instance_id,
-                        "mapping_name": "vehicles",
-                        "file_path": str(bad_csv),
-                    },
-                )
-            )
-        # The error message should contain the specific column name
-        assert "vehicle_id" in str(exc_info.value).lower()
 
     def test_validate_bad_config_raises(self, server, tmp_path):
         """ConfigError details survive MCP propagation."""

@@ -81,8 +81,8 @@ declare:
 - providers and workflows
 - governed relationship policies, feedback profiles, and outcome profiles
 
-New configs should prefer workflow-based loading over legacy ingestion. Legacy
-`ingest` remains available for older mapping-based configs.
+Use workflow-based loading for source artifacts. Providers parse external data,
+dataflow steps shape it, and canonical apply steps write accepted graph state.
 
 ## Workflows
 
@@ -93,7 +93,7 @@ return an `apply_digest` and `head_snapshot_id`; applying the preview commits
 only if those identities still match.
 
 Proposal workflows produce candidate groups for governed review. They preserve
-tri-state signals from declared integrations:
+tri-state signals from relationship-local signal sources:
 
 - `support`
 - `unsure`
@@ -105,7 +105,7 @@ decision without mutating the graph.
 Use built-in step types for generic deterministic dataflow mechanics:
 `shape_items`, `join_items`, `filter_items`, `dedupe_items`, graph object
 construction, and canonical apply steps. Use providers for source adapters,
-external integrations, model calls, and domain policy.
+external services, model calls, and domain policy.
 
 ## The Entity Graph
 
@@ -143,7 +143,7 @@ A **decision record** groups receipts, traces, and events around a higher-level
 question so an agent or reviewer can reconstruct the decision history.
 
 These are different proofs. Receipts explain how Cruxible decided or changed
-state. Traces explain what executable integration produced evidence.
+state. Traces explain what executable provider produced evidence.
 
 ## Feedback And Outcomes
 

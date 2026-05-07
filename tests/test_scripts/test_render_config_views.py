@@ -70,8 +70,8 @@ def test_update_readme_default_sections_are_comprehension_views(
         "<!-- CRUXIBLE:END workflow-summary -->\n\n"
         "<!-- CRUXIBLE:BEGIN governance-table -->\n"
         "<!-- CRUXIBLE:END governance-table -->\n\n"
-        "<!-- CRUXIBLE:BEGIN integration-catalog -->\n"
-        "<!-- CRUXIBLE:END integration-catalog -->\n\n"
+        "<!-- CRUXIBLE:BEGIN signal-policy-catalog -->\n"
+        "<!-- CRUXIBLE:END signal-policy-catalog -->\n\n"
         "<!-- CRUXIBLE:BEGIN query-map -->\n"
         "<!-- CRUXIBLE:END query-map -->\n\n"
         "<!-- CRUXIBLE:BEGIN query-catalog -->\n"
@@ -98,7 +98,7 @@ def test_update_readme_default_sections_are_comprehension_views(
         "Review Policy | Feedback | Outcomes |"
     ) in updated
     assert "Workflow: Propose Campaign Recommendations" in updated
-    assert "| Integration | Kind | Used By | Notes |" in updated
+    assert "| Signal Source | Role | Review Unsure | Used By | Notes |" in updated
     assert "No configured constraints." in updated
     assert "No configured feedback profiles." in updated
     assert "query_entity_Campaign" in updated
@@ -180,29 +180,30 @@ relationships:
   - name: asset_runs_product
     from: Asset
     to: Product
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         product_match:
           role: required
   - name: asset_reviewed_for_product
     from: Asset
     to: Product
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         review_signal:
           role: advisory
   - name: asset_remediated_vulnerability
     from: Asset
     to: Vulnerability
-    matching:
-      integrations:
-        remediation_verification:
-          role: required
+    proposal_policy:
+        signals:
+          remediation_verification:
+            role: required
+            note: Verify remediation evidence.
   - name: incident_exploited_vulnerability
     from: Incident
     to: Vulnerability
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_signal:
           role: required
 
@@ -215,20 +216,6 @@ named_queries:
 contracts:
   EmptyInput:
     fields: {}
-
-integrations:
-  product_match:
-    kind: heuristic
-    notes: Match an asset software row to a product.
-  review_signal:
-    kind: analyst_review
-    notes: Manual review signal from the agent.
-  remediation_verification:
-    kind: remediation_check
-    notes: Verify remediation evidence.
-  incident_signal:
-    kind: incident_investigation
-    notes: Attribute an incident to a vulnerability.
 
 constraints:
   - name: supported_products_only
@@ -369,7 +356,7 @@ workflows:
     assert "| Relationship | Scope | Creation Path | Signals |" in rendered
     assert "Workflow: Propose Asset Products" in rendered
     assert "Agent/manual group propose" in rendered
-    assert "| Integration | Kind | Used By | Notes |" in rendered
+    assert "| Signal Source | Role | Review Unsure | Used By | Notes |" in rendered
     assert "`remediation_verification`" in rendered
     assert "Verify remediation evidence." in rendered
     assert "### Constraints" in rendered
@@ -452,8 +439,8 @@ relationships:
     from_entity: Asset
     to_entity: Product
     properties: {}
-    matching:
-      integrations: {}
+    proposal_policy:
+      signals: {}
 contracts:
   AssetProductOutput:
     fields: {}

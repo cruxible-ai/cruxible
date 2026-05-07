@@ -7,7 +7,7 @@ Controls which tools an MCP session can invoke, enforced via the
 - ``GOVERNED_WRITE``: execute workflows that persist receipts and
   propose or review via governed surfaces
 - ``GRAPH_WRITE``: raw graph mutation and proposal resolution
-- ``ADMIN``: apply canonical workflows, ingest data, add constraints, create new instances
+- ``ADMIN``: apply canonical workflows, add constraints, create new instances
 
 Default is ``ADMIN`` (backward compatible), except when ``CRUXIBLE_AGENT_MODE=1``
 is active and ``CRUXIBLE_MODE`` is unset. In agent mode, the default is
@@ -96,7 +96,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_evaluate": PermissionMode.READ_ONLY,
     "cruxible_stats": PermissionMode.READ_ONLY,
     "cruxible_lint": PermissionMode.READ_ONLY,
-    "cruxible_find_candidates": PermissionMode.READ_ONLY,
     "cruxible_get_entity": PermissionMode.READ_ONLY,
     "cruxible_get_relationship": PermissionMode.READ_ONLY,
     "cruxible_relationship_lineage": PermissionMode.READ_ONLY,
@@ -139,7 +138,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
     "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,
     # ADMIN tools
-    "cruxible_ingest": PermissionMode.ADMIN,
     "cruxible_add_constraint": PermissionMode.ADMIN,
     "cruxible_add_decision_policy": PermissionMode.ADMIN,
     "cruxible_lock_workflow": PermissionMode.ADMIN,

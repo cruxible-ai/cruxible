@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -140,35 +139,6 @@ def test_trace_methods_call_trace_routes():
         "workflow_name=wf&provider_name=provider&limit=25&offset=5"
     )
     assert seen[1][1] == expected_url
-
-
-def test_file_upload_uses_multipart(tmp_path: Path):
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["content_type"] = request.headers["content-type"]
-        captured["path"] = str(request.url)
-        return httpx.Response(
-            200,
-            json={
-                "records_ingested": 1,
-                "records_updated": 0,
-                "mapping": "vehicles",
-                "entity_type": "Vehicle",
-                "relationship_type": None,
-                "receipt_id": "RCPT-1",
-            },
-        )
-
-    csv_path = tmp_path / "vehicles.csv"
-    csv_path.write_text("vehicle_id,make\nV-1,Honda\n")
-
-    client = _build_client(handler)
-    result = client.ingest("inst_123", "vehicles", file_path=str(csv_path))
-
-    assert result.records_ingested == 1
-    assert "multipart/form-data" in captured["content_type"]
-    assert captured["path"].endswith("/api/v1/inst_123/ingest")
 
 
 def test_client_includes_bearer_token_header_when_configured():

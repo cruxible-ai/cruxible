@@ -19,7 +19,6 @@ OperationType = Literal[
     "workflow",
     "add_entity",
     "add_relationship",
-    "ingest",
     "feedback",
     "feedback_batch",
     "group_propose",
@@ -46,7 +45,6 @@ NodeType = Literal[
     "entity_write",
     "relationship_write",
     "feedback_applied",
-    "ingest_batch",
 ]
 """Fine-grained kind of node within the receipt DAG."""
 

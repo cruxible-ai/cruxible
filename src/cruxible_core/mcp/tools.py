@@ -158,47 +158,6 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_workflow_test(instance_id, name=name)
 
     @_tool
-    def cruxible_ingest(
-        instance_id: str,
-        mapping_name: str,
-        file_path: str | None = None,
-        data_csv: str | None = None,
-        data_json: str | list[dict[str, Any]] | None = None,
-        data_ndjson: str | None = None,
-        upload_id: str | None = None,
-    ) -> contracts.IngestResult:
-        """Ingest data through a legacy ingestion mapping.
-
-        Deprecated for new configs: prefer workflow-based deterministic loading
-        via `cruxible_lock_workflow`, `cruxible_run_workflow`, and
-        `cruxible_apply_workflow`.
-
-        For deterministic relationships only (explicit in source data).
-        For inferred relationships (matching, classification), use
-        ``cruxible_add_relationship`` instead.
-
-        Provide exactly one data source:
-        - ``file_path``: path to a CSV, JSON, or NDJSON (.jsonl/.ndjson) file
-          on disk. Files with ``.json`` extension containing NDJSON content
-          are auto-detected.
-        - ``data_csv``: inline CSV string
-        - ``data_json``: inline JSON array of row objects
-          (e.g. ``[{"id": "1", "name": "x"}, ...]``)
-        - ``data_ndjson``: inline NDJSON string (one JSON object per line)
-        - ``upload_id``: reserved for cloud mode (not supported locally)
-
-        Ingest entity mappings before relationship mappings.
-        Re-ingesting existing relationships updates provided properties;
-        omitted properties are preserved.
-
-        For large relationship sets (10K+ edges), CSV file ingestion is
-        recommended — it streams rows and avoids MCP payload size limits.
-        """
-        return handlers.handle_ingest(
-            instance_id, mapping_name, file_path, data_csv, data_json, data_ndjson, upload_id
-        )
-
-    @_tool
     def cruxible_query(
         instance_id: str,
         query_name: str,
@@ -397,40 +356,6 @@ def register_tools(server: FastMCP) -> list[str]:
             limit=limit,
             property_filter=property_filter,
             operation_type=operation_type,
-        )
-
-    @_tool
-    def cruxible_find_candidates(
-        instance_id: str,
-        relationship_type: str,
-        strategy: contracts.CandidateStrategy,
-        match_rules: list[dict[str, str]] | None = None,
-        via_relationship: str | None = None,
-        min_overlap: float = 0.5,
-        min_confidence: float = 0.5,
-        limit: int = 20,
-        min_distinct_neighbors: int = 2,
-    ) -> contracts.CandidatesResult:
-        """Find missing-relationship candidates.
-
-        `strategy="property_match"` requires `match_rules`.
-        Each rule: `{from_property, to_property, operator}`.
-        Operators: `equals` (type-strict), `iequals` (case-insensitive),
-        `contains` (substring, forces brute-force scan).
-        `strategy="shared_neighbors"` requires `via_relationship`.
-        `min_distinct_neighbors` (default 2) skips pairs where both entities
-        have fewer than this many neighbors — filters degenerate cases.
-        """
-        return handlers.handle_find_candidates(
-            instance_id,
-            relationship_type,
-            strategy,
-            match_rules=match_rules,
-            via_relationship=via_relationship,
-            min_overlap=min_overlap,
-            min_confidence=min_confidence,
-            limit=limit,
-            min_distinct_neighbors=min_distinct_neighbors,
         )
 
     @_tool
@@ -652,12 +577,11 @@ def register_tools(server: FastMCP) -> list[str]:
         declared domain properties while preserving system review metadata.
 
         For governed judgment relationships, prefer candidate group proposal
-        flows so Cruxible can preserve tri-state integration signals
+        flows so Cruxible can preserve tri-state signal-source evidence
         (support, unsure, contradict) and review history.
 
         Batch size: practical limit is ~500 relationships per call.
-        For bulk ingestion of 10K+ relationships, use ``cruxible_ingest``
-        with CSV files instead.
+        For bulk loading, use workflow dataflow steps plus apply_relationships.
         """
         return handlers.handle_add_relationship(instance_id, relationships)
 
@@ -864,14 +788,14 @@ def register_tools(server: FastMCP) -> list[str]:
         thesis_text: str = "",
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
-        integrations_used: list[str] | None = None,
+        signal_sources_used: list[str] | None = None,
         proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
         """Propose a candidate group of edges for batch review.
 
         Each member carries tri-state signals (support/contradict/unsure) from
-        declared integrations. The group carries a thesis (structured facts that
+        declared signal sources. The group carries a thesis (structured facts that
         get hashed into a deterministic signature) and optional analysis_state
         (opaque agent data, NOT hashed).
 
@@ -886,7 +810,7 @@ def register_tools(server: FastMCP) -> list[str]:
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
-            integrations_used=integrations_used,
+            signal_sources_used=signal_sources_used,
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         )

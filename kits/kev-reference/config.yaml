@@ -143,7 +143,6 @@ artifacts:
 
 providers:
   parse_public_kev_bundle:
-    kind: function
     description: >
       Parse the pinned public KEV artifact into generic provenance-rich
       tabular rows. Domain normalization happens in the next workflow step.
@@ -152,11 +151,9 @@ providers:
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: public_kev_bundle
 
   normalize_public_kev_reference:
-    kind: function
     description: >
       Join parsed KEV catalog, EPSS scores, and NVD CPE configurations on
       CVE ID, extract CPE-based product identity and version ranges, and
@@ -167,7 +164,6 @@ providers:
     ref: kit://providers/reference.py::normalize_public_kev_reference
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: public_kev_bundle
 
 workflows:
@@ -176,7 +172,6 @@ workflows:
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.
-    contract_in: cruxible.EmptyInput
     steps:
       - id: raw_tables
         provider: parse_public_kev_bundle

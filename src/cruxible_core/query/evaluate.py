@@ -305,7 +305,7 @@ def _check_governed_support_relationships(
     governed = {
         relationship.name: relationship
         for relationship in config.relationships
-        if relationship.matching is not None
+        if relationship.proposal_policy is not None
     }
     if not governed:
         return
@@ -313,7 +313,7 @@ def _check_governed_support_relationships(
     for edge in graph.iter_edges():
         relationship_type = edge["relationship_type"]
         relationship = governed.get(relationship_type)
-        if relationship is None or relationship.matching is None:
+        if relationship is None or relationship.proposal_policy is None:
             continue
 
         from_type = edge["from_type"]
@@ -370,13 +370,13 @@ def _check_governed_support_relationships(
             )
             continue
 
-        signals_by_integration = {signal.integration: signal.signal for signal in member.signals}
-        required_integrations = {
+        signals_by_source = {signal.signal_source: signal.signal for signal in member.signals}
+        required_signal_sources = {
             name
-            for name, guardrail in relationship.matching.integrations.items()
+            for name, guardrail in relationship.proposal_policy.signals.items()
             if guardrail.role in {"blocking", "required"}
         }
-        missing = sorted(required_integrations - set(signals_by_integration))
+        missing = sorted(required_signal_sources - set(signals_by_source))
         if missing:
             findings.append(
                 _governed_support_finding(
@@ -386,13 +386,13 @@ def _check_governed_support_relationships(
                     to_type,
                     to_id,
                     "missing_required_signal",
-                    "Governed relationship is missing required integration support",
-                    integrations=missing,
+                    "Governed relationship is missing required signal-source support",
+                    signal_sources=missing,
                 )
             )
 
-        for integration_name, guardrail in relationship.matching.integrations.items():
-            signal = signals_by_integration.get(integration_name)
+        for source_name, guardrail in relationship.proposal_policy.signals.items():
+            signal = signals_by_source.get(source_name)
             if guardrail.role == "blocking" and signal == "contradict":
                 findings.append(
                     _governed_support_finding(
@@ -403,7 +403,7 @@ def _check_governed_support_relationships(
                         to_id,
                         "blocking_contradict",
                         "Governed relationship has a blocking contradict signal",
-                        integrations=[integration_name],
+                        signal_sources=[source_name],
                     )
                 )
             elif guardrail.role in {"blocking", "required"} and signal == "unsure":
@@ -416,7 +416,7 @@ def _check_governed_support_relationships(
                         to_id,
                         "required_unsure",
                         "Governed relationship has required or blocking unsure support",
-                        integrations=[integration_name],
+                        signal_sources=[source_name],
                     )
                 )
 
@@ -463,7 +463,7 @@ def _governed_support_finding(
     reason: str,
     message: str,
     *,
-    integrations: list[str] | None = None,
+    signal_sources: list[str] | None = None,
 ) -> EvaluationFinding:
     detail: dict[str, Any] = {
         "from_entity": f"{from_type}:{from_id}",
@@ -471,8 +471,8 @@ def _governed_support_finding(
         "relationship_type": relationship_type,
         "reason": reason,
     }
-    if integrations:
-        detail["integrations"] = integrations
+    if signal_sources:
+        detail["signal_sources"] = signal_sources
     return EvaluationFinding(
         category="governed_support_relationship",
         severity="warning",

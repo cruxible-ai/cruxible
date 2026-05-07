@@ -147,54 +147,6 @@ class TestValidate:
 
 
 # ---------------------------------------------------------------------------
-# ingest
-# ---------------------------------------------------------------------------
-
-
-class TestIngest:
-    def test_ingest_entities(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-    ) -> None:
-        _assert_local_mutation_disabled(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "vehicles", "--file", str(vehicles_csv)],
-            "ingest",
-        )
-
-    def test_ingest_relationships(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-        parts_csv: Path,
-        fitments_csv: Path,
-    ) -> None:
-        _assert_local_mutation_disabled(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "fitments", "--file", str(fitments_csv)],
-            "ingest",
-        )
-
-    def test_ingest_bad_mapping(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-    ) -> None:
-        _assert_local_mutation_disabled(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "nonexistent", "--file", str(vehicles_csv)],
-            "ingest",
-        )
-
-
-# ---------------------------------------------------------------------------
 # query
 # ---------------------------------------------------------------------------
 
@@ -473,7 +425,7 @@ class TestConfigViews:
         assert "Recommended For" in result.output
         assert "Governed proposal" in result.output
         assert "Creation Path" in result.output
-        assert "| Integration | Kind | Used By | Notes |" in result.output
+        assert "| Signal Source | Role | Review Unsure | Used By | Notes |" in result.output
         assert "No configured constraints." in result.output
         assert "No configured feedback profiles." in result.output
         assert "### Entity Types" not in result.output
@@ -624,8 +576,8 @@ relationships:
     from_entity: Asset
     to_entity: Product
     properties: {}
-    matching:
-      integrations: {}
+    proposal_policy:
+      signals: {}
 workflows:
   build_overlay:
     canonical: true
@@ -781,7 +733,7 @@ class TestCanonicalViews:
                     relationship_type="recommended_for",
                     signals=[
                         CandidateSignal(
-                            integration="catalog",
+                            signal_source="catalog",
                             signal="support",
                             evidence="seasonal match",
                         )
@@ -1147,34 +1099,6 @@ class TestSample:
             ["sample", "--type", "Part", "--limit", "1"],
         )
         assert result.exit_code == 0
-
-
-# ---------------------------------------------------------------------------
-# find-candidates
-# ---------------------------------------------------------------------------
-
-
-class TestFindCandidates:
-    def test_find_candidates_property_match(
-        self,
-        runner: CliRunner,
-        populated_instance: CruxibleInstance,
-    ) -> None:
-        result = _chdir_run(
-            runner,
-            populated_instance.root,
-            [
-                "find-candidates",
-                "--relationship",
-                "replaces",
-                "--strategy",
-                "property_match",
-                "--rule",
-                "category=category",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "candidate" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -2079,11 +2003,6 @@ version: "1.0"
 name: group_cli_test
 description: For CLI group tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -2115,19 +2034,18 @@ relationships:
       verified:
         type: bool
         default: false
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
 
 constraints: []
-ingestion: {}
 """
 
 
 @pytest.fixture
 def group_instance(tmp_path: Path) -> CruxibleInstance:
-    """Instance with matching config and seeded entities for group tests."""
+    """Instance with proposal policy config and seeded entities for group tests."""
     (tmp_path / "config.yaml").write_text(GROUP_CONFIG_YAML)
     inst = CruxibleInstance.init(tmp_path, "config.yaml")
     from cruxible_core.graph.types import EntityInstance
@@ -2167,7 +2085,7 @@ def _members_json(from_id: str = "BP-1", to_id: str = "V-1") -> str:
                 "to_type": "Vehicle",
                 "to_id": to_id,
                 "relationship_type": "fits",
-                "signals": [{"integration": "check_v1", "signal": "support"}],
+                "signals": [{"signal_source": "check_v1", "signal": "support"}],
             }
         ]
     )
@@ -2184,7 +2102,7 @@ def _seed_group(instance: CruxibleInstance, *, resolve: bool = False) -> str:
                 to_type="Vehicle",
                 to_id="V-1",
                 relationship_type="fits",
-                signals=[CandidateSignal(integration="check_v1", signal="support")],
+                signals=[CandidateSignal(signal_source="check_v1", signal="support")],
                 properties={},
             )
         ],

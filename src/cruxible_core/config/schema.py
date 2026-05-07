@@ -1,8 +1,8 @@
 """Pydantic models for Cruxible Core config YAML validation.
 
 The config defines a decision domain: entity types, relationships,
-named queries, constraints, ingestion mappings, and optional execution
-artifacts such as contracts, providers, workflows, and workflow tests.
+named queries, constraints, and optional execution artifacts such as
+contracts, providers, workflows, and workflow tests.
 
 Hierarchy:
     CoreConfig
@@ -10,8 +10,8 @@ Hierarchy:
     │   └── properties: dict[str, PropertySchema]
     ├── relationships: list[RelationshipSchema]
     │   ├── properties: dict[str, PropertySchema]
-    │   └── matching: MatchingSchema
-    │       └── integrations: dict[str, IntegrationGuardrailSchema]
+    │   └── proposal_policy: ProposalPolicySchema
+    │       └── signals: dict[str, SignalPolicySchema]
     ├── named_queries: dict[str, NamedQuerySchema]
     │   └── traversal: list[TraversalStep]
     ├── constraints: list[ConstraintSchema]
@@ -19,8 +19,6 @@ Hierarchy:
     ├── outcome_profiles: dict[str, OutcomeProfileSchema]
     ├── quality_checks: list[QualityCheckSchema]
     ├── decision_policies: list[DecisionPolicySchema]
-    ├── ingestion: dict[str, IngestionMapping]
-    ├── integrations: dict[str, IntegrationSchema]
     ├── contracts: dict[str, ContractSchema]
     ├── artifacts: dict[str, ProviderArtifactSchema]
     ├── providers: dict[str, ProviderSchema]
@@ -42,7 +40,7 @@ _OUTCOME_PATH_PATTERN = (
     rf"^(RESOLUTION|GROUP|WORKFLOW|THESIS|RECEIPT|SURFACE|TRACESET)\.({_PATH_TOKEN})$"
 )
 
-WorkflowPurpose = Literal["utility", "decision_support", "proposal", "sync"]
+WorkflowPurpose = Literal["utility", "decision_support", "proposal"]
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -179,39 +177,22 @@ class EntityTypeSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Integration & Matching Config (for candidate group resolve)
+# Proposal Policy Config (for candidate group resolve)
 # ---------------------------------------------------------------------------
 
 
-class IntegrationSchema(BaseModel):
-    """Global integration definition. Identity + stable contract.
-
-    Integration specs are immutable by convention: any semantic change
-    (different model, different fields, different metric) requires a new key
-    (e.g. cosine_similarity_v2). Not enforced at runtime in v0.2.0.
-
-    The ``contract`` field references a named ContractSchema key defined in
-    ``CoreConfig.contracts``.  Cross-reference validation happens in the
-    ``validate_integration_contracts`` root validator on ``CoreConfig``.
-    """
-
-    kind: str
-    contract: str | None = None
-    notes: str = ""
-
-
-class IntegrationGuardrailSchema(BaseModel):
-    """Per-integration guardrails for candidate group proposals."""
+class SignalPolicySchema(BaseModel):
+    """Per-signal-source guardrails for candidate group proposals."""
 
     role: Literal["blocking", "required", "advisory"] = "required"
     always_review_on_unsure: bool = False
     note: str = ""
 
 
-class MatchingSchema(BaseModel):
+class ProposalPolicySchema(BaseModel):
     """Guardrails for candidate group proposals on a relationship type."""
 
-    integrations: dict[str, IntegrationGuardrailSchema] = Field(default_factory=dict)
+    signals: dict[str, SignalPolicySchema] = Field(default_factory=dict)
     auto_resolve_when: Literal["all_support", "no_contradict"] = "all_support"
     auto_resolve_requires_prior_trust: Literal["trusted_only", "trusted_or_watch"] = "trusted_only"
     max_group_size: int = 1000
@@ -232,16 +213,19 @@ class RelationshipSchema(BaseModel):
     properties: dict[str, PropertySchema] = Field(default_factory=dict)
     description: str | None = None
     reverse_name: str | None = Field(default=None, validation_alias="inverse")
-    matching: MatchingSchema | None = None
-    proposal_identity: Literal["signature", "relationship_tuple"] = "signature"
+    proposal_policy: ProposalPolicySchema | None = None
+    proposal_identity: Literal["thesis_signature", "relationship_tuple"] = "thesis_signature"
 
-    model_config = {"populate_by_name": True}
+    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     @model_validator(mode="after")
     def validate_proposal_identity(self) -> RelationshipSchema:
         self.properties = _apply_graph_property_defaults(self.properties)
-        if self.proposal_identity == "relationship_tuple" and self.matching is None:
-            msg = "proposal_identity 'relationship_tuple' requires a governed matching section"
+        if self.proposal_identity == "relationship_tuple" and self.proposal_policy is None:
+            msg = (
+                "proposal_identity 'relationship_tuple' requires a governed "
+                "proposal_policy section"
+            )
             raise ValueError(msg)
         return self
 
@@ -325,7 +309,7 @@ class NamedQuerySchema(BaseModel):
 class ConstraintSchema(BaseModel):
     """Schema for a constraint rule.
 
-    Constraints are evaluated during ingestion or query time.
+    Constraints are evaluated during graph mutation or query time.
     Severity determines whether violations are warnings or errors.
     """
 
@@ -750,7 +734,7 @@ class ProviderArtifactSchema(BaseModel):
 class ProviderSchema(BaseModel):
     """Versioned executable leaf used by workflow provider steps."""
 
-    kind: Literal["function", "model", "tool"]
+    kind: Literal["function", "model", "tool"] = "function"
     description: str | None = None
     contract_in: ContractReference
     contract_out: ContractReference
@@ -935,7 +919,7 @@ class EnumSignalMappingSpec(BaseModel):
 class MapSignalsSpec(BaseModel):
     """Convert raw provider output into a governed signal batch."""
 
-    integration: str
+    signal_source: str
     items: Any
     from_id: Any
     to_id: Any
@@ -1182,7 +1166,7 @@ class WorkflowSchema(BaseModel):
     description: str | None = None
     purpose: WorkflowPurpose = "utility"
     canonical: bool = False
-    contract_in: ContractReference
+    contract_in: ContractReference = "cruxible.EmptyInput"
     steps: list[WorkflowStepSchema]
     returns: str
 
@@ -1223,58 +1207,6 @@ class WorkflowTestSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Ingestion Mapping
-# ---------------------------------------------------------------------------
-
-
-class IngestionMapping(BaseModel):
-    """Mapping for ingesting entity or relationship data from CSV/JSON.
-
-    For entities: set entity_type + id_column. Remaining CSV columns
-    map to entity properties by name, or use column_map to rename.
-
-    For relationships: set relationship_type + from_column + to_column.
-    Extra columns become edge properties.
-    """
-
-    description: str | None = None
-    entity_type: str | None = None
-    relationship_type: str | None = None
-    file_pattern: str | None = None
-    id_column: str | None = None
-    from_column: str | None = None
-    to_column: str | None = None
-    column_map: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_mapping_type(self) -> IngestionMapping:
-        has_entity = self.entity_type is not None
-        has_relationship = self.relationship_type is not None
-
-        if has_entity == has_relationship:
-            msg = "Exactly one of 'entity_type' or 'relationship_type' must be set"
-            raise ValueError(msg)
-
-        if has_entity and not self.id_column:
-            msg = "Entity ingestion requires 'id_column'"
-            raise ValueError(msg)
-
-        if has_relationship and (not self.from_column or not self.to_column):
-            msg = "Relationship ingestion requires both 'from_column' and 'to_column'"
-            raise ValueError(msg)
-
-        return self
-
-    @property
-    def is_entity(self) -> bool:
-        return self.entity_type is not None
-
-    @property
-    def is_relationship(self) -> bool:
-        return self.relationship_type is not None
-
-
-# ---------------------------------------------------------------------------
 # Top-Level Config
 # ---------------------------------------------------------------------------
 
@@ -1283,7 +1215,7 @@ class CoreConfig(BaseModel):
     """Top-level Cruxible Core configuration.
 
     Parsed from YAML. Defines the complete decision domain: entity types,
-    relationships, queries, constraints, and ingestion mappings.
+    relationships, queries, constraints, providers, and workflows.
     """
 
     version: str = "1.0"
@@ -1302,34 +1234,18 @@ class CoreConfig(BaseModel):
     outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
     decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
-    ingestion: dict[str, IngestionMapping] = Field(default_factory=dict)
-    integrations: dict[str, IntegrationSchema] = Field(default_factory=dict)
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)
     providers: dict[str, ProviderSchema] = Field(default_factory=dict)
     workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
     tests: list[WorkflowTestSchema] = Field(default_factory=list)
 
+    model_config = {"extra": "forbid"}
+
     @model_validator(mode="after")
     def validate_root_config_minimums(self) -> CoreConfig:
         if self.extends is None and not self.entity_types:
             raise ValueError("entity_types must not be empty unless extends is set")
-        return self
-
-    @model_validator(mode="after")
-    def validate_integration_contracts(self) -> CoreConfig:
-        """Check that integration contract refs point to existing contracts."""
-        for name, spec in self.integrations.items():
-            if (
-                spec.contract is not None
-                and spec.contract not in self.contracts
-                and spec.contract not in BUILTIN_CONTRACTS
-            ):
-                msg = (
-                    f"Integration '{name}' references contract '{spec.contract}' "
-                    f"which is not defined in contracts"
-                )
-                raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

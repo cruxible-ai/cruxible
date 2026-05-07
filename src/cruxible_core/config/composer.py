@@ -17,8 +17,6 @@ _KEYED_MAP_KEYS = {
     "entity_types",
     "named_queries",
     "enums",
-    "ingestion",
-    "integrations",
     "contracts",
     "artifacts",
     "providers",

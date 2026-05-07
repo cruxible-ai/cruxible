@@ -30,7 +30,6 @@ from cruxible_core.canonical_views import (
 )
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
-    _candidates_from_payload,
     _dispatch_cli_instance,
     _emit_json,
     _entities_from_payload,
@@ -49,7 +48,6 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.formatting import (
-    candidates_table,
     entities_table,
     inspect_neighbors_table,
     query_definitions_table,
@@ -63,7 +61,6 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import GroupResolution
-from cruxible_core.query.candidates import MatchRule
 from cruxible_core.service import (
     InspectEntityResult,
     service_analyze_feedback,
@@ -71,7 +68,6 @@ from cruxible_core.service import (
     service_describe_query,
     service_evaluate,
     service_explain_receipt,
-    service_find_candidates,
     service_get_entity,
     service_get_relationship,
     service_get_relationship_lineage,
@@ -697,69 +693,6 @@ def lint_cmd(
         raise SystemExit(1)
 
     click.secho("Lint clean.", fg="green")
-
-
-@click.command("find-candidates")
-@click.option("--relationship", required=True, help="Relationship type to find candidates for.")
-@click.option(
-    "--strategy",
-    required=True,
-    type=click.Choice(["property_match", "shared_neighbors"]),
-    help="Detection strategy.",
-)
-@click.option(
-    "--rule",
-    multiple=True,
-    help="Match rule as FROM_PROP=TO_PROP (for property_match strategy).",
-)
-@click.option("--via", "via_relationship", default=None, help="Via relationship (shared_neighbors)")
-@click.option("--limit", default=20, help="Max candidates to show.")
-@handle_errors
-def find_candidates_cmd(
-    relationship: str,
-    strategy: str,
-    rule: tuple[str, ...],
-    via_relationship: str | None,
-    limit: int,
-) -> None:
-    """Find candidate relationships using a deterministic strategy."""
-    match_rules = None
-    if rule:
-        match_rules = []
-        for r in rule:
-            parts = r.split("=", 1)
-            if len(parts) != 2:
-                raise click.BadParameter(f"Rule must be FROM_PROP=TO_PROP, got: {r}")
-            match_rules.append(MatchRule(from_property=parts[0], to_property=parts[1]))
-
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.find_candidates(
-            instance_id,
-            relationship_type=relationship,
-            strategy=cast(contracts.CandidateStrategy, strategy),
-            match_rules=(
-                [item.model_dump(mode="json") for item in match_rules] if match_rules else None
-            ),
-            via_relationship=via_relationship,
-            limit=limit,
-        ),
-        lambda instance: service_find_candidates(
-            instance,
-            relationship,
-            cast(contracts.CandidateStrategy, strategy),
-            match_rules=match_rules,
-            via_relationship=via_relationship,
-            limit=limit,
-        ),
-    )
-    candidates = (
-        _candidates_from_payload(result.candidates)
-        if isinstance(result, contracts.CandidatesResult)
-        else result
-    )
-
-    console.print(candidates_table(candidates))
-    click.echo(f"{len(candidates)} candidate(s) found.")
 
 
 @click.group("inspect")

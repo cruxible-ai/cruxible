@@ -130,7 +130,7 @@ flowchart LR
 
 ## Governed Relationships
 
-Each governed relationship has a `matching` block, integrations that provide
+Each governed relationship has a `proposal_policy` block and signal sources that provide
 signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
@@ -143,25 +143,25 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 | Promotion Lifts Product | Promotion -> Product | Agent/manual group propose | Inventory Capacity Check, Merchant Review, Promo Performance Model | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Promotion Lift Resolution |
 <!-- CRUXIBLE:END governance-table -->
 
-### Integration Signal Notes
+### Signal Policy Notes
 
-This catalog is generated from configured integrations and the governed
-relationships that consume them.
+This catalog is generated from relationship-local signal policy and the
+governed relationships that consume each signal source.
 
-<!-- CRUXIBLE:BEGIN integration-catalog -->
-| Integration | Kind | Used By | Notes |
-| --- | --- | --- | --- |
-| `basket_affinity` | retail_basket_affinity | Product Complements Product | Uses basket co-occurrence, attach rate, or bundle behavior to support complement judgments. |
-| `catalog_attribute_similarity` | retail_catalog_similarity | Product Cannibalizes Product, Product Substitutes Product | Uses structured attributes and semantic product data to support substitute judgments. |
-| `catalog_complement_classifier` | retail_catalog_semantic_match | Product Complements Product | Uses product attributes, taxonomy, and shopping mission context to classify complements. |
-| `category_price_overlap` | retail_price_band_overlap | Product Cannibalizes Product, Product Substitutes Product | Checks category, size, pack, and price-band compatibility for substitution or cannibalization. |
-| `demand_displacement_model` | retail_demand_displacement | Product Cannibalizes Product | Uses sales, promotion, placement, or recommendation outcomes to support cannibalization judgments. |
-| `inventory_capacity_check` | retail_inventory_capacity | Promotion Lifts Product | Checks whether inventory availability can support promotion or substitution recommendations. |
-| `merchant_review` | human_review | Product Cannibalizes Product, Product Complements Product, Product Substitutes Product, Product Targets Segment, Promotion Lifts Product | Merchant, category manager, or planner review signal used for accepted commercial judgment. |
-| `promo_performance_model` | retail_promotion_performance | Promotion Lifts Product | Uses promotion results or forecasts to judge product lift. |
-| `search_substitution_behavior` | retail_search_session_switching | Product Substitutes Product | Uses search, PDP, or session switching behavior as advisory substitution evidence. |
-| `segment_fit_model` | retail_segment_fit | Product Targets Segment | Uses segment behavior and merchandising rules to judge product fit for a segment. |
-<!-- CRUXIBLE:END integration-catalog -->
+<!-- CRUXIBLE:BEGIN signal-policy-catalog -->
+| Signal Source | Role | Review Unsure | Used By | Notes |
+| --- | --- | --- | --- | --- |
+| `basket_affinity` | required | yes | Product Complements Product | - |
+| `catalog_attribute_similarity` | required | yes | Product Cannibalizes Product, Product Substitutes Product | - |
+| `catalog_complement_classifier` | advisory | yes | Product Complements Product | - |
+| `category_price_overlap` | required | yes | Product Cannibalizes Product, Product Substitutes Product | - |
+| `demand_displacement_model` | required | yes | Product Cannibalizes Product | - |
+| `inventory_capacity_check` | advisory | yes | Promotion Lifts Product | - |
+| `merchant_review` | advisory | yes | Product Cannibalizes Product, Product Complements Product, Product Substitutes Product, Product Targets Segment, Promotion Lifts Product | - |
+| `promo_performance_model` | required | yes | Promotion Lifts Product | - |
+| `search_substitution_behavior` | advisory | yes | Product Substitutes Product | - |
+| `segment_fit_model` | required | yes | Product Targets Segment | - |
+<!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Query Map
 

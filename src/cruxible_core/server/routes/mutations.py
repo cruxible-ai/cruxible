@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import Any
-
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.errors import ConfigError, PermissionDeniedError
+from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.runtime import local_api
 from cruxible_core.server.config import is_agent_mode
 from cruxible_core.server.request_models import (
@@ -18,7 +13,6 @@ from cruxible_core.server.request_models import (
     AddDecisionPolicyRequest,
     AddEntitiesRequest,
     AddRelationshipsRequest,
-    IngestRequest,
     ReloadConfigRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -34,75 +28,6 @@ def _reject_in_agent_mode(operation: str) -> None:
             current_mode="agent",
             required_mode="operator",
         )
-
-
-def _normalize_data_json(raw: str | None) -> str | list[dict[str, Any]] | None:
-    if raw is None:
-        return None
-    parsed = json.loads(raw)
-    if not isinstance(parsed, list):
-        raise ConfigError("data_json must decode to a JSON array")
-    return parsed
-
-
-@router.post("/{instance_id}/ingest", response_model=contracts.IngestResult)
-async def ingest(instance_id: str, request: Request) -> contracts.IngestResult:
-    _reject_in_agent_mode("ingest")
-    resolved_instance_id = resolve_server_instance_id(instance_id)
-    content_type = request.headers.get("content-type", "")
-    if content_type.startswith("multipart/form-data"):
-        form = await request.form()
-        mapping_name = str(form.get("mapping_name") or "")
-        if not mapping_name:
-            raise ConfigError("mapping_name is required")
-
-        upload_id_raw = form.get("upload_id")
-        upload_id = str(upload_id_raw) if upload_id_raw else None
-        data_csv = str(form.get("data_csv")) if form.get("data_csv") is not None else None
-        data_ndjson = str(form.get("data_ndjson")) if form.get("data_ndjson") is not None else None
-        data_json_value = (
-            _normalize_data_json(str(form.get("data_json")))
-            if form.get("data_json") is not None
-            else None
-        )
-        file_item = form.get("file")
-        upload = (
-            file_item
-            if file_item is not None
-            and hasattr(file_item, "read")
-            and hasattr(file_item, "filename")
-            else None
-        )
-
-        temp_path: str | None = None
-        if upload is not None:
-            suffix = Path(upload.filename or "upload.dat").suffix
-            with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-                handle.write(await upload.read())
-                temp_path = handle.name
-        try:
-            return local_api._handle_ingest_local(
-                instance_id=resolved_instance_id,
-                mapping_name=mapping_name,
-                file_path=temp_path,
-                data_csv=data_csv,
-                data_json=data_json_value,
-                data_ndjson=data_ndjson,
-                upload_id=upload_id,
-            )
-        finally:
-            if temp_path is not None:
-                Path(temp_path).unlink(missing_ok=True)
-
-    payload = IngestRequest.model_validate(await request.json())
-    return local_api._handle_ingest_local(
-        instance_id=resolved_instance_id,
-        mapping_name=payload.mapping_name,
-        data_csv=payload.data_csv,
-        data_json=payload.data_json,
-        data_ndjson=payload.data_ndjson,
-        upload_id=payload.upload_id,
-    )
 
 
 @router.post("/{instance_id}/entities", response_model=contracts.AddEntityResult)

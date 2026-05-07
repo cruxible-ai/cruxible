@@ -202,7 +202,7 @@ flowchart LR
 
 ## Governed Relationships
 
-Each governed relationship has a `matching` block, integrations that provide
+Each governed relationship has a `proposal_policy` block and signal sources that provide
 signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 
 <!-- CRUXIBLE:BEGIN governance-table -->
@@ -220,15 +220,23 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 | Vulnerability Classified As | Vulnerability -> Vulnerability Class | Workflow: Propose Vulnerability Classification | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
-### Integration Signal Notes
+### Signal Policy Notes
 
-Top-level integration catalogs are optional in 0.2. KEV keeps proposal signal
-policy directly on governed relationships, so the governed relationship table
+KEV keeps proposal signal policy directly on governed relationships, so the governed relationship table
 above is the source of truth for required/advisory signal labels.
 
-<!-- CRUXIBLE:BEGIN integration-catalog -->
-No configured integrations.
-<!-- CRUXIBLE:END integration-catalog -->
+<!-- CRUXIBLE:BEGIN signal-policy-catalog -->
+| Signal Source | Role | Review Unsure | Used By | Notes |
+| --- | --- | --- | --- | --- |
+| `control_effectiveness` | required | yes | Asset Exposed To Vulnerability, Control Mitigates Class | - |
+| `exploitability_signal` | required | yes | Asset Exposed To Vulnerability | - |
+| `incident_attribution` | required | no | Finding From Incident, Incident Exploited Vulnerability, Incident Involved Asset, Incident Owned By | - |
+| `policy_review` | required | no | Asset Patch Exception For | - |
+| `product_version_evidence` | required | yes | Asset Exposed To Vulnerability | - |
+| `remediation_verification` | required | yes | Asset Remediated Vulnerability | - |
+| `software_product_match` | required | yes | Asset Runs Product | - |
+| `vulnerability_classification` | required | yes | Vulnerability Classified As | - |
+<!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Query Map
 

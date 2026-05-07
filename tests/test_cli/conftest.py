@@ -85,17 +85,6 @@ named_queries:
 
 constraints: []
 
-ingestion:
-  vehicles:
-    entity_type: Vehicle
-    id_column: vehicle_id
-  parts:
-    entity_type: Part
-    id_column: part_number
-  fitments:
-    relationship_type: fits
-    from_column: part_number
-    to_column: vehicle_id
 """
 
 

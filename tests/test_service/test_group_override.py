@@ -22,11 +22,6 @@ version: "1.0"
 name: override_test
 description: For group_override tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -64,8 +59,8 @@ relationships:
       source:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
 
@@ -79,7 +74,6 @@ named_queries:
     returns: "list[Part]"
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -247,7 +241,7 @@ class TestGroupOverride:
                 to_type="Vehicle",
                 to_id="V-1",
                 relationship_type="fits",
-                signals=[CandidateSignal(integration="check_v1", signal="support")],
+                signals=[CandidateSignal(signal_source="check_v1", signal="support")],
             ),
             CandidateMember(
                 from_type="Part",
@@ -255,7 +249,7 @@ class TestGroupOverride:
                 to_type="Vehicle",
                 to_id="V-1",
                 relationship_type="fits",
-                signals=[CandidateSignal(integration="check_v1", signal="support")],
+                signals=[CandidateSignal(signal_source="check_v1", signal="support")],
             ),
         ]
         pr = service_propose_group(instance, "fits", members, thesis_facts={"test": True})

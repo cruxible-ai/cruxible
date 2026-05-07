@@ -443,7 +443,7 @@ class GovernedLocalClient:
         thesis_text: str | None = None,
         thesis_facts: dict | None = None,
         analysis_state: dict | None = None,
-        integrations_used: list[str] | None = None,
+        signal_sources_used: list[str] | None = None,
         proposed_by: str = "agent",
         suggested_priority: str | None = None,
     ):
@@ -454,7 +454,7 @@ class GovernedLocalClient:
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
-            integrations_used=integrations_used,
+            signal_sources_used=signal_sources_used,
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         )

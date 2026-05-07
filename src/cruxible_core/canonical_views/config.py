@@ -17,7 +17,6 @@ from cruxible_core.canonical_views import (
     build_schema_catalog_view,
     build_workflow_view,
     render_governed_relationship_table_markdown,
-    render_integration_catalog_markdown,
     render_learning_loops_markdown,
     render_ontology_mermaid,
     render_overview_markdown,
@@ -27,6 +26,7 @@ from cruxible_core.canonical_views import (
     render_query_mermaid,
     render_query_mermaid_blocks,
     render_schema_catalog_markdown,
+    render_signal_policy_catalog_markdown,
     render_workflow_dependency_mermaid,
     render_workflow_mermaid,
     render_workflow_pipeline_mermaid,
@@ -84,8 +84,8 @@ def _render_governance_table(config: CoreConfig) -> str:
     return _as_rendered_text(render_governed_relationship_table_markdown(config))
 
 
-def _render_integration_catalog(config: CoreConfig) -> str:
-    return _as_rendered_text(render_integration_catalog_markdown(config))
+def _render_signal_policy_catalog(config: CoreConfig) -> str:
+    return _as_rendered_text(render_signal_policy_catalog_markdown(config))
 
 
 def _render_quality_rules(config: CoreConfig) -> str:
@@ -189,10 +189,10 @@ VIEW_SPECS: dict[str, ViewSpec] = {
         _render_governance_table,
         fenced=False,
     ),
-    "integration-catalog": ViewSpec(
-        "integration-catalog",
-        "Integration Catalog",
-        _render_integration_catalog,
+    "signal-policy-catalog": ViewSpec(
+        "signal-policy-catalog",
+        "Signal Policy Catalog",
+        _render_signal_policy_catalog,
         fenced=False,
     ),
     "workflow-steps": ViewSpec(
@@ -244,7 +244,7 @@ DEFAULT_VIEW_ORDER = (
     "workflow-pipeline",
     "workflow-summary",
     "governance-table",
-    "integration-catalog",
+    "signal-policy-catalog",
     "query-map",
     "query-catalog",
     "quality-rules",

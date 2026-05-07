@@ -54,7 +54,11 @@ def group_group() -> None:
 @click.option("--thesis", default="", help="Human-readable thesis text.")
 @click.option("--thesis-facts", default=None, help="JSON object of structured thesis facts.")
 @click.option("--analysis-state", default=None, help="JSON object of opaque analysis state.")
-@click.option("--integration", multiple=True, help="Integration name used in this proposal.")
+@click.option(
+    "--signal-source",
+    multiple=True,
+    help="Signal source name used in this proposal.",
+)
 @handle_errors
 def group_propose(
     relationship: str,
@@ -63,7 +67,7 @@ def group_propose(
     thesis: str,
     thesis_facts: str | None,
     analysis_state: str | None,
-    integration: tuple[str, ...],
+    signal_source: tuple[str, ...],
 ) -> None:
     """Propose a candidate group of edges for batch review."""
     if members_file and members_json:
@@ -101,7 +105,7 @@ def group_propose(
             relationship_type=m["relationship_type"],
             signals=[
                 contracts.SignalInput(
-                    integration=s["integration"],
+                    signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
                 )
@@ -120,7 +124,7 @@ def group_propose(
             relationship_type=m["relationship_type"],
             signals=[
                 CandidateSignal(
-                    integration=s["integration"],
+                    signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
                 )
@@ -138,7 +142,7 @@ def group_propose(
             thesis_text=thesis,
             thesis_facts=facts,
             analysis_state=state,
-            integrations_used=list(integration) if integration else None,
+            signal_sources_used=list(signal_source) if signal_source else None,
         ),
         lambda instance: service_propose_group(
             instance,
@@ -147,7 +151,7 @@ def group_propose(
             thesis_text=thesis,
             thesis_facts=facts,
             analysis_state=state,
-            integrations_used=list(integration) if integration else None,
+            signal_sources_used=list(signal_source) if signal_source else None,
         ),
         allow_local=False,
         command_name="group propose",

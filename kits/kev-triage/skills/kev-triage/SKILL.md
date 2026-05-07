@@ -222,12 +222,12 @@ confirmed compromise.
      --members '[{"from_type":"Incident","from_id":"INC-2025-003",
                    "to_type":"Owner","to_id":"OWNER-3",
                    "relationship_type":"incident_owned_by",
-                   "signals":[{"integration":"incident_attribution",
+                   "signals":[{"signal_source":"incident_attribution",
                                 "signal":"support",
                                 "evidence":"Report names Partner Integrations team as responders"}]}]' \
      --thesis "Partner Integrations team (OWNER-3) ran the response for INC-2025-003 per the on-call log" \
      --thesis-facts '{"incident_id":"INC-2025-003","owner_id":"OWNER-3"}' \
-     --integration incident_attribution
+     --signal-source incident_attribution
    ```
 
 4. Propose `incident_involved_asset` (one member per asset):
@@ -238,11 +238,11 @@ confirmed compromise.
                    "to_type":"Asset","to_id":"ASSET-8",
                    "relationship_type":"incident_involved_asset",
                    "properties":{"role":"target"},
-                   "signals":[{"integration":"incident_attribution","signal":"support",
+                   "signals":[{"signal_source":"incident_attribution","signal":"support",
                                 "evidence":"SIEM shows anomalous admin console access from ..."}]}]' \
      --thesis "partner-api-01 (ASSET-8) was the target host for INC-2025-003" \
      --thesis-facts '{"incident_id":"INC-2025-003","asset_id":"ASSET-8"}' \
-     --integration incident_attribution
+     --signal-source incident_attribution
    ```
 
 5. Propose `incident_exploited_vulnerability`:
@@ -252,11 +252,11 @@ confirmed compromise.
      --members '[{"from_type":"Incident","from_id":"INC-2025-003",
                    "to_type":"Vulnerability","to_id":"CVE-2020-14882",
                    "relationship_type":"incident_exploited_vulnerability",
-                   "signals":[{"integration":"incident_attribution","signal":"support",
+                   "signals":[{"signal_source":"incident_attribution","signal":"support",
                                 "evidence":"Exploit payload matches CVE-2020-14882 signature"}]}]' \
      --thesis "Attacker used CVE-2020-14882 admin console bypass to reach RCE on partner-api-01" \
      --thesis-facts '{"incident_id":"INC-2025-003","cve_id":"CVE-2020-14882"}' \
-     --integration incident_attribution
+     --signal-source incident_attribution
    ```
 
 6. Create `Finding` entities for each root cause identified in the
@@ -279,16 +279,16 @@ confirmed compromise.
      --members '[{"from_type":"Finding","from_id":"FIND-2025-020",
                    "to_type":"Incident","to_id":"INC-2025-003",
                    "relationship_type":"finding_from_incident",
-                   "signals":[{"integration":"incident_attribution","signal":"support",
+                   "signals":[{"signal_source":"incident_attribution","signal":"support",
                                 "evidence":"Post-mortem lists FIND-2025-020 as a root cause for INC-2025-003"}]},
                   {"from_type":"Finding","from_id":"FIND-2025-021",
                    "to_type":"Incident","to_id":"INC-2025-003",
                    "relationship_type":"finding_from_incident",
-                   "signals":[{"integration":"incident_attribution","signal":"support",
+                   "signals":[{"signal_source":"incident_attribution","signal":"support",
                                 "evidence":"Post-mortem lists FIND-2025-021 as a root cause for INC-2025-003"}]}]' \
      --thesis "The INC-2025-003 post-mortem identifies FIND-2025-020 and FIND-2025-021 as root-cause findings" \
      --thesis-facts '{"incident_id":"INC-2025-003","finding_ids":["FIND-2025-020","FIND-2025-021"]}' \
-     --integration incident_attribution
+     --signal-source incident_attribution
    ```
 
 **Thesis quality.** Every proposal must include a thesis that names the
@@ -329,11 +329,11 @@ asset, with an approver, rationale, and review date.
                    "to_type":"Vulnerability","to_id":"CVE-2024-38475",
                    "relationship_type":"asset_patch_exception_for",
                    "properties":{"exception_id":"EXC-2026-001"},
-                   "signals":[{"integration":"policy_review","signal":"support",
+                   "signals":[{"signal_source":"policy_review","signal":"support",
                                 "evidence":"Approved by CFO per change ticket CHG-40123"}]}]' \
      --thesis "Billing asset ASSET-5 has an approved month-end freeze for CVE-2024-38475; review 2026-05-03" \
      --thesis-facts '{"exception_id":"EXC-2026-001","cve_id":"CVE-2024-38475"}' \
-     --integration policy_review
+     --signal-source policy_review
    ```
 
 The deterministic `asset_has_exception` edge is loaded from seed data or
@@ -360,11 +360,11 @@ materially blocks a specific CVE class.
      --members '[{"from_type":"CompensatingControl","from_id":"CTRL-1",
                    "to_type":"VulnerabilityClass","to_id":"path_traversal",
                    "relationship_type":"control_mitigates_class",
-                   "signals":[{"integration":"control_effectiveness","signal":"support",
+                   "signals":[{"signal_source":"control_effectiveness","signal":"support",
                                 "evidence":"WAF rule set 941xx blocks path traversal payloads; tested 2025-10-15"}]}]' \
      --thesis "Edge WAF ruleset 941xx blocks path traversal exploit strings" \
      --thesis-facts '{"control_id":"CTRL-1","class_id":"path_traversal"}' \
-     --integration control_effectiveness
+     --signal-source control_effectiveness
    ```
 
 ## Task 5 — Remediation verification
@@ -393,11 +393,11 @@ asset-vulnerability pair is now closed.
                                  "verified_at":"2026-04-22",
                                  "evidence_source":"scanner",
                                  "ticket_id":"CHG-40123"},
-                   "signals":[{"integration":"remediation_verification","signal":"support",
+                   "signals":[{"signal_source":"remediation_verification","signal":"support",
                                 "evidence":"Post-patch scan no longer detects WebLogic admin console bypass"}]}]' \
      --thesis "ASSET-8 was patched and scanner verification on 2026-04-22 no longer detects CVE-2020-14882" \
      --thesis-facts '{"asset_id":"ASSET-8","cve_id":"CVE-2020-14882","remediation_type":"patch"}' \
-     --integration remediation_verification
+     --signal-source remediation_verification
    ```
 
 3. If this also closes a root cause, update the related `Finding` entity:
@@ -473,7 +473,7 @@ Stop and ask the user (don't guess) when:
 - A remediation claim exists, but the asset/CVE mapping or verification
   evidence is ambiguous. Confirm the closure scope with the user before
   proposing `asset_remediated_vulnerability`.
-- A proposal needs a relationship or integration not already used by this
+- A proposal needs a relationship or signal source not already used by this
   skill's documented default flows, and the instance does not have a
   documented local variant covering it. Stop and ask rather than guessing a
   new write surface.
@@ -482,7 +482,7 @@ Stop and ask the user (don't guess) when:
 - You hit `PermissionDeniedError` in agent mode. Retrying won't help.
 - A workflow `propose` produces no reviewable group when you expected one.
   Either the upstream layer didn't populate, prerequisite approved edges are
-  missing, or the matching config rejected everything — either way, surface it.
+  missing, or the proposal policy rejected everything — either way, surface it.
 - A query result looks empty, complete, or final, but there are relevant
   `pending_review` groups on the same governed surface. Surface the accepted
   vs pending distinction instead of implying the query sees proposed state.
@@ -491,17 +491,17 @@ Stop and ask the user (don't guess) when:
 
 | Symptom | Check |
 |---|---|
-| `cruxible group propose` rejects with "integration not declared" | Use the integration names documented in this skill for the task you are performing. If the instance still rejects the name, stop and ask rather than probing the schema directly. |
+| `cruxible group propose` rejects with "signal source not declared" | Use the signal source names documented in this skill for the task you are performing. If the instance still rejects the name, stop and ask rather than probing the schema directly. |
 | `cruxible run` fails with "Artifact ... sha256 mismatch" | A seed file was edited without re-pinning. Operator needs to run `cruxible lock --force`. Do not retry as agent. |
 | Query returns empty when you expected results | Likely the proposal chain ran but nothing has been approved yet. `group list --status pending_review` shows the backlog and `group status --group <id>` shows the accepted-vs-pending split for a specific bucket. |
 | `add-entity` says "entity updated" when you expected "added" | ID collision — the entity already exists. Fetch it (`get-entity`) and decide whether to continue. |
-| Thesis is accepted but proposal still blocks | `group propose` enforces integration signals. A proposal with no `signals` array and no `--integration` flag will be rejected. |
+| Thesis is accepted but proposal still blocks | `group propose` enforces signal-source evidence. A proposal with no `signals` array and no `--signal-source` flag will be rejected. |
 
 ## Relationship reference (local-governed)
 
 Every governed relationship the agent can propose:
 
-| Relationship | From → To | Required integration |
+| Relationship | From → To | Required signal source |
 |---|---|---|
 | `asset_runs_product` | Asset → Product | `software_product_match` |
 | `asset_exposed_to_vulnerability` | Asset → Vulnerability | `product_version_evidence` + `exploitability_signal` + `control_effectiveness` |

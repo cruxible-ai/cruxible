@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from cruxible_core.config.property_validation import entity_properties_with_identity
-from cruxible_core.config.schema import MatchingSchema
+from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
@@ -45,7 +45,7 @@ RelationshipTuple = tuple[str, str, str, str, str]
 
 def derive_review_priority(
     members: list[CandidateMember],
-    matching: MatchingSchema | None,
+    proposal_policy: ProposalPolicySchema | None,
     prior_resolution: GroupResolution | None,
 ) -> str:
     """Derive review_priority mechanically from universal states.
@@ -53,8 +53,8 @@ def derive_review_priority(
     Returns: "critical", "review", or "normal".
     Highest-severity bucket wins.
     """
-    if matching is None:
-        # No matching config → default to review (first-time, no guardrails)
+    if proposal_policy is None:
+        # No proposal policy → default to review (first-time, no guardrails).
         return "review" if prior_resolution is None else "normal"
 
     has_critical = False
@@ -70,7 +70,7 @@ def derive_review_priority(
     # Check signals on members
     for m in members:
         for sig in m.signals:
-            icfg = matching.integrations.get(sig.integration)
+            icfg = proposal_policy.signals.get(sig.signal_source)
             if icfg is None:
                 continue
             if icfg.role == "advisory":
@@ -251,7 +251,7 @@ def service_propose_group(
     thesis_facts: dict[str, Any] | None = None,
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace",
     analysis_state: dict[str, Any] | None = None,
-    integrations_used: list[str] | None = None,
+    signal_sources_used: list[str] | None = None,
     proposed_by: Literal["human", "agent"] = "agent",
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
@@ -263,7 +263,7 @@ def service_propose_group(
     config = instance.load_config()
     thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
-    integrations_used = integrations_used or []
+    signal_sources_used = signal_sources_used or []
     source_trace_ids = source_trace_ids or []
     source_step_ids = source_step_ids or []
     policy_summary: dict[str, int] = {}
@@ -325,7 +325,7 @@ def service_propose_group(
         policy_summary=policy_summary,
     )
 
-    matching = rel_schema.matching
+    proposal_policy = rel_schema.proposal_policy
 
     if not thesis_facts:
         raise ConfigError("Governed proposals require non-empty thesis_facts")
@@ -354,47 +354,49 @@ def service_propose_group(
 
         # 6. Signal validation (retained members)
         for m in members:
-            seen_integrations: set[str] = set()
+            seen_signal_sources: set[str] = set()
             for sig in m.signals:
-                if sig.integration in seen_integrations:
+                if sig.signal_source in seen_signal_sources:
                     raise ConfigError(
                         f"Member {m.from_id}\u2192{m.to_id} has duplicate signals "
-                        f"from integration '{sig.integration}'"
+                        f"from signal source '{sig.signal_source}'"
                     )
-                seen_integrations.add(sig.integration)
+                seen_signal_sources.add(sig.signal_source)
 
-                if matching is not None and matching.integrations:
-                    if sig.integration not in matching.integrations:
-                        declared = ", ".join(sorted(matching.integrations.keys()))
+                if proposal_policy is not None and proposal_policy.signals:
+                    if sig.signal_source not in proposal_policy.signals:
+                        declared = ", ".join(sorted(proposal_policy.signals.keys()))
                         raise ConfigError(
-                            f"Signal from undeclared integration '{sig.integration}'; "
+                            f"Signal from undeclared signal source '{sig.signal_source}'; "
                             f"declared: {declared}"
                         )
 
-        # 7. Config guardrails (if matching section exists)
-        if matching is not None and matching.integrations:
-            # Blocking + required integrations: every retained member must have a signal
-            for iname, icfg in matching.integrations.items():
+        # 7. Config guardrails (if a proposal_policy section exists).
+        if proposal_policy is not None and proposal_policy.signals:
+            # Blocking + required signal_sources: every retained member must have a signal
+            for iname, icfg in proposal_policy.signals.items():
                 if icfg.role in ("blocking", "required"):
                     for m in members:
-                        member_integrations = {s.integration for s in m.signals}
-                        if iname not in member_integrations:
+                        member_signal_sources = {s.signal_source for s in m.signals}
+                        if iname not in member_signal_sources:
                             raise ConfigError(
                                 f"Member {m.from_id}\u2192{m.to_id} missing signal "
-                                f"from {icfg.role} integration '{iname}'"
+                                f"from {icfg.role} signal source '{iname}'"
                             )
 
-            # integrations_used validation
-            for iname in integrations_used:
-                if iname not in matching.integrations:
+            # signal_sources_used validation
+            for iname in signal_sources_used:
+                if iname not in proposal_policy.signals:
                     raise ConfigError(
-                        f"Integration '{iname}' not declared in matching.integrations"
+                        f"Signal source '{iname}' not declared in proposal_policy.signals"
                     )
 
             # max_group_size
-            if len(members) > matching.max_group_size:
+            if len(members) > proposal_policy.max_group_size:
                 raise ConfigError(
-                    f"Group size {len(members)} exceeds max_group_size {matching.max_group_size}"
+                    "Group size "
+                    f"{len(members)} exceeds max_group_size "
+                    f"{proposal_policy.max_group_size}"
                 )
 
         prior = group_store.find_resolution(
@@ -483,7 +485,7 @@ def service_propose_group(
             assert result is not None
             return result
 
-        review_priority = derive_review_priority(pending_members, matching, prior)
+        review_priority = derive_review_priority(pending_members, proposal_policy, prior)
         if force_review and review_priority == "normal":
             review_priority = "review"
 
@@ -500,14 +502,14 @@ def service_propose_group(
             and not has_override
             and prior is not None
             and prior.trust_status != "invalidated"
-            and matching is not None
+            and proposal_policy is not None
         ):
             trust_ok = False
-            if matching.auto_resolve_requires_prior_trust == "trusted_only":
+            if proposal_policy.auto_resolve_requires_prior_trust == "trusted_only":
                 trust_ok = prior.trust_status == "trusted"
-            elif matching.auto_resolve_requires_prior_trust == "trusted_or_watch":
+            elif proposal_policy.auto_resolve_requires_prior_trust == "trusted_or_watch":
                 trust_ok = prior.trust_status in ("trusted", "watch")
-            if trust_ok and _check_auto_resolve_signals(delta_members, matching):
+            if trust_ok and _check_auto_resolve_signals(delta_members, proposal_policy):
                 auto_resolve = True
 
         if force_review or has_override:
@@ -535,7 +537,7 @@ def service_propose_group(
                     "thesis_text": thesis_text,
                     "thesis_facts": thesis_facts,
                     "analysis_state": analysis_state,
-                    "integrations_used": integrations_used,
+                    "signal_sources_used": signal_sources_used,
                     "proposed_by": proposed_by,
                     "member_count": len(pending_members),
                     "pending_version": pending_group.pending_version + 1,
@@ -599,7 +601,7 @@ def service_propose_group(
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
-            integrations_used=integrations_used,
+            signal_sources_used=signal_sources_used,
             proposed_by=proposed_by,
             member_count=len(pending_members),
             pending_version=1,
@@ -651,7 +653,7 @@ def service_propose_group(
                         )
                     rewritten_review_priority = derive_review_priority(
                         rewritten_members,
-                        matching,
+                        proposal_policy,
                         prior,
                     )
                     if force_review and rewritten_review_priority == "normal":
@@ -679,7 +681,7 @@ def service_propose_group(
                             "thesis_text": thesis_text,
                             "thesis_facts": thesis_facts,
                             "analysis_state": analysis_state,
-                            "integrations_used": integrations_used,
+                            "signal_sources_used": signal_sources_used,
                             "proposed_by": proposed_by,
                             "member_count": len(rewritten_members),
                             "pending_version": concurrent_pending.pending_version + 1,
@@ -820,17 +822,17 @@ def _policy_expired(expires_at: str | None) -> bool:
 
 def _check_auto_resolve_signals(
     members: list[CandidateMember],
-    matching: MatchingSchema,
+    proposal_policy: ProposalPolicySchema,
 ) -> bool:
     """Check if signals meet the auto_resolve_when policy.
 
     Returns True if auto-resolve is eligible based on signals alone.
     """
-    policy = matching.auto_resolve_when
+    policy = proposal_policy.auto_resolve_when
 
     for m in members:
         for sig in m.signals:
-            icfg = matching.integrations.get(sig.integration)
+            icfg = proposal_policy.signals.get(sig.signal_source)
             if icfg is None or icfg.role == "advisory":
                 continue
 

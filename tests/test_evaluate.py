@@ -8,12 +8,12 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
-    IntegrationGuardrailSchema,
     JsonContentQualityCheck,
-    MatchingSchema,
     PropertyQualityCheck,
     PropertySchema,
+    ProposalPolicySchema,
     RelationshipSchema,
+    SignalPolicySchema,
     UniquenessQualityCheck,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -425,10 +425,10 @@ def _governed_replaces_config(*, blocking: bool = False) -> CoreConfig:
                 name="replaces",
                 from_entity="Part",
                 to_entity="Part",
-                matching=MatchingSchema(
-                    integrations={
-                        "detector": IntegrationGuardrailSchema(role=role),
-                        "reviewer": IntegrationGuardrailSchema(role="required"),
+                proposal_policy=ProposalPolicySchema(
+                    signals={
+                        "detector": SignalPolicySchema(role=role),
+                        "reviewer": SignalPolicySchema(role="required"),
                     }
                 ),
             ),
@@ -448,7 +448,7 @@ def _store_with_member(
         signature="sig",
         status="resolved",
         member_count=1,
-        integrations_used=[signal.integration for signal in signals],
+        signal_sources_used=[signal.signal_source for signal in signals],
     )
     member = CandidateMember(
         relationship_type="replaces",
@@ -521,7 +521,7 @@ class TestGovernedSupportRelationships:
             )
         )
         store = _store_with_member(
-            [CandidateSignal(integration="detector", signal="support")]
+            [CandidateSignal(signal_source="detector", signal="support")]
         )
         report = evaluate_graph(config, graph, group_store=store)
         findings = [
@@ -529,7 +529,7 @@ class TestGovernedSupportRelationships:
         ]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "missing_required_signal"
-        assert findings[0].detail["integrations"] == ["reviewer"]
+        assert findings[0].detail["signal_sources"] == ["reviewer"]
 
     def test_detects_required_unsure_signal(self):
         config = _governed_replaces_config()
@@ -546,8 +546,8 @@ class TestGovernedSupportRelationships:
         )
         store = _store_with_member(
             [
-                CandidateSignal(integration="detector", signal="unsure"),
-                CandidateSignal(integration="reviewer", signal="support"),
+                CandidateSignal(signal_source="detector", signal="unsure"),
+                CandidateSignal(signal_source="reviewer", signal="support"),
             ]
         )
         report = evaluate_graph(config, graph, group_store=store)
@@ -572,8 +572,8 @@ class TestGovernedSupportRelationships:
         )
         store = _store_with_member(
             [
-                CandidateSignal(integration="detector", signal="contradict"),
-                CandidateSignal(integration="reviewer", signal="support"),
+                CandidateSignal(signal_source="detector", signal="contradict"),
+                CandidateSignal(signal_source="reviewer", signal="support"),
             ]
         )
         report = evaluate_graph(config, graph, group_store=store)

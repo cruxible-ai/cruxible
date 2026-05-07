@@ -22,11 +22,6 @@ version: "1.0"
 name: trust_tests
 description: For trust status tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -64,15 +59,14 @@ relationships:
       source:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
       auto_resolve_when: all_support
       auto_resolve_requires_prior_trust: trusted_only
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -116,7 +110,7 @@ def _member(from_id="BP-1", to_id="V-1"):
         to_type="Vehicle",
         to_id=to_id,
         relationship_type="fits",
-        signals=[CandidateSignal(integration="check_v1", signal="support")],
+        signals=[CandidateSignal(signal_source="check_v1", signal="support")],
     )
 
 

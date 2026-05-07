@@ -613,11 +613,11 @@ class TestWorkflowExecutor:
 
         assert result.output["relationship_type"] == "recommended_for"
         assert len(result.output["members"]) == 2
-        assert result.output["integrations_used"] == ["catalog"]
+        assert result.output["signal_sources_used"] == ["catalog"]
         assert len(result.traces) == 1
         plan_steps = [node for node in result.receipt.nodes if node.node_type == "plan_step"]
         assert any(node.detail.get("relationship_type") == "recommended_for" for node in plan_steps)
-        assert any(node.detail.get("integration") == "catalog" for node in plan_steps)
+        assert any(node.detail.get("signal_source") == "catalog" for node in plan_steps)
         assert any(node.detail.get("signals_from") == ["catalog_signals"] for node in plan_steps)
 
     def test_execute_canonical_workflow_runs_in_preview_mode_without_mutating_graph(

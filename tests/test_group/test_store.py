@@ -46,7 +46,7 @@ def _create_legacy_group_db(db_path: Path) -> None:
             thesis_text TEXT NOT NULL DEFAULT '',
             thesis_facts TEXT NOT NULL DEFAULT '{}',
             analysis_state TEXT NOT NULL DEFAULT '{}',
-            integrations_used TEXT NOT NULL DEFAULT '[]',
+            signal_sources_used TEXT NOT NULL DEFAULT '[]',
             proposed_by TEXT NOT NULL,
             member_count INTEGER NOT NULL DEFAULT 0,
             review_priority TEXT NOT NULL DEFAULT 'normal',
@@ -95,7 +95,7 @@ def _group(
         thesis_text=thesis_text,
         thesis_facts=thesis_facts or {"style": "casual"},
         analysis_state=analysis_state or {"centroid": [0.1, 0.2]},
-        integrations_used=["cosine_v1"],
+        signal_sources_used=["cosine_v1"],
         proposed_by="agent",
         member_count=2,
         review_priority=review_priority,
@@ -121,7 +121,7 @@ def _member(
         to_id=to_id,
         relationship_type="fits",
         signals=signals
-        or [CandidateSignal(integration="cosine_v1", signal="support", evidence="high sim")],
+        or [CandidateSignal(signal_source="cosine_v1", signal="support", evidence="high sim")],
         properties={"raw_score": 0.95},
     )
 
@@ -271,7 +271,7 @@ class TestMembers:
             store.save_members("GRP-1", [_member("s1", "o1"), _member("s2", "o2")])
         members = store.get_members("GRP-1")
         assert len(members) == 2
-        assert members[0].signals[0].integration == "cosine_v1"
+        assert members[0].signals[0].signal_source == "cosine_v1"
         assert members[0].properties["raw_score"] == 0.95
 
 
@@ -479,7 +479,7 @@ class TestMigration:
         conn.execute(
             "INSERT INTO candidate_groups "
             "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
-            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "analysis_state, signal_sources_used, proposed_by, member_count, review_priority, "
             "suggested_priority, resolution_id, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -525,7 +525,7 @@ class TestMigration:
         conn.execute(
             "INSERT INTO candidate_groups "
             "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
-            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "analysis_state, signal_sources_used, proposed_by, member_count, review_priority, "
             "suggested_priority, resolution_id, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -576,7 +576,7 @@ class TestMigration:
         conn.execute(
             "INSERT INTO candidate_groups "
             "(group_id, relationship_type, signature, status, thesis_text, thesis_facts, "
-            "analysis_state, integrations_used, proposed_by, member_count, review_priority, "
+            "analysis_state, signal_sources_used, proposed_by, member_count, review_priority, "
             "suggested_priority, resolution_id, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (

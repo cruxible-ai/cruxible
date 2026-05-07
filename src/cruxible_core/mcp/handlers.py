@@ -318,40 +318,6 @@ def handle_propose_workflow(
     )
 
 
-def handle_ingest(
-    instance_id: str,
-    mapping_name: str,
-    file_path: str | None = None,
-    data_csv: str | None = None,
-    data_json: str | list[dict[str, Any]] | None = None,
-    data_ndjson: str | None = None,
-    upload_id: str | None = None,
-) -> contracts.IngestResult:
-    """Ingest a data file or inline data into the graph."""
-    return _dispatch_remote_or_local(
-        lambda client: client.ingest(
-            instance_id,
-            mapping_name,
-            file_path=file_path,
-            data_csv=data_csv,
-            data_json=data_json,
-            data_ndjson=data_ndjson,
-            upload_id=upload_id,
-        ),
-        lambda: local_api._handle_ingest_local(
-            instance_id,
-            mapping_name,
-            file_path=file_path,
-            data_csv=data_csv,
-            data_json=data_json,
-            data_ndjson=data_ndjson,
-            upload_id=upload_id,
-        ),
-        allow_local=False,
-        operation_name="cruxible_ingest",
-    )
-
-
 def handle_query(
     instance_id: str,
     query_name: str,
@@ -861,44 +827,6 @@ def handle_list(
     )
 
 
-def handle_find_candidates(
-    instance_id: str,
-    relationship_type: str,
-    strategy: contracts.CandidateStrategy,
-    match_rules: list[dict[str, str]] | None = None,
-    via_relationship: str | None = None,
-    min_overlap: float = 0.5,
-    min_confidence: float = 0.5,
-    limit: int = 20,
-    min_distinct_neighbors: int = 2,
-) -> contracts.CandidatesResult:
-    """Find candidate relationships."""
-    return _dispatch_remote_or_local(
-        lambda client: client.find_candidates(
-            instance_id,
-            relationship_type=relationship_type,
-            strategy=strategy,
-            match_rules=match_rules,
-            via_relationship=via_relationship,
-            min_overlap=min_overlap,
-            min_confidence=min_confidence,
-            limit=limit,
-            min_distinct_neighbors=min_distinct_neighbors,
-        ),
-        lambda: local_api._handle_find_candidates_local(
-            instance_id,
-            relationship_type,
-            strategy,
-            match_rules=match_rules,
-            via_relationship=via_relationship,
-            min_overlap=min_overlap,
-            min_confidence=min_confidence,
-            limit=limit,
-            min_distinct_neighbors=min_distinct_neighbors,
-        ),
-    )
-
-
 def handle_evaluate(
     instance_id: str,
     max_findings: int = 100,
@@ -1255,7 +1183,7 @@ def handle_propose_group(
     thesis_text: str = "",
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
-    integrations_used: list[str] | None = None,
+    signal_sources_used: list[str] | None = None,
     proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
@@ -1268,7 +1196,7 @@ def handle_propose_group(
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
-            integrations_used=integrations_used,
+            signal_sources_used=signal_sources_used,
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),
@@ -1279,7 +1207,7 @@ def handle_propose_group(
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             analysis_state=analysis_state,
-            integrations_used=integrations_used,
+            signal_sources_used=signal_sources_used,
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),

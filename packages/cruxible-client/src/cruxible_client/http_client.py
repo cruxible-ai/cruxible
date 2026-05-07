@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import builtins
 import json
-from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
@@ -129,42 +128,6 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.WorldOverlayResult)
-
-    def ingest(
-        self,
-        instance_id: str,
-        mapping_name: str,
-        *,
-        file_path: str | None = None,
-        data_csv: str | None = None,
-        data_json: str | list[dict[str, Any]] | None = None,
-        data_ndjson: str | None = None,
-        upload_id: str | None = None,
-    ) -> contracts.IngestResult:
-        if file_path is not None:
-            path = Path(file_path)
-            with path.open("rb") as handle:
-                response = self._client.post(
-                    f"/api/v1/{instance_id}/ingest",
-                    data={
-                        "mapping_name": mapping_name,
-                        "upload_id": upload_id or "",
-                    },
-                    files={"file": (path.name, handle)},
-                )
-            return self._parse_model(response, contracts.IngestResult)
-
-        response = self._client.post(
-            f"/api/v1/{instance_id}/ingest",
-            json={
-                "mapping_name": mapping_name,
-                "data_csv": data_csv,
-                "data_json": data_json,
-                "data_ndjson": data_ndjson,
-                "upload_id": upload_id,
-            },
-        )
-        return self._parse_model(response, contracts.IngestResult)
 
     def query(
         self,
@@ -455,34 +418,6 @@ class CruxibleClient:
             params["property_filter"] = json.dumps(property_filter)
         response = self._client.get(f"/api/v1/{instance_id}/list/{resource_type}", params=params)
         return self._parse_model(response, contracts.ListResult)
-
-    def find_candidates(
-        self,
-        instance_id: str,
-        *,
-        relationship_type: str,
-        strategy: contracts.CandidateStrategy,
-        match_rules: builtins.list[dict[str, str]] | None = None,
-        via_relationship: str | None = None,
-        min_overlap: float = 0.5,
-        min_confidence: float = 0.5,
-        limit: int = 20,
-        min_distinct_neighbors: int = 2,
-    ) -> contracts.CandidatesResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/candidates",
-            json={
-                "relationship_type": relationship_type,
-                "strategy": strategy,
-                "match_rules": match_rules,
-                "via_relationship": via_relationship,
-                "min_overlap": min_overlap,
-                "min_confidence": min_confidence,
-                "limit": limit,
-                "min_distinct_neighbors": min_distinct_neighbors,
-            },
-        )
-        return self._parse_model(response, contracts.CandidatesResult)
 
     def evaluate(
         self,
@@ -983,7 +918,7 @@ class CruxibleClient:
         thesis_text: str = "",
         thesis_facts: dict[str, Any] | None = None,
         analysis_state: dict[str, Any] | None = None,
-        integrations_used: builtins.list[str] | None = None,
+        signal_sources_used: builtins.list[str] | None = None,
         proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
     ) -> contracts.ProposeGroupToolResult:
@@ -995,7 +930,7 @@ class CruxibleClient:
                 "thesis_text": thesis_text,
                 "thesis_facts": thesis_facts,
                 "analysis_state": analysis_state,
-                "integrations_used": integrations_used,
+                "signal_sources_used": signal_sources_used,
                 "proposed_by": proposed_by,
                 "suggested_priority": suggested_priority,
             },

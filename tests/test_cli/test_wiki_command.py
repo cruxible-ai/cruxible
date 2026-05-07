@@ -84,17 +84,17 @@ relationships:
     from: Asset
     to: Vulnerability
     description: Asset currently associated with the vulnerability.
-    matching: {}
+    proposal_policy: {}
   - name: asset_requires_action_for_vulnerability
     from: Asset
     to: Vulnerability
     description: Asset currently requires remediation action.
-    matching: {}
+    proposal_policy: {}
   - name: service_impacted_by_vulnerability
     from: BusinessService
     to: Vulnerability
     description: Service currently considered exposed through affected infrastructure.
-    matching: {}
+    proposal_policy: {}
   - name: asset_supports_service
     from: Asset
     to: BusinessService
@@ -244,7 +244,7 @@ relationships:
     from: LocalSubject
     to: ReferenceItem
     description: Local subject points at an upstream reference item.
-    matching: {}
+    proposal_policy: {}
 
 named_queries:
   local_review:
@@ -656,7 +656,7 @@ def _seed_review_history(
                         "vulnerability_id": "CVE-2021-41773",
                     },
                     analysis_state={"priority": "urgent"},
-                    integrations_used=["inventory"],
+                    signal_sources_used=["inventory"],
                     proposed_by="agent",
                     member_count=1,
                     review_priority="review",
@@ -696,7 +696,7 @@ def _seed_review_history(
                         "vulnerability_id": "CVE-2021-41773",
                     },
                     analysis_state={"priority": "review"},
-                    integrations_used=["inventory"],
+                    signal_sources_used=["inventory"],
                     proposed_by="agent",
                     member_count=1,
                     review_priority="review",
@@ -1121,7 +1121,7 @@ def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path
                     ),
                     thesis_facts={"vulnerability_id": "CVE-2021-41773"},
                     analysis_state={"priority": "review"},
-                    integrations_used=["inventory"],
+                    signal_sources_used=["inventory"],
                     proposed_by="agent",
                     member_count=2,
                     review_priority="review",

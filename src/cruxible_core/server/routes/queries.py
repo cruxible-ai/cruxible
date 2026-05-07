@@ -12,7 +12,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import local_api
 from cruxible_core.server.request_models import (
     EvaluateRequest,
-    FindCandidatesRequest,
     LintRequest,
     QueryRequest,
     RenderWikiRequest,
@@ -179,25 +178,6 @@ async def lint(instance_id: str, req: LintRequest) -> contracts.LintResult:
         analysis_limit=req.analysis_limit,
         min_support=req.min_support,
         exclude_orphan_types=req.exclude_orphan_types,
-    )
-
-
-@router.post("/{instance_id}/candidates", response_model=contracts.CandidatesResult)
-async def candidates(
-    instance_id: str,
-    req: FindCandidatesRequest,
-) -> contracts.CandidatesResult:
-    resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_find_candidates_local(
-        instance_id=resolved_instance_id,
-        relationship_type=req.relationship_type,
-        strategy=req.strategy,
-        match_rules=req.match_rules,
-        via_relationship=req.via_relationship,
-        min_overlap=req.min_overlap,
-        min_confidence=req.min_confidence,
-        limit=req.limit,
-        min_distinct_neighbors=req.min_distinct_neighbors,
     )
 
 

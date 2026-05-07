@@ -276,7 +276,7 @@ def load_kit_provider_module(path: Path, kit_root: Path) -> ModuleType:
         raise ConfigError(
             f"Kit provider import failed for {path}: missing dependency '{exc.name}'. "
             "Install the dependency in the Cruxible Python environment, expose it "
-            "through a Cruxible extra, or move the integration behind a command/http provider."
+            "through a Cruxible extra, or move the dependency behind a command/http provider."
         ) from exc
     except Exception as exc:
         raise ConfigError(f"Kit provider import failed for {path}: {exc}") from exc

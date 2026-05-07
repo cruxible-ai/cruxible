@@ -49,7 +49,6 @@ def to_markdown(receipt: Receipt) -> str:
     plan_steps = [n for n in receipt.nodes if n.node_type == "plan_step"]
     writes = [n for n in receipt.nodes if n.node_type in ("entity_write", "relationship_write")]
     feedback_nodes = [n for n in receipt.nodes if n.node_type == "feedback_applied"]
-    ingest_nodes = [n for n in receipt.nodes if n.node_type == "ingest_batch"]
 
     if lookups:
         lines.append("## Entry Points")
@@ -105,12 +104,6 @@ def to_markdown(receipt: Receipt) -> str:
     if feedback_nodes:
         lines.append("## Feedback")
         for n in feedback_nodes:
-            lines.append(f"- {_node_label(n)}")
-        lines.append("")
-
-    if ingest_nodes:
-        lines.append("## Ingestion")
-        for n in ingest_nodes:
             lines.append(f"- {_node_label(n)}")
         lines.append("")
 
@@ -185,11 +178,5 @@ def _node_label(node: ReceiptNode) -> str:
         action = node.detail.get("action", "?")
         status = "applied" if node.detail.get("applied") else "not applied"
         return f"Feedback: {action} ({status})"
-
-    if node.node_type == "ingest_batch":
-        mapping = node.detail.get("mapping", "?")
-        added = node.detail.get("added", 0)
-        updated = node.detail.get("updated", 0)
-        return f"Ingest: {mapping} ({added} added, {updated} updated)"
 
     return node.node_type

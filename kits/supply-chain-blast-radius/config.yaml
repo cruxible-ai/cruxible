@@ -535,8 +535,8 @@ relationships:
 # ─── Governed relationships ──────────────────────────────────────────
 #
 # Each governed edge is created through propose_relationship_group +
-# resolution. The matching block names the integration that supplies
-# tri-state signals; the auto_resolve_when policy gates when proposals
+# resolution. The proposal_policy block names the signal source that
+# supplies tri-state signals; the auto_resolve_when policy gates when proposals
 # can apply without human review.
 #
 # Bucket signatures are rule-centric (rule_id + rule_version live in
@@ -556,8 +556,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_supplier_scope_match:
           role: required
           always_review_on_unsure: true
@@ -576,8 +576,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_component_cascade:
           role: required
           always_review_on_unsure: true
@@ -600,8 +600,8 @@ relationships:
       rationale:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_assembly_cascade:
           role: required
           always_review_on_unsure: true
@@ -905,41 +905,6 @@ quality_checks:
     direction: incoming
     min_count: 1
     severity: error
-
-# ─── Integrations ────────────────────────────────────────────────────
-#
-# One integration per governed relationship in v1. Each integration is
-# the named "voice" that emits tri-state signals through map_signals.
-# Adding a second voice per relationship (e.g. separating direct supplier
-# match from geography-match for incident_impacts_supplier) is a v1.5
-# enrichment that does not require schema changes.
-
-integrations:
-  incident_supplier_scope_match:
-    kind: incident_scope_match
-    contract: null
-    notes: >
-      Matches incident scope (supplier|geography) to suppliers via
-      supplier_id or supplier.primary_geography.
-
-  incident_component_cascade:
-    kind: supplier_to_component_cascade
-    contract: null
-    notes: >
-      Cascades from impacted suppliers through supplier_supplies_component
-      to components, downgrading the signal when a viable alternate
-      sourcing option exists outside incident scope.
-
-  incident_assembly_cascade:
-    kind: supplier_to_assembly_cascade
-    contract: null
-    notes: >
-      Cascades from impacted suppliers through supplier_supplies_assembly
-      to directly supplied assemblies, downgrading the signal when a viable
-      alternate sourcing option exists outside incident scope.
-
-# ─── Contracts ───────────────────────────────────────────────────────
-
 contracts:
   EmptyInput:
     fields: {}
@@ -1792,79 +1757,65 @@ artifacts:
 
 providers:
   load_supply_chain_seed_data:
-    kind: function
     description: Load all base-world entities and deterministic edges from the seed bundle.
     contract_in: EmptyInput
     contract_out: SupplyChainSeedData
     ref: kit://providers/supply_chain_blast_radius.py::load_seed_data
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: supply_chain_seed_bundle
 
   assess_incident_supplier_scope:
-    kind: function
     description: Match each open incident's scope to suppliers via direct supplier or geography basis.
     contract_in: IncidentScopeAssessmentInput
     contract_out: IncidentScopeAssessmentResults
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   fetch_inventory_positions:
-    kind: function
     description: Fetch inventory positions from an internal inventory API using provider-managed auth.
     contract_in: InventoryFetchInput
     contract_out: InventoryFetchResults
     ref: kit://providers/supply_chain_blast_radius.py::fetch_inventory_positions
     version: "1.0.0"
     deterministic: false
-    runtime: python
     side_effects: false
     config:
       base_url: null
       timeout_s: 20
 
   assess_buffer_coverage:
-    kind: function
     description: Compute reusable buffer coverage assessments from inventory, BOM, and demand context.
     contract_in: BufferAssessmentInput
     contract_out: BufferAssessmentResults
     ref: kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_incident_component_cascade:
-    kind: function
     description: Cascade impacted suppliers to components, downgrading where viable alternate sourcing exists.
     contract_in: IncidentComponentCascadeInput
     contract_out: IncidentComponentCascadeResults
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_incident_assembly_cascade:
-    kind: function
     description: Cascade impacted suppliers to directly supplied assemblies, downgrading where viable alternate sourcing exists.
     contract_in: IncidentAssemblyCascadeInput
     contract_out: IncidentAssemblyCascadeResults
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_assembly_cascade
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_incident_product_exposure:
-    kind: function
     description: Roll impacted components and directly impacted assemblies through assembly BOM hierarchy to derived product exposure context.
     contract_in: IncidentProductExposureInput
     contract_out: IncidentProductExposureResults
     ref: kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
 # ─── Workflows ───────────────────────────────────────────────────────
 #
@@ -2396,7 +2347,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: incident_supplier_scope_match
+          signal_source: incident_supplier_scope_match
           items: $steps.assessments.items
           from_id: $item.incident_id
           to_id: $item.supplier_id
@@ -2469,7 +2420,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: incident_component_cascade
+          signal_source: incident_component_cascade
           items: $steps.assessments.items
           from_id: $item.incident_id
           to_id: $item.component_id
@@ -2543,7 +2494,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: incident_assembly_cascade
+          signal_source: incident_assembly_cascade
           items: $steps.assessments.items
           from_id: $item.incident_id
           to_id: $item.assembly_id

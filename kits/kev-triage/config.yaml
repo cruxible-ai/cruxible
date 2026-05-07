@@ -133,8 +133,8 @@ relationships:
 # ─── Local: governed relationships ─────────────────────────────────────
 #
 # These relationships are created through the proposal/group resolution
-# flow, not direct writes. Each has a matching block that defines which
-# integrations provide signals and how auto-resolution works.
+# flow, not direct writes. Each has a proposal_policy block that defines
+# which signal sources provide evidence and how auto-resolution works.
 
   - name: asset_runs_product
     description: >
@@ -147,8 +147,8 @@ relationships:
     properties:
       installed_version: {}
       evidence_source: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         software_product_match:
           role: required
           always_review_on_unsure: true
@@ -168,8 +168,8 @@ relationships:
       installed_version: {}
       affected_rationale: {}
       evidence_source: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         product_version_evidence:
           role: required
           always_review_on_unsure: true
@@ -188,8 +188,8 @@ relationships:
       exception_id: {}
       review_due_at: {}
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         policy_review:
           role: required
 
@@ -202,8 +202,8 @@ relationships:
     properties:
       basis: {}
       source: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         vulnerability_classification:
           role: required
           always_review_on_unsure: true
@@ -215,8 +215,8 @@ relationships:
     properties:
       validation_basis: {}
       expires_at: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         control_effectiveness:
           role: required
           always_review_on_unsure: true
@@ -231,8 +231,8 @@ relationships:
       evidence_source: {}
       ticket_id: {}
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         remediation_verification:
           role: required
           always_review_on_unsure: true
@@ -249,8 +249,8 @@ relationships:
     to: Owner
     properties:
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_attribution:
           role: required
 
@@ -262,8 +262,8 @@ relationships:
       role:
         description: How the asset was involved (target, lateral_movement, staging, etc.)
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_attribution:
           role: required
 
@@ -275,8 +275,8 @@ relationships:
       evidence:
         description: Summary of evidence linking this CVE to the incident.
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_attribution:
           role: required
 
@@ -286,8 +286,8 @@ relationships:
     to: Incident
     properties:
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         incident_attribution:
           role: required
 
@@ -655,7 +655,6 @@ artifacts:
 
 providers:
   parse_local_seed_bundle:
-    kind: function
     description: >
       Parse the pinned local seed artifact into generic provenance-rich
       tabular rows. Domain normalization happens in the next workflow step.
@@ -664,11 +663,9 @@ providers:
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: local_seed_bundle
 
   normalize_local_seed_tables:
-    kind: function
     description: >
       Normalize parsed local seed tables into deterministic KEV entities and
       relationship rows keyed by entity and relationship type.
@@ -677,11 +674,9 @@ providers:
     ref: kit://providers/seed.py::normalize_local_seed_tables
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: local_seed_bundle
 
   load_software_inventory:
-    kind: function
     description: >
       Load raw software inventory from the seed data bundle. Returns
       rows with business-friendly software names, versions, and
@@ -691,11 +686,9 @@ providers:
     ref: kit://providers/seed.py::load_software_inventory
     version: "1.0.0"
     deterministic: true
-    runtime: python
     artifact: local_seed_bundle
 
   match_software_to_products:
-    kind: function
     description: >
       Fuzzy match software inventory rows against reference-layer
       products using CPE name similarity and vendor matching. Returns
@@ -705,10 +698,8 @@ providers:
     ref: kit://providers/matching.py::match_software_to_products
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_asset_affected:
-    kind: function
     description: >
       Join approved asset-product mappings to public
       vulnerability-affects-product edges and assess whether the
@@ -718,10 +709,8 @@ providers:
     ref: kit://providers/assessment.py::assess_asset_affected
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_asset_exposure:
-    kind: function
     description: >
       Assess whether an affected asset is materially exposed using
       internet exposure, environment, criticality, and attached active
@@ -731,10 +720,8 @@ providers:
     ref: kit://providers/assessment.py::assess_asset_exposure
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
   assess_exposure_reconciliation:
-    kind: function
     description: >
       Compare accepted exposure edges against the current product-derived
       affected candidate set and identify stale exposures to close.
@@ -743,7 +730,6 @@ providers:
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
     version: "1.0.0"
     deterministic: true
-    runtime: python
 
 # ─── Workflows ────────────────────────────────────────────────────────
 
@@ -754,7 +740,6 @@ workflows:
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference
       layer's build_public_kev_reference workflow.
-    contract_in: cruxible.EmptyInput
     steps:
       - id: raw_tables
         provider: parse_local_seed_bundle
@@ -968,7 +953,6 @@ workflows:
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
       governed group resolution flow.
-    contract_in: cruxible.EmptyInput
     steps:
       - id: inventory
         provider: load_software_inventory
@@ -998,7 +982,7 @@ workflows:
         as: candidates
       - id: signals
         map_signals:
-          integration: software_product_match
+          signal_source: software_product_match
           items: $steps.matches.items
           from_id: $item.asset_id
           to_id: $item.product_id
@@ -1031,7 +1015,6 @@ workflows:
       Derive affected asset-vulnerability candidates from approved
       asset-product mappings, then propose the asset exposure edges that
       should drive action.
-    contract_in: cruxible.EmptyInput
     steps:
       - id: asset_products
         list_relationships:
@@ -1086,7 +1069,7 @@ workflows:
         as: candidates
       - id: version_signals
         map_signals:
-          integration: product_version_evidence
+          signal_source: product_version_evidence
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
@@ -1100,7 +1083,7 @@ workflows:
         as: version_signals
       - id: exploitability_signals
         map_signals:
-          integration: exploitability_signal
+          signal_source: exploitability_signal
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
@@ -1114,7 +1097,7 @@ workflows:
         as: exploitability_signals
       - id: control_signals
         map_signals:
-          integration: control_effectiveness
+          signal_source: control_effectiveness
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
@@ -1165,7 +1148,7 @@ workflows:
         as: candidates
       - id: classification_signals
         map_signals:
-          integration: vulnerability_classification
+          signal_source: vulnerability_classification
           items: $input.items
           from_id: $item.cve_id
           to_id: $item.class_id
@@ -1215,7 +1198,7 @@ workflows:
         as: candidates
       - id: control_signals
         map_signals:
-          integration: control_effectiveness
+          signal_source: control_effectiveness
           items: $input.items
           from_id: $item.control_id
           to_id: $item.class_id
@@ -1251,7 +1234,6 @@ workflows:
       current affected candidate set through Asset -> Product <- Vulnerability
       and propose remediation/closure for accepted exposure edges that are no
       longer supported.
-    contract_in: cruxible.EmptyInput
     steps:
       - id: asset_products
         list_relationships:
@@ -1299,7 +1281,7 @@ workflows:
         as: candidates
       - id: remediation_signals
         map_signals:
-          integration: remediation_verification
+          signal_source: remediation_verification
           items: $steps.reconciliation.items
           from_id: $item.asset_id
           to_id: $item.cve_id

@@ -256,21 +256,6 @@ class ReceiptBuilder:
         self._add_edge(parent_id or self._root_id, node_id, "applied")
         return node_id
 
-    def record_ingest_batch(
-        self,
-        mapping: str,
-        added: int,
-        updated: int,
-        parent_id: str | None = None,
-    ) -> str:
-        """Record an ingest batch result."""
-        node_id = self._add_node(
-            node_type="ingest_batch",
-            detail={"mapping": mapping, "added": added, "updated": updated},
-        )
-        self._add_edge(parent_id or self._root_id, node_id, "mutated")
-        return node_id
-
     def build(self, results: list[dict[str, Any]] | None = None) -> Receipt:
         """Finalize and return the receipt."""
         elapsed_ms = (time.monotonic_ns() - self._start_ns) / 1_000_000

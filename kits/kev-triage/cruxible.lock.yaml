@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:2a9b562e6361e5b556472968289d81d8d62699becaf1f7c54253fbb681bcf5f2
-lock_digest: sha256:4cc595c84138c3476fb1c382ad6d5b0438ef4d34117443134db35ca4814d5f7d
-generated_at: 2026-05-04 20:30:27.543659+00:00
+config_digest: sha256:0f7874def07d363610b728e1bc4c27c6a1736bbd18e1a78ec9e48601007147cc
+lock_digest: sha256:465a03f78a089d994891706352aff9e0ed31818b0c9c85abf838242baa11ca3e
+generated_at: 2026-05-07 18:05:33.280872+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -14,7 +14,7 @@ providers:
   parse_local_seed_bundle:
     version: 1.0.0
     ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
-    provider_entrypoint_sha256: sha256:b2640a1835789e183d747ae4b345ca3a026f2b6916c8bcc7b7da34aa17e909da
+    provider_entrypoint_sha256: sha256:3b32b7fb545dce707fb6dcd265ee389aafd68cdce829b6c08c430d043e3443ca
     runtime: python
     deterministic: true
     side_effects: false

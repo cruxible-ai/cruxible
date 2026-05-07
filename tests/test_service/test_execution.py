@@ -394,7 +394,10 @@ class TestWorkflowExecutionServices:
         proposal_workflow_instance.save_config(config)
         service_lock(proposal_workflow_instance)
 
-        with pytest.raises(ConfigError, match="missing signal from required integration 'catalog'"):
+        with pytest.raises(
+            ConfigError,
+            match="missing signal from required signal source 'catalog'",
+        ):
             service_propose_workflow(
                 proposal_workflow_instance,
                 "propose_campaign_recommendations",

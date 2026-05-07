@@ -93,24 +93,13 @@ class OutcomeRequest(BaseModel):
     detail: dict[str, Any] | None = None
 
 
-class FindCandidatesRequest(BaseModel):
-    relationship_type: str
-    strategy: contracts.CandidateStrategy
-    match_rules: list[dict[str, str]] | None = None
-    via_relationship: str | None = None
-    min_overlap: float = 0.5
-    min_confidence: float = 0.5
-    limit: int = 20
-    min_distinct_neighbors: int = 2
-
-
 class ProposeGroupRequest(BaseModel):
     relationship_type: str
     members: list[contracts.MemberInput]
     thesis_text: str = ""
     thesis_facts: dict[str, Any] | None = None
     analysis_state: dict[str, Any] | None = None
-    integrations_used: list[str] | None = None
+    signal_sources_used: list[str] | None = None
     proposed_by: contracts.GroupProposedBy = "agent"
     suggested_priority: str | None = None
 

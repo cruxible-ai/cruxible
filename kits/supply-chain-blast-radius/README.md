@@ -229,7 +229,7 @@ flowchart LR
 
 ## Governed Relationships
 
-This table is generated from existing matching, decision policy, feedback, and
+This table is generated from existing proposal policy, decision policy, feedback, and
 outcome profile config. It distinguishes structural proposal mechanics from the
 authored explanation around them.
 
@@ -241,18 +241,18 @@ authored explanation around them.
 | Incident Impacts Supplier | Incident -> Supplier | Workflow: Propose Incident Impacts Supplier | Incident Supplier Scope Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Incident Supplier Resolution |
 <!-- CRUXIBLE:END governance-table -->
 
-### Integration Signal Notes
+### Signal Policy Notes
 
-This catalog is generated from configured integrations and the governed
-relationships that consume them.
+This catalog is generated from relationship-local signal policy and the
+governed relationships that consume each signal source.
 
-<!-- CRUXIBLE:BEGIN integration-catalog -->
-| Integration | Kind | Used By | Notes |
-| --- | --- | --- | --- |
-| `incident_assembly_cascade` | supplier_to_assembly_cascade | Incident Impacts Assembly | Cascades from impacted suppliers through supplier_supplies_assembly to directly supplied assemblies, downgrading the signal when a viable alternate sourcing option exists outside incident scope. |
-| `incident_component_cascade` | supplier_to_component_cascade | Incident Impacts Component | Cascades from impacted suppliers through supplier_supplies_component to components, downgrading the signal when a viable alternate sourcing option exists outside incident scope. |
-| `incident_supplier_scope_match` | incident_scope_match | Incident Impacts Supplier | Matches incident scope (supplier\|geography) to suppliers via supplier_id or supplier.primary_geography. |
-<!-- CRUXIBLE:END integration-catalog -->
+<!-- CRUXIBLE:BEGIN signal-policy-catalog -->
+| Signal Source | Role | Review Unsure | Used By | Notes |
+| --- | --- | --- | --- | --- |
+| `incident_assembly_cascade` | required | yes | Incident Impacts Assembly | - |
+| `incident_component_cascade` | required | yes | Incident Impacts Component | - |
+| `incident_supplier_scope_match` | required | yes | Incident Impacts Supplier | - |
+<!-- CRUXIBLE:END signal-policy-catalog -->
 
 ## Query Map
 

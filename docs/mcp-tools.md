@@ -234,33 +234,6 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_ingest
-
-**Permission:** `ADMIN`
-
-**Purpose:** Ingest data through a legacy ingestion mapping. Deprecated for new configs: prefer workflow-based deterministic loading via `cruxible_lock_workflow`, `cruxible_run_workflow`, and `cruxible_apply_workflow`. For deterministic relationships only (explicit in source data). For inferred relationships (matching, classification), use ``cruxible_add_relationship`` instead. Provide exactly one data source: - ``file_path``: path to a CSV, JSON, or NDJSON (.jsonl/.ndjson) file on disk. Files with ``.json`` extension containing NDJSON content are auto-detected. - ``data_csv``: inline CSV string - ``data_json``: inline JSON array of row objects (e.g. ``[{"id": "1", "name": "x"}, ...]``) - ``data_ndjson``: inline NDJSON string (one JSON object per line) - ``upload_id``: reserved for cloud mode (not supported locally) Ingest entity mappings before relationship mappings. Re-ingesting existing relationships updates provided properties; omitted properties are preserved. For large relationship sets (10K+ edges), CSV file ingestion is recommended — it streams rows and avoids MCP payload size limits.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `mapping_name` | yes | string |  |
-| `file_path` | no | string | null |  |
-| `data_csv` | no | string | null |  |
-| `data_json` | no | string | array | null |  |
-| `data_ndjson` | no | string | null |  |
-| `upload_id` | no | string | null |  |
-
-**Returns:** Top-level fields: `records_ingested`, `records_updated`, `mapping`, `entity_type`, `relationship_type`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
 ## cruxible_query
 
 **Permission:** `READ_ONLY`
@@ -507,35 +480,6 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `operation_type` | no | string | null |  |
 
 **Returns:** Top-level fields: `items`, `total`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_find_candidates
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Find missing-relationship candidates. `strategy="property_match"` requires `match_rules`. Each rule: `{from_property, to_property, operator}`. Operators: `equals` (type-strict), `iequals` (case-insensitive), `contains` (substring, forces brute-force scan). `strategy="shared_neighbors"` requires `via_relationship`. `min_distinct_neighbors` (default 2) skips pairs where both entities have fewer than this many neighbors — filters degenerate cases.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-| `strategy` | yes | enum: property_match, shared_neighbors |  |
-| `match_rules` | no | array | null |  |
-| `via_relationship` | no | string | null |  |
-| `min_overlap` | no | number |  |
-| `min_confidence` | no | number |  |
-| `limit` | no | integer |  |
-| `min_distinct_neighbors` | no | integer |  |
-
-**Returns:** Top-level fields: `candidates`, `total`
 
 **Side Effects:** Read-only.
 
@@ -924,7 +868,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer candidate group proposal flows so Cruxible can preserve tri-state integration signals (support, unsure, contradict) and review history. Batch size: practical limit is ~500 relationships per call. For bulk ingestion of 10K+ relationships, use ``cruxible_ingest`` with CSV files instead.
+**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer proposal workflows or candidate group proposal flows so Cruxible can preserve tri-state signal-source evidence (support, unsure, contradict) and review history. For bulk state loading, use workflows with tabular providers, dataflow steps, and apply_relationships.
 
 **Arguments:**
 
@@ -946,7 +890,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Add or update entities in the graph (upsert). Each entity needs: entity_type, entity_id. Optional properties dict. Re-submitting an existing entity replaces all its properties (full overwrite, not merge). Use for entities from free text or external sources when CSV ingestion is not available.
+**Purpose:** Add or update entities in the graph (upsert). Each entity needs: entity_type, entity_id. Optional properties dict. Re-submitting an existing entity replaces all its properties (full overwrite, not merge). Use for small explicit writes; use workflows for repeatable source-artifact state loading.
 
 **Arguments:**
 
@@ -1219,7 +1163,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared integrations. The group carries a thesis (structured facts that get hashed into a deterministic signature) and optional analysis_state (opaque agent data, NOT hashed). If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
+**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared relationship signal sources. The group carries a thesis (structured facts that get hashed into a deterministic signature) and optional analysis_state (opaque agent data, NOT hashed). If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
 
 **Arguments:**
 
@@ -1231,7 +1175,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `thesis_text` | no | string |  |
 | `thesis_facts` | no | object | null |  |
 | `analysis_state` | no | object | null |  |
-| `integrations_used` | no | array | null |  |
+| `signal_sources_used` | no | array | null |  |
 | `proposed_by` | no | enum: human, agent |  |
 | `suggested_priority` | no | string | null |  |
 

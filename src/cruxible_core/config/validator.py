@@ -2,8 +2,7 @@
 
 The Pydantic schema validates structure. This module validates semantics:
 relationships reference valid entity types, named queries reference valid
-relationships, ingestion mappings reference valid entity/relationship types, and
-workflow/provider declarations resolve correctly.
+relationships, and workflow/provider declarations resolve correctly.
 """
 
 from __future__ import annotations
@@ -30,9 +29,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_constraints(config, errors, warnings)
     _validate_feedback_profiles(config, errors)
     _validate_outcome_profiles(config, errors)
-    _validate_ingestion(config, errors)
     _validate_primary_keys(config, errors)
-    _validate_matching_integrations(config, errors)
     _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
     _validate_quality_checks(config, errors)
@@ -442,78 +439,6 @@ def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:
                 )
 
 
-def _validate_ingestion(config: CoreConfig, errors: list[str]) -> None:
-    """Check that ingestion mappings reference valid entity/relationship types."""
-    entity_names = set(config.entity_types.keys())
-    relationships = {rel.name: rel for rel in config.relationships}
-
-    for mapping_name, mapping in config.ingestion.items():
-        if mapping.is_entity:
-            if mapping.entity_type not in entity_names:
-                errors.append(
-                    f"Ingestion mapping '{mapping_name}': entity_type "
-                    f"'{mapping.entity_type}' not defined in entity_types"
-                )
-                continue
-            assert mapping.entity_type is not None
-            entity = config.entity_types[mapping.entity_type]
-            allowed_targets = set(entity.properties) | {mapping.id_column or ""}
-            allowed_targets.update(SYSTEM_OWNED_PROPERTIES)
-            for source, target in mapping.column_map.items():
-                if target not in allowed_targets:
-                    errors.append(
-                        f"Ingestion mapping '{mapping_name}': column_map target "
-                        f"'{target}' from source '{source}' is not a property on "
-                        f"entity type '{mapping.entity_type}'"
-                    )
-        elif mapping.is_relationship:
-            rel = relationships.get(mapping.relationship_type or "")
-            if rel is None:
-                errors.append(
-                    f"Ingestion mapping '{mapping_name}': relationship_type "
-                    f"'{mapping.relationship_type}' not defined in relationships"
-                )
-                continue
-            mapped_from_column = mapping.column_map.get(
-                mapping.from_column or "", mapping.from_column or ""
-            )
-            mapped_to_column = mapping.column_map.get(
-                mapping.to_column or "", mapping.to_column or ""
-            )
-            allowed_targets = set(rel.properties) | {
-                mapping.from_column or "",
-                mapping.to_column or "",
-                mapped_from_column,
-                mapped_to_column,
-            }
-            allowed_targets.update(SYSTEM_OWNED_PROPERTIES)
-            for source, target in mapping.column_map.items():
-                if target not in allowed_targets:
-                    errors.append(
-                        f"Ingestion mapping '{mapping_name}': column_map target "
-                        f"'{target}' from source '{source}' is not a property on "
-                        f"relationship '{mapping.relationship_type}'"
-                    )
-
-
-def _validate_matching_integrations(config: CoreConfig, errors: list[str]) -> None:
-    """Strict mixed mode: non-empty global registry requires all matching keys to resolve."""
-    registry = config.integrations
-    if not registry:
-        return  # Empty registry = open mode, bare labels allowed
-
-    for rel in config.relationships:
-        if rel.matching is None:
-            continue
-        for key in rel.matching.integrations:
-            if key not in registry:
-                errors.append(
-                    f"Integration '{key}' in matching.integrations for "
-                    f"relationship '{rel.name}' not found in global "
-                    f"integrations registry"
-                )
-
-
 def _validate_primary_keys(config: CoreConfig, errors: list[str]) -> None:
     """Error if entity types are missing primary keys."""
     for name, entity in config.entity_types.items():
@@ -694,8 +619,6 @@ def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
     if config.kind != "ontology":
         return
 
-    if config.ingestion:
-        errors.append("Config kind 'ontology' may not define ingestion mappings")
     if config.contracts:
         errors.append("Config kind 'ontology' may not define contracts")
     if config.artifacts:
@@ -714,7 +637,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
     query_names = set(config.named_queries.keys())
     entity_names = set(config.entity_types.keys())
     relationship_names = {rel.name for rel in config.relationships}
-    integration_names = set(config.integrations.keys())
+    relationships_by_name = {rel.name: rel for rel in config.relationships}
 
     for workflow_name, workflow in config.workflows.items():
         if not _contract_exists(config, workflow.contract_in):
@@ -725,6 +648,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
             )
 
         produced_aliases: set[str] = set()
+        produced_signal_sources: dict[str, tuple[str, str]] = {}
         step_ids: set[str] = set()
         uses_apply_steps = False
         providers_used: set[str] = set()
@@ -961,12 +885,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 continue
 
             if step.map_signals is not None:
-                if integration_names and step.map_signals.integration not in integration_names:
-                    errors.append(
-                        "Workflow "
-                        f"'{workflow_name}' step '{step.id}': map_signals integration "
-                        f"'{step.map_signals.integration}' not found in integrations"
-                    )
                 for ref in _iter_refs(
                     [
                         step.map_signals.items,
@@ -985,24 +903,48 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     )
                 if step.as_ is not None:
                     produced_aliases.add(step.as_)
+                    produced_signal_sources[step.as_] = (
+                        step.map_signals.signal_source,
+                        step.id,
+                    )
                 continue
 
             if step.propose_relationship_group is not None:
-                if step.propose_relationship_group.relationship_type not in relationship_names:
+                spec = step.propose_relationship_group
+                relationship = relationships_by_name.get(spec.relationship_type)
+                if spec.relationship_type not in relationship_names:
                     errors.append(
                         "Workflow "
                         f"'{workflow_name}' step '{step.id}': propose_relationship_group "
-                        f"relationship_type '{step.propose_relationship_group.relationship_type}' "
+                        f"relationship_type '{spec.relationship_type}' "
                         "not found in relationships"
                     )
-                if step.propose_relationship_group.candidates_from not in produced_aliases:
+                elif relationship is not None and relationship.proposal_policy is not None:
+                    declared = relationship.proposal_policy.signals
+                    if declared:
+                        for alias in spec.signals_from:
+                            signal_source = produced_signal_sources.get(alias)
+                            if signal_source is None:
+                                continue
+                            source_name, source_step_id = signal_source
+                            if source_name not in declared:
+                                allowed = ", ".join(sorted(declared.keys()))
+                                errors.append(
+                                    "Workflow "
+                                    f"'{workflow_name}' step '{source_step_id}': "
+                                    f"map_signals signal_source '{source_name}' is not "
+                                    "declared in proposal_policy.signals for "
+                                    f"relationship '{spec.relationship_type}' "
+                                    f"(expected one of: {allowed})"
+                                )
+                if spec.candidates_from not in produced_aliases:
                     errors.append(
                         "Workflow "
                         f"'{workflow_name}' step '{step.id}': candidates_from alias "
-                        f"'{step.propose_relationship_group.candidates_from}' "
+                        f"'{spec.candidates_from}' "
                         "is unknown or future"
                     )
-                for alias in step.propose_relationship_group.signals_from:
+                for alias in spec.signals_from:
                     if alias not in produced_aliases:
                         errors.append(
                             "Workflow "
@@ -1011,10 +953,10 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         )
                 for ref in _iter_refs(
                     [
-                        step.propose_relationship_group.thesis_text,
-                        step.propose_relationship_group.thesis_facts,
-                        step.propose_relationship_group.analysis_state,
-                        step.propose_relationship_group.suggested_priority,
+                        spec.thesis_text,
+                        spec.thesis_facts,
+                        spec.analysis_state,
+                        spec.suggested_priority,
                     ]
                 ):
                     _validate_workflow_ref(
@@ -1024,7 +966,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         produced_aliases,
                         errors,
                     )
-                if not step.propose_relationship_group.thesis_facts:
+                if not spec.thesis_facts:
                     errors.append(
                         "Workflow "
                         f"'{workflow_name}' step '{step.id}': propose_relationship_group "

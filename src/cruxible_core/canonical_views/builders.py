@@ -48,7 +48,7 @@ def build_ontology_view(
             name=rel.name,
             from_entity=rel.from_entity,
             to_entity=rel.to_entity,
-            mode="governed" if rel.matching is not None else "deterministic",
+            mode="governed" if rel.proposal_policy is not None else "deterministic",
             cardinality=rel.cardinality,
             reverse_name=rel.reverse_name,
             description=rel.description,
@@ -205,7 +205,7 @@ def build_schema_catalog_view(config: CoreConfig) -> SchemaCatalogView:
             description=relationship.description,
             from_entity=relationship.from_entity,
             to_entity=relationship.to_entity,
-            mode="governed" if relationship.matching is not None else "deterministic",
+            mode="governed" if relationship.proposal_policy is not None else "deterministic",
             properties=[
                 _property_schema_view(config, prop_name, prop)
                 for prop_name, prop in relationship.properties.items()
@@ -242,7 +242,11 @@ def build_governance_view(
     resolution_total: int,
 ) -> GovernanceView:
     """Build a governance summary over governed relationships plus live queue state."""
-    governed = {rel.name: rel.matching for rel in config.relationships if rel.matching is not None}
+    governed = {
+        rel.name: rel.proposal_policy
+        for rel in config.relationships
+        if rel.proposal_policy is not None
+    }
 
     pending_by_relationship: dict[str, list[CandidateGroup]] = {}
     for group in pending_groups:
@@ -375,7 +379,7 @@ def _workflow_step_summary(
     elif step_kind == "make_candidates" and step.make_candidates is not None:
         detail = step.make_candidates.relationship_type
     elif step_kind == "map_signals" and step.map_signals is not None:
-        detail = step.map_signals.integration
+        detail = step.map_signals.signal_source
     elif step_kind == "propose_relationship_group" and step.propose_relationship_group is not None:
         detail = step.propose_relationship_group.relationship_type
     elif step_kind == "make_entities" and step.make_entities is not None:

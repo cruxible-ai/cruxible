@@ -13,8 +13,6 @@ _SAFE_LIST_KEYS = {"constraints", "quality_checks", "tests"}
 _KEYED_MAP_KEYS = {
     "entity_types",
     "named_queries",
-    "ingestion",
-    "integrations",
     "contracts",
     "artifacts",
     "providers",

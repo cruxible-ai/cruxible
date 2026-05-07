@@ -651,30 +651,6 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible find-candidates
-
-**Usage:** `cruxible find-candidates [OPTIONS]`
-
-**Purpose:** Find candidate relationships using a deterministic strategy.
-
-**Options And Arguments:**
-
-| Name | Required | Default | Type | Description |
-| --- | --- | --- | --- | --- |
-| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type to find candidates for. |
-| `--strategy` | yes | `Sentinel.UNSET` | choice | Detection strategy. |
-| `--rule` | no | `Sentinel.UNSET` | text | Match rule as FROM_PROP=TO_PROP (for property_match strategy). |
-| `--via` | no | `` | text | Via relationship (shared_neighbors) |
-| `--limit` | no | `20` | integer | Max candidates to show. |
-
-**Output And Side Effects:**
-- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
-
 ## cruxible get-entity
 
 **Usage:** `cruxible get-entity [OPTIONS]`
@@ -807,7 +783,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--thesis` | no | `` | text | Human-readable thesis text. |
 | `--thesis-facts` | no | `` | text | JSON object of structured thesis facts. |
 | `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
-| `--integration` | no | `Sentinel.UNSET` | text | Integration name used in this proposal. |
+| `--signal-source` | no | `Sentinel.UNSET` | text | Signal source name used in this proposal. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -900,27 +876,6 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--resolution` | yes | `Sentinel.UNSET` | text | Resolution ID. |
 | `--status` | yes | `Sentinel.UNSET` | choice | Trust status to set. |
 | `--reason` | no | `` | text | Reason for trust status change. |
-
-**Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
-
-## cruxible ingest
-
-**Usage:** `cruxible ingest [OPTIONS]`
-
-**Purpose:** Ingest data from a file using a named mapping.
-
-**Options And Arguments:**
-
-| Name | Required | Default | Type | Description |
-| --- | --- | --- | --- | --- |
-| `--mapping` | yes | `Sentinel.UNSET` | text | Ingestion mapping name from config. |
-| `--file` | yes | `Sentinel.UNSET` | path | Data file. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

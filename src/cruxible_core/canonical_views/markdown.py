@@ -205,13 +205,13 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
     governed_relationships = [
         relationship
         for relationship in sorted(config.relationships, key=lambda item: item.name)
-        if relationship.matching is not None
+        if relationship.proposal_policy is not None
     ]
     creation_paths = _governed_relationship_creation_paths(config)
     rows: list[tuple[str, ...]] = []
     for relationship in governed_relationships:
-        matching = relationship.matching
-        if matching is None:
+        proposal_policy = relationship.proposal_policy
+        if proposal_policy is None:
             continue
         policies = [
             policy
@@ -230,10 +230,10 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
                 f"{_humanize_label(relationship.from_entity)} -> "
                 f"{_humanize_label(relationship.to_entity)}",
                 _creation_path_label(creation_paths.get(relationship.name, [])),
-                _humanize_list_or_dash(sorted(matching.integrations)),
+                _humanize_list_or_dash(sorted(proposal_policy.signals)),
                 _matching_policy_label(
-                    matching.auto_resolve_when,
-                    matching.auto_resolve_requires_prior_trust,
+                    proposal_policy.auto_resolve_when,
+                    proposal_policy.auto_resolve_requires_prior_trust,
                 ),
                 _decision_policy_label(policies),
                 _feedback_profile_label(feedback_profile),
@@ -255,28 +255,41 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
     )
 
 
-def render_integration_catalog_markdown(config: CoreConfig) -> str:
-    """Render configured signal integrations and governed relationship usage."""
-    if not config.integrations:
-        return "No configured integrations."
-
-    used_by: dict[str, set[str]] = {name: set() for name in config.integrations}
+def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
+    """Render governed proposal signal-source policies from relationship config."""
+    used_by: dict[str, set[str]] = {}
+    policy_rows: dict[str, tuple[str, str]] = {}
     for relationship in config.relationships:
-        if relationship.matching is None:
+        if relationship.proposal_policy is None:
             continue
-        for integration_name in relationship.matching.integrations:
-            used_by.setdefault(integration_name, set()).add(relationship.name)
+        for source_name, policy in relationship.proposal_policy.signals.items():
+            used_by.setdefault(source_name, set()).add(relationship.name)
+            policy_rows.setdefault(
+                source_name,
+                (
+                    policy.role,
+                    "yes" if policy.always_review_on_unsure else "no",
+                    policy.note.strip() or "-",
+                ),
+            )
+
+    if not policy_rows:
+        return "No configured proposal signal sources."
 
     rows: list[tuple[str, ...]] = [
         (
             f"`{name}`",
-            integration.kind,
+            role,
+            always_review,
             _humanize_list_or_dash(sorted(used_by.get(name, set()))),
-            integration.notes.strip() or "-",
+            note,
         )
-        for name, integration in sorted(config.integrations.items())
+        for name, (role, always_review, note) in sorted(policy_rows.items())
     ]
-    return _markdown_table(("Integration", "Kind", "Used By", "Notes"), rows)
+    return _markdown_table(
+        ("Signal Source", "Role", "Review Unsure", "Used By", "Notes"),
+        rows,
+    )
 
 
 def render_quality_rules_markdown(config: CoreConfig) -> str:

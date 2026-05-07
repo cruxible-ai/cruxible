@@ -2,9 +2,9 @@
 
 Cruxible Core configs are YAML files that define a decision domain: entity
 types, relationships, named queries, constraints, workflows, providers,
-artifacts, integrations, quality checks, feedback profiles, decision policies,
-and legacy ingestion mappings. AI agents generate these configs; Core validates
-and executes against them.
+artifacts, quality checks, feedback profiles, outcome profiles, and decision
+policies. AI agents generate these configs; Core validates and executes against
+them.
 
 ## Top-Level Structure
 
@@ -19,10 +19,8 @@ entity_types: { ... }
 relationships: [ ... ]
 named_queries: { ... }
 constraints: [ ... ]
-ingestion: { ... }
 
 # Governed workflow sections (all optional)
-integrations: { ... }
 quality_checks: [ ... ]
 feedback_profiles: { ... }
 outcome_profiles: { ... }
@@ -46,8 +44,6 @@ tests: [ ... ]
 | `relationships` | list | no | `[]` | Relationship definitions |
 | `named_queries` | dict | no | `{}` | Declarative query definitions |
 | `constraints` | list | no | `[]` | Validation rules |
-| `ingestion` | dict | no | `{}` | Data ingestion mappings (deprecated — use workflows instead) |
-| `integrations` | dict | no | `{}` | Optional metadata catalog for governed proposal signal labels |
 | `quality_checks` | list | no | `[]` | Evaluate-time graph quality checks |
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
 | `outcome_profiles` | dict | no | `{}` | Structured outcome vocabularies for trust calibration |
@@ -97,7 +93,7 @@ relationships:
 | Metadata | `name`, `description` | Overlay overrides base |
 | Safe lists | `constraints`, `quality_checks`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
-| Keyed maps | `entity_types`, `named_queries`, `enums`, `ingestion`, `integrations`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
+| Keyed maps | `entity_types`, `named_queries`, `enums`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
 
 When `extends` is set, `entity_types` may be empty — the base provides them.
@@ -106,8 +102,8 @@ When `extends` is set, `entity_types` may be empty — the base provides them.
 
 `kind` controls whether the config is a reusable reference ontology or an operational world model.
 
-- `ontology`: reference taxonomy/model only. It may define entities, relationships, queries, constraints, and other static schema, but it may not define ingestion mappings, contracts, artifacts, providers, workflows, or workflow tests.
-- `world_model`: operational model. It can ingest local/company data, run workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
+- `ontology`: schema-only reference taxonomy/model. It may define entities, relationships, queries, constraints, and other static schema, but it may not define contracts, artifacts, providers, workflows, or workflow tests.
+- `world_model`: operational model. It can load local/company data through workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
 
 Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
 
@@ -198,13 +194,13 @@ A list of relationship definitions connecting entity types.
 
 ```yaml
 relationships:
-  # Deterministic relationship — no matching config needed
+  # Deterministic relationship — no proposal policy needed
   - name: product_from_vendor
     description: Deterministic product-to-vendor mapping from CPE structure.
     from: Product
     to: Vendor
 
-  # Governed judgment relationship — uses matching + integrations
+  # Governed judgment relationship — uses proposal_policy + signals
   - name: asset_affected_by_vulnerability
     description: Accepted judgment that an asset is actually affected.
     from: Asset
@@ -212,8 +208,8 @@ relationships:
     properties:
       installed_version: {}
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         product_version_evidence:
           role: required
           always_review_on_unsure: true
@@ -233,21 +229,22 @@ relationships:
 | `description` | string | no | `null` | Human-readable description |
 | `inverse` | string | no | `null` | Name for the reverse traversal direction |
 | `is_hierarchy` | bool | no | `false` | Mark as a hierarchical relationship |
-| `matching` | MatchingConfig | no | `null` | Governed proposal policy (see [matching](#matching)) |
+| `proposal_policy` | ProposalPolicyConfig | no | `null` | Governed proposal policy (see [proposal_policy](#proposal_policy)) |
+| `proposal_identity` | string | no | `"thesis_signature"` | `"thesis_signature"` groups trust by proposal thesis; `"relationship_tuple"` groups trust by edge tuple and requires `proposal_policy` |
 
 **Notes:**
 - `from` and `to` must reference entity type names defined in `entity_types`.
 - Edge `properties` use the same `PropertySchema` as entity properties.
 - `inverse` enables traversing the relationship in reverse by name.
-- Relationships with `matching` are **intended to be governed** — edges should be created through the proposal/group resolution flow rather than direct ingestion. The runtime does not currently enforce this; raw `add_relationship` calls will still succeed. The `matching` config controls auto-resolution behavior when proposals are used.
+- Relationships with `proposal_policy` are intended to be governed: edges should be created through the proposal/group resolution flow when they are inferred, classified, or otherwise judgment-bearing. Raw `add_relationship` calls remain available for explicit deterministic facts.
 
-### matching
+### proposal_policy
 
-The `matching` block on a relationship defines how candidate group proposals are evaluated and auto-resolved. It connects relationship types to the governed proposal pipeline.
+The `proposal_policy` block on a relationship defines how candidate group proposals are evaluated and auto-resolved. It connects relationship types to the governed proposal pipeline.
 
 ```yaml
-matching:
-  integrations:
+proposal_policy:
+  signals:
     product_version_evidence:
       role: required
       always_review_on_unsure: true
@@ -260,21 +257,21 @@ matching:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `integrations` | dict[str, IntegrationConfig] | `{}` | Per-signal guardrails keyed by integration/signal label. If the optional top-level `integrations` catalog is non-empty, keys must resolve there; otherwise labels are open. |
+| `signals` | dict[str, SignalPolicyConfig] | `{}` | Per-signal-source guardrails keyed by the labels emitted from workflow `map_signals` steps |
 | `auto_resolve_when` | string | `"all_support"` | `"all_support"` or `"no_contradict"` — when to auto-resolve proposals |
 | `auto_resolve_requires_prior_trust` | string | `"trusted_only"` | `"trusted_only"` or `"trusted_or_watch"` — trust level required for auto-resolution |
 | `max_group_size` | int | `1000` | Maximum candidates per group proposal |
 
-**IntegrationConfig** (per-integration within `matching.integrations`):
+**SignalPolicyConfig** (per signal source within `proposal_policy.signals`):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `role` | string | `"required"` | `"blocking"`, `"required"`, or `"advisory"` — how the signal affects resolution |
-| `always_review_on_unsure` | bool | `false` | Force manual review when this integration returns `unsure` |
-| `note` | string | `""` | Human-readable note about this integration's role |
+| `always_review_on_unsure` | bool | `false` | Force manual review when this signal source returns `unsure` |
+| `note` | string | `""` | Human-readable note about this signal source's role |
 
 **Role semantics:**
-- `blocking`: A `contradict` signal from this integration blocks auto-resolution entirely.
+- `blocking`: A `contradict` signal from this source blocks auto-resolution entirely.
 - `required`: The signal is factored into the auto-resolve decision; `unsure` may trigger review.
 - `advisory`: The signal is recorded but does not affect auto-resolution.
 
@@ -376,84 +373,6 @@ RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
 **Examples:**
 - `replaces.FROM.category == replaces.TO.category` — flags any `replaces` edge where the source and target parts have different categories.
 - `replaces.FROM.priority > replaces.TO.priority` — flags any `replaces` edge where the source priority does not exceed the target priority.
-
----
-
-## ingestion
-
-> **Deprecation notice:** The `ingestion` section is being deprecated. Workflows with `make_entities` / `make_relationships` / `apply_entities` / `apply_relationships` steps are the preferred path for loading data — they produce receipts, support canonical snapshots, and compose with the governed proposal flow. New configs should use workflows instead of ingestion mappings. Existing ingestion mappings will continue to work but will be removed in a future release.
-
-A dict of named mappings that tell Core how to load CSV/JSON data into entities and relationships.
-
-```yaml
-ingestion:
-  vehicles:
-    entity_type: Vehicle
-    file_pattern: "vehicles*.csv"
-    id_column: vehicle_id
-
-  parts:
-    entity_type: Part
-    file_pattern: "parts*.csv"
-    id_column: part_number
-
-  fitments:
-    relationship_type: fits
-    file_pattern: "fitments*.csv"
-    from_column: part_number
-    to_column: vehicle_id
-```
-
-### IngestionMapping
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `description` | string | no | `null` | Human-readable description of what data this mapping expects |
-| `entity_type` | string | conditional | `null` | Entity type to ingest (mutually exclusive with `relationship_type`) |
-| `relationship_type` | string | conditional | `null` | Relationship type to ingest (mutually exclusive with `entity_type`) |
-| `file_pattern` | string | no | `null` | Glob pattern for matching data files |
-| `id_column` | string | conditional | `null` | Column containing entity IDs (required for entity mappings) |
-| `from_column` | string | conditional | `null` | Column containing source entity IDs (required for relationship mappings) |
-| `to_column` | string | conditional | `null` | Column containing target entity IDs (required for relationship mappings) |
-| `column_map` | dict | no | `{}` | Rename CSV columns to property names: `{csv_column: property_name}` |
-
-**Rules:**
-- Exactly one of `entity_type` or `relationship_type` must be set.
-- Entity mappings require `id_column`.
-- Relationship mappings require both `from_column` and `to_column`.
-- `column_map` renames CSV columns to match property names in the schema.
-- Columns not in `column_map` map by name if they match a schema property.
-
----
-
-## integrations
-
-Optional global integration definitions that document external signal sources for governed proposals. This catalog is metadata and validation aid only; relationship-level `matching.integrations` is the behavior-bearing governance policy.
-
-Most configs can omit the top-level `integrations` section and use labels directly in `matching.integrations`. If the catalog is present and non-empty, Cruxible validates that every relationship-level integration key resolves to a catalog entry.
-
-```yaml
-integrations:
-  product_version_evidence:
-    kind: product_version_match
-    contract: ProductVersionSignal
-
-  scanner_evidence:
-    kind: scanner_presence
-    notes: "Advisory signal from vulnerability scanner findings"
-```
-
-### IntegrationSpec
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `kind` | string | **yes** | — | Integration kind identifier (e.g., `product_version_match`, `engineering_review`) |
-| `contract` | string | no | `null` | Optional named contract reference documenting the integration's input/output |
-| `notes` | string | no | `""` | Human-readable notes |
-
-**Convention:** Integration output is a tri-state signal: `support`, `unsure`, or `contradict`. The contract should document this as `output: support|unsure|contradict`.
-
-**Validation:** An empty top-level catalog leaves relationship-level signal labels open. A non-empty catalog enables strict cross-reference validation.
 
 ---
 
@@ -972,7 +891,7 @@ Each step must define exactly one of these operations:
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
 | `apply_relationships` | Apply a built relationship set to graph state | `apply_relationships: {relationships_from}`, `as` |
 | `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
-| `map_signals` | Convert provider output to tri-state integration signals | `map_signals: {integration, items, from_id, to_id, score/enum}`, `as` |
+| `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, score/enum}`, `as` |
 | `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from}`, `as` |
 
 ### Step Reference Syntax
@@ -1021,7 +940,7 @@ ranks, and ties keep the earlier item.
 
 Common providers and step types have different jobs: step types are
 engine-owned deterministic workflow/dataflow mechanics, while common providers
-remain reusable but opaque adapters, external integrations, model calls, or
+remain reusable but opaque adapters, external services, model calls, or
 domain-policy modules.
 
 ### Governed Proposal Steps
@@ -1029,10 +948,10 @@ domain-policy modules.
 For workflows that produce governed proposals (fuzzy matching, judgment calls), the three-step pattern is:
 
 1. **`make_candidates`** — build candidate (from, to) pairs with properties
-2. **`map_signals`** — convert provider scores/enums to tri-state signals per integration
+2. **`map_signals`** — convert provider scores/enums to tri-state signals per signal source
 3. **`propose_relationship_group`** — assemble candidates + signals into a group proposal
 
-The group then enters the resolution lifecycle (auto-resolve or manual review) based on the relationship's `matching` config.
+The group then enters the resolution lifecycle (auto-resolve or manual review) based on the relationship's `proposal_policy` config.
 
 **map_signals mapping modes** (exactly one required):
 
@@ -1132,8 +1051,8 @@ relationships:
     properties:
       installed_version: {}
       rationale: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         product_version_evidence:
           role: required
           always_review_on_unsure: true
@@ -1159,24 +1078,9 @@ named_queries:
       - relationship: asset_affected_by_vulnerability
         direction: outgoing
 
-ingestion:
-  assets:
-    description: Internal asset inventory import from CMDB.
-    entity_type: Asset
-    id_column: asset_id
-    column_map:
-      asset_id: asset_id
-      hostname: hostname
-      criticality: criticality
-      environment: environment
-      internet_exposed: internet_exposed
-
-  asset_owned_by_edges:
-    description: Asset ownership mapping import.
-    relationship_type: asset_owned_by
-    from_column: asset_id
-    to_column: owner_id
+# Operational configs load local state through workflows with providers,
+# dataflow steps, make_entities/make_relationships, and apply_* steps.
 
 ```
 
-See also the reference layer config (`kits/kev-reference/config.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks. Relationship-level `matching.integrations` is enough for governed proposal policy; a top-level `integrations` catalog is optional metadata.
+See also the reference layer config (`kits/kev-reference/config.yaml`) for a complete example with workflows, providers, contracts, artifacts, and quality checks. Relationship-level `proposal_policy.signals` defines governed proposal policy.

@@ -16,18 +16,16 @@ from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
     EnumSchema,
-    IngestionMapping,
-    IntegrationGuardrailSchema,
-    IntegrationSchema,
     JsonContentQualityCheck,
-    MatchingSchema,
     NamedQuerySchema,
     PropertyQualityCheck,
     PropertySchema,
+    ProposalPolicySchema,
     ProviderArtifactSchema,
     ProviderSchema,
     RelatedExclusionSpec,
     RelationshipSchema,
+    SignalPolicySchema,
     TraversalStep,
     UniquenessQualityCheck,
     WorkflowSchema,
@@ -179,7 +177,7 @@ class TestRelationshipSchema:
         assert rel.cardinality == "many_to_many"
         assert rel.properties == {}
         assert rel.reverse_name is None
-        assert rel.proposal_identity == "signature"
+        assert rel.proposal_identity == "thesis_signature"
 
     def test_relationship_properties_default_optional_and_string(self):
         rel = RelationshipSchema(
@@ -206,7 +204,7 @@ class TestRelationshipSchema:
             name="r",
             from_entity="A",
             to_entity="B",
-            matching=MatchingSchema(integrations={}),
+            proposal_policy=ProposalPolicySchema(signals={}),
             proposal_identity="relationship_tuple",
         )
         assert rel.proposal_identity == "relationship_tuple"
@@ -716,7 +714,7 @@ class TestWorkflowSchema:
             WorkflowStepSchema(
                 id="catalog_signals",
                 map_signals={
-                    "integration": "catalog",
+                    "signal_source": "catalog",
                     "items": "$steps.rows.items",
                     "from_id": "$input.campaign_id",
                     "to_id": "$item.product_sku",
@@ -787,62 +785,6 @@ class TestWorkflowTests:
         assert test_case.expect.required_providers == []
 
 
-class TestIngestionMapping:
-    def test_entity_mapping(self):
-        m = IngestionMapping(entity_type="Part", id_column="part_number")
-        assert m.is_entity is True
-        assert m.is_relationship is False
-
-    def test_relationship_mapping(self):
-        m = IngestionMapping(
-            relationship_type="fits",
-            from_column="part_number",
-            to_column="vehicle_id",
-        )
-        assert m.is_entity is False
-        assert m.is_relationship is True
-
-    def test_neither_set_fails(self):
-        with pytest.raises(ValidationError, match="Exactly one"):
-            IngestionMapping()
-
-    def test_both_set_fails(self):
-        with pytest.raises(ValidationError, match="Exactly one"):
-            IngestionMapping(
-                entity_type="Part",
-                relationship_type="fits",
-                id_column="id",
-                from_column="a",
-                to_column="b",
-            )
-
-    def test_entity_without_id_column_fails(self):
-        with pytest.raises(ValidationError, match="id_column"):
-            IngestionMapping(entity_type="Part")
-
-    def test_relationship_without_columns_fails(self):
-        with pytest.raises(ValidationError, match="from_column"):
-            IngestionMapping(relationship_type="fits")
-
-    def test_column_map(self):
-        m = IngestionMapping(
-            entity_type="Part",
-            id_column="pn",
-            column_map={"part_name": "name", "cat": "category"},
-        )
-        assert m.column_map["part_name"] == "name"
-
-    def test_description(self):
-        m = IngestionMapping(
-            description="CSV of SDN entities with sdn_id, name, country columns",
-            entity_type="SDNEntity",
-            id_column="sdn_id",
-        )
-        assert m.description == "CSV of SDN entities with sdn_id, name, country columns"
-        dumped = m.model_dump(exclude_none=True)
-        assert dumped["description"] == m.description
-
-
 class TestCoreConfig:
     def test_minimal_config(self):
         config = CoreConfig(
@@ -859,7 +801,6 @@ class TestCoreConfig:
         assert config.kind == "world_model"
         assert config.named_queries == {}
         assert config.constraints == []
-        assert config.ingestion == {}
 
     def test_get_relationship(self):
         config = CoreConfig(
@@ -920,17 +861,40 @@ class TestCoreConfig:
         assert config.get_entity_type("Thing") is not None
         assert config.get_entity_type("Missing") is None
 
-    def test_integrations_default_empty(self):
-        config = CoreConfig(
-            name="test",
-            entity_types={
-                "A": EntityTypeSchema(
-                    properties={"id": PropertySchema(type="string", primary_key=True)}
-                ),
-            },
-            relationships=[],
-        )
-        assert config.integrations == {}
+    def test_removed_top_level_integrations_rejected(self):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            CoreConfig(
+                name="test",
+                entity_types={
+                    "A": EntityTypeSchema(
+                        properties={"id": PropertySchema(type="string", primary_key=True)}
+                    ),
+                },
+                relationships=[],
+                integrations={},
+            )
+
+    def test_removed_top_level_ingestion_rejected(self):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            CoreConfig(
+                name="test",
+                entity_types={
+                    "A": EntityTypeSchema(
+                        properties={"id": PropertySchema(type="string", primary_key=True)}
+                    ),
+                },
+                relationships=[],
+                ingestion={},
+            )
+
+    def test_removed_relationship_matching_rejected(self):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            RelationshipSchema(
+                name="links",
+                from_entity="A",
+                to_entity="B",
+                matching={},
+            )
 
     def test_execution_sections_default_empty(self):
         config = CoreConfig(
@@ -1016,145 +980,66 @@ class TestCoreConfig:
 
 
 # ---------------------------------------------------------------------------
-# IntegrationSchema + IntegrationGuardrailSchema + MatchingSchema
+# SignalPolicySchema + ProposalPolicySchema
 # ---------------------------------------------------------------------------
 
 
-class TestIntegrationSchema:
-    def test_basic(self):
-        spec = IntegrationSchema(
-            kind="vector_similarity",
-            contract="embedding_contract",
-            notes="semantic similarity",
-        )
-        assert spec.kind == "vector_similarity"
-        assert spec.contract == "embedding_contract"
-
+class TestSignalPolicySchema:
     def test_defaults(self):
-        spec = IntegrationSchema(kind="test")
-        assert spec.contract is None
-        assert spec.notes == ""
-
-
-class TestIntegrationGuardrailSchema:
-    def test_defaults(self):
-        cfg = IntegrationGuardrailSchema()
+        cfg = SignalPolicySchema()
         assert cfg.role == "required"
         assert cfg.always_review_on_unsure is False
         assert cfg.note == ""
 
     def test_all_roles(self):
         for role in ("blocking", "required", "advisory"):
-            cfg = IntegrationGuardrailSchema(role=role)
+            cfg = SignalPolicySchema(role=role)
             assert cfg.role == role
 
 
-class TestMatchingSchema:
+class TestProposalPolicySchema:
     def test_defaults(self):
-        cfg = MatchingSchema()
-        assert cfg.integrations == {}
+        cfg = ProposalPolicySchema()
+        assert cfg.signals == {}
         assert cfg.auto_resolve_when == "all_support"
         assert cfg.auto_resolve_requires_prior_trust == "trusted_only"
         assert cfg.max_group_size == 1000
 
     def test_full(self):
-        cfg = MatchingSchema(
-            integrations={
-                "bolt_check": IntegrationGuardrailSchema(role="blocking"),
-                "style_v1": IntegrationGuardrailSchema(role="advisory"),
+        cfg = ProposalPolicySchema(
+            signals={
+                "bolt_check": SignalPolicySchema(role="blocking"),
+                "style_v1": SignalPolicySchema(role="advisory"),
             },
             auto_resolve_when="no_contradict",
             auto_resolve_requires_prior_trust="trusted_or_watch",
             max_group_size=200,
         )
-        assert len(cfg.integrations) == 2
-        assert cfg.integrations["bolt_check"].role == "blocking"
+        assert len(cfg.signals) == 2
+        assert cfg.signals["bolt_check"].role == "blocking"
 
 
-class TestRelationshipSchemaMatching:
-    def test_matching_default_none(self):
+class TestRelationshipSchemaProposalPolicy:
+    def test_proposal_policy_default_none(self):
         rel = RelationshipSchema(name="r", from_entity="A", to_entity="B")
-        assert rel.matching is None
+        assert rel.proposal_policy is None
 
-    def test_matching_section(self):
+    def test_proposal_policy_section(self):
         rel = RelationshipSchema(
             name="fits",
             from_entity="Part",
             to_entity="Vehicle",
-            matching=MatchingSchema(
-                integrations={"bolt": IntegrationGuardrailSchema(role="blocking")},
+            proposal_policy=ProposalPolicySchema(
+                signals={"bolt": SignalPolicySchema(role="blocking")},
                 max_group_size=100,
             ),
         )
-        assert rel.matching is not None
-        assert rel.matching.max_group_size == 100
+        assert rel.proposal_policy is not None
+        assert rel.proposal_policy.max_group_size == 100
 
 
-class TestStrictMixedMode:
-    """Non-empty global registry requires all matching.integrations keys to resolve."""
-
-    def _config(self, *, integrations=None, matching=None):
-        return CoreConfig(
-            name="test",
-            entity_types={
-                "A": EntityTypeSchema(
-                    properties={"id": PropertySchema(type="string", primary_key=True)}
-                ),
-                "B": EntityTypeSchema(
-                    properties={"id": PropertySchema(type="string", primary_key=True)}
-                ),
-            },
-            relationships=[
-                RelationshipSchema(
-                    name="links",
-                    from_entity="A",
-                    to_entity="B",
-                    matching=matching,
-                ),
-            ],
-            integrations=integrations or {},
-        )
-
-    def test_empty_registry_bare_labels_ok(self):
-        """Empty global registry = open mode, bare labels allowed."""
-        config = self._config(
-            matching=MatchingSchema(
-                integrations={"some_label": IntegrationGuardrailSchema(role="blocking")}
-            ),
-        )
-        # Should not raise
-        validate_config(config)
-
-    def test_nonempty_registry_all_resolved_ok(self):
-        config = self._config(
-            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
-            matching=MatchingSchema(
-                integrations={"bolt_v1": IntegrationGuardrailSchema(role="blocking")}
-            ),
-        )
-        validate_config(config)
-
-    def test_nonempty_registry_unresolved_key_error(self):
-        config = self._config(
-            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
-            matching=MatchingSchema(
-                integrations={"unknown": IntegrationGuardrailSchema(role="blocking")}
-            ),
-        )
-        with pytest.raises(ConfigError, match="not found in global integrations"):
-            validate_config(config)
-
-    def test_no_matching_section_ok(self):
-        """Matching=None is always fine."""
-        config = self._config(
-            integrations={"bolt_v1": IntegrationSchema(kind="physical")},
-            matching=None,
-        )
-        validate_config(config)
-
-
-class TestMatchingSchemaRoundTrip:
-    """Load -> save -> load preserves integrations + matching."""
+class TestProposalPolicySchemaRoundTrip:
+    """Load -> save -> load preserves relationship-local proposal policy."""
 
     def test_round_trip(self, tmp_path):
         yaml_str = """\
@@ -1171,22 +1056,12 @@ entity_types:
       id:
         type: string
         primary_key: true
-contracts:
-  embedding_io:
-    fields:
-      model_ref:
-        type: string
-integrations:
-  cosine_v1:
-    kind: vector_similarity
-    contract: embedding_io
-    notes: semantic similarity
 relationships:
   - name: fits
     from: Shoe
     to: Outfit
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         cosine_v1:
           role: blocking
           always_review_on_unsure: true
@@ -1195,13 +1070,12 @@ relationships:
       max_group_size: 200
 """
         config = load_config_from_string(yaml_str)
-        assert config.integrations["cosine_v1"].kind == "vector_similarity"
         rel = config.get_relationship("fits")
         assert rel is not None
-        assert rel.matching is not None
-        assert rel.matching.integrations["cosine_v1"].role == "blocking"
-        assert rel.matching.auto_resolve_when == "no_contradict"
-        assert rel.matching.max_group_size == 200
+        assert rel.proposal_policy is not None
+        assert rel.proposal_policy.signals["cosine_v1"].role == "blocking"
+        assert rel.proposal_policy.auto_resolve_when == "no_contradict"
+        assert rel.proposal_policy.max_group_size == 200
 
         # Save and reload
         path = tmp_path / "config.yaml"
@@ -1209,10 +1083,9 @@ relationships:
         config2 = load_config_from_string(path.read_text())
         rel2 = config2.get_relationship("fits")
         assert rel2 is not None
-        assert rel2.matching is not None
-        assert rel2.matching.integrations["cosine_v1"].role == "blocking"
-        assert rel2.matching.integrations["cosine_v1"].always_review_on_unsure is True
-        assert config2.integrations["cosine_v1"].contract == "embedding_io"
+        assert rel2.proposal_policy is not None
+        assert rel2.proposal_policy.signals["cosine_v1"].role == "blocking"
+        assert rel2.proposal_policy.signals["cosine_v1"].always_review_on_unsure is True
 
 
 class TestQualityCheckValidation:

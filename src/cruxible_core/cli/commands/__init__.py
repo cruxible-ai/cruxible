@@ -21,12 +21,10 @@ if TYPE_CHECKING:
     feedback_batch_cmd: Any
     feedback_cmd: Any
     feedback_profile_cmd: Any
-    find_candidates_cmd: Any
     clone_cmd: Any
     get_entity_cmd: Any
     get_relationship_cmd: Any
     group_group: Any
-    ingest: Any
     init: Any
     inspect_group: Any
     lint_cmd: Any
@@ -80,7 +78,6 @@ else:
         analyze_outcomes_cmd,
         evaluate,
         explain,
-        find_candidates_cmd,
         get_entity_cmd,
         get_relationship_cmd,
         inspect_group,
@@ -95,7 +92,6 @@ else:
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
         clone_cmd,
-        ingest,
         init,
         lock_cmd,
         plan_cmd,
@@ -124,12 +120,10 @@ __all__ = [
     "feedback_batch_cmd",
     "feedback_cmd",
     "feedback_profile_cmd",
-    "find_candidates_cmd",
     "clone_cmd",
     "get_entity_cmd",
     "get_relationship_cmd",
     "group_group",
-    "ingest",
     "init",
     "inspect_group",
     "lint_cmd",

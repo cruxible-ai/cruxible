@@ -19,7 +19,6 @@ FeedbackSource = Literal["human", "agent"]
 OutcomeValue = Literal["correct", "incorrect", "partial", "unknown"]
 OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
-CandidateStrategy = Literal["property_match", "shared_neighbors"]
 GroupAction = Literal["approve", "reject"]
 GroupResolvedBy = Literal["human", "agent"]
 GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved", "suppressed"]
@@ -50,7 +49,7 @@ class EntityInput(BaseModel):
 
 
 class SignalInput(BaseModel):
-    integration: str
+    signal_source: str
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
 
@@ -131,15 +130,6 @@ class ValidateResult(BaseModel):
     warnings: list[str]
 
 
-class IngestResult(BaseModel):
-    records_ingested: int
-    records_updated: int = 0
-    mapping: str
-    entity_type: str | None
-    relationship_type: str | None
-    receipt_id: str | None = None
-
-
 class QueryToolResult(BaseModel):
     results: list[dict[str, Any]]
     receipt_id: str | None
@@ -196,11 +186,6 @@ class ListResult(BaseModel):
 class TraceListResult(BaseModel):
     traces: list[dict[str, Any]] = Field(default_factory=list)
     count: int
-
-
-class CandidatesResult(BaseModel):
-    candidates: list[dict[str, Any]]
-    total: int
 
 
 class EvaluateResult(BaseModel):

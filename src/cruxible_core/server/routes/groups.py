@@ -29,7 +29,7 @@ async def propose_group(
         thesis_text=req.thesis_text,
         thesis_facts=req.thesis_facts,
         analysis_state=req.analysis_state,
-        integrations_used=req.integrations_used,
+        signal_sources_used=req.signal_sources_used,
         proposed_by=req.proposed_by,
         suggested_priority=req.suggested_priority,
     )

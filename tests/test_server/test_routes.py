@@ -155,6 +155,84 @@ def _init_instance(
     return payload["instance_id"]
 
 
+def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
+    entities = [
+        {
+            "entity_type": "Vehicle",
+            "entity_id": "V-2024-CIVIC-EX",
+            "properties": {
+                "vehicle_id": "V-2024-CIVIC-EX",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        },
+        {
+            "entity_type": "Vehicle",
+            "entity_id": "V-2024-ACCORD-SPORT",
+            "properties": {
+                "vehicle_id": "V-2024-ACCORD-SPORT",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Accord",
+            },
+        },
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-1001",
+            "properties": {
+                "part_number": "BP-1001",
+                "name": "Ceramic Brake Pads",
+                "category": "brakes",
+                "price": 49.99,
+            },
+        },
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-1002",
+            "properties": {
+                "part_number": "BP-1002",
+                "name": "Performance Brake Pads",
+                "category": "brakes",
+                "price": 89.99,
+            },
+        },
+    ]
+    relationships = [
+        {
+            "from_type": "Part",
+            "from_id": "BP-1001",
+            "relationship": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-CIVIC-EX",
+            "properties": {"verified": True, "source": "catalog"},
+        },
+        {
+            "from_type": "Part",
+            "from_id": "BP-1001",
+            "relationship": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-ACCORD-SPORT",
+            "properties": {"verified": True, "source": "catalog"},
+        },
+        {
+            "from_type": "Part",
+            "from_id": "BP-1002",
+            "relationship": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-CIVIC-EX",
+            "properties": {"verified": True, "source": "user_report"},
+        },
+    ]
+    response = client.post(f"/api/v1/{instance_id}/entities", json={"entities": entities})
+    assert response.status_code == 200
+    response = client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={"relationships": relationships},
+    )
+    assert response.status_code == 200
+
+
 def test_health_endpoint_returns_ok(app_client: TestClient):
     response = app_client.get("/health")
     assert response.status_code == 200
@@ -216,27 +294,12 @@ def test_optional_server_token_gates_entire_daemon(
     assert allowed.json()["valid"] is True
 
 
-def test_init_then_ingest_then_query_round_trip(
+def test_init_then_seed_then_query_round_trip(
     app_client: TestClient,
     server_project: Path,
-    vehicles_csv: Path,
-    parts_csv: Path,
-    fitments_csv: Path,
 ):
     instance_id = _init_instance(app_client, server_project)
-
-    for mapping, csv_path in [
-        ("vehicles", vehicles_csv),
-        ("parts", parts_csv),
-        ("fitments", fitments_csv),
-    ]:
-        with csv_path.open("rb") as handle:
-            response = app_client.post(
-                f"/api/v1/{instance_id}/ingest",
-                data={"mapping_name": mapping},
-                files={"file": (csv_path.name, handle, "text/csv")},
-            )
-        assert response.status_code == 200
+    _seed_car_parts_state(app_client, instance_id)
 
     response = app_client.post(
         f"/api/v1/{instance_id}/query",
@@ -267,24 +330,9 @@ def test_init_then_ingest_then_query_round_trip(
 def test_decision_record_routes_and_query_context_round_trip(
     app_client: TestClient,
     server_project: Path,
-    vehicles_csv: Path,
-    parts_csv: Path,
-    fitments_csv: Path,
 ):
     instance_id = _init_instance(app_client, server_project)
-
-    for mapping, csv_path in [
-        ("vehicles", vehicles_csv),
-        ("parts", parts_csv),
-        ("fitments", fitments_csv),
-    ]:
-        with csv_path.open("rb") as handle:
-            response = app_client.post(
-                f"/api/v1/{instance_id}/ingest",
-                data={"mapping_name": mapping},
-                files={"file": (csv_path.name, handle, "text/csv")},
-            )
-        assert response.status_code == 200
+    _seed_car_parts_state(app_client, instance_id)
 
     created = app_client.post(
         f"/api/v1/{instance_id}/decision-records",
@@ -359,24 +407,9 @@ def test_decision_record_routes_and_query_context_round_trip(
 def test_stats_and_inspect_routes_return_expected_shapes(
     app_client: TestClient,
     server_project: Path,
-    vehicles_csv: Path,
-    parts_csv: Path,
-    fitments_csv: Path,
 ):
     instance_id = _init_instance(app_client, server_project)
-
-    for mapping, csv_path in [
-        ("vehicles", vehicles_csv),
-        ("parts", parts_csv),
-        ("fitments", fitments_csv),
-    ]:
-        with csv_path.open("rb") as handle:
-            response = app_client.post(
-                f"/api/v1/{instance_id}/ingest",
-                data={"mapping_name": mapping},
-                files={"file": (csv_path.name, handle, "text/csv")},
-            )
-        assert response.status_code == 200
+    _seed_car_parts_state(app_client, instance_id)
 
     stats = app_client.get(f"/api/v1/{instance_id}/stats")
     assert stats.status_code == 200
@@ -836,7 +869,6 @@ def test_server_restart_can_reload_existing_instance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
-    vehicles_csv: Path,
 ):
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     reset_permissions()
@@ -845,13 +877,7 @@ def test_server_restart_can_reload_existing_instance(
     get_manager().clear()
     client1 = TestClient(create_app())
     instance_id = _init_instance(client1, server_project)
-    with vehicles_csv.open("rb") as handle:
-        response = client1.post(
-            f"/api/v1/{instance_id}/ingest",
-            data={"mapping_name": "vehicles"},
-            files={"file": (vehicles_csv.name, handle, "text/csv")},
-        )
-    assert response.status_code == 200
+    _seed_car_parts_state(client1, instance_id)
 
     get_manager().clear()
     reset_registry()
@@ -1271,8 +1297,8 @@ def test_workflow_propose_route_returns_suppressed_members(
     proposal_workflow_config_yaml: str,
 ):
     tuple_config_yaml = proposal_workflow_config_yaml.replace(
-        "    matching:\n",
-        "    proposal_identity: relationship_tuple\n    matching:\n",
+        "    proposal_policy:\n",
+        "    proposal_identity: relationship_tuple\n    proposal_policy:\n",
         1,
     )
     instance_id = _init_instance(

@@ -194,12 +194,12 @@ class TestSQLiteStore:
 
     def test_count_filter_by_operation_type(self, store: SQLiteStore):
         b1 = ReceiptBuilder(query_name="q", parameters={})
-        b2 = ReceiptBuilder(operation_type="ingest", parameters={})
+        b2 = ReceiptBuilder(operation_type="add_entity", parameters={})
         b2.mark_committed()
         store.save_receipt(b1.build(results=[]))
         store.save_receipt(b2.build())
 
-        assert store.count_receipts(operation_type="ingest") == 1
+        assert store.count_receipts(operation_type="add_entity") == 1
         assert store.count_receipts(operation_type="query") == 1
 
     def test_combined_filters(self, store: SQLiteStore):

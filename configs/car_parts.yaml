@@ -115,18 +115,3 @@ constraints:
     rule: "replaces.from.category == replaces.to.category"
     severity: warning
     description: "Replacement parts should be in the same category"
-
-ingestion:
-  vehicles:
-    entity_type: Vehicle
-    file_pattern: "vehicles*.csv"
-    id_column: vehicle_id
-  parts:
-    entity_type: Part
-    file_pattern: "parts*.csv"
-    id_column: part_number
-  fitments:
-    relationship_type: fits
-    file_pattern: "fitments*.csv"
-    from_column: part_number
-    to_column: vehicle_id

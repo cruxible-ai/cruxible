@@ -12,11 +12,11 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.mcp.handlers import handle_query
 from cruxible_core.mcp.server import create_server
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service.mutations import service_ingest
 
 
 def call_tool(server, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -40,19 +40,68 @@ def server():
 
 
 @pytest.fixture
-def dev_graph_instance_id(
-    tmp_project: Path,
-    vehicles_csv: Path,
-    parts_csv: Path,
-    fitments_csv: Path,
-) -> str:
+def dev_graph_instance_id(tmp_project: Path) -> str:
     instance = CruxibleInstance.init(tmp_project, "config.yaml")
-    for mapping, path in [
-        ("vehicles", vehicles_csv),
-        ("parts", parts_csv),
-        ("fitments", fitments_csv),
-    ]:
-        service_ingest(instance, mapping, file_path=str(path))
+    graph = instance.load_graph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-2024-CIVIC-EX",
+            properties={
+                "vehicle_id": "V-2024-CIVIC-EX",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-2024-ACCORD-SPORT",
+            properties={
+                "vehicle_id": "V-2024-ACCORD-SPORT",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Accord",
+            },
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Part",
+            entity_id="BP-1001",
+            properties={"part_number": "BP-1001", "name": "Brake Pads", "category": "brakes"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Part",
+            entity_id="BP-1002",
+            properties={"part_number": "BP-1002", "name": "Rotor", "category": "brakes"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1001",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
+            properties={"verified": True},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1002",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
+            properties={"verified": True},
+        )
+    )
+    instance.save_graph(graph)
     return str(tmp_project)
 
 
@@ -242,22 +291,10 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
     assert schema["name"] == "car_parts_compatibility"
 
 
-def test_find_candidates_and_evaluate_work_locally_for_dev_instance(
+def test_evaluate_works_locally_for_dev_instance(
     server,
     dev_graph_instance_id: str,
 ) -> None:
-    candidates = call_tool(
-        server,
-        "cruxible_find_candidates",
-        {
-            "instance_id": dev_graph_instance_id,
-            "relationship_type": "replaces",
-            "strategy": "property_match",
-            "match_rules": [{"from_property": "category", "to_property": "category"}],
-        },
-    )
-    assert "candidates" in candidates
-
     evaluation = call_tool(
         server,
         "cruxible_evaluate",

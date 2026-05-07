@@ -172,8 +172,8 @@ relationships:
       reason:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         catalog:
           role: required
           always_review_on_unsure: true
@@ -199,11 +199,6 @@ contracts:
     fields:
       items:
         type: json
-
-integrations:
-  catalog:
-    kind: heuristic
-    contract: null
 
 providers:
   campaign_recommendations:
@@ -244,7 +239,7 @@ workflows:
         as: candidates
       - id: catalog_signals
         map_signals:
-          integration: catalog
+          signal_source: catalog
           items: $steps.recommendations.items
           from_id: $steps.campaign.results[0].entity_id
           to_id: $item.product_sku

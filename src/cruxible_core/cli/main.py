@@ -120,11 +120,9 @@ from cruxible_core.cli.commands import (  # noqa: E402
     feedback_batch_cmd,
     feedback_cmd,
     feedback_profile_cmd,
-    find_candidates_cmd,
     get_entity_cmd,
     get_relationship_cmd,
     group_group,
-    ingest,
     init,
     inspect_group,
     lint_cmd,
@@ -162,7 +160,6 @@ cli.add_command(test_cmd)  # type: ignore[has-type]
 cli.add_command(propose_cmd)  # type: ignore[has-type]
 cli.add_command(snapshot_group, "snapshot")  # type: ignore[has-type]
 cli.add_command(clone_cmd, "clone")  # type: ignore[has-type]
-cli.add_command(ingest)  # type: ignore[has-type]
 cli.add_command(query)  # type: ignore[has-type]
 cli.add_command(render_wiki_cmd, "render-wiki")  # type: ignore[has-type]
 cli.add_command(reload_config_cmd, "reload-config")  # type: ignore[has-type]
@@ -176,7 +173,6 @@ cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
 cli.add_command(outcome_profile_cmd, "outcome-profile")  # type: ignore[has-type]
 cli.add_command(analyze_outcomes_cmd, "analyze-outcomes")  # type: ignore[has-type]
 cli.add_command(list_group, "list")  # type: ignore[has-type]
-cli.add_command(find_candidates_cmd, "find-candidates")  # type: ignore[has-type]
 cli.add_command(schema)  # type: ignore[has-type]
 cli.add_command(stats_cmd, "stats")  # type: ignore[has-type]
 cli.add_command(sample)  # type: ignore[has-type]

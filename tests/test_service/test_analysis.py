@@ -1,4 +1,4 @@
-"""Tests for service layer validate, find_candidates, and evaluate functions."""
+"""Tests for service layer validate and evaluate functions."""
 
 from __future__ import annotations
 
@@ -17,14 +17,12 @@ from cruxible_core.config.schema import (
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember
-from cruxible_core.query.candidates import MatchRule
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_evaluate,
     service_feedback,
-    service_find_candidates,
     service_lint,
     service_outcome,
     service_propose_group,
@@ -167,70 +165,12 @@ constraints:
   - name: weird_rule
     rule: "some_unparseable_thing"
     severity: warning
-ingestion: {}
 """
         config_file = tmp_path / "constraints.yaml"
         config_file.write_text(yaml_with_constraint)
         result = service_validate(config_path=str(config_file))
         assert len(result.warnings) >= 1
         assert any("could not verify" in w for w in result.warnings)
-
-
-# ---------------------------------------------------------------------------
-# service_find_candidates
-# ---------------------------------------------------------------------------
-
-
-class TestFindCandidates:
-    def test_property_match(self, populated_instance: CruxibleInstance) -> None:
-        candidates = service_find_candidates(
-            populated_instance,
-            relationship_type="replaces",
-            strategy="property_match",
-            match_rules=[MatchRule(from_property="category", to_property="category")],
-            min_confidence=0.5,
-        )
-        # Both parts have category=brakes, and BP-1002->BP-1001 replaces exists,
-        # so we may or may not get candidates depending on existing edges
-        assert isinstance(candidates, list)
-
-    def test_shared_neighbors(self, populated_instance: CruxibleInstance) -> None:
-        candidates = service_find_candidates(
-            populated_instance,
-            relationship_type="replaces",
-            strategy="shared_neighbors",
-            via_relationship="fits",
-            min_overlap=0.1,
-            min_distinct_neighbors=1,
-        )
-        assert isinstance(candidates, list)
-
-    def test_bad_relationship(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(Exception):  # RelationshipNotFoundError
-            service_find_candidates(
-                populated_instance,
-                relationship_type="nonexistent",
-                strategy="property_match",
-                match_rules=[MatchRule(from_property="name", to_property="name")],
-            )
-
-    def test_invalid_strategy(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="Invalid strategy"):
-            service_find_candidates(
-                populated_instance,
-                relationship_type="replaces",
-                strategy="bogus",  # type: ignore[arg-type]
-            )
-
-    def test_invalid_min_neighbors(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(ConfigError, match="min_distinct_neighbors"):
-            service_find_candidates(
-                populated_instance,
-                relationship_type="replaces",
-                strategy="shared_neighbors",
-                via_relationship="fits",
-                min_distinct_neighbors=0,
-            )
 
 
 # ---------------------------------------------------------------------------

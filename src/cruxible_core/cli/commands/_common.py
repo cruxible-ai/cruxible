@@ -27,7 +27,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember
-from cruxible_core.query.candidates import CandidateMatch
 from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service import OperationContext, service_sample, service_schema
 
@@ -342,10 +341,6 @@ def _feedback_from_payload(items: list[dict[str, Any]]) -> list[FeedbackRecord]:
 
 def _outcomes_from_payload(items: list[dict[str, Any]]) -> list[OutcomeRecord]:
     return [OutcomeRecord.model_validate(item) for item in items]
-
-
-def _candidates_from_payload(items: list[dict[str, Any]]) -> list[CandidateMatch]:
-    return [CandidateMatch.model_validate(item) for item in items]
 
 
 def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:

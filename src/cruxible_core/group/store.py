@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
     thesis_text TEXT NOT NULL DEFAULT '',
     thesis_facts TEXT NOT NULL DEFAULT '{}',
     analysis_state TEXT NOT NULL DEFAULT '{}',
-    integrations_used TEXT NOT NULL DEFAULT '[]',
+    signal_sources_used TEXT NOT NULL DEFAULT '[]',
     proposed_by TEXT NOT NULL,
     member_count INTEGER NOT NULL DEFAULT 0,
     pending_version INTEGER NOT NULL DEFAULT 1,
@@ -119,6 +119,7 @@ class GroupStore(GroupStoreProtocol):
         }
         additions = [
             ("group_kind", "TEXT NOT NULL DEFAULT 'propose'"),
+            ("signal_sources_used", "TEXT NOT NULL DEFAULT '[]'"),
             ("pending_version", "INTEGER NOT NULL DEFAULT 1"),
             ("source_workflow_name", "TEXT"),
             ("source_workflow_receipt_id", "TEXT"),
@@ -250,7 +251,7 @@ class GroupStore(GroupStoreProtocol):
         self._conn.execute(
             "INSERT INTO candidate_groups "
             "(group_id, relationship_type, signature, status, group_kind, thesis_text, "
-            "thesis_facts, analysis_state, integrations_used, proposed_by, "
+            "thesis_facts, analysis_state, signal_sources_used, proposed_by, "
             "member_count, pending_version, review_priority, suggested_priority, "
             "source_workflow_name, source_workflow_receipt_id, source_trace_ids, "
             "source_step_ids, resolution_id, created_at) "
@@ -263,7 +264,7 @@ class GroupStore(GroupStoreProtocol):
             "thesis_text = excluded.thesis_text, "
             "thesis_facts = excluded.thesis_facts, "
             "analysis_state = excluded.analysis_state, "
-            "integrations_used = excluded.integrations_used, "
+            "signal_sources_used = excluded.signal_sources_used, "
             "proposed_by = excluded.proposed_by, "
             "member_count = excluded.member_count, "
             "pending_version = excluded.pending_version, "
@@ -284,7 +285,7 @@ class GroupStore(GroupStoreProtocol):
                 group.thesis_text,
                 json.dumps(group.thesis_facts),
                 json.dumps(group.analysis_state),
-                json.dumps(group.integrations_used),
+                json.dumps(group.signal_sources_used),
                 group.proposed_by,
                 group.member_count,
                 group.pending_version,
@@ -442,7 +443,7 @@ class GroupStore(GroupStoreProtocol):
             thesis_text=row["thesis_text"],
             thesis_facts=json.loads(row["thesis_facts"]),
             analysis_state=json.loads(row["analysis_state"]),
-            integrations_used=json.loads(row["integrations_used"]),
+            signal_sources_used=json.loads(row["signal_sources_used"]),
             proposed_by=row["proposed_by"],
             member_count=row["member_count"],
             pending_version=row["pending_version"],

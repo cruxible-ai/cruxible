@@ -1,4 +1,4 @@
-"""CLI commands for init, validate, workflows, snapshots, and ingest."""
+"""CLI commands for init, validate, workflows, and snapshots."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from cruxible_core.service import (
     service_apply_workflow,
     service_clone_snapshot,
     service_create_snapshot,
-    service_ingest,
     service_init,
     service_list_snapshots,
     service_lock,
@@ -701,23 +700,3 @@ def clone_cmd(snapshot_id: str, root_dir: str) -> None:
         f"Cloned snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
     )
 
-
-@click.command()
-@click.option("--mapping", required=True, help="Ingestion mapping name from config.")
-@click.option("--file", "file_path", required=True, type=click.Path(exists=True), help="Data file.")
-@handle_errors
-def ingest(mapping: str, file_path: str) -> None:
-    """Ingest data from a file using a named mapping."""
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.ingest(instance_id, mapping, file_path=file_path),
-        lambda instance: service_ingest(instance, mapping, file_path=file_path),
-        allow_local=False,
-        command_name="ingest",
-    )
-
-    parts = [f"{result.records_ingested} added"]
-    if result.records_updated:
-        parts.append(f"{result.records_updated} updated")
-    click.echo(f"Ingested {', '.join(parts)} via mapping '{mapping}'.")
-    if result.receipt_id:
-        click.echo(f"  Receipt: {result.receipt_id}")

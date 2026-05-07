@@ -367,7 +367,7 @@ def service_propose_workflow(
             thesis_facts=proposal_payload.thesis_facts,
             pending_refresh_mode=proposal_payload.pending_refresh_mode,
             analysis_state=proposal_payload.analysis_state,
-            integrations_used=proposal_payload.integrations_used,
+            signal_sources_used=proposal_payload.signal_sources_used,
             proposed_by=proposal_payload.proposed_by,
             suggested_priority=proposal_payload.suggested_priority,
             source_workflow_name=workflow_name,

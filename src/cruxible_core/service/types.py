@@ -82,16 +82,6 @@ class AddRelationshipResult:
 
 
 @dataclass
-class IngestResult:
-    records_ingested: int
-    records_updated: int
-    mapping: str
-    entity_type: str | None
-    relationship_type: str | None
-    receipt_id: str | None = None
-
-
-@dataclass
 class ValidateServiceResult:
     config: CoreConfig
     warnings: list[str]

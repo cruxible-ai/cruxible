@@ -200,7 +200,7 @@ def _map_signal_batch(
         )
         seen_pairs.add(key)
 
-    return SignalBatch(integration=spec.integration, signals=signals)
+    return SignalBatch(signal_source=spec.signal_source, signals=signals)
 
 
 def _build_relationship_group_proposal(
@@ -229,10 +229,10 @@ def _build_relationship_group_proposal(
         for candidate in candidate_set.candidates
     }
 
-    integrations_used: list[str] = []
+    signal_sources_used: list[str] = []
     for alias in spec.signals_from:
         signal_batch = SignalBatch.model_validate(step_outputs[alias])
-        integrations_used.append(signal_batch.integration)
+        signal_sources_used.append(signal_batch.signal_source)
         for signal in signal_batch.signals:
             key = (signal.from_id, signal.to_id)
             if key not in members_by_pair:
@@ -241,14 +241,17 @@ def _build_relationship_group_proposal(
                     f"{signal.from_id}->{signal.to_id}"
                 )
             member = members_by_pair[key]
-            if any(existing.integration == signal_batch.integration for existing in member.signals):
+            if any(
+                existing.signal_source == signal_batch.signal_source
+                for existing in member.signals
+            ):
                 raise QueryExecutionError(
-                    f"Workflow step '{step_id}' produced duplicate integration "
-                    f"'{signal_batch.integration}' for pair {signal.from_id}->{signal.to_id}"
+                    f"Workflow step '{step_id}' produced duplicate signal source "
+                    f"'{signal_batch.signal_source}' for pair {signal.from_id}->{signal.to_id}"
                 )
             member.signals.append(
                 CandidateSignal(
-                    integration=signal_batch.integration,
+                    signal_source=signal_batch.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
                 )
@@ -274,7 +277,7 @@ def _build_relationship_group_proposal(
                 input_payload,
                 step_outputs,
             ),
-            "integrations_used": integrations_used,
+            "signal_sources_used": signal_sources_used,
             "suggested_priority": resolve_value(
                 spec.suggested_priority,
                 input_payload,

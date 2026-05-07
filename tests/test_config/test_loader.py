@@ -20,7 +20,6 @@ class TestLoadConfig:
         assert len(config.relationships) == 2
         assert len(config.named_queries) == 3
         assert len(config.constraints) == 1
-        assert len(config.ingestion) == 3
 
     def test_load_from_string(self):
         yaml_str = """
@@ -102,15 +101,6 @@ relationships: []
         assert len(pfv.traversal) == 1
         assert pfv.traversal[0].relationship == "fits"
         assert pfv.traversal[0].direction == "incoming"
-
-    def test_car_parts_ingestion(self, configs_dir: Path):
-        config = load_config(configs_dir / "car_parts.yaml")
-
-        assert config.ingestion["vehicles"].is_entity
-        assert config.ingestion["vehicles"].entity_type == "Vehicle"
-        assert config.ingestion["fitments"].is_relationship
-        assert config.ingestion["fitments"].from_column == "part_number"
-
 
 class TestSaveConfig:
     def test_save_config_round_trip(self, configs_dir: Path, tmp_path: Path):

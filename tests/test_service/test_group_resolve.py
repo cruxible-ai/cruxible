@@ -28,11 +28,6 @@ version: "1.0"
 name: resolve_test
 description: For resolve_group tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -70,8 +65,8 @@ relationships:
       source:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
       auto_resolve_when: all_support
@@ -87,7 +82,6 @@ relationships:
         type: float
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -144,7 +138,7 @@ def _member(
         to_type="Vehicle",
         to_id=to_id,
         relationship_type="fits",
-        signals=[CandidateSignal(integration="check_v1", signal="support")],
+        signals=[CandidateSignal(signal_source="check_v1", signal="support")],
         properties={},
     )
 
@@ -269,7 +263,7 @@ class TestPerMemberValidation:
             to_type="Vehicle",
             to_id="V-1",
             relationship_type="fits",
-            signals=[CandidateSignal(integration="check_v1", signal="support")],
+            signals=[CandidateSignal(signal_source="check_v1", signal="support")],
         )
         group_id = _propose(instance, [_member("BP-1", "V-1"), bad_member])
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)

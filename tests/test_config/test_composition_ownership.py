@@ -76,7 +76,7 @@ relationships:
   - name: local_links_reference
     from: LocalThing
     to: ReferenceThing
-    matching: {}
+    proposal_policy: {}
 
 named_queries:
   local_lookup:

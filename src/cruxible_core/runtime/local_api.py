@@ -26,7 +26,6 @@ from cruxible_core.mcp.permissions import (
     check_permission,
     validate_root_dir,
 )
-from cruxible_core.query.candidates import MatchRule
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
@@ -51,7 +50,6 @@ from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,
     service_finalize_decision_record,
-    service_find_candidates,
     service_get_decision_record,
     service_get_entity,
     service_get_group,
@@ -61,7 +59,6 @@ from cruxible_core.service import (
     service_get_relationship_lineage,
     service_get_trace,
     service_group_status,
-    service_ingest,
     service_init,
     service_inspect_entity,
     service_inspect_view,
@@ -686,38 +683,6 @@ def _handle_clone_snapshot_governed(
     )
 
 
-def _handle_ingest_local(
-    instance_id: str,
-    mapping_name: str,
-    file_path: str | None = None,
-    data_csv: str | None = None,
-    data_json: str | list[dict[str, Any]] | None = None,
-    data_ndjson: str | None = None,
-    upload_id: str | None = None,
-) -> contracts.IngestResult:
-    """Ingest a data file or inline data into the graph."""
-    check_permission("cruxible_ingest", instance_id=instance_id)
-    instance = get_manager().get(instance_id)
-
-    result = service_ingest(
-        instance,
-        mapping_name,
-        file_path=file_path,
-        data_csv=data_csv,
-        data_json=data_json,
-        data_ndjson=data_ndjson,
-        upload_id=upload_id,
-    )
-    return contracts.IngestResult(
-        records_ingested=result.records_ingested,
-        records_updated=result.records_updated,
-        mapping=result.mapping,
-        entity_type=result.entity_type,
-        relationship_type=result.relationship_type,
-        receipt_id=result.receipt_id,
-    )
-
-
 def _handle_query_local(
     instance_id: str,
     query_name: str,
@@ -1001,40 +966,6 @@ def _handle_list_local(
         items = result.items
 
     return contracts.ListResult(items=items, total=result.total)
-
-
-def _handle_find_candidates_local(
-    instance_id: str,
-    relationship_type: str,
-    strategy: contracts.CandidateStrategy,
-    match_rules: list[dict[str, str]] | None = None,
-    via_relationship: str | None = None,
-    min_overlap: float = 0.5,
-    min_confidence: float = 0.5,
-    limit: int = 20,
-    min_distinct_neighbors: int = 2,
-) -> contracts.CandidatesResult:
-    """Find candidate relationships."""
-    check_permission("cruxible_find_candidates")
-    instance = get_manager().get(instance_id)
-
-    rules = [MatchRule.model_validate(rule) for rule in match_rules] if match_rules else None
-    candidates = service_find_candidates(
-        instance,
-        relationship_type,
-        strategy,
-        match_rules=rules,
-        via_relationship=via_relationship,
-        min_overlap=min_overlap,
-        min_confidence=min_confidence,
-        limit=limit,
-        min_distinct_neighbors=min_distinct_neighbors,
-    )
-
-    return contracts.CandidatesResult(
-        candidates=[candidate.model_dump(mode="json") for candidate in candidates],
-        total=len(candidates),
-    )
 
 
 def _handle_evaluate_local(
@@ -1860,7 +1791,7 @@ def _handle_propose_group_local(
     thesis_text: str = "",
     thesis_facts: dict[str, Any] | None = None,
     analysis_state: dict[str, Any] | None = None,
-    integrations_used: list[str] | None = None,
+    signal_sources_used: list[str] | None = None,
     proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
 ) -> contracts.ProposeGroupToolResult:
@@ -1877,7 +1808,7 @@ def _handle_propose_group_local(
             relationship_type=member.relationship_type,
             signals=[
                 CandidateSignal(
-                    integration=signal.integration,
+                    signal_source=signal.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
                 )
@@ -1895,7 +1826,7 @@ def _handle_propose_group_local(
         thesis_text=thesis_text,
         thesis_facts=thesis_facts,
         analysis_state=analysis_state,
-        integrations_used=integrations_used,
+        signal_sources_used=signal_sources_used,
         proposed_by=proposed_by,
         suggested_priority=suggested_priority,
     )

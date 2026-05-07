@@ -860,7 +860,7 @@ class _WikiGenerator:
                 seen_neighbors.add(neighbor_ref)
                 by_entity_type[neighbor.entity_type] += 1
             relationship = self.relationships_by_name.get(str(row.get("relationship_type")))
-            if relationship is not None and relationship.matching is not None:
+            if relationship is not None and relationship.proposal_policy is not None:
                 governed_count += 1
             else:
                 deterministic_count += 1
@@ -1037,7 +1037,10 @@ class _WikiGenerator:
             relationship_type = str(row.get("relationship_type"))
             relationship_schema = self.relationships_by_name.get(relationship_type)
             label = escape_mermaid_label(_humanize(relationship_type))
-            governed = relationship_schema is not None and relationship_schema.matching is not None
+            governed = (
+                relationship_schema is not None
+                and relationship_schema.proposal_policy is not None
+            )
             if row.get("direction") == "outgoing":
                 source_node, target_node = subject_node, neighbor_node
             else:
@@ -1533,13 +1536,6 @@ class _WikiGenerator:
             elif node.node_type == "feedback_applied":
                 status = "applied" if node.detail.get("applied") else "not applied"
                 other_lines.append(f"- Feedback {status}: {node.detail.get('action', '')}")
-            elif node.node_type == "ingest_batch":
-                mapping = node.detail.get("mapping", "")
-                added = node.detail.get("added", 0)
-                updated = node.detail.get("updated", 0)
-                other_lines.append(
-                    f"- Ingestion batch: {mapping} (added={added}, updated={updated})"
-                )
 
         lines: list[str] = []
         for etype in sorted(entity_adds):
@@ -1860,18 +1856,18 @@ class _WikiGenerator:
                     f"  - Scope: {_humanize(relationship.from_entity)} -> "
                     f"{_humanize(relationship.to_entity)}"
                 )
-                if relationship.matching is not None:
-                    integrations = sorted(relationship.matching.integrations)
-                    if integrations:
+                if relationship.proposal_policy is not None:
+                    signal_sources = sorted(relationship.proposal_policy.signals)
+                    if signal_sources:
                         lines.append(
                             "  - Signals: "
-                            + ", ".join(_humanize(integration) for integration in integrations)
+                            + ", ".join(_humanize(source) for source in signal_sources)
                         )
                     lines.append(
                         "  - Auto-resolve: "
-                        f"{_humanize(relationship.matching.auto_resolve_when)}; "
+                        f"{_humanize(relationship.proposal_policy.auto_resolve_when)}; "
                         "prior trust: "
-                        f"{_humanize(relationship.matching.auto_resolve_requires_prior_trust)}"
+                        f"{_humanize(relationship.proposal_policy.auto_resolve_requires_prior_trust)}"
                     )
             feedback_profile = self.config.get_feedback_profile(relationship_type)
             if feedback_profile is not None:
@@ -1951,7 +1947,7 @@ class _WikiGenerator:
                 f"{_humanize(step.make_candidates.relationship_type)} links"
             )
         if step.map_signals is not None:
-            return f"Map {_humanize(step.map_signals.integration)} signals"
+            return f"Map {_humanize(step.map_signals.signal_source)} signals"
         if step.propose_relationship_group is not None:
             return (
                 "Assemble review proposal for "
@@ -2018,7 +2014,7 @@ class _WikiGenerator:
                     f"{step.as_} ({_humanize(step.make_candidates.relationship_type)} candidates)"
                 )
             if step.map_signals is not None:
-                return f"{step.as_} ({_humanize(step.map_signals.integration)} signals)"
+                return f"{step.as_} ({_humanize(step.map_signals.signal_source)} signals)"
             if step.shape_items is not None:
                 return f"{step.as_} (shaped rows)"
             if step.join_items is not None:
@@ -2068,7 +2064,7 @@ class _WikiGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_relationship_type_page(self, schema: RelationshipSchema) -> str:
-        mode = "governed" if schema.matching is not None else "deterministic"
+        mode = "governed" if schema.proposal_policy is not None else "deterministic"
         lines = [f"# Relationship Type: {schema.name}", ""]
         if schema.description:
             lines.extend([schema.description.strip(), ""])

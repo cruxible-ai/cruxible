@@ -15,7 +15,6 @@ from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
     service_feedback,
-    service_ingest,
     service_propose_group,
     service_query,
     service_resolve_group,
@@ -201,61 +200,6 @@ class TestAddRelationshipReceipts:
 
 
 # ---------------------------------------------------------------------------
-# ingest receipts
-# ---------------------------------------------------------------------------
-
-
-class TestIngestReceipts:
-    def test_ingest_produces_receipt(self, initialized_instance: CruxibleInstance):
-        csv_data = "vehicle_id,year,make,model\nV-CSV-1,2025,Honda,Civic"
-        result = service_ingest(initialized_instance, "vehicles", data_csv=csv_data)
-        assert result.receipt_id is not None
-
-        store = initialized_instance.get_receipt_store()
-        try:
-            receipt = store.get_receipt(result.receipt_id)
-        finally:
-            store.close()
-        assert receipt is not None
-        assert receipt.operation_type == "ingest"
-        assert receipt.committed is True
-
-        node_types = {n.node_type for n in receipt.nodes}
-        assert "ingest_batch" in node_types
-
-    def test_ingest_config_digest(self, initialized_instance: CruxibleInstance):
-        csv_data = "vehicle_id,year,make,model\nV-CSV-2,2025,Honda,Civic"
-        result = service_ingest(initialized_instance, "vehicles", data_csv=csv_data)
-        store = initialized_instance.get_receipt_store()
-        try:
-            receipt = store.get_receipt(result.receipt_id)
-        finally:
-            store.close()
-        digest = receipt.parameters.get("config_digest")
-        assert digest is not None
-        assert len(digest) == 12
-        assert all(c in "0123456789abcdef" for c in digest)
-
-    def test_ingest_failure_receipt(self, initialized_instance: CruxibleInstance):
-        """Bad mapping name triggers error, receipt still persisted."""
-        with pytest.raises(Exception) as exc_info:
-            service_ingest(initialized_instance, "nonexistent_mapping", data_csv="a,b\n1,2")
-        exc = exc_info.value
-        assert hasattr(exc, "mutation_receipt_id")
-        assert exc.mutation_receipt_id is not None
-
-        store = initialized_instance.get_receipt_store()
-        try:
-            receipt = store.get_receipt(exc.mutation_receipt_id)
-        finally:
-            store.close()
-        assert receipt is not None
-        assert receipt.committed is False
-        validation_nodes = [n for n in receipt.nodes if n.node_type == "validation"]
-        assert any(node.detail.get("passed") is False for node in validation_nodes)
-
-
-# ---------------------------------------------------------------------------
 # feedback receipts
 # ---------------------------------------------------------------------------
 
@@ -345,11 +289,6 @@ version: "1.0"
 name: resolve_receipt_test
 description: For group_resolve receipt tests
 
-integrations:
-  check_v1:
-    kind: generic
-    contract: null
-
 entity_types:
   Vehicle:
     properties:
@@ -387,8 +326,8 @@ relationships:
       source:
         type: string
         optional: true
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         check_v1:
           role: required
       auto_resolve_when: all_support
@@ -404,7 +343,6 @@ relationships:
         type: float
 
 constraints: []
-ingestion: {}
 """
 
 
@@ -439,7 +377,7 @@ def _resolve_member(from_id: str = "BP-1", to_id: str = "V-1") -> CandidateMembe
         to_type="Vehicle",
         to_id=to_id,
         relationship_type="fits",
-        signals=[CandidateSignal(integration="check_v1", signal="support")],
+        signals=[CandidateSignal(signal_source="check_v1", signal="support")],
         properties={},
     )
 

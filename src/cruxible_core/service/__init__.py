@@ -10,7 +10,6 @@ from cruxible_core.service.analysis import (
     service_analyze_outcomes,
     service_config_compatibility_warnings,
     service_evaluate,
-    service_find_candidates,
     service_lint,
 )
 from cruxible_core.service.config_mutations import (
@@ -57,7 +56,6 @@ from cruxible_core.service.lifecycle import (
 from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_relationships,
-    service_ingest,
 )
 from cruxible_core.service.queries import (
     service_describe_query,
@@ -103,7 +101,6 @@ from cruxible_core.service.types import (
     FeedbackServiceResult,
     GetGroupResult,
     GroupMemberReviewResult,
-    IngestResult,
     InitResult,
     InspectEntityResult,
     InspectNeighborResult,
@@ -189,7 +186,6 @@ __all__ = [
     "GetGroupResult",
     "GroupMemberReviewResult",
     "ExportEdgesResult",
-    "IngestResult",
     "InspectEntityResult",
     "InspectNeighborResult",
     "InitResult",
@@ -259,7 +255,6 @@ __all__ = [
     "service_render_wiki",
     # Analysis
     "service_evaluate",
-    "service_find_candidates",
     "service_analyze_feedback",
     "service_analyze_outcomes",
     "service_config_compatibility_warnings",
@@ -287,7 +282,6 @@ __all__ = [
     # Mutations
     "service_add_entities",
     "service_add_relationships",
-    "service_ingest",
     # Queries
     "service_get_entity",
     "service_inspect_entity",

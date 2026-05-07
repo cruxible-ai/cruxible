@@ -423,16 +423,6 @@ class TestReceiptBuilder:
         edge = [e for e in receipt.edges if e.to_node == nid][0]
         assert edge.edge_type == "applied"
 
-    def test_record_ingest_batch(self):
-        builder = ReceiptBuilder(operation_type="ingest")
-        nid = builder.record_ingest_batch("parts_csv", added=10, updated=2)
-        receipt = builder.build()
-        node = [n for n in receipt.nodes if n.node_id == nid][0]
-        assert node.node_type == "ingest_batch"
-        assert node.detail["added"] == 10
-        edge = [e for e in receipt.edges if e.to_node == nid][0]
-        assert edge.edge_type == "mutated"
-
     def test_build_no_args_returns_empty_results(self):
         builder = ReceiptBuilder(operation_type="add_entity")
         receipt = builder.build()
@@ -721,14 +711,3 @@ class TestSerializer:
             detail={"action": "approve", "applied": True},
         )
         assert _node_label(node) == "Feedback: approve (applied)"
-
-    def test_node_label_ingest_batch(self):
-        from cruxible_core.receipt.serializer import _node_label
-        from cruxible_core.receipt.types import ReceiptNode
-
-        node = ReceiptNode(
-            node_id="n1",
-            node_type="ingest_batch",
-            detail={"mapping": "parts_csv", "added": 10, "updated": 2},
-        )
-        assert _node_label(node) == "Ingest: parts_csv (10 added, 2 updated)"

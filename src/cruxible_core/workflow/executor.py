@@ -301,7 +301,7 @@ def execute_workflow(
                 compiled_step.step_id,
                 "map_signals",
                 detail={
-                    "integration": signal_batch.integration,
+                    "signal_source": signal_batch.signal_source,
                     "signal_count": len(signal_batch.signals),
                     "item_count": len(
                         _resolve_step_items(
@@ -337,7 +337,7 @@ def execute_workflow(
                     ),
                     "signals_from": (compiled_step.propose_relationship_group_spec.signals_from),
                     "member_count": len(proposal.members),
-                    "integrations_used": proposal.integrations_used,
+                    "signal_sources_used": proposal.signal_sources_used,
                 },
             )
             continue

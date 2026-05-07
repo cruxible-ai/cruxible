@@ -1,6 +1,6 @@
 # Skill: Classification at Scale
 
-Classify entities from an internal catalog against a standard taxonomy using deterministic integrations, batch group review, and a trust flywheel. LLM reasoning is limited to writing configs, handling ambiguous tails, and critiquing results.
+Classify entities from an internal catalog against a standard taxonomy using deterministic providers, relationship-local signal sources, batch group review, and a trust flywheel. LLM reasoning is limited to writing configs, handling ambiguous tails, and critiquing results.
 
 ## When to use this skill
 
@@ -14,23 +14,25 @@ You need to create classification edges between them — at scale, with receipts
 
 ```
 You (the agent):
-  - Write the config (entity types, integrations, matching policy)
-  - Build or invoke deterministic integrations (regex, lookup tables, rules)
-  - Run integrations against entities to produce structured extractions
+  - Write the config (entity types, providers, proposal policy)
+  - Build or invoke deterministic providers (regex, lookup tables, rules)
+  - Run workflows against entities to produce structured extractions
   - Convert extraction results to tri-state signals (support/unsure/contradict)
   - Propose groups with thesis_facts derived from extractions
   - Run the review loop (sample, critique, refine rules, regroup)
 
 Core:
-  - Stores integration identity and contract (the spec of record)
-  - Validates signals against matching policy
+  - Stores provider identity, contracts, and workflow traces
+  - Validates signals against relationship proposal policy
   - Derives review priority from signal + trust state
   - Manages group lifecycle (propose → resolve → trust)
   - Produces receipts for every mutation
   - Gates auto-resolve on thesis-scoped trust
 
-Core does NOT execute integrations. The contract field is a specification,
-not an implementation. You read the contract and run it.
+Core executes declared providers inside workflows, but it does not own the
+domain-specific classification logic. The provider implementation and contract
+are the spec of record; relationship `proposal_policy.signals` decides which
+signal-source labels govern review.
 ```
 
 ## Phase 1: Understand the data
@@ -82,61 +84,25 @@ entity_types:
         type: string
 ```
 
-### Integrations
+### Providers And Signal Sources
 
-Declare each deterministic integration with a contract that fully specifies its rules. The contract is the source of truth for what the integration is supposed to do. If an external integration faithfully implements that contract and is deterministic, re-running it against the same entity should produce the same signal.
+Declare deterministic providers with contracts that fully specify their rules. A provider can emit rows that workflow `map_signals` steps convert into relationship-local signal sources. Re-running a deterministic provider against the same entity should produce the same signal.
 
 ```yaml
-integrations:
+contracts:
+  CatalogRows:
+    fields:
+      items: {type: json}
+
+providers:
   keyword_extract_v1:
-    kind: regex_classifier
-    contract:
-      version: "1.0"
-      source_fields: ["short_desc", "long_desc"]
-      rules:
-        - name: quarter_panel
-          patterns: ["QTR TRIM", "QUARTER TRIM", "QTR PNL", "QUARTER PANEL"]
-          extracts: {part_noun: "trim_panel", qualifier: "quarter"}
-        - name: door_panel
-          patterns: ["DR PNL", "DOOR PANEL", "INT DR TRIM", "DOOR INT"]
-          extracts: {part_noun: "door_panel", qualifier: "interior"}
-        - name: floor_carpet
-          patterns: ["CPT", "CARPET", "PILE CPT", "CT PILE"]
-          extracts: {part_noun: "carpet", qualifier: "floor"}
-        - name: molding
-          patterns: ["MLDG", "MOLDING", "MOULDING"]
-          extracts: {part_noun: "molding"}
-      fallback: unsure
-    notes: >
-      Deterministic regex extraction against catalog shorthand.
-      Agent or external tool reads this contract and executes it.
-      New rules are added through config updates (keyword_extract_v2, etc).
-
-  category_map_v1:
-    kind: lookup_table
-    contract:
-      version: "1.0"
-      from_fields: ["category", "sub_category"]
-      to_field: type_id
-      mappings:
-        "Interior Soft Goods/Door Panels & Components": ["10006", "12730", "11409"]
-        "Interior Soft Goods/Carpet": ["1264"]
-        "Body Components/Hardware": ["11409", "11416"]
-      fallback: unsure
-    notes: >
-      Maps catalog category/sub_category pairs to candidate taxonomy type IDs.
-      Combined with keyword extraction to select final match.
-
-  llm_review_v1:
-    kind: generic
-    contract:
-      use_when: "keyword_extract returns unsure OR category_map has >3 candidates after keyword narrowing"
-    notes: >
-      LLM fallback for the ambiguous tail. Only invoked when deterministic
-      integrations cannot produce a confident signal.
+    contract_out: CatalogRows
+    ref: kit://providers/classification.py::keyword_extract_v1
+    version: 1.0.0
+    deterministic: true
 ```
 
-### Relationship with matching policy
+### Relationship With Proposal Policy
 
 ```yaml
 relationships:
@@ -146,8 +112,8 @@ relationships:
     properties:
       confidence_basis: {}
       match_detail: {}
-    matching:
-      integrations:
+    proposal_policy:
+      signals:
         keyword_extract_v1:
           role: required
         category_map_v1:
@@ -166,42 +132,57 @@ This policy means:
 - If the LLM returns `unsure`, the group gets `always_review_on_unsure` escalation
 - Auto-resolve requires all signals `support` AND a prior `trusted` resolution for the same signature
 
-### Ingestion mappings
+### Source Loading Workflow
 
 ```yaml
-ingestion:
-  catalog_parts:
-    entity_type: CatalogPart
-    id_column: "Detroit P/N"
-    column_map:
-      "ShortDesc (Max 30)": short_desc
-      LongDesc: long_desc
-      Category: category
-      "Sub-Category": sub_category
-
-  taxonomy_types:
-    entity_type: TaxonomyType
-    id_column: PartTypeId
-    column_map:
-      PartTypeName: type_name
-      CategoryName: category_name
-      SubCategoryName: sub_category_name
+workflows:
+  refresh_catalog_state:
+    canonical: true
+    steps:
+      - id: parsed
+        provider: catalog_csv_loader
+        input: {}
+        as: parsed
+      - id: catalog_rows
+        shape_items:
+          items: $steps.parsed.tables.catalog.rows
+          rename:
+            ShortDesc (Max 30): short_desc
+          fields:
+            part_number: $item.Detroit P/N
+            short_desc: $item.short_desc
+            long_desc: $item.LongDesc
+        as: catalog_rows
+      - id: catalog_entities
+        make_entities:
+          entity_type: CatalogPart
+          items: $steps.catalog_rows.items
+          entity_id: $item.part_number
+          properties:
+            short_desc: $item.short_desc
+            long_desc: $item.long_desc
+        as: catalog_entities
+      - id: apply_catalog
+        apply_entities:
+          entities_from: catalog_entities
+        as: apply_catalog
 ```
 
-## Phase 3: Ingest
+## Phase 3: Refresh Canonical State
 
 ```
 cruxible_validate(config_path="config.yaml")
 cruxible_init(root_dir=".", config_path="config.yaml")
-cruxible_ingest(instance_id, "taxonomy_types", file_path="taxonomy.csv")
-cruxible_ingest(instance_id, "catalog_parts", file_path="catalog.csv")
+cruxible_lock_workflow(instance_id, workflow_name="refresh_catalog_state")
+cruxible_run_workflow(instance_id, workflow_name="refresh_catalog_state", input_payload={})
+cruxible_apply_workflow(instance_id, workflow_name="refresh_catalog_state", apply_digest="...")
 ```
 
-Both ingestions produce mutation receipts with config digests.
+The workflow preview and apply path produces receipts, provider traces, and a canonical state transition.
 
-## Phase 4: Run integrations and build signals
+## Phase 4: Run Providers And Build Signals
 
-Read the integration contracts from the config. Execute each one deterministically against the catalog entities. Core doesn't do this — you do.
+Read the provider contracts from the config. Execute provider-backed workflows deterministically against the catalog entities, then use `map_signals` steps to create tri-state evidence.
 
 ### Step 1: Run keyword extraction
 
@@ -237,11 +218,11 @@ Part with category="#Dropbox"
 
 Check the `llm_review_v1.contract.use_when` condition. Only invoke LLM for parts where keyword extraction returned `unsure` OR category mapping left >3 candidates.
 
-For the rest — the parts where both deterministic integrations returned `support` — no LLM call is needed.
+For the rest — the parts where both deterministic signal sources returned `support` — no LLM call is needed.
 
 ### Step 4: Build member signal lists
 
-Each member needs signals from every required integration:
+Each member needs signals from every required signal source:
 
 ```python
 member = {
@@ -251,9 +232,9 @@ member = {
     "to_id": "12730",
     "relationship_type": "classified_as",
     "signals": [
-        {"integration": "keyword_extract_v1", "signal": "support",
+        {"signal_source": "keyword_extract_v1", "signal": "support",
          "evidence": "matched rule quarter_panel: part_noun=trim_panel qualifier=quarter"},
-        {"integration": "category_map_v1", "signal": "support",
+        {"signal_source": "category_map_v1", "signal": "support",
          "evidence": "Interior Soft Goods/Door Panels → [10006,12730,11409] narrowed by qualifier=quarter"},
     ],
     "properties": {"confidence_basis": "keyword+category", "match_detail": "quarter_panel→12730"}
@@ -320,7 +301,7 @@ cruxible_propose_group(
         "unsure_count": 2,
         "sample_parts": ["31112C", "K1960", "62118E"]
     },
-    integrations_used=["keyword_extract_v1", "category_map_v1"]
+    signal_sources_used=["keyword_extract_v1", "category_map_v1"]
 )
 ```
 
@@ -332,15 +313,15 @@ and `cruxible_list_resolutions`.
 ### What Core does with the proposal
 
 Core checks:
-1. All required integration signals present on every member
+1. All required signal-source signals present on every member
 2. `max_group_size` not exceeded
 3. No duplicate members
-4. Signal values from declared integrations only
+4. Signal values from relationship-local signal sources only
 
 Then derives `review_priority`:
-- Blocking integration contradicts → `critical`
+- Blocking signal source contradicts → `critical`
 - Prior trust invalidated → `critical`
-- Unsure on required integration → `review`
+- Unsure on required signal source → `review`
 - No prior resolution → `review`
 - Everything clean + prior trusted → auto-resolve eligible
 
@@ -451,7 +432,7 @@ cruxible_update_trust_status(instance_id, resolution_id, "invalidated",
     reason="Mixed quarter/door panels in group — need finer keyword split")
 ```
 
-Refine the integration contract:
+Refine the provider contract:
 
 ```yaml
 # Add to keyword_extract_v1 (or create keyword_extract_v2):
@@ -476,7 +457,7 @@ cruxible_propose_group(instance_id, "classified_as",
 
 Each iteration of this loop:
 1. Shrinks the ambiguous tail
-2. Adds rules to the integration contract
+2. Adds rules to the provider contract
 3. Produces more specific thesis signatures
 4. Builds trust on verified patterns
 
@@ -486,8 +467,8 @@ The same flywheel that works within the first run also works across data
 refreshes:
 
 ```
-New catalog refresh arrives → ingest new parts
-Agent runs same integrations (same contract) → same extraction
+New catalog refresh arrives → refresh canonical state
+Agent runs same providers (same contract) → same extraction
 Agent proposes group with same thesis_facts → same signature
 Core finds prior trusted resolution → auto_resolved
 Agent calls resolve → edges created, no human review needed
@@ -496,29 +477,27 @@ Agent calls resolve → edges created, no human review needed
 The flywheel breaks only when trust is invalidated — which sends the pattern
 back to review with `critical` priority.
 
-## Integration versioning
+## Signal Source Versioning
 
-When you change integration rules, declare a new version:
+When you change provider rules, declare a new provider and signal-source version:
 
 ```yaml
-integrations:
+providers:
   keyword_extract_v1:
     # ... original rules (kept for audit trail)
   keyword_extract_v2:
-    kind: regex_classifier
-    contract:
-      version: "2.0"
-      # ... updated rules with finer patterns
+    ref: kit://providers/classification.py::keyword_extract_v2
+    version: 2.0.0
 ```
 
-Update the relationship's matching section to reference v2. Old groups still reference v1 in their `integrations_used`, and old resolutions preserve the thesis, trust status, and analysis_state produced under the earlier run. That preserves the audit trail even though the resolution row does not store `integrations_used` directly.
+Update the relationship's `proposal_policy.signals` section and workflow `map_signals.signal_source` to reference v2. Old groups still reference v1 in their `signal_sources_used`, and old resolutions preserve the thesis, trust status, and analysis_state produced under the earlier run.
 
-The signature is stable across integration versions (it's thesis_facts, not integration version). Trust earned under v1 carries forward to v2 proposals with the same thesis_facts. If v2 changes the extraction logic enough to produce different thesis_facts, that's a new signature with its own trust track — which is correct behavior.
+The signature is stable across provider versions when `thesis_facts` stay stable. Trust earned under v1 carries forward to v2 proposals with the same thesis_facts. If v2 changes the extraction logic enough to produce different thesis_facts, that's a new signature with its own trust track — which is correct behavior.
 
 ## Anti-patterns
 
 - **Running LLM classification on every part** — Build deterministic rules first. LLM is for the tail, not the bulk.
-- **Putting extraction logic inside Core** — Core governs signals, it doesn't execute integrations. Keep matching logic in external tools.
+- **Putting domain extraction logic inside Core primitives** — Core governs signals and executes providers, but the classification logic should live in provider code or external services.
 - **Grouping too coarsely** — "All interior parts → PIES Body" is too broad. Group by extracted part noun + qualifier for meaningful trust boundaries.
 - **Grouping too finely** — One part per group defeats batch review. Group by the repeatable pattern, not the individual part.
 - **Skipping `analysis_state`** — Stash your extraction context, LLM reasoning, and candidate scores. Future agents (or your future self) will need it when revisiting resolutions.

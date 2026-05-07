@@ -126,8 +126,6 @@ class TestCheckPermission:
         reset_permissions()
         init_permissions()
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_ingest")
-        with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_lock_workflow")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_apply_workflow")
@@ -172,14 +170,11 @@ class TestCheckPermission:
         reset_permissions()
         init_permissions()
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_ingest")
-        with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_lock_workflow")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_apply_workflow")
 
     def test_admin_tool_in_admin(self):
-        check_permission("cruxible_ingest")
         check_permission("cruxible_lock_workflow")
         check_permission("cruxible_apply_workflow")
         check_permission("cruxible_world_publish")

@@ -74,7 +74,7 @@ state, and outcomes.
 
 - **Ontology:** entity types, relationships, and constraints that define the
   domain.
-- **Providers:** evidence producers and integrations that read, match,
+- **Providers:** evidence producers and source adapters that read, match,
   classify, score, or enrich data.
 - **Workflows:** repeatable procedures that build reference state, load
   operational state, or propose governed changes.
@@ -192,7 +192,7 @@ cruxible --server-url http://127.0.0.1:8100 init \
   --config config.yaml
 ```
 
-The returned `instance_id` is the handle the CLI, GUI, and local integrations use for later queries, workflows, and mutations.
+The returned `instance_id` is the handle the CLI, GUI, and local clients use for later queries, workflows, and mutations.
 
 ### Client-Only Agent Environment
 
@@ -204,7 +204,7 @@ Use `cruxible-client` when the caller only needs typed HTTP/API access to a sepa
 
 Permission modes are enforced at the daemon boundary. If an agent can import `cruxible-core` or access the same runtime/filesystem directly, those modes are advisory rather than isolating. If trust levels matter, keep `cruxible-core` out of the agent environment and talk to a separate daemon through `cruxible-client`.
 
-For the `0.2` RC, the daemon-backed API is the primary interface for the CLI, GUI, and local integrations. Direct local runtime remains available as a convenience path.
+For the `0.2` RC, the daemon-backed API is the primary interface for the CLI, GUI, and local clients. Direct local runtime remains available as a convenience path.
 
 For agent setups, prefer:
 
@@ -333,7 +333,7 @@ Cruxible is for the cases where humans and agents need to coordinate around shar
 - **Receipt-based provenance:** every query produces a DAG-structured proof showing exactly how the answer was derived.
 - **Constraint system:** define validation rules that are checked by `evaluate`. Feedback patterns can be encoded as constraints.
 - **Feedback loop:** approve, reject, correct, or flag individual edges. Rejected edges are excluded from future queries.
-- **Candidate detection:** property matching and shared-neighbor strategies for discovering missing relationships at scale.
+- **Governed proposal workflows:** providers and workflow steps can create candidate groups with signal-source evidence for review.
 - **YAML-driven config:** define entity types, relationships, queries, constraints, workflows, and governed policies in one file.
 - **Zero LLM dependencies:** purely deterministic runtime. No API keys, no token costs during execution.
 - **Full MCP server:** complete lifecycle via [Model Context Protocol](docs/mcp-tools.md) for AI agent orchestration.

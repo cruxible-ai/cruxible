@@ -173,7 +173,7 @@ class CandidateSet(BaseModel):
 class SignalBatchSignal(BaseModel):
     """Governed signal produced for a specific candidate pair.
 
-    Integration context is carried by the containing ``SignalBatch``.
+    Signal-source context is carried by the containing ``SignalBatch``.
     """
 
     from_id: str
@@ -183,9 +183,9 @@ class SignalBatchSignal(BaseModel):
 
 
 class SignalBatch(BaseModel):
-    """Internal workflow artifact containing one integration's signals."""
+    """Internal workflow artifact containing one signal source's signals."""
 
-    integration: str
+    signal_source: str
     signals: list[SignalBatchSignal] = Field(default_factory=list)
 
 
@@ -198,7 +198,7 @@ class RelationshipGroupProposalArtifact(BaseModel):
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
     analysis_state: dict[str, Any] = Field(default_factory=dict)
-    integrations_used: list[str] = Field(default_factory=list)
+    signal_sources_used: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
     proposed_by: Literal["human", "agent"] = "agent"
 
