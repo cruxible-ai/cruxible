@@ -256,7 +256,7 @@ def resolve_kit_provider_ref(ref: str, config_base_path: Path) -> tuple[Path, st
 
 def load_kit_provider_module(path: Path, kit_root: Path) -> ModuleType:
     """Load a kit provider module under a digest-scoped synthetic package."""
-    digest = compute_kit_runtime_digest(kit_root).removeprefix("sha256:").replace("-", "_")
+    digest = compute_kit_runtime_digest(kit_root).removeprefix("sha256:")
     package_root = f"_cruxible_kit_{digest}"
     relative = path.relative_to(kit_root).with_suffix("")
     module_name = ".".join([package_root, *relative.parts])
@@ -379,9 +379,14 @@ def _pull_oci_kit(ref: str) -> Path:
             check=True,
             capture_output=True,
             text=True,
+            timeout=300,
         )
     except FileNotFoundError as exc:
         raise ConfigError("oras binary not found in PATH for oci:// kit refs") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ConfigError(
+            f"Timed out pulling oci:// kit ref '{ref}' after {exc.timeout}s"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() if exc.stderr else str(exc)
         raise ConfigError(f"Failed to pull oci:// kit ref '{ref}': {detail}") from exc
@@ -562,7 +567,7 @@ def _safe_join(root: Path, rel_path: str) -> Path:
 
 def _reject_symlink(path: Path) -> None:
     for candidate in [path, *path.parents]:
-        if candidate.exists() and candidate.is_symlink():
+        if candidate.is_symlink():
             raise ConfigError(f"Kit path must not traverse symlinks: {candidate}")
 
 
@@ -599,14 +604,19 @@ def _rewrite_extends(config_path: Path, upstream_config_path: str) -> None:
     raw = config_path.read_text(encoding="utf-8")
     lines = raw.splitlines()
     updated: list[str] = []
-    replaced = False
+    replaced = 0
     for line in lines:
-        if line.lstrip().startswith("extends:"):
-            indent = line[: len(line) - len(line.lstrip())]
-            updated.append(f"{indent}extends: {upstream_config_path}")
-            replaced = True
+        if line.startswith("extends:"):
+            updated.append(f"extends: {upstream_config_path}")
+            replaced += 1
         else:
             updated.append(line)
-    if not replaced:
-        raise ConfigError(f"Overlay kit config '{config_path}' must contain an extends: entry")
+    if replaced == 0:
+        raise ConfigError(
+            f"Overlay kit config '{config_path}' must contain a top-level extends: entry"
+        )
+    if replaced > 1:
+        raise ConfigError(
+            f"Overlay kit config '{config_path}' has multiple top-level extends: entries"
+        )
     config_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
