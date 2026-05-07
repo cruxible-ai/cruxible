@@ -637,6 +637,8 @@ class TestWorkflowExecutor:
         assert result.apply_digest is not None
         assert result.committed_snapshot_id is None
         assert result.receipt.committed is False
+        assert result.receipt.workflow_mode == "preview"
+        assert result.receipt.head_snapshot_id == result.head_snapshot_id
         assert result.output["total_results"] == 1
         assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
 
@@ -663,6 +665,8 @@ class TestWorkflowExecutor:
         assert applied.apply_digest == preview.apply_digest
         assert applied.committed_snapshot_id is not None
         assert applied.receipt.committed is True
+        assert applied.receipt.workflow_mode == "apply"
+        assert applied.receipt.head_snapshot_id == applied.head_snapshot_id
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
 
     def test_canonical_workflow_tabular_shape_ingest_parity(self, tmp_path: Path) -> None:

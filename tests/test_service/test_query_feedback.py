@@ -68,7 +68,9 @@ class TestQuery:
         )
 
         assert result.receipt is not None
-        assert result.receipt.nodes[0].detail["head_snapshot_id"] == snapshot.snapshot_id
+        assert result.receipt.head_snapshot_id == snapshot.snapshot_id
+        assert result.receipt.committed is False
+        assert "head_snapshot_id" not in result.receipt.nodes[0].detail
         assert result.receipt_id is not None
         store = populated_instance.get_receipt_store()
         try:
@@ -76,7 +78,8 @@ class TestQuery:
         finally:
             store.close()
         assert persisted is not None
-        assert persisted.nodes[0].detail["head_snapshot_id"] == snapshot.snapshot_id
+        assert persisted.head_snapshot_id == snapshot.snapshot_id
+        assert persisted.committed is False
 
     def test_bad_name(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(QueryNotFoundError):

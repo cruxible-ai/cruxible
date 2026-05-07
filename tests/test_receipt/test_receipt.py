@@ -140,7 +140,7 @@ class TestReceiptTypes:
     def test_receipt_defaults_operation_type_query(self):
         receipt = Receipt(nodes=[], edges=[])
         assert receipt.operation_type == "query"
-        assert receipt.committed is True
+        assert receipt.committed is False
 
     def test_receipt_accepts_mutation_operation_type(self):
         receipt = Receipt(nodes=[], edges=[], operation_type="add_entity", committed=False)
@@ -156,7 +156,9 @@ class TestReceiptTypes:
         )
         receipt = Receipt.model_validate_json(old_json)
         assert receipt.operation_type == "query"
-        assert receipt.committed is True
+        assert receipt.committed is False
+        assert receipt.head_snapshot_id is None
+        assert receipt.workflow_mode is None
 
     def test_receipt_query_name_optional(self):
         receipt = Receipt(nodes=[], edges=[])
@@ -354,10 +356,23 @@ class TestReceiptBuilder:
         receipt = builder.build()
         assert receipt.committed is False
 
-    def test_query_committed_default_true(self):
+    def test_query_committed_default_false(self):
         builder = ReceiptBuilder(query_name="q", parameters={})
         receipt = builder.build(results=[])
-        assert receipt.committed is True
+        assert receipt.committed is False
+
+    def test_workflow_mode_and_head_snapshot_are_typed_fields(self):
+        builder = ReceiptBuilder(
+            query_name="wf",
+            parameters={},
+            operation_type="workflow",
+            head_snapshot_id="snap_123",
+            workflow_mode="preview",
+        )
+        receipt = builder.build(results=[])
+        assert receipt.head_snapshot_id == "snap_123"
+        assert receipt.workflow_mode == "preview"
+        assert "head_snapshot_id" not in receipt.nodes[0].detail
 
     def test_mark_committed(self):
         builder = ReceiptBuilder(operation_type="add_entity")
@@ -579,6 +594,7 @@ class TestSerializer:
         md = to_markdown(receipt)
         assert f"# Receipt {receipt.receipt_id}" in md
         assert "**Query:** parts_for_vehicle" in md
+        assert "**Committed:** No" not in md
 
     def test_to_markdown_has_sections(self, receipt: Receipt):
         md = to_markdown(receipt)
@@ -628,6 +644,21 @@ class TestSerializer:
         md = to_markdown(receipt)
         assert "(add_entity)" in md
         assert "**Operation:** add_entity" in md
+        assert "**Committed:** Yes" in md
+
+    def test_to_markdown_workflow_mode_and_uncommitted_state(self):
+        builder = ReceiptBuilder(
+            query_name="wf",
+            parameters={},
+            operation_type="workflow",
+            head_snapshot_id="snap_123",
+            workflow_mode="preview",
+        )
+        receipt = builder.build()
+        md = to_markdown(receipt)
+        assert "**Head snapshot:** snap_123" in md
+        assert "**Workflow mode:** preview" in md
+        assert "**Committed:** No" in md
 
     def test_to_markdown_mutation_writes_section(self):
         builder = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})

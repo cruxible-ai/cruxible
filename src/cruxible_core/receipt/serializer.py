@@ -29,9 +29,15 @@ def to_markdown(receipt: Receipt) -> str:
         lines.append(f"**Operation:** {receipt.operation_type}")
     lines.append(f"**Parameters:** {receipt.parameters}")
     lines.append(f"**Duration:** {receipt.duration_ms}ms")
+    if receipt.head_snapshot_id:
+        lines.append(f"**Head snapshot:** {receipt.head_snapshot_id}")
+    if receipt.workflow_mode is not None:
+        lines.append(f"**Workflow mode:** {receipt.workflow_mode}")
     if receipt.operation_type == "query":
         lines.append(f"**Results:** {len(receipt.results)}")
-    if not receipt.committed:
+    if receipt.committed:
+        lines.append("**Committed:** Yes")
+    elif receipt.operation_type != "query" or receipt.workflow_mode is not None:
         lines.append("**Committed:** No")
     lines.append("")
 

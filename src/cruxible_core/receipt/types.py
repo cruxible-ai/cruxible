@@ -29,6 +29,9 @@ OperationType = Literal[
 ]
 """Coarse-grained category of operation that produced a receipt."""
 
+WorkflowReceiptMode = Literal["preview", "apply", "proposal"]
+"""Workflow execution mode recorded on workflow receipts."""
+
 NodeType = Literal[
     "query",
     "workflow",
@@ -81,7 +84,7 @@ class EvidenceEdge(BaseModel):
 
 
 class Receipt(BaseModel):
-    """A complete receipt for a query execution."""
+    """A complete receipt for a Cruxible operation."""
 
     receipt_id: str = Field(default_factory=lambda: new_id("RCP"))
     query_name: str = ""
@@ -92,4 +95,18 @@ class Receipt(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_ms: float = 0.0
     operation_type: OperationType = "query"
-    committed: bool = True
+    head_snapshot_id: str | None = Field(
+        default=None,
+        description="Instance head snapshot observed when the operation began, if available.",
+    )
+    workflow_mode: WorkflowReceiptMode | None = Field(
+        default=None,
+        description="Workflow receipt mode; unset for non-workflow receipts.",
+    )
+    committed: bool = Field(
+        default=False,
+        description=(
+            "Whether the operation reached its Cruxible durability boundary. "
+            "For read-only operations this is normally false and does not indicate failure."
+        ),
+    )

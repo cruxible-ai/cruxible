@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import (
     _append_event_if_context,
     ensure_decision_record_open,
@@ -20,6 +21,7 @@ from cruxible_core.service.types import (
     LockServiceResult,
     OperationContext,
     PlanServiceResult,
+    ProposeGroupResult,
     ProposeWorkflowResult,
     RunServiceResult,
     TestServiceResult,
@@ -68,6 +70,46 @@ def _build_workflow_execution_result(
     )
 
 
+def _save_workflow_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
+    store = instance.get_receipt_store()
+    try:
+        store.save_receipt(receipt)
+    finally:
+        store.close()
+
+
+def _finalize_proposal_receipt(
+    receipt: Receipt,
+    *,
+    head_snapshot_id: str | None,
+    group_result: ProposeGroupResult,
+) -> Receipt:
+    """Return the workflow receipt annotated with the governed proposal write result."""
+    root = receipt.nodes[0]
+    root_detail = dict(root.detail)
+    root_detail.update(
+        {
+            "mode": "propose",
+            "group_id": group_result.group_id,
+            "group_status": group_result.status,
+            "group_receipt_id": group_result.receipt_id,
+        }
+    )
+    nodes = list(receipt.nodes)
+    nodes[0] = root.model_copy(update={"detail": root_detail})
+    # A proposal workflow is committed only after the bridge reaches the
+    # governed-group durability boundary. Suppressed no-op proposals still get a
+    # receipt, but committed remains false because no group state was written.
+    return receipt.model_copy(
+        update={
+            "nodes": nodes,
+            "head_snapshot_id": head_snapshot_id,
+            "workflow_mode": "proposal",
+            "committed": group_result.receipt_id is not None,
+        }
+    )
+
+
 def _enforce_decision_support_context(
     instance: InstanceProtocol,
     workflow: Any,
@@ -76,9 +118,7 @@ def _enforce_decision_support_context(
     if workflow.purpose != "decision_support":
         return
     if context is None or context.decision_record_id is None:
-        raise ConfigError(
-            "decision_support workflows require decision_record_id"
-        )
+        raise ConfigError("decision_support workflows require decision_record_id")
     ensure_decision_record_open(instance, context.decision_record_id)
 
 
@@ -290,7 +330,13 @@ def service_propose_workflow(
             raise ConfigError(
                 f"Canonical workflow '{workflow_name}' cannot be used with propose_workflow"
             )
-        result = execute_workflow(instance, config, workflow_name, input_payload)
+        result = execute_workflow(
+            instance,
+            config,
+            workflow_name,
+            input_payload,
+            persist_receipt=False,
+        )
         try:
             proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
         except ValidationError as exc:
@@ -329,10 +375,16 @@ def service_propose_workflow(
             source_trace_ids=source_trace_ids,
             source_step_ids=[source_step_id] if source_step_id is not None else [],
         )
+        proposal_receipt = _finalize_proposal_receipt(
+            result.receipt,
+            head_snapshot_id=result.head_snapshot_id,
+            group_result=group_result,
+        )
+        _save_workflow_receipt(instance, proposal_receipt)
         service_result = ProposeWorkflowResult(
             workflow=result.workflow,
             output=result.output,
-            receipt_id=result.receipt.receipt_id,
+            receipt_id=proposal_receipt.receipt_id,
             group_id=group_result.group_id,
             group_status=group_result.status,
             review_priority=group_result.review_priority,
@@ -342,7 +394,7 @@ def service_propose_workflow(
             trace_ids=[trace.trace_id for trace in result.traces],
             prior_resolution=group_result.prior_resolution,
             policy_summary=group_result.policy_summary,
-            receipt=result.receipt,
+            receipt=proposal_receipt,
             traces=result.traces,
         )
     except Exception as exc:
@@ -371,9 +423,7 @@ def service_propose_workflow(
         receipt_id=service_result.receipt_id,
         trace_ids=service_result.trace_ids,
         head_snapshot_id=(
-            service_result.receipt.nodes[0].detail.get("head_snapshot_id")
-            if service_result.receipt
-            else None
+            service_result.receipt.head_snapshot_id if service_result.receipt else None
         ),
         started_at=started_at,
     )
@@ -493,7 +543,6 @@ def _contains_subset(actual: Any, expected_subset: Any) -> bool:
 def _workflow_returns_relationship_proposal(workflow: Any) -> bool:
     """Return True when a workflow returns a built-in relationship proposal artifact."""
     return any(
-        bool(step.as_ == workflow.returns)
-        and step.propose_relationship_group is not None
+        bool(step.as_ == workflow.returns) and step.propose_relationship_group is not None
         for step in workflow.steps
     )

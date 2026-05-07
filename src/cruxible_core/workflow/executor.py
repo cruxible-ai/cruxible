@@ -66,10 +66,13 @@ def execute_workflow(
     head_snapshot_id = instance.get_head_snapshot_id()
     base_graph = instance.load_graph()
     graph = _clone_graph(base_graph) if workflow.canonical else base_graph
+    receipt_workflow_mode = "apply" if execution_mode == "apply" else "preview"
     receipt_builder = ReceiptBuilder(
         query_name=workflow_name,
         parameters=plan.input_payload,
         operation_type="workflow",
+        head_snapshot_id=head_snapshot_id,
+        workflow_mode=receipt_workflow_mode,
     )
 
     step_outputs: dict[str, Any] = {}
@@ -473,11 +476,9 @@ def execute_workflow(
             "mode": execution_mode,
             "config_digest": plan.config_digest,
             "lock_digest": plan.lock_digest,
-            "head_snapshot_id": head_snapshot_id,
             "apply_digest": apply_digest,
         }
     )
-    receipt.committed = execution_mode == "apply" or not workflow.canonical
 
     if workflow.canonical and execution_mode == "apply":
         snapshot = instance.commit_graph_snapshot(graph)

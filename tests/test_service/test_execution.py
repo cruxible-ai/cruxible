@@ -144,6 +144,9 @@ class TestWorkflowExecutionServices:
         assert result.workflow == "evaluate_promo"
         assert result.output["decision"] == "approve"
         assert result.receipt_id.startswith("RCP-")
+        assert result.receipt is not None
+        assert result.receipt.workflow_mode == "preview"
+        assert result.receipt.committed is False
         assert len(result.query_receipt_ids) == 1
         assert len(result.trace_ids) == 2
         assert all(trace_id.startswith("TRC-") for trace_id in result.trace_ids)
@@ -159,6 +162,9 @@ class TestWorkflowExecutionServices:
         assert result.canonical is True
         assert result.apply_digest is not None
         assert result.committed_snapshot_id is None
+        assert result.receipt is not None
+        assert result.receipt.workflow_mode == "preview"
+        assert result.receipt.committed is False
         assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
 
     def test_service_apply_workflow_commits_canonical_workflow(
@@ -177,6 +183,9 @@ class TestWorkflowExecutionServices:
 
         assert applied.mode == "apply"
         assert applied.committed_snapshot_id is not None
+        assert applied.receipt is not None
+        assert applied.receipt.workflow_mode == "apply"
+        assert applied.receipt.committed is True
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
 
     def test_service_apply_workflow_rejects_digest_mismatch(
@@ -258,6 +267,9 @@ class TestWorkflowExecutionServices:
         assert result.group_id.startswith("GRP-")
         assert result.group_status == "pending_review"
         assert result.receipt_id.startswith("RCP-")
+        assert result.receipt is not None
+        assert result.receipt.workflow_mode == "proposal"
+        assert result.receipt.committed is True
         assert result.trace_ids
 
         group_store = proposal_workflow_instance.get_group_store()
@@ -440,8 +452,7 @@ class TestWorkflowExecutionServices:
         assert overlay_result.snapshot.snapshot_id == created.snapshot.snapshot_id
         assert overlay_result.instance.get_root_path() == overlay_root
         assert (
-            overlay_result.instance.metadata["origin_snapshot_id"]
-            == created.snapshot.snapshot_id
+            overlay_result.instance.metadata["origin_snapshot_id"] == created.snapshot.snapshot_id
         )
         assert (overlay_root / ".cruxible" / "cruxible.lock.yaml").exists()
         overlay_graph = overlay_result.instance.load_graph()

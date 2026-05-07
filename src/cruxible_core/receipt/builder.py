@@ -15,6 +15,7 @@ from cruxible_core.receipt.types import (
     OperationType,
     Receipt,
     ReceiptNode,
+    WorkflowReceiptMode,
 )
 
 
@@ -26,33 +27,37 @@ class ReceiptBuilder:
         query_name: str = "",
         parameters: dict[str, Any] | None = None,
         operation_type: OperationType = "query",
+        head_snapshot_id: str | None = None,
+        workflow_mode: WorkflowReceiptMode | None = None,
     ) -> None:
         self._query_name = query_name
         self._parameters = parameters or {}
         self._operation_type = operation_type
+        self._head_snapshot_id = head_snapshot_id
+        self._workflow_mode = workflow_mode
         self._nodes: list[ReceiptNode] = []
         self._edges: list[EvidenceEdge] = []
         self._counter = 0
         self._start_ns = time.monotonic_ns()
+        # "Committed" is intentionally conservative: it flips only after the
+        # caller reaches the operation-specific durability boundary.
+        self._committed = False
 
         if operation_type == "query":
             self._root_id = self._add_node(
                 node_type="query",
                 detail={"query_name": query_name, "parameters": self._parameters},
             )
-            self._committed = True
         elif operation_type == "workflow":
             self._root_id = self._add_node(
                 node_type="workflow",
                 detail={"workflow_name": query_name, "parameters": self._parameters},
             )
-            self._committed = True
         else:
             self._root_id = self._add_node(
                 node_type="mutation",
                 detail={"operation_type": operation_type, "parameters": self._parameters},
             )
-            self._committed = False
 
     def _next_id(self) -> str:
         self._counter += 1
@@ -177,7 +182,7 @@ class ReceiptBuilder:
         return node_id
 
     def mark_committed(self) -> None:
-        """Mark the mutation as having completed all durable writes."""
+        """Mark the operation as having reached its durable state boundary."""
         self._committed = True
 
     def record_validation(
@@ -277,5 +282,7 @@ class ReceiptBuilder:
             results=results or [],
             duration_ms=round(elapsed_ms, 3),
             operation_type=self._operation_type,
+            head_snapshot_id=self._head_snapshot_id,
+            workflow_mode=self._workflow_mode,
             committed=self._committed,
         )

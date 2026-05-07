@@ -79,7 +79,7 @@ def service_query(
         head_snapshot_id = instance.get_head_snapshot_id()
 
         if query_result.receipt:
-            query_result.receipt.nodes[0].detail["head_snapshot_id"] = head_snapshot_id
+            query_result.receipt.head_snapshot_id = head_snapshot_id
             store = instance.get_receipt_store()
             try:
                 store.save_receipt(query_result.receipt)
@@ -108,9 +108,7 @@ def service_query(
         )
         raise
 
-    receipt_head_snapshot_id = (
-        result.receipt.nodes[0].detail.get("head_snapshot_id") if result.receipt else None
-    )
+    receipt_head_snapshot_id = result.receipt.head_snapshot_id if result.receipt else None
     _append_event_if_context(
         instance,
         context,
