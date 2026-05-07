@@ -214,7 +214,7 @@ workflows:
     description: Upstream workflow that should stay out of local scope unless used.
     canonical: false
     contract_in: empty_input
-    returns: empty_output
+    returns: upstream
     steps:
       - id: call_upstream
         provider: upstream_provider
@@ -269,7 +269,7 @@ workflows:
     description: Local workflow surface.
     canonical: false
     contract_in: empty_input
-    returns: empty_output
+    returns: local
     steps:
       - id: run_reference_query
         query: reference_lookup
@@ -469,9 +469,7 @@ def _seed_reference_only_receipt(instance: CruxibleInstance) -> str:
         [{"entity_type": "ReferenceItem", "entity_id": "ref-2"}],
         parent_ids=[lookup],
     )
-    receipt = builder.build(
-        results=[{"entity_type": "ReferenceItem", "entity_id": "ref-2"}]
-    )
+    receipt = builder.build(results=[{"entity_type": "ReferenceItem", "entity_id": "ref-2"}])
 
     receipt_store = instance.get_receipt_store()
     try:
@@ -990,13 +988,10 @@ workflows:
 
     render_wiki(instance, WikiOptions(output_dir=project / "wiki", scope="all"))
 
-    workflow_text = (
-        project / "wiki" / "reference" / "workflows" / "canonical-load.md"
-    ).read_text()
+    workflow_text = (project / "wiki" / "reference" / "workflows" / "canonical-load.md").read_text()
     assert "Apply steps commit previously built records or links" in workflow_text
     assert (
-        "| apply_assets | Apply records to world model | assets | apply_assets |"
-        in workflow_text
+        "| apply_assets | Apply records to world model | assets | apply_assets |" in workflow_text
     )
 
 
@@ -1034,7 +1029,7 @@ def test_render_wiki_local_scope_projects_layered_world(tmp_path: Path) -> None:
     assert "Amber double rectangle = Upstream/reference neighbor" in local_text
     assert 'subgraph type_ReferenceItem["Reference Item (1)"]' in local_text
     assert "class subject_ReferenceItem_ref_1 upstreamNeighbor" in local_text
-    assert "-. \"Local Subject References Item\" .->" in local_text
+    assert '-. "Local Subject References Item" .->' in local_text
     assert "Reference item from the upstream catalog." in reference_page.read_text()
 
     reference_text = reference_page.read_text()

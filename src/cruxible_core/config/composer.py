@@ -70,8 +70,14 @@ def compose_config_sequence(
     layers: Sequence[ResolvedConfigLayer],
     *,
     runtime: bool = False,
+    validate: bool = True,
 ) -> CoreConfig:
-    """Compose an ordered config sequence using current append-only semantics."""
+    """Compose an ordered config sequence using current append-only semantics.
+
+    Composition creates a new effective config, so semantic validation runs by
+    default before the composed model is returned. ``validate=False`` is reserved
+    for tests/tools that need to inspect raw merge mechanics.
+    """
     if not layers:
         raise ConfigError("Config composition requires at least one layer")
 
@@ -100,7 +106,12 @@ def compose_config_sequence(
             removed_provider_names=removed_provider_names,
         )
     composed_data.pop("extends", None)
-    return CoreConfig.model_validate(composed_data)
+    composed = CoreConfig.model_validate(composed_data)
+    if validate:
+        from cruxible_core.config.validator import validate_config
+
+        validate_config(composed)
+    return composed
 
 
 def compose_configs(
@@ -109,6 +120,7 @@ def compose_configs(
     *,
     base_config_path: Path | None = None,
     overlay_config_path: Path | None = None,
+    validate: bool = True,
 ) -> CoreConfig:
     """Compose a base config and overlay using strict append-only semantics."""
     return compose_config_sequence(
@@ -116,6 +128,7 @@ def compose_configs(
             ResolvedConfigLayer(config=base, config_path=base_config_path),
             ResolvedConfigLayer(config=overlay, config_path=overlay_config_path),
         ],
+        validate=validate,
     )
 
 
@@ -125,6 +138,7 @@ def compose_runtime_configs(
     *,
     base_config_path: Path | None = None,
     overlay_config_path: Path | None = None,
+    validate: bool = True,
 ) -> CoreConfig:
     """Compose a release-backed overlay runtime config.
 
@@ -138,6 +152,7 @@ def compose_runtime_configs(
             ResolvedConfigLayer(config=overlay, config_path=overlay_config_path),
         ],
         runtime=True,
+        validate=validate,
     )
 
 

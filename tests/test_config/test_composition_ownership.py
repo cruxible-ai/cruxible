@@ -51,7 +51,7 @@ providers:
 workflows:
   reference_workflow:
     contract_in: empty_input
-    returns: empty_output
+    returns: reference
     steps:
       - id: call_reference
         provider: reference_provider
@@ -97,7 +97,7 @@ providers:
 workflows:
   local_workflow:
     contract_in: empty_input
-    returns: empty_output
+    returns: local
     steps:
       - id: use_reference
         query: reference_lookup

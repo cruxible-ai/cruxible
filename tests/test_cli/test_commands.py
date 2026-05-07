@@ -107,7 +107,10 @@ def governed_view_instance(
 class TestInit:
     def test_init_creates_instance(self, runner: CliRunner, tmp_project: Path) -> None:
         _assert_local_mutation_disabled(
-            runner, tmp_project, ["init", "--config", "config.yaml"], "init",
+            runner,
+            tmp_project,
+            ["init", "--config", "config.yaml"],
+            "init",
         )
 
     def test_init_with_data_dir(self, runner: CliRunner, tmp_project: Path) -> None:
@@ -504,9 +507,7 @@ class TestConfigViews:
         config_path.write_text(proposal_workflow_config_yaml)
         readme = tmp_path / "README.md"
         readme.write_text(
-            "# Demo\n\n"
-            "<!-- CRUXIBLE:BEGIN ontology -->\n"
-            "<!-- CRUXIBLE:END ontology -->\n"
+            "# Demo\n\n<!-- CRUXIBLE:BEGIN ontology -->\n<!-- CRUXIBLE:END ontology -->\n"
         )
 
         result = runner.invoke(
@@ -592,12 +593,19 @@ workflows:
   build_reference:
     canonical: true
     contract_in: EmptyInput
-    returns: EmptyOutput
+    returns: apply_products
     steps:
-      - id: load
-        provider: load_reference
-        input: {}
-        as: loaded
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: []
+          entity_id: $item.product_id
+          properties: {}
+        as: products
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
 """
         )
         overlay.write_text(
@@ -622,8 +630,19 @@ workflows:
   build_overlay:
     canonical: true
     contract_in: EmptyInput
-    returns: EmptyOutput
-    steps: []
+    returns: apply_assets
+    steps:
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: []
+          entity_id: $item.asset_id
+          properties: {}
+        as: assets
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
 """
         )
 

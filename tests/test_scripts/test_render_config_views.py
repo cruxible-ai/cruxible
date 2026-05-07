@@ -18,9 +18,7 @@ def test_update_readme_replaces_empty_marker_block(
     config = load_config_from_string(proposal_workflow_config_yaml)
     readme = tmp_path / "README.md"
     readme.write_text(
-        "# Demo\n\n"
-        "<!-- CRUXIBLE:BEGIN ontology -->\n"
-        "<!-- CRUXIBLE:END ontology -->\n"
+        "# Demo\n\n<!-- CRUXIBLE:BEGIN ontology -->\n<!-- CRUXIBLE:END ontology -->\n"
     )
 
     update_readme_file(readme, config, ("ontology",))
@@ -94,10 +92,7 @@ def test_update_readme_default_sections_are_comprehension_views(
     assert "**Input context**" in updated
     assert "**Result**" in updated
     assert "**Provider source**" in updated
-    assert (
-        "tests/support/workflow_test_providers.py::campaign_recommendations"
-        in updated
-    )
+    assert "tests/support/workflow_test_providers.py::campaign_recommendations" in updated
     assert (
         "| Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | "
         "Review Policy | Feedback | Outcomes |"
@@ -421,8 +416,19 @@ workflows:
   build_reference:
     canonical: true
     contract_in: EmptyInput
-    returns: EmptyOutput
-    steps: []
+    returns: apply_products
+    steps:
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: []
+          entity_id: $item.product_id
+          properties: {}
+        as: products
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
 contracts:
   EmptyInput:
     fields: {}
@@ -455,8 +461,18 @@ workflows:
   propose_asset_products:
     canonical: false
     contract_in: EmptyInput
-    returns: AssetProductOutput
-    steps: []
+    returns: asset_products
+    steps:
+      - id: asset_products
+        make_candidates:
+          relationship_type: asset_runs_product
+          items: []
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Product
+          to_id: $item.product_id
+          properties: {}
+        as: asset_products
 """
     )
 
@@ -501,12 +517,23 @@ workflows:
   build_reference:
     canonical: true
     contract_in: EmptyInput
-    returns: EmptyOutput
+    returns: apply_products
     steps:
       - id: load
         provider: load_reference
         input: {}
         as: loaded
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: []
+          entity_id: $item.product_id
+          properties: {}
+        as: products
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
 """
     )
     overlay.write_text(
@@ -525,8 +552,19 @@ workflows:
   build_overlay:
     canonical: true
     contract_in: EmptyInput
-    returns: EmptyOutput
-    steps: []
+    returns: apply_assets
+    steps:
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: []
+          entity_id: $item.asset_id
+          properties: {}
+        as: assets
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
 """
     )
 
