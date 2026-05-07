@@ -1,7 +1,7 @@
 """Graph quality assessment.
 
 Deterministic checks for orphans, coverage gaps, constraint violations,
-candidate opportunities, and governed support state.
+governed support state, and configured quality rules.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ FindingCategory = Literal[
     "orphan_entity",
     "coverage_gap",
     "constraint_violation",
-    "candidate_opportunity",
     "governed_support_relationship",
     "unreviewed_co_member",
     "quality_check_failed",
@@ -67,9 +66,8 @@ def evaluate_graph(
     1. Orphan entities — nodes with no edges
     2. Coverage gaps — entity/relationship types in config but absent from graph
     3. Constraint violations — rule-based checks on edge properties
-    4. Candidate opportunities — entity pairs sharing neighbors but lacking a direct edge
-    5. Governed support — pending or weakly supported governed relationships
-    6. Unreviewed co-members — entities sharing an intermediary with a cross-referenced
+    4. Governed support — pending or weakly supported governed relationships
+    5. Unreviewed co-members — entities sharing an intermediary with a cross-referenced
        entity but lacking a cross-reference edge themselves
     """
     findings: list[EvaluationFinding] = []
@@ -83,7 +81,6 @@ def evaluate_graph(
     _check_orphans(graph, findings, exclude_types=exclude_orphan_types)
     _check_coverage_gaps(config, graph, findings)
     _check_constraint_violations(config, graph, findings, constraint_summary)
-    _check_candidate_opportunities(config, graph, findings)
     _check_governed_support_relationships(config, graph, findings, group_store)
     _check_unreviewed_co_members(config, graph, findings)
     _check_quality_rules(config, graph, findings, quality_summary)
@@ -221,75 +218,6 @@ def _check_constraint_violations(
                             "to_entity": f"{to_type}:{to_id}",
                             "from_value": from_val,
                             "to_value": to_val,
-                        },
-                    )
-                )
-
-
-_MAX_ENTITIES_FOR_CANDIDATES = 500
-
-
-def _check_candidate_opportunities(
-    config: CoreConfig, graph: EntityGraph, findings: list[EvaluationFinding]
-) -> None:
-    """Find entity pairs sharing neighbors but lacking a target edge.
-
-    Only checks self-referential relationships (from == to entity type).
-    Skips if > 500 entities of the relevant type (performance guard).
-    """
-    for rel in config.relationships:
-        if rel.from_entity != rel.to_entity:
-            continue
-
-        entity_type = rel.from_entity
-        entities = graph.list_entities(entity_type)
-        if len(entities) > _MAX_ENTITIES_FOR_CANDIDATES:
-            continue
-
-        # Build neighbor sets: for each entity, collect its neighbors via any relationship
-        neighbor_sets: dict[str, set[str]] = {}
-        for entity in entities:
-            node_id = make_node_id(entity.entity_type, entity.entity_id)
-            neighbor_sets[node_id] = graph.neighbor_ids(entity.entity_type, entity.entity_id)
-
-        # Check pairs for shared neighbors without a direct edge
-        entity_list = list(neighbor_sets.keys())
-        for i, node_a in enumerate(entity_list):
-            for node_b in entity_list[i + 1 :]:
-                if not neighbor_sets[node_a] or not neighbor_sets[node_b]:
-                    continue
-
-                shared = neighbor_sets[node_a] & neighbor_sets[node_b]
-                if not shared:
-                    continue
-
-                # Check if direct edge already exists (both directions)
-                type_a, id_a = split_node_id(node_a)
-                type_b, id_b = split_node_id(node_b)
-                has_edge = graph.has_relationship(type_a, id_a, type_b, id_b, rel.name)
-                has_reverse = graph.has_relationship(type_b, id_b, type_a, id_a, rel.name)
-
-                if has_edge or has_reverse:
-                    continue
-
-                entity_a = graph.get_entity(type_a, id_a)
-                entity_b = graph.get_entity(type_b, id_b)
-                if not entity_a or not entity_b:
-                    continue
-                findings.append(
-                    EvaluationFinding(
-                        category="candidate_opportunity",
-                        severity="info",
-                        message=(
-                            f"Candidate: {entity_a.entity_type}:{entity_a.entity_id} "
-                            f"and {entity_b.entity_type}:{entity_b.entity_id} "
-                            f"share {len(shared)} neighbor(s) but lack '{rel.name}' edge"
-                        ),
-                        detail={
-                            "relationship_type": rel.name,
-                            "entity_a": f"{entity_a.entity_type}:{entity_a.entity_id}",
-                            "entity_b": f"{entity_b.entity_type}:{entity_b.entity_id}",
-                            "shared_neighbors": len(shared),
                         },
                     )
                 )
