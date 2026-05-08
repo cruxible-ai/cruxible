@@ -69,6 +69,8 @@ def evaluate_graph(
     4. Governed support — pending or weakly supported governed relationships
     5. Unreviewed co-members — entities sharing an intermediary with a cross-referenced
        entity but lacking a cross-reference edge themselves
+    6. Quality checks — config-defined property, json_content, uniqueness, bounds,
+       and cardinality rules
     """
     findings: list[EvaluationFinding] = []
     constraint_summary: dict[str, int] = {
@@ -427,6 +429,21 @@ def _check_unreviewed_co_members(
     R.to_entity == S.from_entity. Entities reachable from matched
     targets through shared intermediaries that lack their own R edge
     are flagged as unreviewed co-members.
+
+    Precision limitation: this check is purely structural. It does not
+    inspect entity properties (e.g., a `category` discriminator) or the
+    direction of an existing R edge on the candidate co-member. In a
+    domain where R-targets share intermediaries with semantically
+    unrelated entities -- for example a brake pad and a door panel that
+    both fit the same vehicle -- the door panel will still be surfaced
+    as a co-member of the brake pad's replacement chain. Co-members that
+    are themselves R-sources (the active replacements) are also
+    surfaced, since matched_set only contains R-targets.
+
+    Treat findings as low-precision audit prompts for a human reviewer,
+    not as actionable suggestions. For higher-precision "needs review"
+    candidates, use a proposal workflow with a provider that applies
+    domain logic.
     """
     for r_rel in config.relationships:
         # Find co-membership relationships S where R.to_entity == S.from_entity
