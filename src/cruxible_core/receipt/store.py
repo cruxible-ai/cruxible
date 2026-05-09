@@ -274,6 +274,10 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
 
     def delete_receipt(self, receipt_id: str) -> bool:
         """Delete a receipt. Returns True if it existed."""
+        self._conn.execute(
+            "DELETE FROM receipt_entities WHERE receipt_id = ?",
+            (receipt_id,),
+        )
         cursor = self._conn.execute(
             "DELETE FROM receipts WHERE receipt_id = ?",
             (receipt_id,),

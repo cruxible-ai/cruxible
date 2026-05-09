@@ -100,6 +100,11 @@ class TestSQLiteReceiptStore:
         store.save_receipt(sample_receipt)
         assert store.delete_receipt(sample_receipt.receipt_id) is True
         assert store.get_receipt(sample_receipt.receipt_id) is None
+        row = store._conn.execute(
+            "SELECT COUNT(*) AS count FROM receipt_entities WHERE receipt_id = ?",
+            (sample_receipt.receipt_id,),
+        ).fetchone()
+        assert row["count"] == 0
 
     def test_delete_nonexistent(self, store: SQLiteReceiptStore):
         assert store.delete_receipt("RCP-nonexistent") is False
