@@ -245,8 +245,13 @@ class DecisionStore(DecisionStoreProtocol):
             conditions.append("receipt_id = ?")
             params.append(receipt_id)
         if trace_id is not None:
-            conditions.append("trace_ids LIKE ?")
-            params.append(f"%{trace_id}%")
+            conditions.append(
+                "EXISTS ("
+                "SELECT 1 FROM json_each(decision_events.trace_ids) "
+                "WHERE json_each.value = ?"
+                ")"
+            )
+            params.append(trace_id)
         if status is not None:
             conditions.append("status = ?")
             params.append(status)

@@ -64,3 +64,21 @@ class TestDecisionStoreConstraints:
         events = store.list_events(record.decision_record_id)
         assert [event.decision_event_id for event in events] == [event_id]
         assert store.get_record(record.decision_record_id).rationale == "new context"
+
+    def test_find_events_by_trace_id_matches_exact_json_member(
+        self, store: DecisionStore
+    ) -> None:
+        record = DecisionRecord(question="Should we investigate?", opened_by="agent")
+        store.save_record(record)
+        trace_1 = _event(record.decision_record_id).model_copy(
+            update={"trace_ids": ["TRC-1"]}
+        )
+        trace_10 = _event(record.decision_record_id).model_copy(
+            update={"trace_ids": ["TRC-10"]}
+        )
+        store.append_event(trace_1)
+        store.append_event(trace_10)
+
+        events = store.find_events(trace_id="TRC-1")
+
+        assert [event.decision_event_id for event in events] == [trace_1.decision_event_id]
