@@ -981,6 +981,70 @@ class TestToDictFromDict:
         assert restored.edge_count() == populated_graph.edge_count() + 1
 
 
+class TestExtractAndMerge:
+    def test_merge_does_not_let_empty_extracted_stub_overwrite_base_entity(
+        self,
+    ):
+        current = EntityGraph()
+        current.add_entity(
+            EntityInstance(
+                entity_type="ReferenceThing",
+                entity_id="R-1",
+                properties={"name": "old upstream value"},
+            )
+        )
+        current.add_entity(
+            EntityInstance(
+                entity_type="LocalThing",
+                entity_id="L-1",
+                properties={"name": "local value"},
+            )
+        )
+        current.add_relationship(
+            RelationshipInstance(
+                relationship_type="local_links_reference",
+                from_type="LocalThing",
+                from_id="L-1",
+                to_type="ReferenceThing",
+                to_id="R-1",
+                properties={"reason": "watch"},
+            )
+        )
+
+        overlay = current.extract_owned_subgraph(
+            entity_types=["LocalThing"],
+            relationship_types=["local_links_reference"],
+        )
+        stub = overlay.get_entity("ReferenceThing", "R-1")
+        assert stub is not None
+        assert stub.properties == {}
+
+        next_upstream = EntityGraph()
+        next_upstream.add_entity(
+            EntityInstance(
+                entity_type="ReferenceThing",
+                entity_id="R-1",
+                properties={"name": "new upstream value"},
+            )
+        )
+
+        merged = EntityGraph.merge_graphs(next_upstream, overlay)
+
+        reference = merged.get_entity("ReferenceThing", "R-1")
+        assert reference is not None
+        assert reference.properties == {"name": "new upstream value"}
+        local = merged.get_entity("LocalThing", "L-1")
+        assert local is not None
+        assert local.properties == {"name": "local value"}
+        assert merged.has_relationship(
+            "LocalThing",
+            "L-1",
+            "ReferenceThing",
+            "R-1",
+            "local_links_reference",
+        )
+
+
 class TestCountEdges:
     def test_count_edges_incoming(self, populated_graph: EntityGraph):
         """Count incoming edges of a specific type."""

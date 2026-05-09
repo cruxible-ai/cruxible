@@ -793,10 +793,22 @@ class EntityGraph:
 
     @classmethod
     def merge_graphs(cls, base: EntityGraph, overlay: EntityGraph) -> EntityGraph:
-        """Merge two graphs by upserting overlay entities and appending overlay edges."""
+        """Merge two graphs by upserting overlay entities and appending overlay edges.
+
+        Overlay entities with empty properties that already exist in base are
+        treated as cross-boundary stubs (created by ``extract_owned_subgraph``)
+        and skipped, so they do not clobber populated base properties. This is a
+        defensive guard pending a post-0.2 redesign of stub-creation in extract.
+        """
         merged = cls.from_dict(base.to_dict())
 
         for entity in overlay.iter_all_entities():
+            # Defensive: extract_owned_subgraph emits empty-property stubs for
+            # cross-boundary endpoints. Skip them when base already has the
+            # entity so the stub does not clobber populated upstream data.
+            # Revisit when the extract-stub behavior is redesigned post-0.2.
+            if merged.has_entity(entity.entity_type, entity.entity_id) and not entity.properties:
+                continue
             merged.add_entity(entity)
 
         for edge in overlay.iter_edges():
