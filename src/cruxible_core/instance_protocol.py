@@ -157,6 +157,8 @@ class FeedbackStoreProtocol(ABC):
     @abstractmethod
     def save_outcome(self, record: OutcomeRecord) -> str: ...
     @abstractmethod
+    def get_outcome(self, outcome_id: str) -> OutcomeRecord | None: ...
+    @abstractmethod
     def list_outcomes(
         self,
         *,
