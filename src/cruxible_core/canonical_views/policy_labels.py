@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from cruxible_core.canonical_views.labels import (
-    _code_list,
-    _humanize_label,
-    _humanize_list,
+    code_list,
+    humanize_label,
+    humanize_list,
 )
 from cruxible_core.config.schema import CoreConfig
 
@@ -29,12 +29,12 @@ def _governed_relationship_creation_paths(config: CoreConfig) -> dict[str, list[
 def _creation_path_label(workflow_names: list[str]) -> str:
     if not workflow_names:
         return "Agent/manual group propose"
-    return f"Workflow: {_humanize_list(sorted(workflow_names))}"
+    return f"Workflow: {humanize_list(sorted(workflow_names))}"
 
 
 def _matching_policy_label(auto_resolve_when: str, prior_trust_policy: str) -> str:
     return (
-        f"{_humanize_label(auto_resolve_when)}; prior trust: {_humanize_label(prior_trust_policy)}"
+        f"{humanize_label(auto_resolve_when)}; prior trust: {humanize_label(prior_trust_policy)}"
     )
 
 
@@ -42,7 +42,7 @@ def _decision_policy_label(policies: list[Any]) -> str:
     if not policies:
         return "Trust-gated auto-resolve"
     return "; ".join(
-        f"{_humanize_label(policy.effect)}: {_humanize_label(policy.name)}"
+        f"{humanize_label(policy.effect)}: {humanize_label(policy.name)}"
         for policy in sorted(policies, key=lambda item: item.name)
     )
 
@@ -60,19 +60,19 @@ def _quality_check_target_label(check: Any) -> str:
     kind = getattr(check, "kind", "")
     if kind in {"property", "json_content"}:
         if check.target == "entity":
-            return f"{_humanize_label(check.entity_type)}.{check.property}"
-        return f"{_humanize_label(check.relationship_type)}.{check.property}"
+            return f"{humanize_label(check.entity_type)}.{check.property}"
+        return f"{humanize_label(check.relationship_type)}.{check.property}"
     if kind == "uniqueness":
-        return _humanize_label(check.entity_type)
+        return humanize_label(check.entity_type)
     if kind == "bounds":
         if check.target == "entity_count":
-            return f"{_humanize_label(check.entity_type)} count"
-        return f"{_humanize_label(check.relationship_type)} count"
+            return f"{humanize_label(check.entity_type)} count"
+        return f"{humanize_label(check.relationship_type)} count"
     if kind == "cardinality":
         direction = "out" if check.direction == "outgoing" else "in"
         return (
-            f"{_humanize_label(check.entity_type)} -> "
-            f"{_humanize_label(check.relationship_type)} ({direction})"
+            f"{humanize_label(check.entity_type)} -> "
+            f"{humanize_label(check.relationship_type)} ({direction})"
         )
     return "-"
 
@@ -86,7 +86,7 @@ def _quality_check_rule_label(check: Any) -> str:
                 ("pattern", check.pattern),
             )
         )
-        return _join_label_parts((_humanize_label(check.rule), details))
+        return _join_label_parts((humanize_label(check.rule), details))
     if kind == "json_content":
         details = _quality_check_optional_details(
             (
@@ -94,9 +94,9 @@ def _quality_check_rule_label(check: Any) -> str:
                 ("match", check.match),
             )
         )
-        return _join_label_parts((_humanize_label(check.rule), details))
+        return _join_label_parts((humanize_label(check.rule), details))
     if kind == "uniqueness":
-        return f"Unique on {_code_list(check.properties)}"
+        return f"Unique on {code_list(check.properties)}"
     if kind in {"bounds", "cardinality"}:
         return _bounds_rule_label(check.min_count, check.max_count)
     return "-"
@@ -176,4 +176,4 @@ def _render_outcome_profile_group(
 def _outcome_profile_target(profile: Any) -> str:
     if profile.anchor_type == "resolution":
         return f"Relationship `{profile.relationship_type}`"
-    return f"{_humanize_label(profile.surface_type)} `{profile.surface_name}`"
+    return f"{humanize_label(profile.surface_type)} `{profile.surface_name}`"

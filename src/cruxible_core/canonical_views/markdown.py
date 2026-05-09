@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from cruxible_core.canonical_views.labels import (
-    _humanize_label,
-    _humanize_list_or_dash,
-    _humanize_traversal_summary,
+    humanize_label,
+    humanize_list_or_dash,
+    humanize_traversal_summary,
 )
 from cruxible_core.canonical_views.mermaid import (
     render_ontology_mermaid,
@@ -153,7 +153,7 @@ def render_workflow_summary_markdown(view: WorkflowView) -> str:
             lines.append("")
         lines.extend(
             [
-                f"### {index}. {_humanize_label(workflow.name)}",
+                f"### {index}. {humanize_label(workflow.name)}",
                 "",
                 f"**Role:** {_workflow_table_role(workflow)}",
                 "",
@@ -226,18 +226,18 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
         feedback_profile = config.feedback_profiles.get(relationship.name)
         rows.append(
             (
-                _humanize_label(relationship.name),
-                f"{_humanize_label(relationship.from_entity)} -> "
-                f"{_humanize_label(relationship.to_entity)}",
+                humanize_label(relationship.name),
+                f"{humanize_label(relationship.from_entity)} -> "
+                f"{humanize_label(relationship.to_entity)}",
                 _creation_path_label(creation_paths.get(relationship.name, [])),
-                _humanize_list_or_dash(sorted(proposal_policy.signals)),
+                humanize_list_or_dash(sorted(proposal_policy.signals)),
                 _matching_policy_label(
                     proposal_policy.auto_resolve_when,
                     proposal_policy.auto_resolve_requires_prior_trust,
                 ),
                 _decision_policy_label(policies),
                 _feedback_profile_label(feedback_profile),
-                _humanize_list_or_dash(outcomes),
+                humanize_list_or_dash(outcomes),
             )
         )
     return _markdown_table(
@@ -281,7 +281,7 @@ def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
             f"`{name}`",
             role,
             always_review,
-            _humanize_list_or_dash(sorted(used_by.get(name, set()))),
+            humanize_list_or_dash(sorted(used_by.get(name, set()))),
             note,
         )
         for name, (role, always_review, note) in sorted(policy_rows.items())
@@ -302,7 +302,7 @@ def render_quality_rules_markdown(config: CoreConfig) -> str:
                 [
                     (
                         f"`{constraint.name}`",
-                        _humanize_label(constraint.severity),
+                        humanize_label(constraint.severity),
                         constraint.rule,
                         constraint.description or "-",
                     )
@@ -321,9 +321,9 @@ def render_quality_rules_markdown(config: CoreConfig) -> str:
                 [
                     (
                         f"`{check.name}`",
-                        _humanize_label(check.kind),
+                        humanize_label(check.kind),
                         _quality_check_target_label(check),
-                        _humanize_label(check.severity),
+                        humanize_label(check.severity),
                         _quality_check_rule_label(check),
                     )
                     for check in sorted(config.quality_checks, key=lambda item: item.name)
@@ -376,16 +376,16 @@ def render_query_catalog_markdown(view: QueryView) -> str:
             lines.append("")
         lines.extend(
             [
-                f"### {_humanize_label(entry_point)}",
+                f"### {humanize_label(entry_point)}",
                 "",
                 _markdown_table(
                     ("Query", "Returns", "Traversal", "Purpose"),
                     [
                         (
-                            _humanize_label(query.name),
-                            _humanize_label(query.returns),
+                            humanize_label(query.name),
+                            humanize_label(query.returns),
                             " -> ".join(
-                                _humanize_traversal_summary(step)
+                                humanize_traversal_summary(step)
                                 for step in query.traversal_summary
                             ),
                             query.description.strip() if query.description else "",

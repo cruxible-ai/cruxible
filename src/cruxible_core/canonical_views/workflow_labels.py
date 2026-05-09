@@ -7,10 +7,9 @@ import inspect
 from pathlib import Path
 
 from cruxible_core.canonical_views.labels import (
-    _humanize_label,
-    _humanize_list,
-    _humanize_list_or_dash,
-    _pluralize_label,
+    humanize_label,
+    humanize_list,
+    humanize_list_or_dash,
 )
 from cruxible_core.canonical_views.models import (
     WorkflowProviderSummaryView,
@@ -70,14 +69,14 @@ def _workflow_story_sort_key(workflow: WorkflowSummaryView) -> tuple[int, str]:
 
 def _workflow_story_label(workflow: WorkflowSummaryView) -> str:
     if workflow.applies_relationships:
-        detail = "Loads: " + _humanize_list(workflow.applies_relationships)
+        detail = "Loads: " + humanize_list(workflow.applies_relationships)
     elif workflow.proposes_relationships:
-        detail = "Proposes: " + _humanize_list(workflow.proposes_relationships)
+        detail = "Proposes: " + humanize_list(workflow.proposes_relationships)
     elif workflow.providers:
-        detail = "Providers: " + _humanize_list(workflow.providers)
+        detail = "Providers: " + humanize_list(workflow.providers)
     else:
-        detail = _humanize_label(workflow.mode)
-    return f"{_humanize_label(workflow.name)}\n{detail}"
+        detail = humanize_label(workflow.mode)
+    return f"{humanize_label(workflow.name)}\n{detail}"
 
 
 def _workflow_pipeline_label(index: int, workflow: WorkflowSummaryView) -> str:
@@ -96,17 +95,10 @@ def _workflow_pipeline_summary(workflow: WorkflowSummaryView) -> str:
     if workflow.mode == "canonical":
         return "Seed canonical state"
     if not writes:
-        return _humanize_label(workflow.name)
+        return humanize_label(workflow.name)
 
     relationship = writes[0]
-    if relationship == "incident_impacts_supplier":
-        return "Assess supplier impact"
-    if relationship.startswith("incident_impacts_"):
-        entity = _humanize_label(relationship.removeprefix("incident_impacts_"))
-        return f"Cascade to {_pluralize_label(entity).lower()}"
-    if relationship == "shipment_at_risk":
-        return "Flag at-risk shipments"
-    return _humanize_label(relationship)
+    return humanize_label(relationship)
 
 
 def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
@@ -116,7 +108,7 @@ def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
         return "Governed proposal"
     if workflow.mode == "utility":
         return "Utility"
-    return _humanize_label(workflow.mode)
+    return humanize_label(workflow.mode)
 
 
 def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
@@ -172,13 +164,13 @@ def _workflow_table_result(workflow: WorkflowSummaryView) -> str:
 
 def _workflow_table_providers(workflow: WorkflowSummaryView) -> str:
     if not workflow.provider_details:
-        return _humanize_list_or_dash(workflow.providers)
+        return humanize_list_or_dash(workflow.providers)
     return "\n".join(_workflow_provider_label(provider) for provider in workflow.provider_details)
 
 
 def _workflow_provider_source_bullets(workflow: WorkflowSummaryView) -> list[str]:
     if not workflow.provider_details:
-        return _markdown_bullets(_humanize_list_or_dash(workflow.providers))
+        return _markdown_bullets(humanize_list_or_dash(workflow.providers))
 
     lines: list[str] = []
     for provider in workflow.provider_details:
@@ -187,7 +179,7 @@ def _workflow_provider_source_bullets(workflow: WorkflowSummaryView) -> list[str
             f"source: `{_provider_source_label(provider)}`",
         ]
         if provider.artifact is not None:
-            labels.append(f"artifact: {_humanize_label(provider.artifact)}")
+            labels.append(f"artifact: {humanize_label(provider.artifact)}")
         elif not provider.deterministic:
             labels.append("non-deterministic")
         lines.append(f"- {'; '.join(labels)}")
@@ -199,7 +191,7 @@ def _workflow_provider_label(provider: WorkflowProviderSummaryView) -> str:
     source = _provider_source_label(provider)
     labels = [descriptor, source]
     if provider.artifact is not None:
-        labels.append(f"Artifact: {_humanize_label(provider.artifact)}")
+        labels.append(f"Artifact: {humanize_label(provider.artifact)}")
     elif not provider.deterministic:
         labels.append("Non-deterministic")
     return "\n".join(labels)
@@ -207,8 +199,8 @@ def _workflow_provider_label(provider: WorkflowProviderSummaryView) -> str:
 
 def _workflow_provider_descriptor(provider: WorkflowProviderSummaryView) -> str:
     return (
-        f"{_humanize_label(provider.name)} "
-        f"({_humanize_label(provider.runtime)} {_humanize_label(provider.kind)}, "
+        f"{humanize_label(provider.name)} "
+        f"({humanize_label(provider.runtime)} {humanize_label(provider.kind)}, "
         f"v{provider.version})"
     )
 
@@ -252,7 +244,7 @@ def _workflow_step_details(
 
 
 def _format_surface_groups(groups: tuple[tuple[str, list[str]], ...]) -> str:
-    lines = [f"{label}: {_humanize_list(values)}" for label, values in groups if values]
+    lines = [f"{label}: {humanize_list(values)}" for label, values in groups if values]
     if not lines:
         return "-"
     return "\n".join(lines)
@@ -263,12 +255,12 @@ def _markdown_bullets(value: str) -> list[str]:
 
 
 def _workflow_step_label(index: int, step: WorkflowStepSummaryView) -> str:
-    prefix = f"{index}. {_humanize_label(step.id)}"
+    prefix = f"{index}. {humanize_label(step.id)}"
     detail = (
-        f"{_humanize_label(step.kind)}: {_humanize_label(step.detail)}"
+        f"{humanize_label(step.kind)}: {humanize_label(step.detail)}"
         if step.detail
-        else _humanize_label(step.kind)
+        else humanize_label(step.kind)
     )
     if step.output:
-        detail = f"{detail}\nAs: {_humanize_label(step.output)}"
+        detail = f"{detail}\nAs: {humanize_label(step.output)}"
     return f"{prefix}\n{detail}"

@@ -5,23 +5,23 @@ from __future__ import annotations
 import re
 
 
-def _humanize_label(value: str) -> str:
+def humanize_label(value: str) -> str:
     value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
     value = value.replace("_", " ").replace("-", " ").strip()
     return value.title()
 
 
-def _humanize_list(values: list[str]) -> str:
-    return ", ".join(_humanize_label(value) for value in values)
+def humanize_list(values: list[str]) -> str:
+    return ", ".join(humanize_label(value) for value in values)
 
 
-def _humanize_list_or_dash(values: list[str]) -> str:
+def humanize_list_or_dash(values: list[str]) -> str:
     if not values:
         return "-"
-    return _humanize_list(values)
+    return humanize_list(values)
 
 
-def _pluralize_label(value: str) -> str:
+def pluralize_label(value: str) -> str:
     if value.endswith("y"):
         return f"{value[:-1]}ies"
     if value.endswith("s"):
@@ -29,13 +29,13 @@ def _pluralize_label(value: str) -> str:
     return f"{value}s"
 
 
-def _code_list(values: list[str]) -> str:
+def code_list(values: list[str]) -> str:
     if not values:
         return "-"
     return ", ".join(f"`{value}`" for value in values)
 
 
-def _query_return_entity(value: str) -> str:
+def query_return_entity(value: str) -> str:
     stripped = value.strip().strip('"')
     match = re.fullmatch(r"list\[(.+)\]", stripped, flags=re.IGNORECASE)
     if match:
@@ -43,17 +43,17 @@ def _query_return_entity(value: str) -> str:
     return stripped
 
 
-def _humanize_traversal_summary(value: str) -> str:
+def humanize_traversal_summary(value: str) -> str:
     relationships, separator, suffix = value.partition(" (")
     relationship_label = " | ".join(
-        _humanize_label(relationship) for relationship in relationships.split("|")
+        humanize_label(relationship) for relationship in relationships.split("|")
     )
     if not separator:
         return relationship_label
 
     suffix = suffix.rstrip(")")
     parts = suffix.split(", ")
-    direction = _humanize_label(parts[0]) if parts else ""
+    direction = humanize_label(parts[0]) if parts else ""
     details = ", ".join(parts[1:])
     if details:
         return f"{relationship_label} ({direction}, {details})"

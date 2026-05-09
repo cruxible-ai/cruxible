@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from cruxible_core.canonical_views.labels import (
-    _humanize_label,
-    _humanize_list,
-    _humanize_traversal_summary,
-    _query_return_entity,
+    humanize_label,
+    humanize_list,
+    humanize_traversal_summary,
+    query_return_entity,
 )
 from cruxible_core.canonical_views.mermaid_utils import (
     escape_mermaid_label as _shared_escape_mermaid_label,
@@ -54,7 +54,7 @@ def render_ontology_mermaid(view: OntologyView) -> str:
     ]
     for entity in view.entity_types:
         node_id = _mermaid_id(f"entity_{entity.name}")
-        label = _escape_mermaid_label(_humanize_label(entity.name))
+        label = _escape_mermaid_label(humanize_label(entity.name))
         lines.append(f'  {node_id}["{label}"]')
         if entity.name in governed_entities and entity.name not in deterministic_entities:
             governed_nodes.append(node_id)
@@ -71,7 +71,7 @@ def render_ontology_mermaid(view: OntologyView) -> str:
     for relationship in deterministic_relationships:
         src = _mermaid_id(f"entity_{relationship.from_entity}")
         dst = _mermaid_id(f"entity_{relationship.to_entity}")
-        label = _escape_mermaid_label(_humanize_label(relationship.name))
+        label = _escape_mermaid_label(humanize_label(relationship.name))
         lines.append(f'  {src} -- "{label}" --> {dst}')
         deterministic_edge_indexes.append(edge_index)
         edge_index += 1
@@ -81,7 +81,7 @@ def render_ontology_mermaid(view: OntologyView) -> str:
     for relationship in governed_relationships:
         src = _mermaid_id(f"entity_{relationship.from_entity}")
         dst = _mermaid_id(f"entity_{relationship.to_entity}")
-        label = _escape_mermaid_label(_humanize_label(relationship.name))
+        label = _escape_mermaid_label(humanize_label(relationship.name))
         lines.append(f'  {src} -. "{label}" .-> {dst}')
         governed_edge_indexes.append(edge_index)
         edge_index += 1
@@ -158,14 +158,14 @@ def render_workflow_dependency_mermaid(view: WorkflowView) -> str:
     for workflow in view.workflows:
         node_id = _mermaid_id(f"workflow_{workflow.name}")
         label = _escape_mermaid_label(
-            f"{_humanize_label(workflow.name)}\n{_humanize_label(workflow.mode)}"
+            f"{humanize_label(workflow.name)}\n{humanize_label(workflow.mode)}"
         )
         lines.append(f'  {node_id}["{label}"]')
     if view.dependencies:
         for dependency in view.dependencies:
             src = _mermaid_id(f"workflow_{dependency.source_workflow}")
             dst = _mermaid_id(f"workflow_{dependency.target_workflow}")
-            label = _escape_mermaid_label(_humanize_list(dependency.via_relationships))
+            label = _escape_mermaid_label(humanize_list(dependency.via_relationships))
             lines.append(f'  {src} -- "{label}" --> {dst}')
     return "\n".join(lines)
 
@@ -176,7 +176,7 @@ def render_workflow_steps_mermaid(view: WorkflowView) -> str:
     for workflow in view.workflows:
         subgraph_id = _mermaid_id(f"workflow_steps_{workflow.name}")
         subgraph_label = _escape_mermaid_label(
-            f"{_humanize_label(workflow.name)} ({_humanize_label(workflow.mode)})"
+            f"{humanize_label(workflow.name)} ({humanize_label(workflow.mode)})"
         )
         lines.append(f'  subgraph {subgraph_id}["{subgraph_label}"]')
         previous_id: str | None = None
@@ -196,7 +196,7 @@ def render_workflow_steps_mermaid_blocks(
 ) -> list[tuple[str, str]]:
     """Render workflow steps as one Mermaid graph per workflow."""
     return [
-        (_humanize_label(workflow.name), _render_single_workflow_steps_mermaid(workflow))
+        (humanize_label(workflow.name), _render_single_workflow_steps_mermaid(workflow))
         for workflow in view.workflows
     ]
 
@@ -212,7 +212,7 @@ def render_query_mermaid(view: QueryView) -> str:
 def render_query_mermaid_blocks(view: QueryView) -> list[tuple[str, str]]:
     """Render named queries as one Mermaid graph per query."""
     return [
-        (_humanize_label(query.name), "\n".join(["flowchart TD", *_query_mermaid_lines(query)]))
+        (humanize_label(query.name), "\n".join(["flowchart TD", *_query_mermaid_lines(query)]))
         for query in view.queries
     ]
 
@@ -223,7 +223,7 @@ def render_query_map_mermaid(view: QueryView) -> str:
     entities: set[str] = set()
     for query in view.queries:
         source = query.entry_point
-        target = _query_return_entity(query.returns)
+        target = query_return_entity(query.returns)
         entities.update((source, target))
         edges.add((source, target))
 
@@ -234,7 +234,7 @@ def render_query_map_mermaid(view: QueryView) -> str:
     ]
     for entity in sorted(entities):
         node_id = _mermaid_id(f"query_entity_{entity}")
-        label = _escape_mermaid_label(_humanize_label(entity))
+        label = _escape_mermaid_label(humanize_label(entity))
         lines.append(f'  {node_id}["{label}"]')
 
     if entities:
@@ -266,9 +266,9 @@ def _query_mermaid_lines(query: QuerySummaryView) -> list[str]:
     query_id = _mermaid_id(f"query_{query.name}")
     entry_id = _mermaid_id(f"query_{query.name}_entry")
     return_id = _mermaid_id(f"query_{query.name}_return")
-    query_label = _escape_mermaid_label(_humanize_label(query.name))
-    entry_label = _escape_mermaid_label(_humanize_label(query.entry_point))
-    return_label = _escape_mermaid_label(_humanize_label(query.returns))
+    query_label = _escape_mermaid_label(humanize_label(query.name))
+    entry_label = _escape_mermaid_label(humanize_label(query.entry_point))
+    return_label = _escape_mermaid_label(humanize_label(query.returns))
     lines = [
         f'  {query_id}["{query_label}"]',
         f'  {entry_id}["Entry: {entry_label}"]',
@@ -277,7 +277,7 @@ def _query_mermaid_lines(query: QuerySummaryView) -> list[str]:
     previous_id = entry_id
     for index, step in enumerate(query.traversal_summary):
         step_id = _mermaid_id(f"query_{query.name}_step_{index}")
-        step_label = _escape_mermaid_label(_humanize_traversal_summary(step))
+        step_label = _escape_mermaid_label(humanize_traversal_summary(step))
         lines.append(f'  {step_id}["{step_label}"]')
         lines.append(f"  {previous_id} --> {step_id}")
         previous_id = step_id
