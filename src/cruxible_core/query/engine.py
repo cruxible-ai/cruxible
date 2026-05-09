@@ -505,6 +505,8 @@ def _evaluate_constraint(
     """Evaluate a simple constraint expression.
 
     Supported format: "target.<property> <op> $<param>" or literal.
+    Source-side constraints are rejected because traversal source semantics
+    depend on relationship direction and are not implemented.
 
     Examples:
         "target.vehicle_id == $vehicle_id"
@@ -523,7 +525,10 @@ def _evaluate_constraint(
             config, target_entity.entity_type, target_entity.entity_id, target_entity.properties
         ).get(prop)
     else:
-        return True  # 'source' not supported in collection mode
+        raise QueryExecutionError(
+            "source-side traversal constraints are not supported; "
+            "use target.<property> constraints"
+        )
 
     if rhs.startswith("$"):
         rhs_value = params.get(rhs[1:])

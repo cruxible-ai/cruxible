@@ -14,6 +14,11 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import BUILTIN_CONTRACTS, ContractSchema, CoreConfig
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import SYSTEM_OWNED_PROPERTIES
+from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN
+
+_TRAVERSAL_CONSTRAINT_RE = re.compile(
+    rf"^(target|source)\.([\w-]+)\s*{COMPARISON_SYMBOL_PATTERN}\s*(.+)$"
+)
 
 
 def validate_config(config: CoreConfig) -> list[str]:
@@ -140,6 +145,13 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
                                     f"references unknown property '{prop_name}' on "
                                     f"entity type '{target_type}'"
                                 )
+                if step.constraint:
+                    match = _TRAVERSAL_CONSTRAINT_RE.match(step.constraint.strip())
+                    if match is not None and match.group(1) == "source":
+                        errors.append(
+                            f"Named query '{query_name}' step {i}: source-side traversal "
+                            "constraints are not supported; use target.<property> constraints"
+                        )
 
 
 def _flip_direction(direction: str) -> str:

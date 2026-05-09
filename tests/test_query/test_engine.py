@@ -382,6 +382,29 @@ class TestExecuteQuery:
         result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
         assert result.parameters == {"vehicle_id": "V-CIVIC"}
 
+    def test_source_side_constraint_fails_query(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["bad_source_constraint"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    constraint="source.vehicle_id == $vehicle_id",
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        with pytest.raises(QueryExecutionError, match="source-side traversal constraints"):
+            execute_query(
+                config,
+                graph,
+                "bad_source_constraint",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
 
 # ---------------------------------------------------------------------------
 # execute_query: multi-step with constraint
@@ -853,6 +876,21 @@ class TestEvaluateConstraint:
             properties={},
         )
         assert _evaluate_constraint(config, "some_weird_expression", entity, {})
+
+    def test_source_side_constraint_raises(self, config: CoreConfig):
+        """source.X constraints fail closed instead of being recorded as passed."""
+        entity = EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-1",
+            properties={"vehicle_id": "V-CIVIC"},
+        )
+        with pytest.raises(QueryExecutionError, match="source-side traversal constraints"):
+            _evaluate_constraint(
+                config,
+                "source.vehicle_id == $vehicle_id",
+                entity,
+                {"vehicle_id": "V-CIVIC"},
+            )
 
 
 # ---------------------------------------------------------------------------

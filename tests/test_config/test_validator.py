@@ -246,6 +246,28 @@ class TestValidateNamedQueries:
         )
         validate_config(config)
 
+    def test_rejects_source_side_traversal_constraint(self):
+        config = _minimal_config(
+            named_queries={
+                "bad": NamedQuerySchema(
+                    entry_point="A",
+                    traversal=[
+                        TraversalStep(
+                            relationship="links",
+                            constraint="source.status == open",
+                        )
+                    ],
+                    returns="list[B]",
+                )
+            }
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+        assert any(
+            "source-side traversal constraints are not supported" in e
+            for e in exc_info.value.errors
+        )
+
 
 class TestValidateLoopOneControls:
     def test_supported_constraint_invalid_reference_errors(self):
