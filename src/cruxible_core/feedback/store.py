@@ -283,7 +283,11 @@ class FeedbackStore(FeedbackStoreProtocol):
 
         self._conn.execute(
             "UPDATE feedback "
-            "SET target_relationship = json_extract(target_json, '$.relationship') "
+            "SET target_relationship = COALESCE("
+            "json_extract(target_json, '$.relationship_type'), "
+            "json_extract(target_json, '$.relationship'), "
+            "''"
+            ") "
             "WHERE target_relationship = ''"
         )
         self._conn.execute(

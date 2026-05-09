@@ -587,6 +587,48 @@ class TestFeedbackStore:
         assert fb1.feedback_id in ids
         assert fb2.feedback_id in ids
 
+    def test_migrates_canonical_relationship_type_target_json(self, tmp_path):
+        db_path = tmp_path / "feedback.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE feedback ("
+            "feedback_id TEXT PRIMARY KEY, "
+            "receipt_id TEXT NOT NULL, "
+            "action TEXT NOT NULL, "
+            "target_json TEXT NOT NULL, "
+            "reason TEXT NOT NULL DEFAULT '', "
+            "source TEXT NOT NULL DEFAULT 'human', "
+            "model_id TEXT, "
+            "corrections TEXT NOT NULL DEFAULT '{}', "
+            "created_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO feedback "
+            "(feedback_id, receipt_id, action, target_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "FB-1",
+                "RCP-1",
+                "approve",
+                '{"relationship_type":"fits","from_type":"Part","from_id":"P-1",'
+                '"to_type":"Vehicle","to_id":"V-1"}',
+                "2026-03-01T00:00:00Z",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        migrated = FeedbackStore(db_path)
+        try:
+            row = migrated._conn.execute(
+                "SELECT target_relationship FROM feedback WHERE feedback_id = ?",
+                ("FB-1",),
+            ).fetchone()
+        finally:
+            migrated.close()
+
+        assert row["target_relationship"] == "fits"
+
     def test_count_feedback(self, store: FeedbackStore, target: RelationshipInstance):
         store.save_feedback(FeedbackRecord(receipt_id="RCP-1", action="approve", target=target))
         store.save_feedback(FeedbackRecord(receipt_id="RCP-2", action="reject", target=target))
