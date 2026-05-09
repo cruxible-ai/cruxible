@@ -75,4 +75,6 @@ class OutcomeRecord(BaseModel):
     def default_anchor_id(self) -> OutcomeRecord:
         if self.anchor_type == "receipt" and self.anchor_id is None:
             self.anchor_id = self.receipt_id
+        elif not self.anchor_id:
+            raise ValueError(f"{self.anchor_type} outcomes require anchor_id")
         return self

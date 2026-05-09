@@ -642,6 +642,14 @@ class TestFeedbackStore:
 
 
 class TestOutcomeStore:
+    def test_resolution_outcome_requires_anchor_id(self):
+        with pytest.raises(ValueError, match="resolution outcomes require anchor_id"):
+            OutcomeRecord(
+                receipt_id="RCP-1",
+                anchor_type="resolution",
+                outcome="correct",
+            )
+
     def test_save_and_get(self, store: FeedbackStore):
         out = OutcomeRecord(
             receipt_id="RCP-1",
