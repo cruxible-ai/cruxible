@@ -538,7 +538,12 @@ class EntityGraph:
         Yields (from_type, from_id, to_type, to_id, rel_type, edge_key, properties).
         """
         for u, v, key, data in self._graph.edges(keys=True, data=True):
-            rel_type = data.get("relationship_type", "")
+            rel_type = data.get("relationship_type")
+            if not isinstance(rel_type, str) or not rel_type:
+                raise ValueError(
+                    "Graph edge "
+                    f"{u!r} -> {v!r} (key={key!r}) is missing relationship_type"
+                )
             if relationship_type is not None and rel_type != relationship_type:
                 continue
             from_type, from_id = split_node_id(u)

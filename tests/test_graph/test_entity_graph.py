@@ -804,6 +804,19 @@ class TestIterEdges:
     def test_iter_edges_empty_graph(self, graph: EntityGraph):
         assert list(graph.iter_edges()) == []
 
+    def test_iter_edges_rejects_missing_relationship_type(
+        self, populated_graph: EntityGraph
+    ):
+        data = populated_graph.to_dict()
+        del data["edges"][0]["relationship_type"]
+        restored = EntityGraph.from_dict(data)
+
+        with pytest.raises(ValueError, match="missing relationship_type"):
+            list(restored.iter_edges())
+
+        with pytest.raises(ValueError, match="missing relationship_type"):
+            list(restored.iter_edges(relationship_type="replaces"))
+
 
 class TestEdgeIteration:
     def test_iter_edge_data(self, populated_graph: EntityGraph):
