@@ -1790,19 +1790,19 @@ class TestStoreLifecycle:
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from cruxible_core.storage.sqlite import SQLiteStore
+        from cruxible_core.receipt.store import SQLiteReceiptStore
 
         close_count = 0
-        original_close = SQLiteStore.close
+        original_close = SQLiteReceiptStore.close
 
-        def counting_close(self: SQLiteStore) -> None:
+        def counting_close(self: SQLiteReceiptStore) -> None:
             nonlocal close_count
             close_count += 1
             original_close(self)
 
-        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(SQLiteReceiptStore, "close", counting_close)
         monkeypatch.setattr(
-            SQLiteStore,
+            SQLiteReceiptStore,
             "save_receipt",
             lambda self, r: (_ for _ in ()).throw(RuntimeError("boom")),
         )
@@ -1863,19 +1863,19 @@ class TestStoreLifecycle:
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from cruxible_core.storage.sqlite import SQLiteStore
+        from cruxible_core.receipt.store import SQLiteReceiptStore
 
         close_count = 0
-        original_close = SQLiteStore.close
+        original_close = SQLiteReceiptStore.close
 
-        def counting_close(self: SQLiteStore) -> None:
+        def counting_close(self: SQLiteReceiptStore) -> None:
             nonlocal close_count
             close_count += 1
             original_close(self)
 
-        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(SQLiteReceiptStore, "close", counting_close)
         monkeypatch.setattr(
-            SQLiteStore,
+            SQLiteReceiptStore,
             "list_receipts",
             lambda self, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )

@@ -6,8 +6,8 @@ import pytest
 
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.storage.sqlite import SQLiteStore
 
 
 def _trace_timing() -> dict[str, object]:
@@ -16,8 +16,8 @@ def _trace_timing() -> dict[str, object]:
 
 
 @pytest.fixture
-def store() -> SQLiteStore:
-    return SQLiteStore(":memory:")
+def store() -> SQLiteReceiptStore:
+    return SQLiteReceiptStore(":memory:")
 
 
 @pytest.fixture
@@ -38,8 +38,8 @@ def sample_receipt() -> Receipt:
     return builder.build(results)
 
 
-class TestSQLiteStore:
-    def test_save_and_get(self, store: SQLiteStore, sample_receipt: Receipt):
+class TestSQLiteReceiptStore:
+    def test_save_and_get(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         receipt_id = store.save_receipt(sample_receipt)
         assert receipt_id == sample_receipt.receipt_id
 
@@ -52,16 +52,16 @@ class TestSQLiteStore:
         assert len(loaded.edges) == len(sample_receipt.edges)
         assert len(loaded.results) == len(sample_receipt.results)
 
-    def test_get_nonexistent(self, store: SQLiteStore):
+    def test_get_nonexistent(self, store: SQLiteReceiptStore):
         assert store.get_receipt("RCP-nonexistent") is None
 
-    def test_save_overwrites(self, store: SQLiteStore, sample_receipt: Receipt):
+    def test_save_overwrites(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
         store.save_receipt(sample_receipt)
         loaded = store.get_receipt(sample_receipt.receipt_id)
         assert loaded is not None
 
-    def test_list_receipts(self, store: SQLiteStore, sample_receipt: Receipt):
+    def test_list_receipts(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
 
         items = store.list_receipts()
@@ -71,7 +71,7 @@ class TestSQLiteStore:
         assert items[0]["parameters"] == {"vehicle_id": "V-1"}
         assert store.count_receipts() == 1
 
-    def test_list_filter_by_query_name(self, store: SQLiteStore):
+    def test_list_filter_by_query_name(self, store: SQLiteReceiptStore):
         b1 = ReceiptBuilder(query_name="query_a", parameters={})
         b2 = ReceiptBuilder(query_name="query_b", parameters={})
         store.save_receipt(b1.build(results=[]))
@@ -82,7 +82,7 @@ class TestSQLiteStore:
         assert items[0]["query_name"] == "query_a"
         assert store.count_receipts(query_name="query_a") == 1
 
-    def test_list_limit_and_offset(self, store: SQLiteStore):
+    def test_list_limit_and_offset(self, store: SQLiteReceiptStore):
         for i in range(5):
             b = ReceiptBuilder(query_name="q", parameters={"i": i})
             store.save_receipt(b.build(results=[]))
@@ -96,20 +96,20 @@ class TestSQLiteStore:
         offset_items = store.list_receipts(limit=2, offset=3)
         assert len(offset_items) == 2
 
-    def test_delete_receipt(self, store: SQLiteStore, sample_receipt: Receipt):
+    def test_delete_receipt(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
         assert store.delete_receipt(sample_receipt.receipt_id) is True
         assert store.get_receipt(sample_receipt.receipt_id) is None
 
-    def test_delete_nonexistent(self, store: SQLiteStore):
+    def test_delete_nonexistent(self, store: SQLiteReceiptStore):
         assert store.delete_receipt("RCP-nonexistent") is False
 
-    def test_list_empty(self, store: SQLiteStore):
+    def test_list_empty(self, store: SQLiteReceiptStore):
         assert store.list_receipts() == []
 
     def test_receipt_preserves_dag_structure(
         self,
-        store: SQLiteStore,
+        store: SQLiteReceiptStore,
         sample_receipt: Receipt,
     ):
         store.save_receipt(sample_receipt)
@@ -128,12 +128,12 @@ class TestSQLiteStore:
         assert "filtered" in edge_types
         assert "produced" in edge_types
 
-    def test_get_receipts_for_entity(self, store: SQLiteStore, sample_receipt: Receipt):
+    def test_get_receipts_for_entity(self, store: SQLiteReceiptStore, sample_receipt: Receipt):
         store.save_receipt(sample_receipt)
         ids = store.get_receipts_for_entity("Part", "P-1")
         assert sample_receipt.receipt_id in ids
 
-    def test_receipt_entity_index_replaces_old_rows(self, store: SQLiteStore):
+    def test_receipt_entity_index_replaces_old_rows(self, store: SQLiteReceiptStore):
         builder = ReceiptBuilder(query_name="q", parameters={})
         builder.record_entity_lookup(entity_type="Vehicle", entity_id="V-1")
         first = builder.build(results=[])
@@ -147,14 +147,14 @@ class TestSQLiteStore:
 
     def test_file_persistence(self, tmp_path):
         db_path = tmp_path / "test.db"
-        store1 = SQLiteStore(db_path)
+        store1 = SQLiteReceiptStore(db_path)
 
         b = ReceiptBuilder(query_name="q", parameters={"x": 1})
         receipt = b.build(results=[])
         store1.save_receipt(receipt)
         store1.close()
 
-        store2 = SQLiteStore(db_path)
+        store2 = SQLiteReceiptStore(db_path)
         loaded = store2.get_receipt(receipt.receipt_id)
         assert loaded is not None
         assert loaded.query_name == "q"
@@ -163,17 +163,17 @@ class TestSQLiteStore:
     def test_migration_adds_operation_type(self, tmp_path):
         """Open store, close, reopen — operation_type column exists."""
         db_path = tmp_path / "migrate.db"
-        store1 = SQLiteStore(db_path)
+        store1 = SQLiteReceiptStore(db_path)
         b = ReceiptBuilder(query_name="q", parameters={})
         store1.save_receipt(b.build(results=[]))
         store1.close()
 
-        store2 = SQLiteStore(db_path)
+        store2 = SQLiteReceiptStore(db_path)
         items = store2.list_receipts()
         assert items[0]["operation_type"] == "query"
         store2.close()
 
-    def test_save_stores_operation_type(self, store: SQLiteStore):
+    def test_save_stores_operation_type(self, store: SQLiteReceiptStore):
         b = ReceiptBuilder(operation_type="add_entity", parameters={"count": 1})
         b.mark_committed()
         receipt = b.build()
@@ -181,7 +181,7 @@ class TestSQLiteStore:
         items = store.list_receipts()
         assert items[0]["operation_type"] == "add_entity"
 
-    def test_list_filter_by_operation_type(self, store: SQLiteStore):
+    def test_list_filter_by_operation_type(self, store: SQLiteReceiptStore):
         b1 = ReceiptBuilder(query_name="q", parameters={})
         b2 = ReceiptBuilder(operation_type="add_entity", parameters={})
         b2.mark_committed()
@@ -192,7 +192,7 @@ class TestSQLiteStore:
         assert len(items) == 1
         assert items[0]["operation_type"] == "add_entity"
 
-    def test_count_filter_by_operation_type(self, store: SQLiteStore):
+    def test_count_filter_by_operation_type(self, store: SQLiteReceiptStore):
         b1 = ReceiptBuilder(query_name="q", parameters={})
         b2 = ReceiptBuilder(operation_type="add_entity", parameters={})
         b2.mark_committed()
@@ -202,7 +202,7 @@ class TestSQLiteStore:
         assert store.count_receipts(operation_type="add_entity") == 1
         assert store.count_receipts(operation_type="query") == 1
 
-    def test_combined_filters(self, store: SQLiteStore):
+    def test_combined_filters(self, store: SQLiteReceiptStore):
         b1 = ReceiptBuilder(query_name="q1", parameters={})
         b2 = ReceiptBuilder(query_name="q1", parameters={}, operation_type="add_entity")
         b2.mark_committed()
@@ -212,12 +212,14 @@ class TestSQLiteStore:
         items = store.list_receipts(query_name="q1", operation_type="add_entity")
         assert len(items) == 1
 
-    def test_old_receipts_default_to_query(self, store: SQLiteStore, sample_receipt: Receipt):
+    def test_old_receipts_default_to_query(
+        self, store: SQLiteReceiptStore, sample_receipt: Receipt
+    ):
         store.save_receipt(sample_receipt)
         loaded = store.get_receipt(sample_receipt.receipt_id)
         assert loaded.operation_type == "query"
 
-    def test_save_and_get_trace(self, store: SQLiteStore):
+    def test_save_and_get_trace(self, store: SQLiteReceiptStore):
         trace = ExecutionTrace(
             workflow_name="evaluate_promo",
             step_id="lift",
@@ -242,7 +244,7 @@ class TestSQLiteStore:
         assert loaded.provider_name == "lift_predictor"
         assert loaded.output_payload["predicted_lift_pct"] == 0.12
 
-    def test_list_traces(self, store: SQLiteStore):
+    def test_list_traces(self, store: SQLiteReceiptStore):
         trace_a = ExecutionTrace(
             workflow_name="wf_a",
             step_id="step",

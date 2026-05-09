@@ -54,7 +54,7 @@ ON execution_traces(provider_name);
 """
 
 
-class SQLiteStore(ReceiptStoreProtocol):
+class SQLiteReceiptStore(ReceiptStoreProtocol):
     """Stores and retrieves receipts and execution traces from SQLite."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:

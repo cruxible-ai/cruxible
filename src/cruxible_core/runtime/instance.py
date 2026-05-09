@@ -31,8 +31,8 @@ from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
-from cruxible_core.storage.sqlite import SQLiteStore
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     compute_lock_config_digest,
@@ -365,9 +365,9 @@ class CruxibleInstance(InstanceProtocol):
     # saved but receipt not recorded) can leave stores inconsistent. Acceptable
     # for a single-user local tool; revisit if the runtime moves server-side.
 
-    def get_receipt_store(self) -> SQLiteStore:
+    def get_receipt_store(self) -> SQLiteReceiptStore:
         """Get or create the receipt SQLite store."""
-        return SQLiteStore(self.instance_dir / "receipts.db")
+        return SQLiteReceiptStore(self.instance_dir / "receipts.db")
 
     def get_decision_store(self) -> DecisionStore:
         """Get or create the decision record SQLite store."""
