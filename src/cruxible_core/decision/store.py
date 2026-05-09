@@ -76,6 +76,7 @@ class DecisionStore(DecisionStoreProtocol):
         self._db_path = str(db_path)
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
 
     @contextmanager
@@ -91,11 +92,24 @@ class DecisionStore(DecisionStoreProtocol):
     def save_record(self, record: DecisionRecord) -> str:
         """Create or replace a decision record."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO decision_records "
+            "INSERT INTO decision_records "
             "(decision_record_id, question, subject_type, subject_id, status, opened_by, "
             "opened_at, finalized_at, final_decision, decision_class, rationale, "
             "abandoned_reason, record_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(decision_record_id) DO UPDATE SET "
+            "question = excluded.question, "
+            "subject_type = excluded.subject_type, "
+            "subject_id = excluded.subject_id, "
+            "status = excluded.status, "
+            "opened_by = excluded.opened_by, "
+            "opened_at = excluded.opened_at, "
+            "finalized_at = excluded.finalized_at, "
+            "final_decision = excluded.final_decision, "
+            "decision_class = excluded.decision_class, "
+            "rationale = excluded.rationale, "
+            "abandoned_reason = excluded.abandoned_reason, "
+            "record_json = excluded.record_json",
             (
                 record.decision_record_id,
                 record.question,
