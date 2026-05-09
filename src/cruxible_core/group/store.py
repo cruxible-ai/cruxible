@@ -384,16 +384,16 @@ class GroupStore(GroupStoreProtocol):
     ) -> bool:
         """Update group status, optionally setting resolution_id. Does NOT commit."""
         if resolution_id is not None:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE candidate_groups SET status = ?, resolution_id = ? WHERE group_id = ?",
                 (status, resolution_id, group_id),
             )
         else:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE candidate_groups SET status = ? WHERE group_id = ?",
                 (status, group_id),
             )
-        return self._conn.total_changes > 0
+        return cursor.rowcount > 0
 
     def update_group(
         self,

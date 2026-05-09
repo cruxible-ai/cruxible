@@ -249,19 +249,29 @@ class TestStatusUpdate:
     def test_update_status(self, store: GroupStore) -> None:
         with store.transaction():
             store.save_group(_group("GRP-1"))
-            store.update_group_status("GRP-1", "applying")
+            updated = store.update_group_status("GRP-1", "applying")
         loaded = store.get_group("GRP-1")
         assert loaded is not None
+        assert updated is True
         assert loaded.status == "applying"
 
     def test_update_status_with_resolution_id(self, store: GroupStore) -> None:
         with store.transaction():
             res_id = store.save_resolution("fits", "abc123", "approve", "", "", {}, {}, "human")
             store.save_group(_group("GRP-1"))
-            store.update_group_status("GRP-1", "applying", resolution_id=res_id)
+            updated = store.update_group_status("GRP-1", "applying", resolution_id=res_id)
         loaded = store.get_group("GRP-1")
         assert loaded is not None
+        assert updated is True
         assert loaded.resolution_id == res_id
+
+    def test_update_status_returns_false_for_missing_group(self, store: GroupStore) -> None:
+        with store.transaction():
+            store.save_group(_group("GRP-1"))
+            store.update_group_status("GRP-1", "applying")
+            updated = store.update_group_status("GRP-missing", "resolved")
+
+        assert updated is False
 
 
 class TestMembers:
