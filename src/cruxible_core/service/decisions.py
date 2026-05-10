@@ -185,6 +185,10 @@ def _append_event_if_context(
 ) -> None:
     """Best-effort append of an operation event when a decision context exists.
 
+    A ``decision_record_id`` is the switch for decision recording mode: reads
+    and writes can both be captured as audit evidence for the decision. Event
+    append failures are logged but do not fail the underlying operation.
+
     ``started_at`` must be captured by the caller before doing the work so
     duration reflects real elapsed time. ``finished_at`` is captured here.
     """

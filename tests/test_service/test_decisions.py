@@ -55,7 +55,7 @@ def test_digest_payload_is_deterministic() -> None:
     assert summary == '{"a": {"x": 1}, "b": 2}'
 
 
-def test_query_auto_logs_receipt_and_snapshot(
+def test_query_decision_record_context_records_audit_event(
     populated_instance: CruxibleInstance,
 ) -> None:
     snapshot = populated_instance.create_snapshot()
@@ -86,6 +86,32 @@ def test_query_auto_logs_receipt_and_snapshot(
     assert events[0].head_snapshot_id == snapshot.snapshot_id
     assert events[0].surface == "cli"
     assert events[0].output_digest is not None
+
+
+def test_query_without_decision_record_context_does_not_record_event(
+    populated_instance: CruxibleInstance,
+) -> None:
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+        subject_type="Vehicle",
+        subject_id="V-2024-CIVIC-EX",
+        opened_by="agent",
+    ).record
+
+    query = service_query(
+        populated_instance,
+        "parts_for_vehicle",
+        {"vehicle_id": "V-2024-CIVIC-EX"},
+    )
+
+    events = service_list_decision_events(
+        populated_instance,
+        decision_record_id=record.decision_record_id,
+    ).events
+
+    assert query.receipt_id is not None
+    assert events == []
 
 
 def test_decision_support_requires_open_decision_record_before_execution(

@@ -41,6 +41,13 @@ WorkflowMode = Literal["run", "preview", "apply"]
 
 @dataclass(frozen=True)
 class OperationContext:
+    """Optional audit context for recording an operation against a decision.
+
+    Supplying ``decision_record_id`` opts the operation into decision recording
+    mode. Read operations may still append decision-event audit metadata; this
+    does not imply graph or world-state mutation.
+    """
+
     decision_record_id: str | None = None
     request_id: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None

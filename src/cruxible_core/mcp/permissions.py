@@ -79,7 +79,8 @@ _MODE_NAMES: dict[str, PermissionMode] = {
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
-    # READ_ONLY tools
+    # READ_ONLY tools do not mutate graph/world state. Some may still append
+    # decision-event audit metadata when an explicit decision_record_id is supplied.
     "cruxible_version": PermissionMode.READ_ONLY,
     "cruxible_server_info": PermissionMode.READ_ONLY,
     "cruxible_init": PermissionMode.READ_ONLY,  # admin gate for create inside handler
