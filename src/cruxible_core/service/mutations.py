@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.operations import (
     apply_entity,
@@ -18,7 +19,6 @@ from cruxible_core.service._helpers import (
     _save_graph,
     mutation_receipt,
 )
-from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -36,7 +36,10 @@ def service_add_entities(
     Validates all entities first, then applies atomically.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
-    check_type_ownership(instance, entity_types=[entity.entity_type for entity in entities])
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
+        entity_types=[entity.entity_type for entity in entities],
+    )
     config = instance.load_config()
     graph = instance.load_graph()
 
@@ -129,8 +132,8 @@ def service_add_relationships(
     preserve existing system review metadata.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
-    check_type_ownership(
-        instance,
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
         relationship_types=[relationship.relationship_type for relationship in relationships],
     )
     config = instance.load_config()

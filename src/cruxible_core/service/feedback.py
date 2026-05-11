@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
+from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
     validate_property_payload,
@@ -31,7 +32,6 @@ from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
-from cruxible_core.service._ownership import check_type_ownership
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackServiceResult,
@@ -735,7 +735,10 @@ def service_feedback(
         source=source,
         corrections=corrections,
     )
-    check_type_ownership(instance, relationship_types=[target.relationship_type])
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
+        relationship_types=[target.relationship_type],
+    )
     config = instance.load_config()
     graph = instance.load_graph()
     receipts = _load_receipts(instance, [receipt_id])
@@ -800,8 +803,9 @@ def service_feedback_batch(
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
         raise ConfigError("Batch feedback items must not be empty")
-    check_type_ownership(
-        instance, relationship_types=[item.target.relationship_type for item in items]
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
+        relationship_types=[item.target.relationship_type for item in items],
     )
 
     for item in items:

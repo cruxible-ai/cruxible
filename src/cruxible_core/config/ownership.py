@@ -1,21 +1,20 @@
-"""Centralized ownership guards for release-backed overlays."""
+"""Shared ownership guards for upstream-backed overlays."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
 from cruxible_core.errors import OwnershipError
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.snapshot.types import UpstreamMetadata
 
 
-def check_type_ownership(
-    instance: InstanceProtocol,
+def check_upstream_type_ownership(
+    upstream: UpstreamMetadata | None,
     *,
     entity_types: Iterable[str] = (),
     relationship_types: Iterable[str] = (),
 ) -> None:
-    """Reject writes that target upstream-owned types in a overlay instance."""
-    upstream = instance.get_upstream_metadata()
+    """Reject writes that target types owned by an upstream release."""
     if upstream is None:
         return
 

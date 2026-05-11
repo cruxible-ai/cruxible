@@ -12,6 +12,7 @@ import hashlib
 import json
 from typing import Any
 
+from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
 from cruxible_core.errors import DataValidationError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -251,9 +252,11 @@ def apply_entity_set(
     All validation is completed before any entity write is applied.
     """
     entity_set = EntitySet.model_validate(raw_entity_set)
-    from cruxible_core.service._ownership import check_type_ownership
 
-    check_type_ownership(instance, entity_types=[entity_set.entity_type])
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
+        entity_types=[entity_set.entity_type],
+    )
     config = instance.load_config()
     create_count = 0
     update_count = 0
@@ -346,9 +349,11 @@ def apply_relationship_set(
     All validation is completed before any relationship write is applied.
     """
     relationship_set = RelationshipSet.model_validate(raw_relationship_set)
-    from cruxible_core.service._ownership import check_type_ownership
 
-    check_type_ownership(instance, relationship_types=[relationship_set.relationship_type])
+    check_upstream_type_ownership(
+        instance.get_upstream_metadata(),
+        relationship_types=[relationship_set.relationship_type],
+    )
     config = instance.load_config()
     create_count = 0
     update_count = 0
