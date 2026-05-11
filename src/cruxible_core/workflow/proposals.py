@@ -1,4 +1,9 @@
-"""Built-in workflow steps for relationship proposals and signals."""
+"""Built-in workflow steps that assemble governed relationship proposals.
+
+These helpers do not write graph state. They turn workflow rows into candidate
+relationship facts, attach tri-state evidence signals, and package the result
+for the service layer to bridge into a governed candidate group.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +35,16 @@ def _make_candidate_set(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> CandidateSet:
+    """Build the set of relationship edges a workflow wants reviewed.
+
+    The ``make_candidates`` step maps each resolved item into a
+    ``RelationshipInstance`` for one configured relationship type. It validates
+    that the produced endpoint types match the relationship schema, then returns
+    an in-memory ``CandidateSet`` artifact for later proposal assembly.
+
+    Candidate creation is intentionally not a graph write. The produced edges
+    remain proposed facts until the service proposal/resolve flow accepts them.
+    """
     relationship_type = spec.relationship_type
     rel_schema = config.get_relationship(relationship_type)
     if rel_schema is None:
@@ -105,6 +120,17 @@ def _map_signal_batch(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> SignalBatch:
+    """Map source rows into tri-state evidence for candidate pairs.
+
+    The ``map_signals`` step resolves a pair identity from each item, derives a
+    ``support``, ``unsure``, or ``contradict`` value from either a numeric score
+    threshold or an enum mapping, and records optional evidence text. Each batch
+    represents one named signal source and may contain at most one signal for a
+    given pair.
+
+    Signals are evidence about candidates, not candidates themselves. Pair
+    membership is checked later when the proposal artifact is assembled.
+    """
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
     seen_pairs: set[tuple[str, str]] = set()
     signals: list[SignalBatchSignal] = []
@@ -209,6 +235,17 @@ def _build_relationship_group_proposal(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> RelationshipGroupProposalArtifact:
+    """Combine candidates, signals, and thesis metadata into a proposal artifact.
+
+    The ``propose_relationship_group`` step joins a prior ``CandidateSet`` with
+    one or more ``SignalBatch`` artifacts by candidate pair. It rejects signals
+    for unknown candidates and duplicate signal sources for the same pair, then
+    returns the single artifact consumed by ``service_propose_workflow``.
+
+    This is the packaging boundary between workflow execution and governed group
+    review. Persistence, policy checks, and eventual graph writes remain owned
+    by the service layer.
+    """
     candidate_set = CandidateSet.model_validate(step_outputs[spec.candidates_from])
     relationship_type = spec.relationship_type
     if candidate_set.relationship_type != relationship_type:
