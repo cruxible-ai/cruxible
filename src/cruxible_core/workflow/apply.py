@@ -1,4 +1,10 @@
-"""Built-in workflow steps for materializing graph changes."""
+"""Built-in workflow steps for materializing governed graph changes.
+
+These helpers split canonical writes into two phases. ``make_*`` steps convert
+workflow rows into typed in-memory artifacts with duplicate diagnostics.
+``apply_*`` steps validate those artifacts against config and graph state, then
+either preview the writes on a cloned graph or persist them during apply mode.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +47,16 @@ def _make_entity_set(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> EntitySet:
+    """Build an entity-upsert artifact from workflow rows.
+
+    The ``make_entities`` step resolves one entity id and property payload per
+    source item. It verifies that the target entity type exists, dedupes repeated
+    entity ids with first-wins semantics, and records duplicate diagnostics for
+    preview/receipt output.
+
+    Property schema validation is intentionally deferred to ``apply_entities`` so
+    this step stays a pure artifact-construction step.
+    """
     if spec.entity_type not in config.entity_types:
         raise QueryExecutionError(
             f"Workflow step '{step_id}' references unknown entity type '{spec.entity_type}'"
@@ -107,6 +123,17 @@ def _make_relationship_set(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> RelationshipSet:
+    """Build a relationship-upsert artifact from workflow rows.
+
+    The ``make_relationships`` step resolves relationship endpoints and
+    properties for one configured relationship type. It checks that produced
+    endpoint types match the configured relationship direction, dedupes repeated
+    relationship tuples with first-wins semantics, and keeps duplicate
+    diagnostics for debugging.
+
+    Endpoint existence and relationship property validation are deferred to
+    ``apply_relationships``, where graph state is available.
+    """
     rel_schema = config.get_relationship(spec.relationship_type)
     if rel_schema is None:
         raise QueryExecutionError(
@@ -212,6 +239,17 @@ def _apply_entity_set(
     persist_writes: bool,
     parent_id: str | None,
 ) -> ApplyEntitiesPreview:
+    """Validate and preview or persist entity writes for a canonical workflow.
+
+    The ``apply_entities`` step consumes an ``EntitySet``, enforces ownership,
+    validates every entity against the current config, and then applies
+    create/update/noop decisions to the provided graph object. The executor
+    passes a cloned graph for canonical previews and commits that graph to live
+    state only in apply mode. ``persist_writes`` controls receipt write-node
+    recording, not graph mutation.
+
+    All validation is completed before any entity write is applied.
+    """
     entity_set = EntitySet.model_validate(raw_entity_set)
     from cruxible_core.service._ownership import check_type_ownership
 
@@ -294,6 +332,19 @@ def _apply_relationship_set(
     persist_writes: bool,
     parent_id: str | None,
 ) -> ApplyRelationshipsPreview:
+    """Validate and preview or persist relationship writes for a workflow.
+
+    The ``apply_relationships`` step consumes a ``RelationshipSet``, enforces
+    ownership, validates every relationship against config and graph state, and
+    then applies create/update/noop decisions to the provided graph object. The
+    executor passes a cloned graph for canonical previews and commits that graph
+    to live state only in apply mode. ``persist_writes`` controls receipt
+    write-node recording, not graph mutation. Relationship writes go through
+    ``apply_relationship`` so provenance and system-owned graph metadata are
+    handled by the shared graph operation.
+
+    All validation is completed before any relationship write is applied.
+    """
     relationship_set = RelationshipSet.model_validate(raw_relationship_set)
     from cruxible_core.service._ownership import check_type_ownership
 
@@ -387,6 +438,7 @@ def _apply_relationship_set(
 
 
 def _would_update_entity(current: dict[str, Any], new_properties: dict[str, Any]) -> bool:
+    """Return true when a patch-style entity update would change stored properties."""
     return any(current.get(key) != value for key, value in new_properties.items())
 
 
@@ -395,6 +447,12 @@ def _compute_apply_digest(
     head_snapshot_id: str | None,
     apply_previews: dict[str, Any],
 ) -> str | None:
+    """Compute the preview/apply identity digest for a canonical workflow.
+
+    The digest binds the workflow name, normalized input, lock digest, current
+    head snapshot, and sorted apply previews. ``service_apply_workflow`` uses it
+    to ensure the apply request matches the preview the caller inspected.
+    """
     if not plan.canonical or not apply_previews:
         return None
     payload = {
