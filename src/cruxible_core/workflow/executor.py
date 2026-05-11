@@ -10,11 +10,11 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.apply import (
-    _apply_entity_set,
-    _apply_relationship_set,
-    _compute_apply_digest,
-    _make_entity_set,
-    _make_relationship_set,
+    apply_entity_set,
+    apply_relationship_set,
+    compute_apply_digest,
+    make_entity_set,
+    make_relationship_set,
 )
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.io import (
@@ -347,7 +347,7 @@ def execute_workflow(
 
         if compiled_step.kind == "make_entities":
             assert compiled_step.make_entities_spec is not None
-            entity_set = _make_entity_set(
+            entity_set = make_entity_set(
                 config,
                 compiled_step.step_id,
                 compiled_step.make_entities_spec,
@@ -380,7 +380,7 @@ def execute_workflow(
 
         if compiled_step.kind == "make_relationships":
             assert compiled_step.make_relationships_spec is not None
-            relationship_set = _make_relationship_set(
+            relationship_set = make_relationship_set(
                 config,
                 compiled_step.step_id,
                 compiled_step.make_relationships_spec,
@@ -417,7 +417,7 @@ def execute_workflow(
                 "apply_entities",
                 detail={},
             )
-            entity_preview = _apply_entity_set(
+            entity_preview = apply_entity_set(
                 instance,
                 graph,
                 compiled_step.step_id,
@@ -441,7 +441,7 @@ def execute_workflow(
                 "apply_relationships",
                 detail={},
             )
-            relationship_preview = _apply_relationship_set(
+            relationship_preview = apply_relationship_set(
                 instance,
                 graph,
                 workflow_name,
@@ -472,7 +472,7 @@ def execute_workflow(
     output = step_outputs[plan.returns]
     receipt_builder.record_results([{"output": output}])
     receipt = receipt_builder.build(results=[{"output": output}])
-    apply_digest = _compute_apply_digest(plan, head_snapshot_id, apply_previews)
+    apply_digest = compute_apply_digest(plan, head_snapshot_id, apply_previews)
     committed_snapshot_id: str | None = None
     receipt.nodes[0].detail.update(
         {

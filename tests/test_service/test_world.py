@@ -28,7 +28,7 @@ from cruxible_core.service import (
     service_world_status,
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
-from cruxible_core.workflow.executor import _apply_entity_set, _apply_relationship_set
+from cruxible_core.workflow.apply import apply_entity_set, apply_relationship_set
 
 WORLD_MODEL_YAML = """\
 version: "1.0"
@@ -705,7 +705,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     receipt_builder = ReceiptBuilder(query_name="wf", parameters={}, operation_type="workflow")
 
     with pytest.raises(OwnershipError, match="upstream-owned entity types"):
-        _apply_entity_set(
+        apply_entity_set(
             instance,
             graph,
             "step_entities",
@@ -724,7 +724,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
             parent_id=None,
         )
 
-    preview = _apply_relationship_set(
+    preview = apply_relationship_set(
         instance,
         graph,
         "wf",
@@ -749,7 +749,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     assert preview.create_count == 1
     assert graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
 
-    update_preview = _apply_relationship_set(
+    update_preview = apply_relationship_set(
         instance,
         graph,
         "wf",

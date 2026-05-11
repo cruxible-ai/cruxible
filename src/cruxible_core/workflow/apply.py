@@ -40,7 +40,7 @@ from cruxible_core.workflow.types import (
 )
 
 
-def _make_entity_set(
+def make_entity_set(
     config: CoreConfig,
     step_id: str,
     spec: MakeEntitiesSpec,
@@ -116,7 +116,7 @@ def _make_entity_set(
     )
 
 
-def _make_relationship_set(
+def make_relationship_set(
     config: CoreConfig,
     step_id: str,
     spec: MakeRelationshipsSpec,
@@ -229,7 +229,7 @@ def _make_relationship_set(
     )
 
 
-def _apply_entity_set(
+def apply_entity_set(
     instance: InstanceProtocol,
     graph: EntityGraph,
     step_id: str,
@@ -321,7 +321,7 @@ def _apply_entity_set(
     )
 
 
-def _apply_relationship_set(
+def apply_relationship_set(
     instance: InstanceProtocol,
     graph: EntityGraph,
     workflow_name: str,
@@ -442,7 +442,7 @@ def _would_update_entity(current: dict[str, Any], new_properties: dict[str, Any]
     return any(current.get(key) != value for key, value in new_properties.items())
 
 
-def _compute_apply_digest(
+def compute_apply_digest(
     plan: Any,
     head_snapshot_id: str | None,
     apply_previews: dict[str, Any],
