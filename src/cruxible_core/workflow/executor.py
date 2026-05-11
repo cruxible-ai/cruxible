@@ -18,24 +18,24 @@ from cruxible_core.workflow.apply import (
 )
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.io import (
-    _execute_assert_step,
-    _execute_provider_step,
-    _execute_query_step,
-    _list_entities,
-    _list_relationships,
+    execute_assert_step,
+    execute_provider_step,
+    execute_query_step,
+    list_entities_step,
+    list_relationships_step,
 )
 from cruxible_core.workflow.proposals import (
-    _build_relationship_group_proposal,
-    _make_candidate_set,
-    _map_signal_batch,
+    build_relationship_group_proposal,
+    make_candidate_set,
+    map_signal_batch,
 )
-from cruxible_core.workflow.step_helpers import _resolve_step_items
-from cruxible_core.workflow.tracing import _persist_receipt
+from cruxible_core.workflow.step_helpers import resolve_step_items
+from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.transforms import (
-    _dedupe_items,
-    _filter_items,
-    _join_items,
-    _shape_items,
+    dedupe_items,
+    filter_items,
+    join_items,
+    shape_items,
 )
 from cruxible_core.workflow.types import WorkflowExecutionResult
 
@@ -84,7 +84,7 @@ def execute_workflow(
 
     for compiled_step in plan.steps:
         if compiled_step.kind == "query":
-            _execute_query_step(
+            execute_query_step(
                 instance,
                 config,
                 graph,
@@ -99,7 +99,7 @@ def execute_workflow(
             continue
 
         if compiled_step.kind == "provider":
-            _execute_provider_step(
+            execute_provider_step(
                 instance,
                 config,
                 lock,
@@ -118,7 +118,7 @@ def execute_workflow(
 
         if compiled_step.kind == "list_entities":
             assert compiled_step.list_entities_spec is not None
-            entity_list = _list_entities(
+            entity_list = list_entities_step(
                 config,
                 graph,
                 compiled_step.step_id,
@@ -142,7 +142,7 @@ def execute_workflow(
 
         if compiled_step.kind == "list_relationships":
             assert compiled_step.list_relationships_spec is not None
-            relationship_list = _list_relationships(
+            relationship_list = list_relationships_step(
                 graph,
                 compiled_step.step_id,
                 compiled_step.list_relationships_spec,
@@ -165,7 +165,7 @@ def execute_workflow(
 
         if compiled_step.kind == "shape_items":
             assert compiled_step.shape_items_spec is not None
-            shaped_items = _shape_items(
+            shaped_items = shape_items(
                 compiled_step.step_id,
                 compiled_step.shape_items_spec,
                 plan.input_payload,
@@ -187,7 +187,7 @@ def execute_workflow(
 
         if compiled_step.kind == "join_items":
             assert compiled_step.join_items_spec is not None
-            joined_items = _join_items(
+            joined_items = join_items(
                 compiled_step.step_id,
                 compiled_step.join_items_spec,
                 plan.input_payload,
@@ -211,7 +211,7 @@ def execute_workflow(
 
         if compiled_step.kind == "filter_items":
             assert compiled_step.filter_items_spec is not None
-            filtered_items = _filter_items(
+            filtered_items = filter_items(
                 compiled_step.step_id,
                 compiled_step.filter_items_spec,
                 plan.input_payload,
@@ -233,7 +233,7 @@ def execute_workflow(
 
         if compiled_step.kind == "dedupe_items":
             assert compiled_step.dedupe_items_spec is not None
-            deduped_items = _dedupe_items(
+            deduped_items = dedupe_items(
                 compiled_step.step_id,
                 compiled_step.dedupe_items_spec,
                 plan.input_payload,
@@ -255,7 +255,7 @@ def execute_workflow(
 
         if compiled_step.kind == "make_candidates":
             assert compiled_step.make_candidates_spec is not None
-            candidate_set = _make_candidate_set(
+            candidate_set = make_candidate_set(
                 config,
                 compiled_step.step_id,
                 compiled_step.make_candidates_spec,
@@ -277,7 +277,7 @@ def execute_workflow(
                     "conflicting_duplicate_count": candidate_set.conflicting_duplicate_count,
                     "duplicate_examples": candidate_set.duplicate_examples,
                     "item_count": len(
-                        _resolve_step_items(
+                        resolve_step_items(
                             compiled_step.make_candidates_spec.items,
                             plan.input_payload,
                             step_outputs,
@@ -289,7 +289,7 @@ def execute_workflow(
 
         if compiled_step.kind == "map_signals":
             assert compiled_step.map_signals_spec is not None
-            signal_batch = _map_signal_batch(
+            signal_batch = map_signal_batch(
                 compiled_step.step_id,
                 compiled_step.map_signals_spec,
                 plan.input_payload,
@@ -307,7 +307,7 @@ def execute_workflow(
                     "signal_source": signal_batch.signal_source,
                     "signal_count": len(signal_batch.signals),
                     "item_count": len(
-                        _resolve_step_items(
+                        resolve_step_items(
                             compiled_step.map_signals_spec.items,
                             plan.input_payload,
                             step_outputs,
@@ -319,7 +319,7 @@ def execute_workflow(
 
         if compiled_step.kind == "propose_relationship_group":
             assert compiled_step.propose_relationship_group_spec is not None
-            proposal = _build_relationship_group_proposal(
+            proposal = build_relationship_group_proposal(
                 compiled_step.step_id,
                 compiled_step.propose_relationship_group_spec,
                 plan.input_payload,
@@ -366,7 +366,7 @@ def execute_workflow(
                     "entity_type": entity_set.entity_type,
                     "entity_count": len(entity_set.entities),
                     "item_count": len(
-                        _resolve_step_items(
+                        resolve_step_items(
                             compiled_step.make_entities_spec.items,
                             plan.input_payload,
                             step_outputs,
@@ -398,7 +398,7 @@ def execute_workflow(
                     "relationship_type": relationship_set.relationship_type,
                     "relationship_count": len(relationship_set.relationships),
                     "item_count": len(
-                        _resolve_step_items(
+                        resolve_step_items(
                             compiled_step.make_relationships_spec.items,
                             plan.input_payload,
                             step_outputs,
@@ -460,7 +460,7 @@ def execute_workflow(
             continue
 
         assert compiled_step.assert_spec is not None
-        _execute_assert_step(
+        execute_assert_step(
             instance,
             compiled_step,
             plan.input_payload,
@@ -490,7 +490,7 @@ def execute_workflow(
         receipt.committed = True
 
     if persist_receipt:
-        _persist_receipt(instance, receipt)
+        persist_workflow_receipt(instance, receipt)
 
     return WorkflowExecutionResult(
         workflow=workflow_name,

@@ -18,18 +18,18 @@ from cruxible_core.primitives import canonical_json
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
-    _MAX_DUPLICATE_EXAMPLES,
-    _resolve_step_items,
+    MAX_DUPLICATE_EXAMPLES,
+    resolve_step_items,
 )
 
 
-def _shape_items(
+def shape_items(
     step_id: str,
     spec: ShapeItemsSpec,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     output_items: list[dict[str, Any]] = []
     dropped_count = 0
     drop_examples: list[dict[str, Any]] = []
@@ -71,7 +71,7 @@ def _shape_items(
         if missing:
             if spec.on_missing_required == "drop":
                 dropped_count += 1
-                if len(drop_examples) < _MAX_DUPLICATE_EXAMPLES:
+                if len(drop_examples) < MAX_DUPLICATE_EXAMPLES:
                     drop_examples.append({"index": index, "missing": missing})
                 continue
             raise QueryExecutionError(
@@ -89,14 +89,14 @@ def _shape_items(
     }
 
 
-def _join_items(
+def join_items(
     step_id: str,
     spec: JoinItemsSpec,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    left_items = _resolve_step_items(spec.left_items, input_payload, step_outputs)
-    right_items = _resolve_step_items(spec.right_items, input_payload, step_outputs)
+    left_items = resolve_step_items(spec.left_items, input_payload, step_outputs)
+    right_items = resolve_step_items(spec.right_items, input_payload, step_outputs)
     right_index: dict[str, list[dict[str, Any]]] = {}
     skipped_right_count = 0
 
@@ -159,13 +159,13 @@ def _join_items(
     }
 
 
-def _filter_items(
+def filter_items(
     step_id: str,
     spec: FilterItemsSpec,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     resolved_where = _resolve_filter_where(
         step_id,
         spec.where,
@@ -215,13 +215,13 @@ def _filter_items(
     }
 
 
-def _dedupe_items(
+def dedupe_items(
     step_id: str,
     spec: DedupeItemsSpec,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     selected: dict[str, dict[str, Any]] = {}
     duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
@@ -258,7 +258,7 @@ def _dedupe_items(
 
         duplicate_count += 1
         existing = selected[key_hash]
-        if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+        if len(duplicate_examples) < MAX_DUPLICATE_EXAMPLES:
             duplicate_examples.append(
                 {
                     "key": key_values,

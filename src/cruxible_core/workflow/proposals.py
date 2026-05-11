@@ -19,7 +19,7 @@ from cruxible_core.errors import QueryExecutionError
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalValue
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.step_helpers import _MAX_DUPLICATE_EXAMPLES, _resolve_step_items
+from cruxible_core.workflow.step_helpers import MAX_DUPLICATE_EXAMPLES, resolve_step_items
 from cruxible_core.workflow.types import (
     CandidateSet,
     RelationshipGroupProposalArtifact,
@@ -28,7 +28,7 @@ from cruxible_core.workflow.types import (
 )
 
 
-def _make_candidate_set(
+def make_candidate_set(
     config: CoreConfig,
     step_id: str,
     spec: MakeCandidatesSpec,
@@ -54,7 +54,7 @@ def _make_candidate_set(
             f"Workflow step '{step_id}' references unknown relationship '{relationship_type}'"
         )
 
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     candidates: list[RelationshipInstance] = []
     duplicate_input_count = 0
@@ -116,7 +116,7 @@ def _make_candidate_set(
             conflicting = seen[key] != member.properties
             if conflicting:
                 conflicting_duplicate_count += 1
-            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+            if len(duplicate_examples) < MAX_DUPLICATE_EXAMPLES:
                 example = {
                     "from_type": member.from_type,
                     "from_id": member.from_id,
@@ -142,7 +142,7 @@ def _make_candidate_set(
     )
 
 
-def _map_signal_batch(
+def map_signal_batch(
     step_id: str,
     spec: MapSignalsSpec,
     input_payload: dict[str, Any],
@@ -159,7 +159,7 @@ def _map_signal_batch(
     Signals are evidence about candidates, not candidates themselves. Pair
     membership is checked later when the proposal artifact is assembled.
     """
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen_pairs: set[tuple[str, str]] = set()
     signals: list[SignalBatchSignal] = []
 
@@ -257,7 +257,7 @@ def _map_signal_batch(
     return SignalBatch(signal_source=spec.signal_source, signals=signals)
 
 
-def _build_relationship_group_proposal(
+def build_relationship_group_proposal(
     step_id: str,
     spec: ProposeRelationshipGroupSpec,
     input_payload: dict[str, Any],

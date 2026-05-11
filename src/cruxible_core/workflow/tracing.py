@@ -10,7 +10,7 @@ from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 
 
-def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
+def persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
     store = instance.get_receipt_store()
     try:
         store.save_receipt(receipt)
@@ -18,7 +18,7 @@ def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
         store.close()
 
 
-def _persist_trace(instance: InstanceProtocol, trace: ExecutionTrace) -> None:
+def persist_trace(instance: InstanceProtocol, trace: ExecutionTrace) -> None:
     store = instance.get_receipt_store()
     try:
         store.save_trace(trace)
@@ -26,7 +26,7 @@ def _persist_trace(instance: InstanceProtocol, trace: ExecutionTrace) -> None:
         store.close()
 
 
-def _build_trace(
+def build_trace(
     *,
     workflow_name: str,
     step_id: str,

@@ -29,8 +29,8 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
-    _MAX_DUPLICATE_EXAMPLES,
-    _resolve_step_items,
+    MAX_DUPLICATE_EXAMPLES,
+    resolve_step_items,
 )
 from cruxible_core.workflow.types import (
     ApplyEntitiesPreview,
@@ -61,7 +61,7 @@ def make_entity_set(
         raise QueryExecutionError(
             f"Workflow step '{step_id}' references unknown entity type '{spec.entity_type}'"
         )
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[str, dict[str, Any]] = {}
     entities: list[EntityInstance] = []
     duplicate_input_count = 0
@@ -89,7 +89,7 @@ def make_entity_set(
             conflicting = seen[entity_id] != properties
             if conflicting:
                 conflicting_duplicate_count += 1
-            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+            if len(duplicate_examples) < MAX_DUPLICATE_EXAMPLES:
                 example = {
                     "entity_id": entity_id,
                     "conflicting": conflicting,
@@ -139,7 +139,7 @@ def make_relationship_set(
         raise QueryExecutionError(
             f"Workflow step '{step_id}' references unknown relationship '{spec.relationship_type}'"
         )
-    items = _resolve_step_items(spec.items, input_payload, step_outputs)
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     relationships: list[RelationshipInstance] = []
     duplicate_input_count = 0
@@ -204,7 +204,7 @@ def make_relationship_set(
             conflicting = seen[key] != member.properties
             if conflicting:
                 conflicting_duplicate_count += 1
-            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+            if len(duplicate_examples) < MAX_DUPLICATE_EXAMPLES:
                 example = {
                     "from_type": member.from_type,
                     "from_id": member.from_id,

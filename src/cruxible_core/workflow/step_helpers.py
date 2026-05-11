@@ -7,10 +7,10 @@ from typing import Any
 from cruxible_core.errors import QueryExecutionError
 from cruxible_core.workflow.refs import resolve_value
 
-_MAX_DUPLICATE_EXAMPLES = 10
+MAX_DUPLICATE_EXAMPLES = 10
 
 
-def _resolve_step_items(
+def resolve_step_items(
     items_template: Any,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],

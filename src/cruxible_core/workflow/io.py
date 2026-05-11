@@ -31,7 +31,13 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.tracing import _build_trace, _persist_receipt, _persist_trace
+from cruxible_core.workflow.tracing import (
+    build_trace,
+    persist_trace,
+)
+from cruxible_core.workflow.tracing import (
+    persist_receipt as persist_workflow_receipt,
+)
 from cruxible_core.workflow.types import CompiledPlan, CompiledPlanStep, WorkflowLock
 
 
@@ -72,7 +78,7 @@ def _resolve_property_filter(
     return property_filter
 
 
-def _list_entities(
+def list_entities_step(
     config: CoreConfig,
     graph: EntityGraph,
     step_id: str,
@@ -101,7 +107,7 @@ def _list_entities(
     }
 
 
-def _list_relationships(
+def list_relationships_step(
     graph: EntityGraph,
     step_id: str,
     spec: ListRelationshipsSpec,
@@ -127,7 +133,7 @@ def _list_relationships(
     }
 
 
-def _execute_query_step(
+def execute_query_step(
     instance: InstanceProtocol,
     config: CoreConfig,
     graph: EntityGraph,
@@ -146,7 +152,7 @@ def _execute_query_step(
     if query_result.receipt is None:
         raise QueryExecutionError(f"Query step '{compiled_step.step_id}' did not produce a receipt")
     if persist_receipt:
-        _persist_receipt(instance, query_result.receipt)
+        persist_workflow_receipt(instance, query_result.receipt)
     query_receipt_ids.append(query_result.receipt.receipt_id)
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
         "results": [item.model_dump() for item in query_result.results],
@@ -167,7 +173,7 @@ def _execute_query_step(
     )
 
 
-def _execute_provider_step(
+def execute_provider_step(
     instance: InstanceProtocol,
     config: CoreConfig,
     lock: WorkflowLock,
@@ -241,7 +247,7 @@ def _execute_provider_step(
     except Exception as exc:
         status = "error"
         error_message = str(exc)
-        trace = _build_trace(
+        trace = build_trace(
             workflow_name=workflow_name,
             step_id=compiled_step.step_id,
             provider_name=compiled_step.provider_name,
@@ -261,7 +267,7 @@ def _execute_provider_step(
             duration_ms=(time.monotonic_ns() - started) / 1_000_000,
         )
         if persist_traces:
-            _persist_trace(instance, trace)
+            persist_trace(instance, trace)
         traces.append(trace)
         step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)
         receipt_builder.record_plan_step(
@@ -275,7 +281,7 @@ def _execute_provider_step(
         )
         raise QueryExecutionError(error_message or "Provider execution failed") from exc
 
-    trace = _build_trace(
+    trace = build_trace(
         workflow_name=workflow_name,
         step_id=compiled_step.step_id,
         provider_name=compiled_step.provider_name,
@@ -295,7 +301,7 @@ def _execute_provider_step(
         duration_ms=(time.monotonic_ns() - started) / 1_000_000,
     )
     if persist_traces:
-        _persist_trace(instance, trace)
+        persist_trace(instance, trace)
     traces.append(trace)
     step_outputs[compiled_step.as_name or compiled_step.step_id] = provider_output
     step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)
@@ -312,7 +318,7 @@ def _execute_provider_step(
     )
 
 
-def _execute_assert_step(
+def execute_assert_step(
     instance: InstanceProtocol,
     compiled_step: CompiledPlanStep,
     input_payload: dict[str, Any],
@@ -343,7 +349,7 @@ def _execute_assert_step(
     if not passed:
         receipt = receipt_builder.build(results=[{"output": None}])
         if persist_receipt:
-            _persist_receipt(instance, receipt)
+            persist_workflow_receipt(instance, receipt)
         raise QueryExecutionError(compiled_step.assert_spec.message)
 
 
