@@ -620,6 +620,51 @@ class TestWorkflowExecutor:
         assert any(node.detail.get("signal_source") == "catalog" for node in plan_steps)
         assert any(node.detail.get("signals_from") == ["catalog_signals"] for node in plan_steps)
 
+    def test_execute_workflow_reports_duplicate_candidate_inputs(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.providers[
+            "campaign_recommendations"
+        ].ref = "tests.support.workflow_test_providers.duplicate_campaign_recommendations"
+        workflow = config.workflows["propose_campaign_recommendations"]
+        workflow.steps = [step for step in workflow.steps if step.map_signals is None]
+        for step in workflow.steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.signals_from = []
+        proposal_workflow_instance.save_config(config)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        candidate_set = result.step_outputs["candidates"]
+        assert len(candidate_set["candidates"]) == 2
+        assert candidate_set["duplicate_input_count"] == 1
+        assert candidate_set["conflicting_duplicate_count"] == 1
+        example = candidate_set["duplicate_examples"][0]
+        assert example["from_id"] == "CMP-1"
+        assert example["to_id"] == "SKU-123"
+        assert example["relationship_type"] == "recommended_for"
+        assert example["conflicting"] is True
+        assert example["first_properties"] == {"reason": "north bestseller"}
+        assert example["duplicate_properties"] == {"reason": "north duplicate rationale"}
+
+        candidates_step = next(
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "plan_step" and node.detail.get("step_id") == "candidates"
+        )
+        assert candidates_step.detail["candidate_count"] == 2
+        assert candidates_step.detail["item_count"] == 3
+        assert candidates_step.detail["duplicate_input_count"] == 1
+        assert candidates_step.detail["conflicting_duplicate_count"] == 1
+        assert candidates_step.detail["duplicate_examples"] == candidate_set["duplicate_examples"]
+
     def test_execute_canonical_workflow_runs_in_preview_mode_without_mutating_graph(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:

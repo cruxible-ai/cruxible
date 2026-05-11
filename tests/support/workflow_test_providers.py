@@ -51,6 +51,32 @@ def campaign_recommendations(
     }
 
 
+def duplicate_campaign_recommendations(
+    input_payload: dict[str, Any], _context: ProviderContext
+) -> dict[str, Any]:
+    """Return recommendations with a duplicate candidate pair for diagnostics tests."""
+    region = input_payload["region"]
+    return {
+        "items": [
+            {
+                "product_sku": "SKU-123",
+                "verdict": "match",
+                "reason": f"{region} bestseller",
+            },
+            {
+                "product_sku": "SKU-123",
+                "verdict": "match",
+                "reason": f"{region} duplicate rationale",
+            },
+            {
+                "product_sku": "SKU-456",
+                "verdict": "fallback",
+                "reason": f"{region} fallback",
+            },
+        ]
+    }
+
+
 def echo_json_payload(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
     """Echo nested JSON test payload items for contract validation tests."""
     payload = input_payload.get("payload", {})

@@ -19,7 +19,7 @@ from cruxible_core.errors import QueryExecutionError
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalValue
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.step_helpers import _resolve_step_items
+from cruxible_core.workflow.step_helpers import _MAX_DUPLICATE_EXAMPLES, _resolve_step_items
 from cruxible_core.workflow.types import (
     CandidateSet,
     RelationshipGroupProposalArtifact,
@@ -44,6 +44,8 @@ def _make_candidate_set(
 
     Candidate creation is intentionally not a graph write. The produced edges
     remain proposed facts until the service proposal/resolve flow accepts them.
+    Duplicate candidate rows are deduped, but duplicate diagnostics are retained
+    for workflow receipts and debugging.
     """
     relationship_type = spec.relationship_type
     rel_schema = config.get_relationship(relationship_type)
@@ -53,8 +55,11 @@ def _make_candidate_set(
         )
 
     items = _resolve_step_items(spec.items, input_payload, step_outputs)
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     candidates: list[RelationshipInstance] = []
+    duplicate_input_count = 0
+    conflicting_duplicate_count = 0
+    duplicate_examples: list[dict[str, Any]] = []
 
     for item in items:
         member = RelationshipInstance.model_validate(
@@ -107,11 +112,34 @@ def _make_candidate_set(
             )
         key = (member.from_type, member.from_id, member.to_type, member.to_id)
         if key in seen:
+            duplicate_input_count += 1
+            conflicting = seen[key] != member.properties
+            if conflicting:
+                conflicting_duplicate_count += 1
+            if len(duplicate_examples) < _MAX_DUPLICATE_EXAMPLES:
+                example = {
+                    "from_type": member.from_type,
+                    "from_id": member.from_id,
+                    "to_type": member.to_type,
+                    "to_id": member.to_id,
+                    "relationship_type": relationship_type,
+                    "conflicting": conflicting,
+                }
+                if conflicting:
+                    example["first_properties"] = seen[key]
+                    example["duplicate_properties"] = member.properties
+                duplicate_examples.append(example)
             continue
-        seen.add(key)
+        seen[key] = member.properties
         candidates.append(member)
 
-    return CandidateSet(relationship_type=relationship_type, candidates=candidates)
+    return CandidateSet(
+        relationship_type=relationship_type,
+        candidates=candidates,
+        duplicate_input_count=duplicate_input_count,
+        conflicting_duplicate_count=conflicting_duplicate_count,
+        duplicate_examples=duplicate_examples,
+    )
 
 
 def _map_signal_batch(

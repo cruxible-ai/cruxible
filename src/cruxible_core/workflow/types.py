@@ -152,8 +152,12 @@ class WorkflowTestCaseResult(BaseModel):
     error: str | None = None
 
 
-class CandidateSet(BaseModel):
-    """Internal workflow artifact containing candidate relationship pairs."""
+class CandidateSet(_DuplicateTrackedCollection):
+    """Internal workflow artifact containing candidate relationship pairs.
+
+    Duplicate inputs are deduped by relationship tuple, with diagnostics retained
+    so proposal workflows can stay forgiving without hiding kit-author mistakes.
+    """
 
     relationship_type: str
     candidates: list[RelationshipInstance] = Field(default_factory=list)

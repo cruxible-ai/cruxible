@@ -273,6 +273,9 @@ def execute_workflow(
                 detail={
                     "relationship_type": candidate_set.relationship_type,
                     "candidate_count": len(candidate_set.candidates),
+                    "duplicate_input_count": candidate_set.duplicate_input_count,
+                    "conflicting_duplicate_count": candidate_set.conflicting_duplicate_count,
+                    "duplicate_examples": candidate_set.duplicate_examples,
                     "item_count": len(
                         _resolve_step_items(
                             compiled_step.make_candidates_spec.items,
