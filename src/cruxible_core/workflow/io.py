@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from cruxible_core.config.schema import CoreConfig, ListEntitiesSpec, ListRelationshipsSpec
 from cruxible_core.errors import ConfigError, QueryExecutionError
@@ -29,6 +28,7 @@ from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.tracing import (
@@ -203,7 +203,7 @@ def execute_provider_step(
     artifact = None
     if locked_provider.artifact is not None:
         locked_artifact = lock.artifacts[locked_provider.artifact]
-        local_path = _resolve_local_artifact_path(locked_artifact.uri, config_base_path)
+        local_path = resolve_local_artifact_path(locked_artifact.uri, config_base_path)
         artifact = ResolvedArtifact(
             name=locked_provider.artifact,
             kind=locked_artifact.kind,
@@ -351,15 +351,3 @@ def execute_assert_step(
         if persist_receipt:
             persist_workflow_receipt(instance, receipt)
         raise QueryExecutionError(compiled_step.assert_spec.message)
-
-
-def _resolve_local_artifact_path(uri: str, config_base_path: Path) -> Path | None:
-    parsed = urlparse(uri)
-    if parsed.scheme == "file":
-        return Path(parsed.path)
-    if parsed.scheme == "":
-        path = Path(uri)
-        if not path.is_absolute():
-            path = (config_base_path / path).resolve()
-        return path
-    return None

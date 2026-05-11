@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
@@ -15,6 +14,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import compute_kit_provider_sha256, is_kit_provider_ref
 from cruxible_core.provider.registry import get_provider_entrypoint_path, resolve_provider
+from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import contract_reference_label, validate_contract_payload
 from cruxible_core.workflow.refs import preview_value
 from cruxible_core.workflow.types import (
@@ -74,7 +74,7 @@ def build_lock(
     for name, artifact in config.artifacts.items():
         locked_sha256 = artifact.sha256 or ""
         if name in canonical_artifact_names and config_base_path is not None:
-            artifact_path = _resolve_local_artifact_path(artifact.uri, config_base_path)
+            artifact_path = resolve_local_artifact_path(artifact.uri, config_base_path)
             if artifact_path is not None:
                 actual_sha256 = compute_path_sha256(artifact_path)
                 if artifact.sha256 and artifact.sha256 != actual_sha256:
@@ -495,7 +495,7 @@ def _verify_local_artifact_hash(
 ) -> None:
     if not expected_sha256:
         raise ConfigError("Canonical workflow artifact is missing sha256")
-    artifact_path = _resolve_local_artifact_path(uri, config_base_path)
+    artifact_path = resolve_local_artifact_path(uri, config_base_path)
     if artifact_path is None:
         raise ConfigError("Canonical workflows require local file or directory artifacts")
     if not artifact_path.exists():
@@ -512,19 +512,6 @@ def _artifact_hash_mismatch_message(name: str, expected_sha256: str, actual_sha2
         f"  actual (on disk):  {actual_sha256}\n"
         "Run 'cruxible lock --force' to accept the on-disk hash, or restore the expected artifact."
     )
-
-
-def _resolve_local_artifact_path(uri: str, config_base_path: Path) -> Path | None:
-    parsed = urlparse(uri)
-    if parsed.scheme in {"", "file"}:
-        if parsed.scheme == "file":
-            raw_path = Path(parsed.path)
-        else:
-            raw_path = Path(uri)
-        if not raw_path.is_absolute():
-            raw_path = (config_base_path / raw_path).resolve()
-        return raw_path
-    return None
 
 
 def compute_path_sha256(path: Path) -> str:

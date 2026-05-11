@@ -687,6 +687,24 @@ class TestWorkflowExecutor:
         assert result.output["total_results"] == 1
         assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
 
+    def test_provider_artifact_relative_file_uri_resolves_from_config_dir(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.artifacts["canonical_bundle"].uri = "file:bundle"
+        canonical_workflow_instance.save_config(config)
+        write_lock_for_instance(canonical_workflow_instance)
+
+        result = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+        )
+
+        assert result.step_outputs["rows"]["items"][0]["vendor_id"] == "vendor-acme"
+        assert result.output["total_results"] == 1
+
     def test_execute_canonical_workflow_apply_commits_graph_and_snapshot(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
