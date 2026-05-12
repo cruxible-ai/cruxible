@@ -396,6 +396,14 @@ class TestSchema:
         assert populated_instance.get_config_path() == new_config.resolve()
         assert populated_instance.load_config().name == "alt_name"
 
+    def test_reload_config_rejects_missing_path(
+        self, populated_instance: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        missing_config = tmp_path / "missing.yaml"
+
+        with pytest.raises(ConfigError, match="does not exist or is not a file"):
+            service_reload_config(populated_instance, str(missing_config))
+
 
 # ---------------------------------------------------------------------------
 # service_sample

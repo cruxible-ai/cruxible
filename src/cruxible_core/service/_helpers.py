@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -10,7 +9,6 @@ from typing import Any, Generic, Protocol, TypeVar
 
 import structlog
 
-from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError, MutationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -65,11 +63,6 @@ def _save_graph(instance: InstanceProtocol, graph: EntityGraph) -> None:
         raise
     except Exception as exc:
         raise MutationError(f"Failed to save graph: {exc}") from exc
-
-
-def _config_digest(config: CoreConfig) -> str:
-    """SHA-256 digest of config JSON (first 12 hex chars)."""
-    return hashlib.sha256(config.model_dump_json(exclude_none=True).encode()).hexdigest()[:12]
 
 
 @contextmanager

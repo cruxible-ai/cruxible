@@ -215,6 +215,8 @@ def service_reload_config(
 
     if config_path is not None:
         resolved = Path(config_path).expanduser().resolve()
+        if not resolved.is_file():
+            raise ConfigError(f"Config path '{resolved}' does not exist or is not a file")
         config = load_config(resolved)
         if config.extends is not None:
             config = compose_config_sequence(
