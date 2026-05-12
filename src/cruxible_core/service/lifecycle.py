@@ -159,12 +159,15 @@ def service_reload_config(
     config_path: str | None = None,
     config_yaml: str | None = None,
 ) -> ReloadConfigResult:
-    """Validate the active config or repoint the instance to a new config path."""
+    """Validate, replace, or repoint the active config for an existing instance."""
     if config_path is not None and config_yaml is not None:
         raise ConfigError("Provide config_path or config_yaml, not both")
 
     upstream = instance.get_upstream_metadata()
     if upstream is not None:
+        # Release-backed overlays keep the upstream config immutable and track a
+        # local overlay file. Reload always regenerates the composed active
+        # config that the instance actually reads.
         root = instance.get_root_path()
         overlay_path = root / (config_path or upstream.overlay_config_path)
         if not overlay_path.is_absolute():
@@ -175,6 +178,9 @@ def service_reload_config(
         base_path = root / upstream.config_path
         active_path = root / upstream.active_config_path
         if config_yaml is not None:
+            # Raw uploaded overlay YAML has no source filename; use the tracked
+            # overlay path only as the base directory for relative extends and
+            # artifact references before writing it to disk.
             overlay = load_config_from_string(config_yaml)
             composed = compose_config_sequence(
                 resolve_config_layers(overlay, config_path=overlay_path),
@@ -192,6 +198,8 @@ def service_reload_config(
             )
         warnings = validate_config(composed)
         if config_path is not None:
+            # A new overlay path changes which local file is tracked, but the
+            # active config remains the generated upstream+overlay composition.
             try:
                 overlay_config_path = str(overlay_path.relative_to(root))
             except ValueError:
@@ -208,6 +216,8 @@ def service_reload_config(
         )
 
     if config_yaml is not None:
+        # Non-upstream raw YAML replaces the instance's active config in place.
+        # This is the daemon/server sync path for anonymous uploaded configs.
         validation = service_validate(config_yaml=config_yaml)
         target_path = instance.get_config_path()
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +229,9 @@ def service_reload_config(
         )
 
     if config_path is not None:
+        # Non-upstream config_path reload repoints the instance to a caller-owned
+        # file after validating the effective config. If the file uses extends,
+        # composition is for validation only; the stored pointer remains the file.
         resolved = Path(config_path).expanduser().resolve()
         if not resolved.is_file():
             raise ConfigError(f"Config path '{resolved}' does not exist or is not a file")
@@ -235,6 +248,9 @@ def service_reload_config(
             warnings=warnings,
         )
 
+    # No replacement was requested: validate whatever the instance currently
+    # points at. Extend-based configs are composed in memory so validation sees
+    # the effective surface.
     config = instance.load_config()
     if config.extends is not None:
         config_file = instance.get_config_path()
