@@ -1321,6 +1321,255 @@ def test_run_apply_shortcut_is_removed(
     assert "No such option: --apply" in result.output
 
 
+def test_workflow_apply_explicit_digest_delegates_to_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def workflow_apply(
+            self,
+            instance_id,
+            *,
+            workflow_name,
+            expected_apply_digest,
+            expected_head_snapshot_id,
+            input_payload,
+        ):
+            assert instance_id == "inst_123"
+            captured["workflow_name"] = workflow_name
+            captured["expected_apply_digest"] = expected_apply_digest
+            captured["expected_head_snapshot_id"] = expected_head_snapshot_id
+            captured["input_payload"] = input_payload
+            return contracts.WorkflowApplyResult(
+                workflow=workflow_name,
+                output={"ok": True},
+                receipt_id="RCP-apply",
+                apply_digest=expected_apply_digest,
+                head_snapshot_id=expected_head_snapshot_id,
+                committed_snapshot_id="snap_committed",
+                trace_ids=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "apply",
+            "--workflow",
+            "build_reference",
+            "--input",
+            '{"vendor": "acme"}',
+            "--apply-digest",
+            "sha256:manual",
+            "--head-snapshot",
+            "snap_manual",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "workflow_name": "build_reference",
+        "expected_apply_digest": "sha256:manual",
+        "expected_head_snapshot_id": "snap_manual",
+        "input_payload": {"vendor": "acme"},
+    }
+
+
+def test_workflow_apply_preview_file_delegates_to_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    preview_file = tmp_path / "preview.json"
+    preview_file.write_text(
+        json.dumps(
+            {
+                "kind": "workflow_preview",
+                "version": 1,
+                "workflow": "build_reference",
+                "input": {"vendor": "acme"},
+                "apply_digest": "sha256:preview",
+                "head_snapshot_id": "snap_preview",
+            }
+        )
+    )
+
+    class StubClient:
+        def workflow_apply(
+            self,
+            instance_id,
+            *,
+            workflow_name,
+            expected_apply_digest,
+            expected_head_snapshot_id,
+            input_payload,
+        ):
+            assert instance_id == "inst_123"
+            captured["workflow_name"] = workflow_name
+            captured["expected_apply_digest"] = expected_apply_digest
+            captured["expected_head_snapshot_id"] = expected_head_snapshot_id
+            captured["input_payload"] = input_payload
+            return contracts.WorkflowApplyResult(
+                workflow=workflow_name,
+                output={"ok": True},
+                receipt_id="RCP-apply",
+                apply_digest=expected_apply_digest,
+                head_snapshot_id=expected_head_snapshot_id,
+                committed_snapshot_id="snap_committed",
+                trace_ids=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "apply",
+            "--preview-file",
+            str(preview_file),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "workflow_name": "build_reference",
+        "expected_apply_digest": "sha256:preview",
+        "expected_head_snapshot_id": "snap_preview",
+        "input_payload": {"vendor": "acme"},
+    }
+
+
+def test_workflow_apply_from_last_preview_uses_stored_preview(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def list(
+            self,
+            instance_id,
+            *,
+            resource_type,
+            query_name=None,
+            operation_type=None,
+            limit=50,
+        ):
+            assert instance_id == "inst_123"
+            assert resource_type == "receipts"
+            assert query_name == "build_reference"
+            assert operation_type == "workflow"
+            assert limit == 50
+            return contracts.ListResult(
+                items=[{"receipt_id": "RCP-preview"}],
+                total=1,
+            )
+
+        def receipt(self, instance_id, receipt_id):
+            assert instance_id == "inst_123"
+            assert receipt_id == "RCP-preview"
+            return {
+                "receipt_id": "RCP-preview",
+                "query_name": "build_reference",
+                "parameters": {"vendor": "acme"},
+                "operation_type": "workflow",
+                "workflow_mode": "preview",
+                "head_snapshot_id": "snap_preview",
+                "created_at": "2026-05-12T12:00:00Z",
+                "nodes": [
+                    {
+                        "node_id": "root",
+                        "node_type": "workflow",
+                        "detail": {"apply_digest": "sha256:preview"},
+                    }
+                ],
+                "edges": [],
+                "results": [],
+            }
+
+        def workflow_apply(
+            self,
+            instance_id,
+            *,
+            workflow_name,
+            expected_apply_digest,
+            expected_head_snapshot_id,
+            input_payload,
+        ):
+            assert instance_id == "inst_123"
+            captured["workflow_name"] = workflow_name
+            captured["expected_apply_digest"] = expected_apply_digest
+            captured["expected_head_snapshot_id"] = expected_head_snapshot_id
+            captured["input_payload"] = input_payload
+            return contracts.WorkflowApplyResult(
+                workflow=workflow_name,
+                output={"ok": True},
+                receipt_id="RCP-apply",
+                apply_digest=expected_apply_digest,
+                head_snapshot_id=expected_head_snapshot_id,
+                committed_snapshot_id="snap_committed",
+                trace_ids=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.workflows._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "apply",
+            "--workflow",
+            "build_reference",
+            "--from-last-preview",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "workflow_name": "build_reference",
+        "expected_apply_digest": "sha256:preview",
+        "expected_head_snapshot_id": "snap_preview",
+        "input_payload": {"vendor": "acme"},
+    }
+    payload = json.loads(result.output)
+    assert payload["committed_snapshot_id"] == "snap_committed"
+
+
+def test_workflow_apply_requires_explicit_preview_in_noninteractive_mode(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "apply",
+            "--workflow",
+            "build_reference",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--apply-digest, --preview-file, or --from-last-preview is required" in result.output
+
+
 def test_propose_json_includes_suppressed_members(
     monkeypatch,
     runner: CliRunner,

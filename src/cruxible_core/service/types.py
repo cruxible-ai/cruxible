@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from cruxible_core.config.schema import (
@@ -497,6 +498,17 @@ class WorkflowExecutionServiceResult:
     def canonical(self) -> bool:
         """Whether this result came from a canonical workflow."""
         return self.workflow_type == "canonical"
+
+
+@dataclass(frozen=True)
+class ApplyPreviewReference:
+    workflow: str
+    input_payload: dict[str, Any]
+    apply_digest: str
+    head_snapshot_id: str | None
+    receipt_id: str
+    created_at: datetime
+    apply_previews: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

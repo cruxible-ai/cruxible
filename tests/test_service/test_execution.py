@@ -14,6 +14,7 @@ from cruxible_core.service import (
     service_apply_workflow,
     service_clone_snapshot,
     service_create_snapshot,
+    service_find_apply_preview,
     service_list_snapshots,
     service_lock,
     service_plan,
@@ -169,6 +170,29 @@ class TestWorkflowExecutionServices:
         assert result.receipt.workflow_mode == "preview"
         assert result.receipt.committed is False
         assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
+
+    def test_service_find_apply_preview_returns_latest_preview(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        reference = service_find_apply_preview(canonical_workflow_instance, "build_reference")
+
+        assert reference.workflow == "build_reference"
+        assert reference.input_payload == {}
+        assert reference.apply_digest == preview.apply_digest
+        assert reference.head_snapshot_id == preview.head_snapshot_id
+        assert reference.receipt_id == preview.receipt_id
+        assert reference.apply_previews
+
+    def test_service_find_apply_preview_rejects_missing_preview(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+
+        with pytest.raises(ConfigError, match="No stored canonical preview"):
+            service_find_apply_preview(canonical_workflow_instance, "build_reference")
 
     def test_service_apply_workflow_commits_canonical_workflow(
         self, canonical_workflow_instance: CruxibleInstance

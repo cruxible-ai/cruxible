@@ -17,6 +17,7 @@ from cruxible_core.service.decisions import (
 )
 from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.types import (
+    ApplyPreviewReference,
     ApplyWorkflowResult,
     LockServiceResult,
     OperationContext,
@@ -76,6 +77,80 @@ def _save_workflow_receipt(instance: InstanceProtocol, receipt: Receipt) -> None
         store.save_receipt(receipt)
     finally:
         store.close()
+
+
+def _apply_previews_from_receipt(receipt: Receipt) -> dict[str, Any]:
+    """Extract apply preview summaries from workflow receipt validation nodes."""
+    previews: dict[str, Any] = {}
+    nodes_by_id = {node.node_id: node for node in receipt.nodes}
+    plan_steps = {
+        node.node_id: node.detail.get("step_id")
+        for node in receipt.nodes
+        if node.node_type == "plan_step"
+        and node.detail.get("kind") in {"apply_entities", "apply_relationships"}
+        and isinstance(node.detail.get("step_id"), str)
+    }
+    for edge in receipt.edges:
+        step_id = plan_steps.get(edge.from_node)
+        if step_id is None or edge.edge_type != "validated":
+            continue
+        validation = nodes_by_id.get(edge.to_node)
+        if validation is None or validation.node_type != "validation":
+            continue
+        detail = dict(validation.detail)
+        detail.pop("passed", None)
+        previews[step_id] = detail
+    return previews
+
+
+def apply_preview_reference_from_receipt(receipt: Receipt) -> ApplyPreviewReference | None:
+    """Return an apply reference when a receipt is a usable canonical preview."""
+    if receipt.operation_type != "workflow" or receipt.workflow_mode != "preview":
+        return None
+    apply_digest = receipt.nodes[0].detail.get("apply_digest") if receipt.nodes else None
+    if not isinstance(apply_digest, str) or not apply_digest:
+        return None
+    return ApplyPreviewReference(
+        workflow=receipt.query_name,
+        input_payload=receipt.parameters,
+        apply_digest=apply_digest,
+        head_snapshot_id=receipt.head_snapshot_id,
+        receipt_id=receipt.receipt_id,
+        created_at=receipt.created_at,
+        apply_previews=_apply_previews_from_receipt(receipt),
+    )
+
+
+def service_find_apply_preview(
+    instance: InstanceProtocol,
+    workflow_name: str,
+    *,
+    limit: int = 50,
+) -> ApplyPreviewReference:
+    """Return the latest stored canonical preview usable for workflow apply."""
+    store = instance.get_receipt_store()
+    try:
+        summaries = store.list_receipts(
+            query_name=workflow_name,
+            operation_type="workflow",
+            limit=limit,
+        )
+        for summary in summaries:
+            receipt_id = summary.get("receipt_id")
+            if not isinstance(receipt_id, str):
+                continue
+            receipt = store.get_receipt(receipt_id)
+            if receipt is None:
+                continue
+            reference = apply_preview_reference_from_receipt(receipt)
+            if reference is not None:
+                return reference
+    finally:
+        store.close()
+    raise ConfigError(
+        f"No stored canonical preview found for workflow '{workflow_name}'. "
+        "Run the workflow in preview mode before applying."
+    )
 
 
 def _workflow_proposal_source_step_ids(workflow: Any, result: Any) -> list[str]:

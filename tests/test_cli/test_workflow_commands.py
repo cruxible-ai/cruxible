@@ -364,6 +364,7 @@ class TestWorkflowCli:
             (["--input-file", "INPUT_FILE"], "input-file"),
             (["--apply-digest", "sha256:manual"], "apply-digest"),
             (["--head-snapshot", "snap_manual"], "head-snapshot"),
+            (["--from-last-preview"], "from-last-preview"),
         ],
     )
     def test_apply_preview_file_rejects_mixed_flags(

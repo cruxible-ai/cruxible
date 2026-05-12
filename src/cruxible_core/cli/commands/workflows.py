@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.cli.commands import _common
@@ -24,7 +25,10 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.receipt.types import Receipt
+from cruxible_core.server.config import is_agent_mode
 from cruxible_core.service import (
+    apply_preview_reference_from_receipt,
     service_apply_workflow,
     service_clone_snapshot,
     service_create_snapshot,
@@ -102,6 +106,58 @@ def _load_preview_file(preview_path: Path) -> dict[str, Any]:
         "apply_digest": apply_digest,
         "head_snapshot_id": head_snapshot_id,
     }
+
+
+def _load_latest_preview_from_client(
+    client: Any,
+    instance_id: str,
+    workflow_name: str,
+) -> dict[str, Any]:
+    result = client.list(
+        instance_id,
+        resource_type="receipts",
+        query_name=workflow_name,
+        operation_type="workflow",
+        limit=50,
+    )
+    for item in result.items:
+        receipt_id = item.get("receipt_id")
+        if not isinstance(receipt_id, str):
+            continue
+        try:
+            receipt = Receipt.model_validate(client.receipt(instance_id, receipt_id))
+        except ValidationError:
+            continue
+        reference = apply_preview_reference_from_receipt(receipt)
+        if reference is not None:
+            return {
+                "workflow": workflow_name,
+                "input": reference.input_payload,
+                "apply_digest": reference.apply_digest,
+                "head_snapshot_id": reference.head_snapshot_id,
+                "receipt_id": reference.receipt_id,
+                "created_at": reference.created_at.isoformat(),
+                "apply_previews": reference.apply_previews,
+            }
+    raise click.UsageError(
+        f"No stored canonical preview found for workflow '{workflow_name}'. "
+        "Run the workflow first, or pass --preview-file/--apply-digest explicitly."
+    )
+
+
+def _is_interactive_apply() -> bool:
+    return click.get_text_stream("stdin").isatty() and not is_agent_mode()
+
+
+def _print_preview_reference(reference: dict[str, Any]) -> None:
+    click.echo(f"Using preview receipt: {reference['receipt_id']}")
+    if reference.get("created_at"):
+        click.echo(f"Preview time: {reference['created_at']}")
+    click.echo(f"Apply digest: {reference['apply_digest']}")
+    head_snapshot_id = reference.get("head_snapshot_id")
+    if head_snapshot_id:
+        click.echo(f"Head snapshot: {head_snapshot_id}")
+    _print_apply_previews(reference.get("apply_previews") or {})
 
 
 @click.command()
@@ -371,6 +427,11 @@ def run_cmd(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Read preview state from a file saved by run --save-preview.",
 )
+@click.option(
+    "--from-last-preview",
+    is_flag=True,
+    help="Apply the latest stored preview for the workflow.",
+)
 @decision_record_option
 @json_option
 @handle_errors
@@ -381,30 +442,69 @@ def apply_cmd(
     apply_digest: str | None,
     head_snapshot: str | None,
     preview_file: Path | None,
+    from_last_preview: bool,
     decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Apply a canonical workflow after verifying preview identity."""
+    instance_id: str | None = None
     if preview_file is not None:
-        if any(
-            value is not None
-            for value in (workflow_name, input_text, input_file, apply_digest, head_snapshot)
+        if (
+            workflow_name is not None
+            or input_text is not None
+            or input_file is not None
+            or apply_digest is not None
+            or head_snapshot is not None
+            or from_last_preview
         ):
             raise click.UsageError(
                 "--preview-file cannot be combined with --workflow, --input, "
-                "--input-file, --apply-digest, or --head-snapshot"
+                "--input-file, --apply-digest, --head-snapshot, or --from-last-preview"
             )
         preview = _load_preview_file(preview_file)
         workflow_name = preview["workflow"]
         payload = preview["input"]
         apply_digest = preview["apply_digest"]
         head_snapshot = preview["head_snapshot_id"]
+        client = None
+    elif from_last_preview or apply_digest is None:
+        if workflow_name is None:
+            raise click.UsageError("--workflow is required unless --preview-file is used")
+        if from_last_preview:
+            if any(
+                value is not None
+                for value in (input_text, input_file, apply_digest, head_snapshot)
+            ):
+                raise click.UsageError(
+                    "--from-last-preview cannot be combined with --input, --input-file, "
+                    "--apply-digest, or --head-snapshot"
+                )
+        elif any(value is not None for value in (input_text, input_file, head_snapshot)):
+            raise click.UsageError(
+                "--apply-digest is required when passing --input, --input-file, or "
+                "--head-snapshot"
+            )
+        if not from_last_preview and (output_json or not _is_interactive_apply()):
+            raise click.UsageError(
+                "--apply-digest, --preview-file, or --from-last-preview is required"
+            )
+        client = _get_client()
+        if client is None:
+            raise click.UsageError("Local mutation disabled for apply; use server mode.")
+        instance_id = _common._require_instance_id()
+        preview = _load_latest_preview_from_client(client, instance_id, workflow_name)
+        payload = preview["input"]
+        apply_digest = preview["apply_digest"]
+        head_snapshot = preview["head_snapshot_id"]
+        if not output_json:
+            _print_preview_reference(preview)
+        if not from_last_preview:
+            click.confirm("Apply this preview?", default=False, abort=True)
     else:
         if workflow_name is None:
             raise click.UsageError("--workflow is required unless --preview-file is used")
-        if apply_digest is None:
-            raise click.UsageError("--apply-digest is required unless --preview-file is used")
         payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
+        client = None
 
     assert workflow_name is not None
     assert apply_digest is not None
@@ -414,26 +514,38 @@ def apply_cmd(
         if resolved_decision_record_id is not None
         else {}
     )
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.workflow_apply(
+    result: Any
+    if client is not None:
+        assert instance_id is not None
+        result = client.workflow_apply(
             instance_id,
             workflow_name=workflow_name,
             expected_apply_digest=apply_digest,
             expected_head_snapshot_id=head_snapshot,
             input_payload=payload,
             **decision_kwargs,
-        ),
-        lambda instance: service_apply_workflow(
-            instance,
-            workflow_name,
-            payload,
-            expected_apply_digest=apply_digest,
-            expected_head_snapshot_id=head_snapshot,
-            context=_operation_context(resolved_decision_record_id),
-        ),
-        allow_local=False,
-        command_name="apply",
-    )
+        )
+    else:
+        result = _dispatch_cli_instance(
+            lambda client, instance_id: client.workflow_apply(
+                instance_id,
+                workflow_name=workflow_name,
+                expected_apply_digest=apply_digest,
+                expected_head_snapshot_id=head_snapshot,
+                input_payload=payload,
+                **decision_kwargs,
+            ),
+            lambda instance: service_apply_workflow(
+                instance,
+                workflow_name,
+                payload,
+                expected_apply_digest=apply_digest,
+                expected_head_snapshot_id=head_snapshot,
+                context=_operation_context(resolved_decision_record_id),
+            ),
+            allow_local=False,
+            command_name="apply",
+        )
     if output_json:
         _emit_json({
             "workflow": result.workflow,
