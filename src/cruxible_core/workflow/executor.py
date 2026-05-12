@@ -29,6 +29,7 @@ from cruxible_core.workflow.proposals import (
     build_relationship_group_proposal,
     make_candidate_set,
     map_signal_batch,
+    signal_mapping_snapshot,
 )
 from cruxible_core.workflow.step_helpers import resolve_step_items
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
@@ -312,6 +313,7 @@ def execute_workflow(
                 detail={
                     "signal_source": signal_batch.signal_source,
                     "signal_count": len(signal_batch.signals),
+                    "mapping": signal_mapping_snapshot(compiled_step.map_signals_spec),
                     "item_count": len(
                         resolve_step_items(
                             compiled_step.map_signals_spec.items,

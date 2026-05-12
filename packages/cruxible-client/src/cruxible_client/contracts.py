@@ -50,10 +50,18 @@ class EntityInput(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class SignalBucketBasis(BaseModel):
+    mode: Literal["score", "enum"]
+    path: str
+    value: str | int | float
+    matched: str
+
+
 class SignalInput(BaseModel):
     signal_source: str
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
+    basis: SignalBucketBasis | None = None
 
 
 class EdgeTargetInput(BaseModel):

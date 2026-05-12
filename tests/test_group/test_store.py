@@ -12,7 +12,12 @@ import pytest
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
-from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.group.types import (
+    CandidateGroup,
+    CandidateMember,
+    CandidateSignal,
+    SignalBucketBasis,
+)
 
 
 def _now() -> datetime:
@@ -283,6 +288,32 @@ class TestMembers:
         assert len(members) == 2
         assert members[0].signals[0].signal_source == "cosine_v1"
         assert members[0].properties["raw_score"] == 0.95
+
+    def test_save_get_members_preserves_signal_basis(self, store: GroupStore) -> None:
+        signal = CandidateSignal(
+            signal_source="cosine_v1",
+            signal="support",
+            evidence="high sim",
+            basis=SignalBucketBasis(
+                mode="score",
+                path="score",
+                value=0.95,
+                matched="support_gte",
+            ),
+        )
+        with store.transaction():
+            store.save_group(_group("GRP-1"))
+            store.save_members("GRP-1", [_member("s1", "o1", signals=[signal])])
+
+        members = store.get_members("GRP-1")
+
+        assert members[0].signals[0].basis is not None
+        assert members[0].signals[0].basis.model_dump(mode="json") == {
+            "mode": "score",
+            "path": "score",
+            "value": 0.95,
+            "matched": "support_gte",
+        }
 
 
 class TestResolutions:

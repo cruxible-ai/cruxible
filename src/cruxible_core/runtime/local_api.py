@@ -14,7 +14,7 @@ from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalBucketBasis
 from cruxible_core.kits import (
     KIT_MANIFEST_FILE,
     config_yaml_has_kit_provider_refs,
@@ -1815,6 +1815,11 @@ def _handle_propose_group_local(
                     signal_source=signal.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
+                    basis=(
+                        SignalBucketBasis.model_validate(signal.basis.model_dump(mode="python"))
+                        if signal.basis is not None
+                        else None
+                    ),
                 )
                 for signal in member.signals
             ],

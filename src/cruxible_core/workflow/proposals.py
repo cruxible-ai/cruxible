@@ -17,7 +17,12 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import QueryExecutionError
 from cruxible_core.graph.types import RelationshipInstance
-from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalValue
+from cruxible_core.group.types import (
+    CandidateMember,
+    CandidateSignal,
+    SignalBucketBasis,
+    SignalValue,
+)
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import MAX_DUPLICATE_EXAMPLES, resolve_step_items
 from cruxible_core.workflow.types import (
@@ -201,6 +206,7 @@ def map_signal_batch(
                 evidence = str(resolved_evidence)
 
         signal: SignalValue
+        basis: SignalBucketBasis
         if spec.score is not None:
             score_spec = spec.score
             score_value = resolve_value(
@@ -218,10 +224,19 @@ def map_signal_batch(
             numeric_score = float(score_value)
             if numeric_score >= float(score_spec.support_gte):
                 signal = "support"
+                matched = "support_gte"
             elif numeric_score >= float(score_spec.unsure_gte):
                 signal = "unsure"
+                matched = "unsure_gte"
             else:
                 signal = "contradict"
+                matched = "below_unsure_gte"
+            basis = SignalBucketBasis(
+                mode="score",
+                path=score_spec.path,
+                value=score_value,
+                matched=matched,
+            )
         else:
             assert spec.enum is not None
             enum_spec = spec.enum
@@ -243,6 +258,12 @@ def map_signal_batch(
                     f"unknown value '{enum_value}'"
                 )
             signal = enum_spec.map[enum_value]
+            basis = SignalBucketBasis(
+                mode="enum",
+                path=enum_spec.path,
+                value=enum_value,
+                matched=enum_value,
+            )
 
         signals.append(
             SignalBatchSignal(
@@ -250,11 +271,29 @@ def map_signal_batch(
                 to_id=to_id,
                 signal=signal,
                 evidence=evidence,
+                basis=basis,
             )
         )
         seen_pairs.add(key)
 
     return SignalBatch(signal_source=spec.signal_source, signals=signals)
+
+
+def signal_mapping_snapshot(spec: MapSignalsSpec) -> dict[str, Any]:
+    """Return the stable mapping snapshot recorded in workflow receipts."""
+    if spec.score is not None:
+        return {
+            "mode": "score",
+            "path": spec.score.path,
+            "support_gte": spec.score.support_gte,
+            "unsure_gte": spec.score.unsure_gte,
+        }
+    assert spec.enum is not None
+    return {
+        "mode": "enum",
+        "path": spec.enum.path,
+        "map": dict(spec.enum.map),
+    }
 
 
 def build_relationship_group_proposal(
@@ -319,6 +358,7 @@ def build_relationship_group_proposal(
                     signal_source=signal_batch.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
+                    basis=signal.basis,
                 )
             )
 

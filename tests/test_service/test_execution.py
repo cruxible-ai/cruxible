@@ -290,9 +290,16 @@ class TestWorkflowExecutionServices:
         assert group.source_workflow_name == "propose_campaign_recommendations"
         assert group.source_workflow_receipt_id == result.receipt_id
         assert group.source_trace_ids == result.trace_ids
-        assert group.source_step_ids == ["proposal"]
+        assert group.source_step_ids == ["proposal", "catalog_signals"]
         assert len(members) == 2
         assert all(member.relationship_type == "recommended_for" for member in members)
+        assert members[0].signals[0].basis is not None
+        assert members[0].signals[0].basis.model_dump(mode="json") == {
+            "mode": "enum",
+            "path": "verdict",
+            "value": "match",
+            "matched": "match",
+        }
 
     def test_service_propose_workflow_honors_retain_missing_pending_refresh_mode(
         self,

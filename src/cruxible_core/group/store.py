@@ -464,7 +464,9 @@ class GroupStore(GroupStoreProtocol):
     def save_members(self, group_id: str, members: list[CandidateMember]) -> None:
         """Batch insert candidate members. Does NOT commit."""
         for m in members:
-            signals_json = json.dumps([s.model_dump(mode="json") for s in m.signals])
+            signals_json = json.dumps(
+                [s.model_dump(mode="json", exclude_none=True) for s in m.signals]
+            )
             self._conn.execute(
                 "INSERT INTO candidate_members "
                 "(group_id, from_type, from_id, to_type, to_id, relationship_type, "

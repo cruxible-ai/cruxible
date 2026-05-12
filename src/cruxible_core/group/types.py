@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictFloat, StrictInt, StrictStr, model_validator
 
 from cruxible_core.graph.types import RelationshipInstance
 
@@ -28,6 +28,25 @@ ReviewPriority = Literal["critical", "review", "normal"]
 """Review priority bucket for a candidate group."""
 
 
+class SignalBucketBasis(BaseModel):
+    """Auditable basis for a tri-state signal bucket decision."""
+
+    mode: Literal["score", "enum"]
+    path: str
+    value: StrictStr | StrictInt | StrictFloat
+    matched: str
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _validate_value_matches_mode(self) -> SignalBucketBasis:
+        if self.mode == "score" and isinstance(self.value, str):
+            raise ValueError("score signal basis value must be numeric")
+        if self.mode == "enum" and not isinstance(self.value, str):
+            raise ValueError("enum signal basis value must be a string")
+        return self
+
+
 class CandidateSignal(BaseModel):
     """Tri-state signal from a signal source, attached to a candidate member.
 
@@ -37,6 +56,7 @@ class CandidateSignal(BaseModel):
     signal_source: str
     signal: SignalValue
     evidence: str = ""
+    basis: SignalBucketBasis | None = None
 
 
 class CandidateMember(RelationshipInstance):

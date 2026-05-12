@@ -26,7 +26,7 @@ from cruxible_core.config.schema import (
     WorkflowType,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember, SignalValue
+from cruxible_core.group.types import CandidateMember, SignalBucketBasis, SignalValue
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 
@@ -200,6 +200,7 @@ class SignalBatchSignal(BaseModel):
     to_id: str
     signal: SignalValue
     evidence: str = ""
+    basis: SignalBucketBasis | None = None
 
 
 class SignalBatch(BaseModel):

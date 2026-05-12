@@ -78,6 +78,28 @@ def _save_workflow_receipt(instance: InstanceProtocol, receipt: Receipt) -> None
         store.close()
 
 
+def _workflow_proposal_source_step_ids(workflow: Any, result: Any) -> list[str]:
+    """Return proposal and signal-mapping step ids that explain a bridged group."""
+    source_step_ids: list[str] = []
+
+    def add(step_id: str | None) -> None:
+        if step_id is not None and step_id not in source_step_ids:
+            source_step_ids.append(step_id)
+
+    returns_alias = workflow.returns
+    add(result.alias_step_ids.get(returns_alias))
+
+    for step in workflow.steps:
+        step_alias = step.as_ if step.as_ is not None else step.id
+        if step_alias != returns_alias or step.propose_relationship_group is None:
+            continue
+        for signal_alias in step.propose_relationship_group.signals_from:
+            add(result.alias_step_ids.get(signal_alias))
+        break
+
+    return source_step_ids
+
+
 def _finalize_proposal_receipt(
     receipt: Receipt,
     *,
@@ -363,7 +385,7 @@ def service_propose_workflow(
             for member in proposal_payload.members
         ]
 
-        source_step_id = result.alias_step_ids.get(config.workflows[workflow_name].returns)
+        source_step_ids = _workflow_proposal_source_step_ids(workflow, result)
         source_trace_ids = [trace.trace_id for trace in result.traces]
         group_result = service_propose_group(
             instance,
@@ -379,7 +401,7 @@ def service_propose_workflow(
             source_workflow_name=workflow_name,
             source_workflow_receipt_id=result.receipt.receipt_id,
             source_trace_ids=source_trace_ids,
-            source_step_ids=[source_step_id] if source_step_id is not None else [],
+            source_step_ids=source_step_ids,
         )
         proposal_receipt = _finalize_proposal_receipt(
             result.receipt,

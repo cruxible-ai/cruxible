@@ -620,10 +620,23 @@ class TestWorkflowExecutor:
         assert result.receipt.workflow_mode == "proposal"
         assert len(result.output["members"]) == 2
         assert result.output["signal_sources_used"] == ["catalog"]
+        assert result.output["members"][0]["signals"][0]["basis"] == {
+            "mode": "enum",
+            "path": "verdict",
+            "value": "match",
+            "matched": "match",
+        }
         assert len(result.traces) == 1
         plan_steps = [node for node in result.receipt.nodes if node.node_type == "plan_step"]
         assert any(node.detail.get("relationship_type") == "recommended_for" for node in plan_steps)
-        assert any(node.detail.get("signal_source") == "catalog" for node in plan_steps)
+        signal_step = next(
+            node for node in plan_steps if node.detail.get("signal_source") == "catalog"
+        )
+        assert signal_step.detail["mapping"] == {
+            "mode": "enum",
+            "path": "verdict",
+            "map": {"match": "support", "fallback": "unsure", "reject": "contradict"},
+        }
         assert any(node.detail.get("signals_from") == ["catalog_signals"] for node in plan_steps)
 
     def test_execute_workflow_reports_duplicate_candidate_inputs(
