@@ -10,6 +10,7 @@ from cruxible_core.config.composer import (
     write_runtime_composed_config,
 )
 from cruxible_core.config.loader import load_config, load_config_from_string, save_config
+from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -20,6 +21,8 @@ from cruxible_core.service.types import (
     ReloadConfigResult,
     ValidateServiceResult,
 )
+
+_MANAGED_CONFIG_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "configs" / "active.yaml"
 
 
 def service_validate(
@@ -67,10 +70,10 @@ def service_init(
 ) -> InitResult:
     """Initialize a new cruxible instance (create-only).
 
-    If the config uses ``extends``, the base is resolved and the composed
-    config is written to ``{root_dir}/config.yaml``.  The instance then
-    references the flattened file — future base/overlay edits require
-    re-init or the full overlay flow.
+    Inline YAML is normalized into an instance-managed active config.  If
+    the source config uses ``extends``, the composed config is flattened into
+    the same managed path so the initialized instance has a self-contained
+    config without assuming a caller-provided filename.
     """
     root = Path(root_dir)
     normalized_kit = (kit or "").strip() or None
@@ -86,26 +89,15 @@ def service_init(
         )
         config_path = str(materialized_config.relative_to(root))
 
-    wrote_inline = False
+    wrote_managed_config = False
 
     if config_yaml is not None:
-        load_config_from_string(config_yaml)
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise ConfigError(f"Failed to create directory {root}: {exc}") from exc
-        disk_config = root / "config.yaml"
-        if disk_config.exists():
-            raise ConfigError(
-                f"config.yaml already exists at {root}. "
-                "Use config_path to reference the existing file, or remove it first."
-            )
-        try:
-            disk_config.write_text(config_yaml)
-        except OSError as exc:
-            raise ConfigError(f"Failed to write config.yaml: {exc}") from exc
-        config_path = "config.yaml"
-        wrote_inline = True
+        config = load_config_from_string(config_yaml)
+        config = compose_config_sequence(
+            resolve_config_layers(config, config_dir=root),
+        )
+        config_path = _save_managed_config(root, config)
+        wrote_managed_config = True
 
     assert config_path is not None
     resolved = Path(config_path)
@@ -116,17 +108,15 @@ def service_init(
     config = load_config(resolved)
     if config.extends is not None:
         try:
-            root.mkdir(parents=True, exist_ok=True)
-            composed_path = root / "config.yaml"
             composed = compose_config_sequence(
                 resolve_config_layers(config, config_path=resolved),
             )
-            save_config(composed, composed_path)
+            config_path = _save_managed_config(root, composed)
+            wrote_managed_config = True
         except Exception:
-            if wrote_inline:
-                (root / "config.yaml").unlink(missing_ok=True)
+            if wrote_managed_config:
+                _cleanup_managed_config(root)
             raise
-        config_path = "config.yaml"
 
     try:
         instance = CruxibleInstance.init(
@@ -136,17 +126,32 @@ def service_init(
             instance_mode=instance_mode,
         )
     except Exception:
-        if wrote_inline or config.extends is not None:
-            try:
-                (root / "config.yaml").unlink(missing_ok=True)
-            except Exception:
-                pass
+        if wrote_managed_config:
+            _cleanup_managed_config(root)
         raise
 
     loaded = instance.load_config()
     warnings = validate_config(loaded)
 
     return InitResult(instance=instance, warnings=warnings)
+
+
+def _save_managed_config(root: Path, config: CoreConfig) -> str:
+    """Persist the active config under instance-owned metadata."""
+    managed_path = root / _MANAGED_CONFIG_RELATIVE_PATH
+    try:
+        managed_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ConfigError(f"Failed to create directory {managed_path.parent}: {exc}") from exc
+    save_config(config, managed_path)
+    return str(_MANAGED_CONFIG_RELATIVE_PATH)
+
+
+def _cleanup_managed_config(root: Path) -> None:
+    try:
+        (root / _MANAGED_CONFIG_RELATIVE_PATH).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def service_reload_config(

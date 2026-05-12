@@ -542,8 +542,7 @@ def test_reload_config_route_updates_instance_path(
     payload = response.json()
     assert payload["updated"] is True
     assert str(tmp_path / "alt-config.yaml") not in payload["config_path"]
-    assert ".cruxible" not in payload["config_path"]
-    assert payload["config_path"].endswith("/config.yaml")
+    assert payload["config_path"].endswith("/.cruxible/configs/active.yaml")
 
 
 def test_server_init_creates_daemon_owned_governed_instance(
@@ -561,7 +560,9 @@ def test_server_init_creates_daemon_owned_governed_instance(
     assert isinstance(instance, CruxibleInstance)
     assert instance.is_governed_mode()
     assert instance.get_root_path() == Path(record.location)
-    assert instance.get_config_path().parent == Path(record.location)
+    assert instance.get_config_path() == (
+        expected_root / ".cruxible" / "configs" / "active.yaml"
+    )
     assert instance.load_config().name == "car_parts_compatibility"
 
 

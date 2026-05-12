@@ -33,34 +33,63 @@ _INLINE_RELATIVE_EXTENDS_ERROR = (
 
 @dataclass(frozen=True)
 class ResolvedConfigLayer:
-    """One config contribution with its resolved source path, if any."""
+    """One config contribution with its resolved source path or directory."""
 
     config: CoreConfig
     config_path: Path | None = None
+    config_dir: Path | None = None
+
+    @property
+    def source_dir(self) -> Path | None:
+        """Return the directory used for relative artifact rebasing."""
+        if self.config_dir is not None:
+            return self.config_dir
+        if self.config_path is not None:
+            return self.config_path.parent
+        return None
 
 
 def resolve_config_layers(
     config: CoreConfig,
     *,
     config_path: Path | None = None,
+    config_dir: Path | None = None,
 ) -> list[ResolvedConfigLayer]:
     """Lower today's supported config shapes into an ordered layer sequence."""
+    if config_path is not None and config_dir is not None:
+        raise ConfigError("Provide config_path or config_dir, not both")
     resolved_path = config_path.resolve() if config_path is not None else None
+    resolved_dir = config_dir.resolve() if config_dir is not None else None
+    source_dir = (
+        resolved_dir
+        if resolved_dir is not None
+        else (resolved_path.parent if resolved_path is not None else None)
+    )
     if config.extends is None:
-        return [ResolvedConfigLayer(config=config, config_path=resolved_path)]
+        return [
+            ResolvedConfigLayer(
+                config=config,
+                config_path=resolved_path,
+                config_dir=resolved_dir,
+            )
+        ]
 
     base_path = Path(config.extends)
     if not base_path.is_absolute():
-        if resolved_path is None:
+        if source_dir is None:
             raise ConfigError(_INLINE_RELATIVE_EXTENDS_ERROR)
-        base_path = resolved_path.parent / base_path
+        base_path = source_dir / base_path
     if not base_path.exists():
         raise ConfigError(f"Base config for extends not found: {base_path}")
 
     resolved_base_path = base_path.resolve()
     return [
         ResolvedConfigLayer(config=load_config(resolved_base_path), config_path=resolved_base_path),
-        ResolvedConfigLayer(config=config, config_path=resolved_path),
+        ResolvedConfigLayer(
+            config=config,
+            config_path=resolved_path,
+            config_dir=resolved_dir,
+        ),
     ]
 
 
@@ -90,8 +119,9 @@ def compose_config_sequence(
                 layer_data
             )
             removed_provider_names.update(removed)
-        if layer.config_path is not None:
-            layer_data = _rebase_artifact_uris(layer_data, layer.config_path.resolve().parent)
+        source_dir = layer.source_dir
+        if source_dir is not None:
+            layer_data = _rebase_artifact_uris(layer_data, source_dir.resolve())
         if composed_data is None:
             composed_data = layer_data
         else:

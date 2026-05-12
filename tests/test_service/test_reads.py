@@ -60,15 +60,23 @@ class TestInit:
     def test_inline_yaml(self, tmp_path: Path) -> None:
         result = service_init(tmp_path, config_yaml=CAR_PARTS_YAML)
         assert result.instance is not None
-        assert (tmp_path / "config.yaml").exists()
+        assert result.instance.get_config_path() == (
+            tmp_path / ".cruxible" / "configs" / "active.yaml"
+        )
+        assert (tmp_path / ".cruxible" / "configs" / "active.yaml").exists()
+        assert not (tmp_path / "config.yaml").exists()
 
-    def test_inline_yaml_overwrite_guard(self, tmp_path: Path) -> None:
+    def test_inline_yaml_does_not_claim_root_config_name(self, tmp_path: Path) -> None:
         (tmp_path / "config.yaml").write_text("existing content")
-        with pytest.raises(ConfigError, match="already exists"):
-            service_init(tmp_path, config_yaml=CAR_PARTS_YAML)
+        result = service_init(tmp_path, config_yaml=CAR_PARTS_YAML)
+        assert result.instance is not None
+        assert (tmp_path / "config.yaml").read_text() == "existing content"
+        assert result.instance.get_config_path() == (
+            tmp_path / ".cruxible" / "configs" / "active.yaml"
+        )
 
     def test_inline_yaml_cleanup_on_failure(self, tmp_path: Path) -> None:
-        """If init fails after writing config.yaml, the file is cleaned up."""
+        """Bad inline YAML fails before writing a managed active config."""
         # Write invalid YAML that passes load_config_from_string but fails
         # CruxibleInstance.init. Actually, it's hard to trigger this cleanly.
         # Instead, test the simpler case: bad inline YAML fails validation
@@ -128,8 +136,11 @@ class TestInit:
         assert "Case" in config.entity_types
         assert config.get_relationship("cites") is not None
         assert config.get_relationship("follows") is not None
-        # Instance should point at the composed file, not the raw overlay
-        assert (instance_root / "config.yaml").exists()
+        # Instance should point at the managed composed file, not the raw overlay.
+        assert result.instance.get_config_path() == (
+            instance_root / ".cruxible" / "configs" / "active.yaml"
+        )
+        assert (instance_root / ".cruxible" / "configs" / "active.yaml").exists()
 
     def test_init_with_extends_base_not_found(self, tmp_path: Path) -> None:
         overlay = tmp_path / "overlay.yaml"
@@ -172,6 +183,9 @@ class TestInit:
         config = result.instance.load_config()
         assert "Case" in config.entity_types
         assert config.get_relationship("follows") is not None
+        assert result.instance.get_config_path() == (
+            instance_root / ".cruxible" / "configs" / "active.yaml"
+        )
 
     def test_init_with_extends_compose_conflict_cleanup(self, tmp_path: Path) -> None:
         base = tmp_path / "base.yaml"

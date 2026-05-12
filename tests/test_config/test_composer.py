@@ -12,6 +12,7 @@ from cruxible_core.config.composer import (
     compose_config_sequence,
     compose_configs,
     compose_runtime_configs,
+    resolve_config_layers,
     write_composed_config,
 )
 from cruxible_core.config.loader import load_config, load_config_from_string
@@ -185,6 +186,40 @@ named_queries:
         composed = compose_configs(base, overlay, validate=False)
 
         assert "bad_query" in composed.named_queries
+
+    def test_inline_layer_can_resolve_extends_from_config_dir(self, tmp_path: Path) -> None:
+        (tmp_path / "base.yaml").write_text(
+            """\
+version: "1.0"
+name: base
+entity_types:
+  Case:
+    properties:
+      case_id: {type: string, primary_key: true}
+relationships:
+  - name: cites
+    from: Case
+    to: Case
+"""
+        )
+        overlay = load_config_from_string(
+            """\
+version: "1.0"
+name: overlay
+extends: base.yaml
+entity_types: {}
+relationships:
+  - name: follows
+    from: Case
+    to: Case
+"""
+        )
+
+        composed = compose_config_sequence(resolve_config_layers(overlay, config_dir=tmp_path))
+
+        assert "Case" in composed.entity_types
+        assert composed.get_relationship("cites") is not None
+        assert composed.get_relationship("follows") is not None
 
 
 # --- feedback_profiles (keyed-map merge) ---

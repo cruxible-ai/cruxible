@@ -146,10 +146,9 @@ def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -
     resolving relative extends paths. A fully isolated daemon will need callers to upload
     fully resolved config content instead of relying on workspace filesystem access here.
     """
-    overlay_path = workspace_root / "config.yaml"
     config = load_config_from_string(config_yaml)
     config = compose_config_sequence(
-        resolve_config_layers(config, config_path=overlay_path),
+        resolve_config_layers(config, config_dir=workspace_root),
     )
     data = config.model_dump(mode="python", by_alias=True, exclude_none=True)
     return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
