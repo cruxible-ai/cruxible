@@ -29,6 +29,31 @@ def shape_items(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    """Project, rename, enrich, cast, and validate item-shaped workflow data.
+
+    The step resolves ``spec.items`` to a list, requires every item to be a
+    mapping, applies top-level renames, then builds each output row. When
+    ``include_input`` is true the renamed input row is retained; otherwise the
+    output starts with only renamed fields. Additional ``fields`` are resolved
+    with ``$item`` bound to the renamed row, casts run after field resolution,
+    and required fields either raise or drop the row depending on
+    ``on_missing_required``.
+
+    Args:
+        step_id: Workflow step id used in execution errors.
+        spec: Parsed ``shape_items`` step configuration.
+        input_payload: Workflow input payload available to refs.
+        step_outputs: Outputs produced by earlier workflow steps.
+
+    Returns:
+        A mapping with shaped ``items`` plus input/output/drop counts and a
+        bounded sample of dropped-row examples.
+
+    Raises:
+        QueryExecutionError: If an input item is not a mapping, a rename
+            collides, a cast fails, or required fields are missing in ``error``
+            mode.
+    """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     output_items: list[dict[str, Any]] = []
     dropped_count = 0
@@ -95,6 +120,29 @@ def join_items(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    """Inner-join two item collections and project joined rows.
+
+    The step resolves left and right collections, indexes right-side rows by the
+    canonical JSON form of ``right_key``, and matches left rows by the canonical
+    JSON form of ``left_key``. Joined output fields are resolved with ``$item``
+    bound to a payload containing ``left``, ``right``, and ``join_key``.
+    Right-side rows with null keys are counted as skipped; left-side rows with
+    null keys simply produce no output rows.
+
+    Args:
+        step_id: Workflow step id used in execution errors.
+        spec: Parsed ``join_items`` step configuration.
+        input_payload: Workflow input payload available to refs.
+        step_outputs: Outputs produced by earlier workflow steps.
+
+    Returns:
+        A mapping with joined ``items`` plus left/right/skipped/matched/output
+        counts.
+
+    Raises:
+        QueryExecutionError: If any left or right item is not a mapping, or if a
+            referenced value cannot be resolved.
+    """
     left_items = resolve_step_items(spec.left_items, input_payload, step_outputs)
     right_items = resolve_step_items(spec.right_items, input_payload, step_outputs)
     right_index: dict[str, list[dict[str, Any]]] = {}
@@ -165,6 +213,28 @@ def filter_items(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    """Filter an item collection using exact-match filters and comparisons.
+
+    The ``where`` mapping is resolved once before iteration and supports only
+    ``$input`` references, which keeps it config/input scoped rather than
+    item-scoped. Each item must be a mapping, first passes the exact ``where``
+    filter, then passes every comparison with ``$item`` bound to that row.
+    Matching output preserves the original item objects.
+
+    Args:
+        step_id: Workflow step id used in execution errors.
+        spec: Parsed ``filter_items`` step configuration.
+        input_payload: Workflow input payload available to refs.
+        step_outputs: Outputs produced by earlier workflow steps.
+
+    Returns:
+        A mapping with filtered ``items`` plus input/output/filtered counts.
+
+    Raises:
+        QueryExecutionError: If an item is not a mapping, ``where`` resolves to
+            a non-mapping, ``where`` uses a disallowed reference, or a comparison
+            operator is unsupported.
+    """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     resolved_where = _resolve_filter_where(
         step_id,
@@ -221,6 +291,29 @@ def dedupe_items(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    """Deduplicate an item collection by resolved key values.
+
+    Each item must be a mapping. The dedupe key is the canonical JSON form of
+    the configured key values, allowing composite keys and stable comparison of
+    structured values. ``first`` keeps the first item for each key, ``last``
+    keeps the last, and ``max``/``min`` compare a resolved rank value. Missing
+    ``$item`` rank refs are treated as absent rank values rather than hard
+    errors, so ranked strategies can tolerate sparse inputs.
+
+    Args:
+        step_id: Workflow step id used in execution errors.
+        spec: Parsed ``dedupe_items`` step configuration.
+        input_payload: Workflow input payload available to refs.
+        step_outputs: Outputs produced by earlier workflow steps.
+
+    Returns:
+        A mapping with deduped ``items`` plus input/output/duplicate counts and
+        a bounded sample of duplicate examples.
+
+    Raises:
+        QueryExecutionError: If an item is not a mapping, a key/rank reference
+            cannot be resolved, or ranked values are incomparable.
+    """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     selected: dict[str, dict[str, Any]] = {}
     duplicate_count = 0
@@ -310,6 +403,7 @@ def _ensure_item_mapping(
     step_kind: str,
     item: Any,
 ) -> dict[str, Any]:
+    """Return ``item`` as a mapping or raise a step-specific execution error."""
     if not isinstance(item, dict):
         raise QueryExecutionError(
             f"Workflow step '{step_id}' {step_kind} items must contain mappings"
@@ -322,6 +416,7 @@ def _apply_shape_rename(
     source_row: dict[str, Any],
     rename: dict[str, str],
 ) -> dict[str, Any]:
+    """Apply top-level shape renames while rejecting target collisions."""
     renamed_row = dict(source_row)
     for source, target in rename.items():
         if source not in source_row:
@@ -341,6 +436,7 @@ def _cast_shape_value(
     value: Any,
     cast_type: str,
 ) -> Any:
+    """Cast one shaped field according to the configured shape cast type."""
     try:
         if cast_type == "str":
             return str(value)
@@ -363,6 +459,7 @@ def _cast_shape_value(
 
 
 def _cast_shape_int(value: Any) -> int:
+    """Cast a value to int without accepting bools or non-integer strings."""
     if isinstance(value, bool):
         raise TypeError("bool is not int")
     if isinstance(value, int):
@@ -375,6 +472,7 @@ def _cast_shape_int(value: Any) -> int:
 
 
 def _cast_shape_float(value: Any) -> float:
+    """Cast a value to a finite float without accepting bools."""
     if isinstance(value, bool):
         raise TypeError("bool is not float")
     if isinstance(value, int | float):
@@ -392,6 +490,7 @@ def _cast_shape_float(value: Any) -> float:
 
 
 def _cast_shape_bool(value: Any) -> bool:
+    """Cast bool-like values accepted by shape_items."""
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and value in (0, 1):
@@ -406,6 +505,7 @@ def _cast_shape_bool(value: Any) -> bool:
 
 
 def _cast_shape_json(value: Any) -> dict[str, Any] | list[Any]:
+    """Return dict/list JSON values or parse them from a JSON string."""
     if isinstance(value, dict | list):
         return value
     if isinstance(value, str):
@@ -416,6 +516,7 @@ def _cast_shape_json(value: Any) -> dict[str, Any] | list[Any]:
 
 
 def _shape_required_value_missing(row: dict[str, Any], field_name: str) -> bool:
+    """Return whether a required shaped field is absent, null, or empty."""
     return field_name not in row or row[field_name] is None or row[field_name] == ""
 
 
@@ -425,6 +526,7 @@ def _resolve_filter_where(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    """Resolve a filter_items ``where`` mapping using only input-scoped refs."""
     resolved = _resolve_filter_where_value(step_id, where, input_payload, step_outputs)
     if not isinstance(resolved, dict):
         raise QueryExecutionError(
@@ -439,6 +541,7 @@ def _resolve_filter_where_value(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
 ) -> Any:
+    """Resolve one ``where`` value while forbidding item/step-scoped refs."""
     if isinstance(value, str) and value.startswith("$"):
         if value == "$input" or value.startswith("$input."):
             return resolve_value(value, input_payload, step_outputs)
@@ -464,6 +567,7 @@ def _resolve_optional_rank(
     step_outputs: dict[str, Any],
     item_payload: dict[str, Any],
 ) -> Any:
+    """Resolve a dedupe rank, treating missing ``$item`` rank refs as absent."""
     try:
         return resolve_value(
             rank_template,
@@ -486,6 +590,7 @@ def _should_replace_ranked_item(
     new_rank: Any,
     new_rank_present: bool,
 ) -> bool:
+    """Return whether a ranked dedupe candidate should replace the current item."""
     if not new_rank_present:
         return False
     if not existing_rank_present:
