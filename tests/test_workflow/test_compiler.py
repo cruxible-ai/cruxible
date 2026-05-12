@@ -207,11 +207,11 @@ class TestWorkflowCompiler:
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         config = canonical_workflow_instance.load_config()
-        config.workflows["build_reference"].canonical = False
+        config.workflows["build_reference"].type = "utility"
         canonical_workflow_instance.save_config(config)
         write_lock_for_instance(canonical_workflow_instance)
 
-        with pytest.raises(ConfigError, match="must be canonical to use apply_entities"):
+        with pytest.raises(ConfigError, match="must be type: canonical to use apply_entities"):
             compile_workflow(
                 canonical_workflow_instance.load_config(),
                 build_lock(canonical_workflow_instance.load_config()),

@@ -300,7 +300,7 @@ def _validate_outcome_profiles(config: CoreConfig, errors: list[str]) -> None:
                         f"Outcome profile '{profile_key}': workflow_name "
                         f"'{profile.workflow_name}' not found in workflows"
                     )
-                elif workflow.canonical:
+                elif workflow.type == "canonical":
                     errors.append(
                         f"Outcome profile '{profile_key}': workflow_name "
                         f"'{profile.workflow_name}' must be non-canonical"
@@ -414,10 +414,10 @@ def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:
                     f"Decision policy '{policy.name}': workflow_name "
                     f"'{policy.workflow_name}' not found in workflows"
                 )
-            elif workflow.canonical:
+            elif workflow.type != "proposal":
                 errors.append(
                     f"Decision policy '{policy.name}': workflow_name "
-                    f"'{policy.workflow_name}' must be a non-canonical proposal workflow"
+                    f"'{policy.workflow_name}' must be type: proposal"
                 )
             elif not _workflow_returns_relationship_proposal(workflow):
                 errors.append(
@@ -1085,27 +1085,31 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 "not produced by any prior step"
             )
 
-        if uses_apply_steps and not workflow.canonical:
+        if uses_apply_steps and workflow.type != "canonical":
             errors.append(
-                f"Workflow '{workflow_name}': apply_* steps require canonical: true"
+                f"Workflow '{workflow_name}': apply_* steps require type: canonical"
             )
-        if workflow.canonical and not uses_apply_steps:
+        if workflow.type == "canonical" and not uses_apply_steps:
             errors.append(
                 f"Workflow '{workflow_name}': canonical workflows require at least one apply_* step"
             )
-        if workflow.purpose == "decision_support" and uses_apply_steps:
+        if workflow.type == "decision_support" and uses_apply_steps:
             errors.append(
                 f"Workflow '{workflow_name}': decision_support workflows must not use apply_* steps"
             )
-        if workflow.purpose == "proposal" and not _workflow_returns_relationship_proposal(
-            workflow
-        ):
+        returns_proposal = _workflow_returns_relationship_proposal(workflow)
+        if workflow.type == "proposal" and not returns_proposal:
             errors.append(
                 f"Workflow '{workflow_name}': proposal workflows must return a "
                 "proposal-bearing alias produced by propose_relationship_group"
             )
+        if workflow.type != "proposal" and returns_proposal:
+            errors.append(
+                f"Workflow '{workflow_name}': workflows returning propose_relationship_group "
+                "output require type: proposal"
+            )
 
-        if workflow.canonical:
+        if workflow.type == "canonical":
             for provider_name in providers_used:
                 provider = config.providers[provider_name]
                 if provider.runtime != "python":

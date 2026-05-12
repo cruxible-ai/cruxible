@@ -333,7 +333,7 @@ class TestValidateLoopOneControls:
             validate_config(config)
         assert any("Duplicate decision policy name" in e for e in exc_info.value.errors)
 
-    def test_workflow_policy_requires_proposal_bearing_workflow(self):
+    def test_workflow_policy_requires_proposal_type(self):
         config = _minimal_config(
             contracts={
                 "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
@@ -380,7 +380,7 @@ class TestValidateLoopOneControls:
         )
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
-        assert any("proposal-bearing alias" in e for e in exc_info.value.errors)
+        assert any("must be type: proposal" in e for e in exc_info.value.errors)
 
     def test_receipt_outcome_profile_requires_known_query_surface(self):
         config = _minimal_config(
@@ -798,7 +798,7 @@ class TestValidateWorkflowExecution:
         config = self._workflow_config(
             workflows={
                 "wf": WorkflowSchema(
-                    canonical=True,
+                    type="canonical",
                     contract_in="WorkflowInput",
                     steps=[
                         WorkflowStepSchema(
@@ -823,7 +823,7 @@ class TestValidateWorkflowExecution:
         config = self._workflow_config(
             workflows={
                 "wf": WorkflowSchema(
-                    purpose="decision_support",
+                    type="decision_support",
                     contract_in="WorkflowInput",
                     steps=[
                         WorkflowStepSchema(
@@ -849,11 +849,11 @@ class TestValidateWorkflowExecution:
             for error in exc_info.value.errors
         )
 
-    def test_proposal_purpose_requires_relationship_proposal_return(self):
+    def test_proposal_type_requires_relationship_proposal_return(self):
         config = self._workflow_config(
             workflows={
                 "wf": WorkflowSchema(
-                    purpose="proposal",
+                    type="proposal",
                     contract_in="WorkflowInput",
                     steps=[
                         WorkflowStepSchema(

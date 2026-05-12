@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
+from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
@@ -60,19 +61,24 @@ def execute_workflow(
         config_base_path=instance.get_config_path().parent,
     )
     workflow = config.workflows[workflow_name]
-    execution_mode: Literal["run", "preview", "apply"] = mode
-    if workflow.canonical and mode == "run":
-        execution_mode = "preview"
+    workflow_type = workflow.type
+    is_canonical = workflow_type == "canonical"
+    if is_canonical and mode == "run":
+        raise ConfigError("canonical workflows must be executed in preview or apply mode")
+    if not is_canonical and mode != "run":
+        raise ConfigError("only canonical workflows support preview or apply mode")
+    execution_mode: Literal["run", "preview", "apply", "proposal"] = (
+        "proposal" if workflow_type == "proposal" else mode
+    )
     head_snapshot_id = instance.get_head_snapshot_id()
     base_graph = instance.load_graph()
-    graph = _clone_graph(base_graph) if workflow.canonical else base_graph
-    receipt_workflow_mode = "apply" if execution_mode == "apply" else "preview"
+    graph = _clone_graph(base_graph) if is_canonical else base_graph
     receipt_builder = ReceiptBuilder(
         query_name=workflow_name,
         parameters=plan.input_payload,
         operation_type="workflow",
         head_snapshot_id=head_snapshot_id,
-        workflow_mode=receipt_workflow_mode,
+        workflow_mode=execution_mode,
     )
 
     step_outputs: dict[str, Any] = {}
@@ -483,7 +489,7 @@ def execute_workflow(
         }
     )
 
-    if workflow.canonical and execution_mode == "apply":
+    if is_canonical and execution_mode == "apply":
         snapshot = instance.commit_graph_snapshot(graph)
         committed_snapshot_id = snapshot.snapshot_id
         receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id
@@ -497,7 +503,7 @@ def execute_workflow(
         output=output,
         receipt=receipt,
         mode=execution_mode,
-        canonical=workflow.canonical,
+        workflow_type=workflow_type,
         apply_digest=apply_digest,
         head_snapshot_id=head_snapshot_id,
         committed_snapshot_id=committed_snapshot_id,

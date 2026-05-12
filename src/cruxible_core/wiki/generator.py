@@ -1691,7 +1691,7 @@ class _WikiGenerator:
     def _workflow_role(self, schema: WorkflowSchema) -> str:
         if any(step.propose_relationship_group is not None for step in schema.steps):
             return "Governed proposal"
-        if schema.canonical or self._workflow_has_apply_steps(schema):
+        if schema.type == "canonical" or self._workflow_has_apply_steps(schema):
             return "Canonical state write"
         return "Read or compute workflow"
 
@@ -1738,9 +1738,9 @@ class _WikiGenerator:
                 for query_name in sorted(query_names)
             ]
             lines.append(f"- Query context: {', '.join(query_links)}")
-        if len(lines) == 1 and not schema.canonical:
+        if len(lines) == 1 and schema.type != "canonical":
             lines.append("- Graph context: none configured")
-        elif len(lines) == 1 and schema.canonical:
+        elif len(lines) == 1 and schema.type == "canonical":
             lines.append("- Graph context: none; this workflow seeds canonical state")
         return lines
 

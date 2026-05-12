@@ -543,7 +543,7 @@ providers:
     version: 1.0.0
 workflows:
   build_reference:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     returns: apply_products
     steps:
@@ -580,7 +580,7 @@ relationships:
       signals: {}
 workflows:
   build_overlay:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     returns: apply_assets
     steps:

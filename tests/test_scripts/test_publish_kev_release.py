@@ -54,7 +54,7 @@ def test_write_temp_kev_config_updates_artifact_sha(tmp_path: Path) -> None:
 
     loaded = module.yaml.safe_load(output.read_text(encoding="utf-8"))
     assert loaded["artifacts"]["public_kev_bundle"]["sha256"] == "sha256:test-artifact"
-    assert loaded["workflows"]["build_public_kev_reference"]["canonical"] is True
+    assert loaded["workflows"]["build_public_kev_reference"]["type"] == "canonical"
 
 
 def test_publish_script_uses_split_reference_kit() -> None:

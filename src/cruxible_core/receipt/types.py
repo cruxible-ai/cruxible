@@ -28,7 +28,7 @@ OperationType = Literal[
 ]
 """Coarse-grained category of operation that produced a receipt."""
 
-WorkflowReceiptMode = Literal["preview", "apply", "proposal"]
+WorkflowReceiptMode = Literal["run", "preview", "apply", "proposal"]
 """Workflow execution mode recorded on workflow receipts."""
 
 NodeType = Literal[

@@ -137,7 +137,7 @@ This policy means:
 ```yaml
 workflows:
   refresh_catalog_state:
-    canonical: true
+    type: canonical
     steps:
       - id: parsed
         provider: catalog_csv_loader

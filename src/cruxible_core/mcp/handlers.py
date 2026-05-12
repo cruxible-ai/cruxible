@@ -245,7 +245,7 @@ def handle_workflow_apply(
     input_payload: dict[str, Any] | None = None,
     decision_record_id: str | None = None,
 ) -> contracts.WorkflowApplyResult:
-    """Apply a canonical workflow after verifying preview identity."""
+    """Commit a previously previewed canonical workflow after verifying identity."""
     decision_kwargs = (
         {"decision_record_id": decision_record_id}
         if decision_record_id is not None

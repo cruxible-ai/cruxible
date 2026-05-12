@@ -23,6 +23,7 @@ from cruxible_core.config.schema import (
     ProposeRelationshipGroupSpec,
     ShapeItemsSpec,
     StepKind,
+    WorkflowType,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, SignalValue
@@ -80,7 +81,7 @@ class CompiledPlanStep(BaseModel):
 
     step_id: str
     kind: StepKind
-    canonical: bool = False
+    workflow_type: WorkflowType = "utility"
     as_name: str | None = None
     query_name: str | None = None
     provider_name: str | None = None
@@ -108,6 +109,11 @@ class CompiledPlanStep(BaseModel):
     apply_entities_spec: ApplyEntitiesSpec | None = None
     apply_relationships_spec: ApplyRelationshipsSpec | None = None
 
+    @property
+    def canonical(self) -> bool:
+        """Whether this step belongs to a canonical workflow."""
+        return self.workflow_type == "canonical"
+
 
 class CompiledPlan(BaseModel):
     """Compiled workflow plan artifact."""
@@ -116,10 +122,15 @@ class CompiledPlan(BaseModel):
     contract_in: str
     config_digest: str
     lock_digest: str | None = None
-    canonical: bool = False
+    workflow_type: WorkflowType = "utility"
     steps: list[CompiledPlanStep]
     returns: str
     input_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def canonical(self) -> bool:
+        """Whether this plan belongs to a canonical workflow."""
+        return self.workflow_type == "canonical"
 
 
 class WorkflowExecutionResult(BaseModel):
@@ -128,8 +139,8 @@ class WorkflowExecutionResult(BaseModel):
     workflow: str
     output: Any
     receipt: Receipt
-    mode: Literal["run", "preview", "apply"] = "run"
-    canonical: bool = False
+    mode: Literal["run", "preview", "apply", "proposal"] = "run"
+    workflow_type: WorkflowType = "utility"
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
     committed_snapshot_id: str | None = None
@@ -139,6 +150,11 @@ class WorkflowExecutionResult(BaseModel):
     step_outputs: dict[str, Any] = Field(default_factory=dict)
     alias_step_ids: dict[str, str] = Field(default_factory=dict)
     step_trace_ids: dict[str, list[str]] = Field(default_factory=dict)
+
+    @property
+    def canonical(self) -> bool:
+        """Whether this result came from a canonical workflow."""
+        return self.workflow_type == "canonical"
 
 
 class WorkflowTestCaseResult(BaseModel):

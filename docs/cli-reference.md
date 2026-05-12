@@ -166,7 +166,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible apply [OPTIONS]`
 
-**Purpose:** Apply a canonical workflow after verifying preview identity.
+**Purpose:** Commit a previously previewed canonical workflow after verifying the preview identity.
 
 **Options And Arguments:**
 
@@ -1381,7 +1381,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible propose [OPTIONS]`
 
-**Purpose:** Execute a workflow and bridge its output into a candidate group.
+**Purpose:** Execute a `type: proposal` workflow and bridge its output into a candidate group.
 
 **Options And Arguments:**
 
@@ -1521,7 +1521,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible run [OPTIONS]`
 
-**Purpose:** Execute a workflow for the current instance. For workflows that produce group proposals, use 'cruxible propose' instead.
+**Purpose:** Execute a workflow for the current instance. Canonical workflows run as previews and return an `apply_digest` plus `head_snapshot_id`; use `cruxible apply` to commit them. For `type: proposal` workflows, use `cruxible propose` instead.
 
 **Options And Arguments:**
 
@@ -1531,7 +1531,6 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--input` | no | `` | text | Inline JSON or YAML workflow input. |
 | `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
 | `--save-preview` | no | `` | file | Save preview state to a JSON file for use with apply --preview-file. |
-| `--apply, --no-apply` | no | `False` | boolean | Immediately apply a canonical workflow after preview verification. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 

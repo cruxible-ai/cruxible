@@ -12,6 +12,7 @@ from cruxible_core.config.schema import (
     OutcomeLabel,
     OutcomeRemediationHint,
     SurfaceType,
+    WorkflowType,
 )
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -36,7 +37,7 @@ from cruxible_core.snapshot.types import (
 )
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
 
-WorkflowMode = Literal["run", "preview", "apply"]
+WorkflowMode = Literal["run", "preview", "apply", "proposal"]
 
 
 @dataclass(frozen=True)
@@ -483,7 +484,7 @@ class WorkflowExecutionServiceResult:
     output: Any
     receipt_id: str
     mode: WorkflowMode
-    canonical: bool
+    workflow_type: WorkflowType
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
     committed_snapshot_id: str | None = None
@@ -493,17 +494,22 @@ class WorkflowExecutionServiceResult:
     receipt: Receipt | None = None
     traces: list[ExecutionTrace] = field(default_factory=list)
 
+    @property
+    def canonical(self) -> bool:
+        """Whether this result came from a canonical workflow."""
+        return self.workflow_type == "canonical"
+
 
 @dataclass
 class RunServiceResult(WorkflowExecutionServiceResult):
     mode: WorkflowMode = "run"
-    canonical: bool = False
+    workflow_type: WorkflowType = "utility"
 
 
 @dataclass
 class ApplyWorkflowResult(WorkflowExecutionServiceResult):
     mode: WorkflowMode = "apply"
-    canonical: bool = True
+    workflow_type: WorkflowType = "canonical"
 
 
 @dataclass
@@ -536,6 +542,8 @@ class ProposeWorkflowResult:
     group_id: str | None
     group_status: GroupStatus | Literal["suppressed"]
     review_priority: ReviewPriority
+    mode: WorkflowMode = "proposal"
+    workflow_type: WorkflowType = "proposal"
     suppressed: bool = False
     suppressed_members: list[SuppressedProposalMember] = field(default_factory=list)
     query_receipt_ids: list[str] = field(default_factory=list)
@@ -544,6 +552,11 @@ class ProposeWorkflowResult:
     policy_summary: dict[str, int] = field(default_factory=dict)
     receipt: Receipt | None = None
     traces: list[ExecutionTrace] = field(default_factory=list)
+
+    @property
+    def canonical(self) -> bool:
+        """Whether this result came from a canonical workflow."""
+        return self.workflow_type == "canonical"
 
 
 @dataclass

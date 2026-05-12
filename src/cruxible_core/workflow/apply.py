@@ -458,7 +458,7 @@ def compute_apply_digest(
     head snapshot, and sorted apply previews. ``service_apply_workflow`` uses it
     to ensure the apply request matches the preview the caller inspected.
     """
-    if not plan.canonical or not apply_previews:
+    if plan.workflow_type != "canonical" or not apply_previews:
         return None
     payload = {
         "workflow": plan.workflow,

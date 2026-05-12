@@ -264,12 +264,6 @@ def plan_cmd(workflow_name: str, input_text: str | None, input_file: str | None)
     type=click.Path(dir_okay=False, path_type=Path),
     help="Save preview state to a JSON file for use with apply --preview-file.",
 )
-@click.option(
-    "--apply/--no-apply",
-    "apply_now",
-    default=False,
-    help="Immediately apply a canonical workflow after preview verification.",
-)
 @decision_record_option
 @json_option
 @handle_errors
@@ -278,12 +272,12 @@ def run_cmd(
     input_text: str | None,
     input_file: str | None,
     save_preview: Path | None,
-    apply_now: bool,
     decision_record_id: str | None,
     output_json: bool,
 ) -> None:
     """Execute a workflow for the current instance.
 
+    Canonical workflows run as previews and return apply identity values.
     For workflows that produce group proposals, use 'cruxible propose' instead.
     """
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
@@ -323,61 +317,12 @@ def run_cmd(
             head_snapshot_id=result.head_snapshot_id,
             apply_previews=result.apply_previews,
         )
-    if apply_now:
-        if not result.canonical or not result.apply_digest:
-            raise click.ClickException(
-                f"Workflow '{result.workflow}' did not produce applyable canonical preview state; "
-                "use 'cruxible propose' for governed relationship workflows."
-            )
-        applied = _dispatch_cli_instance(
-            lambda client, instance_id: client.workflow_apply(
-                instance_id,
-                workflow_name=result.workflow,
-                expected_apply_digest=result.apply_digest,
-                expected_head_snapshot_id=result.head_snapshot_id,
-                input_payload=payload,
-                **decision_kwargs,
-            ),
-            lambda instance: service_apply_workflow(
-                instance,
-                result.workflow,
-                payload,
-                expected_apply_digest=result.apply_digest or "",
-                expected_head_snapshot_id=result.head_snapshot_id,
-                context=_operation_context(resolved_decision_record_id),
-            ),
-            allow_local=False,
-            command_name="run --apply",
-        )
-        if output_json:
-            _emit_json(
-                {
-                    "workflow": applied.workflow,
-                    "mode": "applied",
-                    "preview_receipt_id": result.receipt_id,
-                    "apply_digest": result.apply_digest,
-                    "head_snapshot_id": result.head_snapshot_id,
-                    "committed_snapshot_id": applied.committed_snapshot_id,
-                    "receipt_id": applied.receipt_id,
-                    "trace_ids": applied.trace_ids or [],
-                    "output": applied.output,
-                }
-            )
-            return
-        click.echo(f"Workflow {applied.workflow} applied.")
-        if applied.committed_snapshot_id:
-            click.echo(f"Committed snapshot: {applied.committed_snapshot_id}")
-        _print_apply_previews(applied.apply_previews)
-        click.echo(f"Preview receipt ID: {result.receipt_id}")
-        click.echo(f"Apply receipt ID: {applied.receipt_id}")
-        if applied.trace_ids:
-            click.echo(f"Trace IDs: {', '.join(applied.trace_ids)}")
-        click.echo(json.dumps(applied.output, indent=2, sort_keys=True))
-        return
     if output_json:
         _emit_json({
             "workflow": result.workflow,
             "mode": result.mode,
+            "workflow_type": result.workflow_type,
+            "canonical": result.canonical,
             "apply_digest": result.apply_digest,
             "head_snapshot_id": result.head_snapshot_id,
             "receipt_id": result.receipt_id,
@@ -492,8 +437,14 @@ def apply_cmd(
     if output_json:
         _emit_json({
             "workflow": result.workflow,
+            "mode": result.mode,
+            "workflow_type": result.workflow_type,
+            "canonical": result.canonical,
+            "apply_digest": result.apply_digest,
+            "head_snapshot_id": result.head_snapshot_id,
             "committed_snapshot_id": result.committed_snapshot_id,
             "receipt_id": result.receipt_id,
+            "trace_ids": result.trace_ids or [],
             "output": result.output,
         })
         return
@@ -573,6 +524,9 @@ def propose_cmd(
     if output_json:
         _emit_json({
             "workflow": result.workflow,
+            "mode": result.mode,
+            "workflow_type": result.workflow_type,
+            "canonical": result.canonical,
             "group_id": result.group_id,
             "status": result.group_status,
             "suppressed": result.suppressed,
@@ -699,4 +653,3 @@ def clone_cmd(snapshot_id: str, root_dir: str) -> None:
     click.echo(
         f"Cloned snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
     )
-

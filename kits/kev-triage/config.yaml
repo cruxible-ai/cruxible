@@ -735,7 +735,7 @@ providers:
 
 workflows:
   build_local_state:
-    canonical: true
+    type: canonical
     description: >
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference
@@ -947,8 +947,7 @@ workflows:
     returns: apply_patch_window_edges
 
   propose_asset_products:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
@@ -1009,8 +1008,7 @@ workflows:
     returns: proposal
 
   propose_asset_exposure:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Derive affected asset-vulnerability candidates from approved
       asset-product mappings, then propose the asset exposure edges that
@@ -1126,8 +1124,7 @@ workflows:
     returns: proposal
 
   propose_vulnerability_classification:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Propose local-layer vulnerability classifications selected by an
       agent after reviewing the available VulnerabilityClass buckets and
@@ -1177,8 +1174,7 @@ workflows:
     returns: proposal
 
   propose_control_mitigates_class:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Propose that an existing compensating control materially mitigates
       a vulnerability class. This is the stock onboarding path and may be
@@ -1227,8 +1223,7 @@ workflows:
     returns: proposal
 
   propose_exposure_reconciliation:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       After a KEV reference refresh or product-mapping refresh, derive the
       current affected candidate set through Asset -> Product <- Vulnerability

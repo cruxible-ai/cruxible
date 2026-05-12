@@ -158,7 +158,7 @@ def render_workflow_dependency_mermaid(view: WorkflowView) -> str:
     for workflow in view.workflows:
         node_id = _mermaid_id(f"workflow_{workflow.name}")
         label = _escape_mermaid_label(
-            f"{humanize_label(workflow.name)}\n{humanize_label(workflow.mode)}"
+            f"{humanize_label(workflow.name)}\n{_workflow_mode_label(workflow.mode)}"
         )
         lines.append(f'  {node_id}["{label}"]')
     if view.dependencies:
@@ -176,7 +176,7 @@ def render_workflow_steps_mermaid(view: WorkflowView) -> str:
     for workflow in view.workflows:
         subgraph_id = _mermaid_id(f"workflow_steps_{workflow.name}")
         subgraph_label = _escape_mermaid_label(
-            f"{humanize_label(workflow.name)} ({humanize_label(workflow.mode)})"
+            f"{humanize_label(workflow.name)} ({_workflow_mode_label(workflow.mode)})"
         )
         lines.append(f'  subgraph {subgraph_id}["{subgraph_label}"]')
         previous_id: str | None = None
@@ -302,6 +302,14 @@ def _format_mermaid_edge_indexes(indexes: list[int]) -> str:
 
 def _escape_mermaid_label(value: str) -> str:
     return str(_shared_escape_mermaid_label(value))
+
+
+def _workflow_mode_label(mode: str) -> str:
+    if mode == "proposal":
+        return "Governed proposal"
+    if mode == "decision_support":
+        return "Decision support"
+    return humanize_label(mode)
 
 
 def _mermaid_id(raw: str) -> str:

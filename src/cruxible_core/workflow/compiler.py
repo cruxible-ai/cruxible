@@ -173,6 +173,8 @@ def compile_workflow(
     workflow = config.workflows.get(workflow_name)
     if workflow is None:
         raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+    workflow_type = workflow.type
+    is_canonical = workflow_type == "canonical"
 
     normalized_input = validate_contract_payload(
         config,
@@ -194,7 +196,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="query",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     query_name=step.query,
                     params_template=step.params,
@@ -220,7 +222,7 @@ def compile_workflow(
                     f"Provider '{step.provider}' entrypoint changed since lock generation. "
                     "Run `cruxible lock`."
                 )
-            if workflow.canonical:
+            if is_canonical:
                 if provider_schema.runtime != "python":
                     raise ConfigError(
                         f"Canonical workflow '{workflow_name}' requires python providers"
@@ -251,7 +253,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="provider",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     provider_name=step.provider,
                     provider_ref=locked.ref,
@@ -272,7 +274,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="list_entities",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     list_entities_spec=step.list_entities,
                 )
@@ -284,7 +286,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="list_relationships",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     list_relationships_spec=step.list_relationships,
                 )
@@ -296,7 +298,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="shape_items",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     shape_items_spec=step.shape_items,
                 )
@@ -308,7 +310,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="join_items",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     join_items_spec=step.join_items,
                 )
@@ -320,7 +322,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="filter_items",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     filter_items_spec=step.filter_items,
                 )
@@ -332,7 +334,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="dedupe_items",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     dedupe_items_spec=step.dedupe_items,
                 )
@@ -344,7 +346,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="make_candidates",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     make_candidates_spec=step.make_candidates,
                 )
@@ -356,7 +358,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="map_signals",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     map_signals_spec=step.map_signals,
                 )
@@ -368,7 +370,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="propose_relationship_group",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     propose_relationship_group_spec=step.propose_relationship_group,
                 )
@@ -380,7 +382,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="make_entities",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     make_entities_spec=step.make_entities,
                 )
@@ -392,7 +394,7 @@ def compile_workflow(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="make_relationships",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     make_relationships_spec=step.make_relationships,
                 )
@@ -400,15 +402,15 @@ def compile_workflow(
             continue
 
         if step.apply_entities is not None:
-            if not workflow.canonical:
+            if not is_canonical:
                 raise ConfigError(
-                    f"Workflow '{workflow_name}' must be canonical to use apply_entities"
+                    f"Workflow '{workflow_name}' must be type: canonical to use apply_entities"
                 )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="apply_entities",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     apply_entities_spec=step.apply_entities,
                 )
@@ -416,15 +418,15 @@ def compile_workflow(
             continue
 
         if step.apply_relationships is not None:
-            if not workflow.canonical:
+            if not is_canonical:
                 raise ConfigError(
-                    f"Workflow '{workflow_name}' must be canonical to use apply_relationships"
+                    f"Workflow '{workflow_name}' must be type: canonical to use apply_relationships"
                 )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="apply_relationships",
-                    canonical=workflow.canonical,
+                    workflow_type=workflow_type,
                     as_name=step.as_,
                     apply_relationships_spec=step.apply_relationships,
                 )
@@ -436,7 +438,7 @@ def compile_workflow(
             CompiledPlanStep(
                 step_id=step.id,
                 kind="assert",
-                canonical=workflow.canonical,
+                workflow_type=workflow_type,
                 assert_spec=step.assert_spec,
             )
         )
@@ -446,7 +448,7 @@ def compile_workflow(
         contract_in=contract_reference_label(workflow.contract_in),
         config_digest=digest,
         lock_digest=lock.lock_digest,
-        canonical=workflow.canonical,
+        workflow_type=workflow_type,
         steps=compiled_steps,
         returns=workflow.returns,
         input_payload=normalized_input,
@@ -476,7 +478,7 @@ def _compute_provider_entrypoint_sha256(
 def _collect_canonical_artifact_names(config: CoreConfig) -> set[str]:
     artifact_names: set[str] = set()
     for workflow in config.workflows.values():
-        if not workflow.canonical:
+        if workflow.type != "canonical":
             continue
         for step in workflow.steps:
             if step.provider is None:

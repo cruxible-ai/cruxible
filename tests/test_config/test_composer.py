@@ -109,7 +109,7 @@ providers:
     artifact: canonical_bundle
 workflows:
   build_reference:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     steps:
       - id: rows

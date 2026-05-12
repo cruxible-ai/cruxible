@@ -142,10 +142,12 @@ class TestWorkflowExecutionServices:
         )
 
         assert result.workflow == "evaluate_promo"
+        assert result.mode == "run"
+        assert result.workflow_type == "utility"
         assert result.output["decision"] == "approve"
         assert result.receipt_id.startswith("RCP-")
         assert result.receipt is not None
-        assert result.receipt.workflow_mode == "preview"
+        assert result.receipt.workflow_mode == "run"
         assert result.receipt.committed is False
         assert len(result.query_receipt_ids) == 1
         assert len(result.trace_ids) == 2
@@ -159,6 +161,7 @@ class TestWorkflowExecutionServices:
         result = service_run(canonical_workflow_instance, "build_reference", {})
 
         assert result.mode == "preview"
+        assert result.workflow_type == "canonical"
         assert result.canonical is True
         assert result.apply_digest is not None
         assert result.committed_snapshot_id is None
@@ -182,6 +185,7 @@ class TestWorkflowExecutionServices:
         )
 
         assert applied.mode == "apply"
+        assert applied.workflow_type == "canonical"
         assert applied.committed_snapshot_id is not None
         assert applied.receipt is not None
         assert applied.receipt.workflow_mode == "apply"
@@ -266,6 +270,9 @@ class TestWorkflowExecutionServices:
 
         assert result.group_id.startswith("GRP-")
         assert result.group_status == "pending_review"
+        assert result.mode == "proposal"
+        assert result.workflow_type == "proposal"
+        assert result.canonical is False
         assert result.receipt_id.startswith("RCP-")
         assert result.receipt is not None
         assert result.receipt.workflow_mode == "proposal"
@@ -370,14 +377,14 @@ class TestWorkflowExecutionServices:
                 {"campaign_id": "CMP-1"},
             )
 
-    def test_service_propose_workflow_requires_proposal_purpose(
+    def test_service_propose_workflow_requires_proposal_type(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
         config = proposal_workflow_instance.load_config()
-        config.workflows["propose_campaign_recommendations"].purpose = "utility"  # type: ignore[assignment]
+        config.workflows["propose_campaign_recommendations"].type = "utility"
         proposal_workflow_instance.save_config(config)
 
-        with pytest.raises(ConfigError, match="must set purpose: proposal"):
+        with pytest.raises(ConfigError, match="must set type: proposal"):
             service_propose_workflow(
                 proposal_workflow_instance,
                 "propose_campaign_recommendations",

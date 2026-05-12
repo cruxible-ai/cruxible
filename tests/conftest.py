@@ -212,7 +212,7 @@ providers:
 
 workflows:
   propose_campaign_recommendations:
-    purpose: proposal
+    type: proposal
     contract_in: CampaignInput
     steps:
       - id: campaign
@@ -412,7 +412,7 @@ providers:
 
 workflows:
   build_reference:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     steps:
       - id: rows

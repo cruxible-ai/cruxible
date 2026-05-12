@@ -1252,58 +1252,12 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
     assert "1 passed, 0 failed, 1 total" in test.output
 
 
-def test_run_apply_shortcuts_preview_file_flow_in_server_mode(
-    monkeypatch,
+def test_run_apply_shortcut_is_removed(
     runner: CliRunner,
     tmp_path: Path,
-):
+) -> None:
     input_path = tmp_path / "input.yaml"
     input_path.write_text("sku: SKU-123\n")
-    captured: dict[str, object] = {}
-
-    class StubClient:
-        def workflow_run(self, instance_id, *, workflow_name, input_payload=None):
-            captured["run_instance_id"] = instance_id
-            captured["run_payload"] = input_payload
-            return contracts.WorkflowRunResult(
-                workflow=workflow_name,
-                output={"preview": True},
-                receipt_id="RCP-preview",
-                mode="preview",
-                canonical=True,
-                apply_digest="sha256:abc",
-                head_snapshot_id="snap-head",
-                apply_previews={},
-                trace_ids=["TRC-preview"],
-            )
-
-        def workflow_apply(
-            self,
-            instance_id,
-            *,
-            workflow_name,
-            expected_apply_digest,
-            expected_head_snapshot_id,
-            input_payload=None,
-        ):
-            captured["apply_instance_id"] = instance_id
-            captured["apply_digest"] = expected_apply_digest
-            captured["apply_head_snapshot_id"] = expected_head_snapshot_id
-            captured["apply_payload"] = input_payload
-            return contracts.WorkflowApplyResult(
-                workflow=workflow_name,
-                output={"applied": True},
-                receipt_id="RCP-apply",
-                mode="apply",
-                canonical=True,
-                apply_digest=expected_apply_digest,
-                head_snapshot_id=expected_head_snapshot_id,
-                committed_snapshot_id="snap-commit",
-                apply_previews={},
-                trace_ids=["TRC-apply"],
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
         cli,
         [
@@ -1320,14 +1274,8 @@ def test_run_apply_shortcuts_preview_file_flow_in_server_mode(
         ],
     )
 
-    assert result.exit_code == 0
-    assert captured["run_instance_id"] == "inst_123"
-    assert captured["apply_instance_id"] == "inst_123"
-    assert captured["apply_digest"] == "sha256:abc"
-    assert captured["apply_head_snapshot_id"] == "snap-head"
-    assert captured["apply_payload"] == {"sku": "SKU-123"}
-    assert "Workflow wf applied." in result.output
-    assert "Committed snapshot: snap-commit" in result.output
+    assert result.exit_code == 2
+    assert "No such option: --apply" in result.output
 
 
 def test_propose_json_includes_suppressed_members(

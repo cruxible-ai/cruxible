@@ -139,7 +139,7 @@ def register_tools(server: FastMCP) -> list[str]:
         input_payload: dict[str, Any] | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.WorkflowApplyResult:
-        """Apply a canonical workflow after verifying the preview identity."""
+        """Commit a previously previewed canonical workflow after verifying identity."""
         return handlers.handle_workflow_apply(
             instance_id,
             workflow_name,
@@ -672,7 +672,7 @@ def register_tools(server: FastMCP) -> list[str]:
 
         Use this when a repeated decision procedure should propose relationship state
         through Cruxible's proposal/review/trust boundary instead of writing edges directly.
-        The workflow must return a relationship proposal artifact from a
+        The workflow must be `type: proposal` and return a relationship proposal artifact from a
         `propose_relationship_group` step.
         """
         return handlers.handle_propose_workflow(

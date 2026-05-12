@@ -40,7 +40,7 @@ _OUTCOME_PATH_PATTERN = (
     rf"^(RESOLUTION|GROUP|WORKFLOW|THESIS|RECEIPT|SURFACE|TRACESET)\.({_PATH_TOKEN})$"
 )
 
-WorkflowPurpose = Literal["utility", "decision_support", "proposal"]
+WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -1164,20 +1164,12 @@ class WorkflowSchema(BaseModel):
     """Declarative composition of query and provider steps."""
 
     description: str | None = None
-    purpose: WorkflowPurpose = "utility"
-    canonical: bool = False
+    type: WorkflowType = "utility"
     contract_in: ContractReference = "cruxible.EmptyInput"
     steps: list[WorkflowStepSchema]
     returns: str
 
     model_config = {"extra": "forbid"}
-
-    @model_validator(mode="after")
-    def validate_purpose_canonical(self) -> WorkflowSchema:
-        if self.purpose in {"decision_support", "proposal"} and self.canonical:
-            msg = f"purpose '{self.purpose}' workflows must not set canonical: true"
-            raise ValueError(msg)
-        return self
 
 
 class WorkflowTestExpectSchema(BaseModel):

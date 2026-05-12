@@ -138,7 +138,7 @@ providers:
 workflows:
   propose_asset_exposure:
     description: Build remediation conclusions for affected assets.
-    canonical: false
+    type: utility
     contract_in: exposure_input
     returns: exposure_output
     steps:
@@ -212,7 +212,7 @@ providers:
 workflows:
   upstream_workflow:
     description: Upstream workflow that should stay out of local scope unless used.
-    canonical: false
+    type: utility
     contract_in: empty_input
     returns: upstream
     steps:
@@ -267,7 +267,7 @@ providers:
 workflows:
   local_workflow:
     description: Local workflow surface.
-    canonical: false
+    type: utility
     contract_in: empty_input
     returns: local
     steps:
@@ -966,7 +966,7 @@ entity_types:
 
 workflows:
   canonical_load:
-    canonical: true
+    type: canonical
     contract_in: empty_input
     returns: apply_assets
     steps:

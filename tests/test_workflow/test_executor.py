@@ -45,7 +45,10 @@ class TestWorkflowExecutor:
         )
 
         assert result.output["decision"] == "approve"
+        assert result.mode == "run"
+        assert result.workflow_type == "utility"
         assert result.receipt.operation_type == "workflow"
+        assert result.receipt.workflow_mode == "run"
         assert len(result.query_receipt_ids) == 1
         assert len(result.traces) == 2
         trace_ids = {trace.trace_id for trace in result.traces}
@@ -612,6 +615,9 @@ class TestWorkflowExecutor:
         )
 
         assert result.output["relationship_type"] == "recommended_for"
+        assert result.mode == "proposal"
+        assert result.workflow_type == "proposal"
+        assert result.receipt.workflow_mode == "proposal"
         assert len(result.output["members"]) == 2
         assert result.output["signal_sources_used"] == ["catalog"]
         assert len(result.traces) == 1
@@ -665,7 +671,23 @@ class TestWorkflowExecutor:
         assert candidates_step.detail["conflicting_duplicate_count"] == 1
         assert candidates_step.detail["duplicate_examples"] == candidate_set["duplicate_examples"]
 
-    def test_execute_canonical_workflow_runs_in_preview_mode_without_mutating_graph(
+    def test_execute_canonical_workflow_run_mode_raises(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        write_lock_for_instance(canonical_workflow_instance)
+
+        with pytest.raises(
+            ConfigError,
+            match="canonical workflows must be executed in preview or apply mode",
+        ):
+            execute_workflow(
+                canonical_workflow_instance,
+                canonical_workflow_instance.load_config(),
+                "build_reference",
+                {},
+            )
+
+    def test_execute_canonical_workflow_preview_does_not_mutate_graph(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         write_lock_for_instance(canonical_workflow_instance)
@@ -675,6 +697,7 @@ class TestWorkflowExecutor:
             canonical_workflow_instance.load_config(),
             "build_reference",
             {},
+            mode="preview",
         )
 
         assert result.mode == "preview"
@@ -700,6 +723,7 @@ class TestWorkflowExecutor:
             canonical_workflow_instance.load_config(),
             "build_reference",
             {},
+            mode="preview",
         )
 
         assert result.step_outputs["rows"]["items"][0]["vendor_id"] == "vendor-acme"
@@ -714,6 +738,7 @@ class TestWorkflowExecutor:
             canonical_workflow_instance.load_config(),
             "build_reference",
             {},
+            mode="preview",
         )
 
         applied = execute_workflow(
@@ -804,7 +829,7 @@ providers:
 
 workflows:
   import_assets:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     steps:
       - id: parsed
@@ -889,6 +914,7 @@ workflows:
             canonical_workflow_instance.load_config(),
             "build_reference",
             {},
+            mode="preview",
         )
 
         product_preview = result.apply_previews["apply_products"]

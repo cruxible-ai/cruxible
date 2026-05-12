@@ -339,6 +339,7 @@ outcome_profiles:
 
 workflows:
   propose_asset_products:
+    type: proposal
     contract_in: EmptyInput
     steps:
       - id: proposal
@@ -401,7 +402,7 @@ entity_types:
 relationships: []
 workflows:
   build_reference:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     returns: apply_products
     steps:
@@ -446,7 +447,7 @@ contracts:
     fields: {}
 workflows:
   propose_asset_products:
-    canonical: false
+    type: utility
     contract_in: EmptyInput
     returns: asset_products
     steps:
@@ -502,7 +503,7 @@ providers:
     version: 1.0.0
 workflows:
   build_reference:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     returns: apply_products
     steps:
@@ -537,7 +538,7 @@ entity_types:
 relationships: []
 workflows:
   build_overlay:
-    canonical: true
+    type: canonical
     contract_in: EmptyInput
     returns: apply_assets
     steps:

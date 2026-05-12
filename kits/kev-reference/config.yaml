@@ -168,7 +168,7 @@ providers:
 
 workflows:
   build_public_kev_reference:
-    canonical: true
+    type: canonical
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.

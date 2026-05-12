@@ -177,7 +177,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -203,7 +203,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -991,7 +991,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Execute a configured workflow and bridge its output into a governed relationship group. Use this when a repeated decision procedure should propose relationship state through Cruxible's proposal/review/trust boundary instead of writing edges directly. The workflow must return a relationship proposal artifact from a `propose_relationship_group` step.
+**Purpose:** Execute a configured workflow and bridge its output into a governed relationship group. Use this when a repeated decision procedure should propose relationship state through Cruxible's proposal/review/trust boundary instead of writing edges directly. The workflow must be `type: proposal` and return a relationship proposal artifact from a `propose_relationship_group` step.
 
 **Arguments:**
 
@@ -1002,7 +1002,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

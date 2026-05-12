@@ -281,7 +281,7 @@ def _strip_canonical_runtime_config(
     removed_workflow_names: set[str] = set()
     removed_provider_names: set[str] = set()
     for workflow_name, workflow_value in workflows.items():
-        if isinstance(workflow_value, dict) and workflow_value.get("canonical") is True:
+        if isinstance(workflow_value, dict) and workflow_value.get("type") == "canonical":
             removed_workflow_names.add(workflow_name)
             removed_provider_names.update(_workflow_provider_names(workflow_value))
             continue

@@ -814,12 +814,12 @@ providers:
 
 ## workflows
 
-Declarative step-based execution plans. Workflows compose queries, providers, and graph mutations into reproducible pipelines. A workflow can be **canonical** (creates accepted world state with snapshot tracking) or non-canonical (produces output without mutating graph state).
+Declarative step-based execution plans. Workflows compose queries, providers, and graph mutations into reproducible pipelines. A workflow `type` declares whether it is `utility`, `canonical`, `proposal`, or `decision_support`.
 
 ```yaml
 workflows:
   build_public_kev_reference:
-    canonical: true
+    type: canonical
     description: >
       Build the canonical public KEV reference layer from bundled data.
     contract_in: cruxible.EmptyInput
@@ -866,7 +866,7 @@ workflows:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `description` | string | no | `null` | What this workflow does |
-| `canonical` | bool | no | `false` | Whether this workflow creates accepted canonical state |
+| `type` | `utility`, `canonical`, `proposal`, or `decision_support` | no | `utility` | Workflow contract for execution and agent-facing lifecycle |
 | `contract_in` | string or inline ContractSchema | **yes** | — | Workflow input contract reference. May be config-defined, built-in (`cruxible.*`), or an inline contract object. |
 | `steps` | list[WorkflowStepSchema] | **yes** | — | Ordered list of steps |
 | `returns` | string | **yes** | — | ID of the step whose output is the workflow result |
@@ -945,7 +945,7 @@ domain-policy modules.
 
 ### Governed Proposal Steps
 
-For workflows that produce governed proposals (fuzzy matching, judgment calls), the three-step pattern is:
+For `type: proposal` workflows that produce governed proposals (fuzzy matching, judgment calls), the three-step pattern is:
 
 1. **`make_candidates`** — build candidate (from, to) pairs with properties
 2. **`map_signals`** — convert provider scores/enums to tri-state signals per signal source

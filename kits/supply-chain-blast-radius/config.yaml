@@ -1828,7 +1828,7 @@ providers:
 workflows:
 
   build_seed_state:
-    canonical: true
+    type: canonical
     description: Load base-world suppliers, components, assemblies, products, shipments, and deterministic edges.
     contract_in: EmptyInput
     steps:
@@ -2046,7 +2046,7 @@ workflows:
     returns: apply_shipment_edges
 
   sync_inventory_positions:
-    canonical: true
+    type: canonical
     description: Apply fetched or curated inventory positions and their locations into graph state.
     contract_in: InventoryFetchResults
     steps:
@@ -2140,7 +2140,7 @@ workflows:
     returns: apply_inventory_locations
 
   sync_product_buffer_assessments:
-    canonical: true
+    type: canonical
     description: Apply reviewed buffer coverage assessments into graph state.
     contract_in: BufferAssessmentResults
     steps:
@@ -2230,7 +2230,7 @@ workflows:
   # ── Utility: live inventory API context ─────────────────────────────
 
   refresh_inventory_positions:
-    canonical: false
+    type: utility
     description: >
       Fetch inventory positions from an internal inventory API. This is a
       utility context workflow because live API data is non-deterministic;
@@ -2248,7 +2248,7 @@ workflows:
     returns: inventory
 
   refresh_buffer_assessments:
-    canonical: false
+    type: utility
     description: >
       Compute reusable buffer coverage assessments from current graph inventory,
       BOM, and optional demand context. Results can be used by agents or
@@ -2310,8 +2310,7 @@ workflows:
   # ── Stage 1: incident → supplier ───────────────────────────────────
 
   propose_incident_impacts_supplier:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Match every open incident's scope to suppliers via direct supplier
       or geography basis. Bucket signature is rule-centric
@@ -2378,8 +2377,7 @@ workflows:
   # ── Stage 2: supplier → component ──────────────────────────────────
 
   propose_incident_impacts_component:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Cascade resolved incident_impacts_supplier edges through
       supplier_supplies_component to candidate component impacts.
@@ -2451,8 +2449,7 @@ workflows:
   # ── Stage 3: supplier → directly supplied assembly ─────────────────
 
   propose_incident_impacts_assembly:
-    canonical: false
-    purpose: proposal
+    type: proposal
     description: >
       Cascade resolved incident_impacts_supplier edges through
       supplier_supplies_assembly to candidate direct assembly impacts.
@@ -2525,7 +2522,7 @@ workflows:
   # ── Utility: upstream impact → product exposure context ─────────────
 
   assess_incident_product_exposure:
-    canonical: false
+    type: utility
     description: >
       Roll resolved impacted components and directly impacted assemblies
       through the assembly BOM hierarchy to finished products, using

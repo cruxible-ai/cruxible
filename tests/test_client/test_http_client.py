@@ -315,6 +315,9 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
                     "workflow": "wf",
                     "output": {},
                     "receipt_id": "RCP-propose",
+                    "mode": "proposal",
+                    "workflow_type": "proposal",
+                    "canonical": False,
                     "group_id": None,
                     "group_status": "suppressed",
                     "review_priority": "review",
@@ -333,6 +336,9 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
                 "output": {},
                 "receipt_id": "RCP-workflow",
                 "mode": "run" if path.endswith("/workflows/run") else "apply",
+                "workflow_type": "utility"
+                if path.endswith("/workflows/run")
+                else "canonical",
                 "canonical": path.endswith("/workflows/apply"),
                 "apply_digest": "sha256:abc",
                 "head_snapshot_id": "snap_1",
@@ -426,6 +432,7 @@ def test_workflow_apply_uses_expected_route():
                 "output": {"total_results": 1},
                 "receipt_id": "RCP-2",
                 "mode": "apply",
+                "workflow_type": "canonical",
                 "canonical": True,
                 "apply_digest": "sha256:abc",
                 "head_snapshot_id": None,

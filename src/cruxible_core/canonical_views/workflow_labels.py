@@ -63,7 +63,7 @@ def _workflow_story_order(view: WorkflowView) -> list[WorkflowSummaryView]:
 
 
 def _workflow_story_sort_key(workflow: WorkflowSummaryView) -> tuple[int, str]:
-    order = {"canonical": 0, "governed": 1, "utility": 2}
+    order = {"canonical": 0, "proposal": 1, "governed": 1, "decision_support": 2, "utility": 3}
     return (order.get(workflow.mode, 3), workflow.name)
 
 
@@ -83,8 +83,10 @@ def _workflow_pipeline_label(index: int, workflow: WorkflowSummaryView) -> str:
     summary = _workflow_pipeline_summary(workflow)
     if workflow.mode == "canonical":
         detail = "Canonical"
-    elif workflow.mode == "governed":
+    elif workflow.mode in {"proposal", "governed"}:
         detail = "Governed proposal"
+    elif workflow.mode == "decision_support":
+        detail = "Decision support"
     else:
         detail = "Utility"
     return f"{index}. {summary}\n{detail}"
@@ -104,8 +106,10 @@ def _workflow_pipeline_summary(workflow: WorkflowSummaryView) -> str:
 def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
     if workflow.mode == "canonical":
         return "Canonical seed"
-    if workflow.mode == "governed":
+    if workflow.mode in {"proposal", "governed"}:
         return "Governed proposal"
+    if workflow.mode == "decision_support":
+        return "Decision support"
     if workflow.mode == "utility":
         return "Utility"
     return humanize_label(workflow.mode)
@@ -131,7 +135,7 @@ def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
 
 def _workflow_table_result(workflow: WorkflowSummaryView) -> str:
     entities = _workflow_step_details(workflow, {"make_entities"})
-    if workflow.mode == "utility":
+    if workflow.mode in {"utility", "decision_support"}:
         return _format_surface_groups((("Provider output", workflow.providers),))
 
     if workflow.mode == "canonical":

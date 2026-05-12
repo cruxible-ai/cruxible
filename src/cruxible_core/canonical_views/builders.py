@@ -116,7 +116,7 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
         workflows.append(
             WorkflowSummaryView(
                 name=workflow_name,
-                mode=_workflow_mode(workflow.canonical, proposes, applies),
+                mode=_workflow_mode(workflow.type, proposes, applies),
                 step_count=len(workflow.steps),
                 queries=sorted(set(queries)),
                 providers=sorted(set(providers)),
@@ -430,12 +430,12 @@ def _workflow_provider_summary(
 
 
 def _workflow_mode(
-    canonical: bool,
+    workflow_type: str,
     proposes: set[str],
     applies: set[str],
 ) -> str:
-    if canonical:
-        return "canonical"
+    if workflow_type in {"canonical", "proposal", "decision_support"}:
+        return workflow_type
     if proposes or applies:
         return "governed"
     return "utility"

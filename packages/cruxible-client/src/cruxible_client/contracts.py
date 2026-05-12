@@ -28,6 +28,8 @@ DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
 DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
 WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
+WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
+WorkflowMode = Literal["run", "preview", "apply", "proposal"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -357,7 +359,8 @@ class WorkflowExecutionResult(BaseModel):
     workflow: str
     output: Any
     receipt_id: str
-    mode: str
+    mode: WorkflowMode
+    workflow_type: WorkflowType
     canonical: bool
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
@@ -370,12 +373,14 @@ class WorkflowExecutionResult(BaseModel):
 
 
 class WorkflowRunResult(WorkflowExecutionResult):
-    mode: str = "run"
+    mode: WorkflowMode = "run"
+    workflow_type: WorkflowType = "utility"
     canonical: bool = False
 
 
 class WorkflowApplyResult(WorkflowExecutionResult):
-    mode: str = "apply"
+    mode: WorkflowMode = "apply"
+    workflow_type: WorkflowType = "canonical"
     canonical: bool = True
 
 
@@ -399,6 +404,9 @@ class WorkflowProposeResult(BaseModel):
     workflow: str
     output: Any
     receipt_id: str
+    mode: WorkflowMode = "proposal"
+    workflow_type: WorkflowType = "proposal"
+    canonical: bool = False
     group_id: str | None = None
     group_status: str
     review_priority: str

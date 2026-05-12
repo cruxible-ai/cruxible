@@ -118,7 +118,7 @@ def test_decision_support_requires_open_decision_record_before_execution(
     workflow_instance: CruxibleInstance,
 ) -> None:
     config = workflow_instance.load_config()
-    config.workflows["evaluate_promo"].purpose = "decision_support"  # type: ignore[assignment]
+    config.workflows["evaluate_promo"].type = "decision_support"
     workflow_instance.save_config(config)
     service_lock(workflow_instance)
 

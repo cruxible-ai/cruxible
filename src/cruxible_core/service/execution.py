@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import ValidationError
 
@@ -58,7 +58,7 @@ def _build_workflow_execution_result(
         output=result.output,
         receipt_id=result.receipt.receipt_id,
         mode=result.mode,
-        canonical=result.canonical,
+        workflow_type=result.workflow_type,
         apply_digest=result.apply_digest,
         head_snapshot_id=result.head_snapshot_id,
         committed_snapshot_id=result.committed_snapshot_id,
@@ -89,7 +89,7 @@ def _finalize_proposal_receipt(
     root_detail = dict(root.detail)
     root_detail.update(
         {
-            "mode": "propose",
+            "mode": "proposal",
             "group_id": group_result.group_id,
             "group_status": group_result.status,
             "group_receipt_id": group_result.receipt_id,
@@ -104,7 +104,6 @@ def _finalize_proposal_receipt(
         update={
             "nodes": nodes,
             "head_snapshot_id": head_snapshot_id,
-            "workflow_mode": "proposal",
             "committed": group_result.receipt_id is not None,
         }
     )
@@ -115,7 +114,7 @@ def _enforce_decision_support_context(
     workflow: Any,
     context: OperationContext | None,
 ) -> None:
-    if workflow.purpose != "decision_support":
+    if workflow.type != "decision_support":
         return
     if context is None or context.decision_record_id is None:
         raise ConfigError("decision_support workflows require decision_record_id")
@@ -169,14 +168,24 @@ def service_run(
         workflow = config.workflows.get(workflow_name)
         if workflow is None:
             raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
+        execution_mode: Literal["run", "preview"] = (
+            "preview" if workflow.type == "canonical" else "run"
+        )
+        input_event["mode"] = execution_mode
         _enforce_decision_support_context(instance, workflow, context)
-        if _workflow_returns_relationship_proposal(workflow):
+        if workflow.type == "proposal":
             raise QueryExecutionError(
                 f"Workflow '{workflow_name}' produces a governed proposal; use "
                 f"'cruxible propose --workflow {workflow_name}' to bridge output into a "
                 "candidate group."
             )
-        result = execute_workflow(instance, config, workflow_name, input_payload)
+        result = execute_workflow(
+            instance,
+            config,
+            workflow_name,
+            input_payload,
+            mode=execution_mode,
+        )
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
         _append_event_if_context(
@@ -199,6 +208,7 @@ def service_run(
         output_payload={
             "output": service_result.output,
             "mode": service_result.mode,
+            "workflow_type": service_result.workflow_type,
             "apply_digest": service_result.apply_digest,
             "committed_snapshot_id": service_result.committed_snapshot_id,
         },
@@ -233,8 +243,7 @@ def service_apply_workflow(
         workflow = config.workflows.get(workflow_name)
         if workflow is None:
             raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-        _enforce_decision_support_context(instance, workflow, context)
-        if not workflow.canonical:
+        if workflow.type != "canonical":
             raise ConfigError(f"Workflow '{workflow_name}' is not canonical and cannot be applied")
 
         preview = execute_workflow(
@@ -292,6 +301,7 @@ def service_apply_workflow(
         output_payload={
             "output": service_result.output,
             "mode": service_result.mode,
+            "workflow_type": service_result.workflow_type,
             "committed_snapshot_id": service_result.committed_snapshot_id,
         },
         receipt_id=service_result.receipt_id,
@@ -314,21 +324,17 @@ def service_propose_workflow(
     input_event = {
         "workflow_name": workflow_name,
         "input": input_payload,
-        "mode": "propose",
+        "mode": "proposal",
     }
     try:
         config = instance.load_config()
         workflow = config.workflows.get(workflow_name)
         if workflow is None:
             raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-        if workflow.purpose != "proposal":
+        if workflow.type != "proposal":
             raise ConfigError(
-                f"Workflow '{workflow_name}' must set purpose: proposal to be used with "
+                f"Workflow '{workflow_name}' must set type: proposal to be used with "
                 "propose_workflow"
-            )
-        if workflow.canonical:
-            raise ConfigError(
-                f"Canonical workflow '{workflow_name}' cannot be used with propose_workflow"
             )
         result = execute_workflow(
             instance,
@@ -388,6 +394,8 @@ def service_propose_workflow(
             group_id=group_result.group_id,
             group_status=group_result.status,
             review_priority=group_result.review_priority,
+            mode=result.mode,
+            workflow_type=result.workflow_type,
             suppressed=group_result.suppressed,
             suppressed_members=group_result.suppressed_members,
             query_receipt_ids=result.query_receipt_ids,
@@ -417,6 +425,8 @@ def service_propose_workflow(
         input_payload=input_event,
         output_payload={
             "output": service_result.output,
+            "mode": service_result.mode,
+            "workflow_type": service_result.workflow_type,
             "group_id": service_result.group_id,
             "group_status": service_result.group_status,
         },
@@ -446,7 +456,17 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
 
     for test in tests:
         try:
-            result = execute_workflow(instance, config, test.workflow, test.input)
+            workflow = config.workflows.get(test.workflow)
+            execution_mode: Literal["run", "preview"] = (
+                "preview" if workflow and workflow.type == "canonical" else "run"
+            )
+            result = execute_workflow(
+                instance,
+                config,
+                test.workflow,
+                test.input,
+                mode=execution_mode,
+            )
             _validate_test_expectation(
                 test.expect.output_equals,
                 result.output,
@@ -538,11 +558,3 @@ def _contains_subset(actual: Any, expected_subset: Any) -> bool:
         )
 
     return actual == expected_subset
-
-
-def _workflow_returns_relationship_proposal(workflow: Any) -> bool:
-    """Return True when a workflow returns a built-in relationship proposal artifact."""
-    return any(
-        bool(step.as_ == workflow.returns) and step.propose_relationship_group is not None
-        for step in workflow.steps
-    )

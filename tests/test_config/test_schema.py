@@ -578,15 +578,37 @@ class TestWorkflowSchema:
         )
         assert workflow.contract_in == "PromoInput"
 
-    @pytest.mark.parametrize("purpose", ["decision_support", "proposal"])
-    def test_decision_support_and_proposal_workflows_cannot_be_canonical(
+    @pytest.mark.parametrize(
+        "workflow_type",
+        ["utility", "canonical", "decision_support", "proposal"],
+    )
+    def test_workflow_accepts_type(
         self,
-        purpose: str,
+        workflow_type: str,
     ):
-        with pytest.raises(ValidationError, match="must not set canonical: true"):
+        workflow = WorkflowSchema(
+            type=workflow_type,  # type: ignore[arg-type]
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="context",
+                    query="get_context",
+                    params={"sku": "$input.sku"},
+                    **{"as": "context"},
+                )
+            ],
+            returns="context",
+        )
+        assert workflow.type == workflow_type
+
+    @pytest.mark.parametrize(
+        "legacy_field",
+        [{"purpose": "proposal"}, {"canonical": True}],
+    )
+    def test_workflow_rejects_legacy_type_fields(self, legacy_field: dict[str, object]):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             WorkflowSchema(
-                purpose=purpose,  # type: ignore[arg-type]
-                canonical=True,
+                **legacy_field,
                 contract_in="PromoInput",
                 steps=[
                     WorkflowStepSchema(
