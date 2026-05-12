@@ -25,7 +25,7 @@ from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupReso
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.filters import matches_exact_filter
-from cruxible_core.service._helpers import MutationReceiptContext, mutation_receipt
+from cruxible_core.service.mutation_receipts import MutationReceiptContext, mutation_receipt
 from cruxible_core.service.mutations import service_add_relationships
 from cruxible_core.service.types import (
     GetGroupResult,

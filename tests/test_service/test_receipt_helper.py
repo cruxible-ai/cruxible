@@ -1,4 +1,4 @@
-"""Focused tests for the shared mutation receipt helper."""
+"""Focused tests for service mutation receipt policy."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from cruxible_core.errors import ConfigError, MutationError
-from cruxible_core.service._helpers import mutation_receipt
+from cruxible_core.service.mutation_receipts import mutation_receipt
 
 
 @dataclass

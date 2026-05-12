@@ -1,4 +1,4 @@
-"""Internal helpers shared across service modules."""
+"""Service policy for local governed mutation receipts."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> bool:
         store.close()
 
 
-def _save_graph(instance: InstanceProtocol, graph: EntityGraph) -> None:
+def save_graph_for_mutation(instance: InstanceProtocol, graph: EntityGraph) -> None:
     """Save graph, wrapping non-CoreError failures so mutation_receipt_id flows."""
     try:
         instance.save_graph(graph)
@@ -74,7 +74,7 @@ def mutation_receipt(
     store: Closeable | None = None,
     enabled: bool = True,
 ) -> Iterator[MutationReceiptContext[ResultT]]:
-    """Wrap mutation execution with uniform receipt persistence and tagging."""
+    """Wrap local governed mutation execution with receipt persistence and tagging."""
     builder = (
         ReceiptBuilder(operation_type=operation_type, parameters=parameters)
         if enabled

@@ -31,7 +31,11 @@ from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, RelationshipInst
 from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service._helpers import MutationReceiptContext, _save_graph, mutation_receipt
+from cruxible_core.service.mutation_receipts import (
+    MutationReceiptContext,
+    mutation_receipt,
+    save_graph_for_mutation,
+)
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackServiceResult,
@@ -786,7 +790,7 @@ def service_feedback(
                 edge_key=target.edge_key,
             )
 
-        _save_graph(instance, graph)
+        save_graph_for_mutation(instance, graph)
         ctx.set_result(FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied))
 
     result = ctx.result
@@ -881,7 +885,7 @@ def service_feedback_batch(
                         edge_key=target.edge_key,
                     )
 
-            _save_graph(instance, graph)
+            save_graph_for_mutation(instance, graph)
 
         ctx.set_result(
             FeedbackBatchServiceResult(
