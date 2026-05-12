@@ -319,13 +319,10 @@ def execute_provider_step(
 
 
 def execute_assert_step(
-    instance: InstanceProtocol,
     compiled_step: CompiledPlanStep,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
     receipt_builder: ReceiptBuilder,
-    *,
-    persist_receipt: bool,
 ) -> None:
     assert compiled_step.assert_spec is not None
     left = resolve_value(compiled_step.assert_spec.left, input_payload, step_outputs)
@@ -347,7 +344,4 @@ def execute_assert_step(
         parent_id=step_node,
     )
     if not passed:
-        receipt = receipt_builder.build(results=[{"output": None}])
-        if persist_receipt:
-            persist_workflow_receipt(instance, receipt)
         raise QueryExecutionError(compiled_step.assert_spec.message)

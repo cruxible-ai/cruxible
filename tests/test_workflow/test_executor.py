@@ -348,6 +348,24 @@ class TestWorkflowExecutor:
                 },
             )
 
+        store = workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        assert receipt.nodes[0].detail["mode"] == "run"
+        assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
+        assert "output failed contract" in receipt.nodes[0].detail["error"]
+        provider_steps = [
+            node
+            for node in receipt.nodes
+            if node.node_type == "plan_step" and node.detail.get("kind") == "provider"
+        ]
+        assert any(step.detail.get("status") == "error" for step in provider_steps)
+
     def test_compile_workflow_rejects_missing_required_json_schema_field(
         self,
         tmp_path: Path,
@@ -598,9 +616,15 @@ class TestWorkflowExecutor:
         store = workflow_instance.get_receipt_store()
         try:
             receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
         finally:
             store.close()
         assert receipts
+        assert receipt is not None
+        assert receipt.committed is False
+        assert receipt.nodes[0].detail["mode"] == "run"
+        assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
+        assert receipt.nodes[0].detail["error"] == "Margin below threshold"
 
     def test_execute_workflow_builds_relationship_proposal_artifact(
         self, proposal_workflow_instance: CruxibleInstance
