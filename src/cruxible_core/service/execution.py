@@ -190,10 +190,10 @@ def service_run(
         workflow = config.workflows.get(workflow_name)
         if workflow is None:
             raise ConfigError(f"Workflow '{workflow_name}' not found in workflows")
-        execution_mode: Literal["run", "preview"] = (
+        execution_action: Literal["run", "preview"] = (
             "preview" if workflow.type == "canonical" else "run"
         )
-        input_event["mode"] = execution_mode
+        input_event["mode"] = execution_action
         _enforce_decision_support_context(instance, workflow, context)
         if workflow.type == "proposal":
             raise QueryExecutionError(
@@ -206,7 +206,7 @@ def service_run(
             config,
             workflow_name,
             input_payload,
-            mode=execution_mode,
+            mode=execution_action,
         )
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
@@ -479,7 +479,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
     for test in tests:
         try:
             workflow = config.workflows.get(test.workflow)
-            execution_mode: Literal["run", "preview"] = (
+            execution_action: Literal["run", "preview"] = (
                 "preview" if workflow and workflow.type == "canonical" else "run"
             )
             result = execute_workflow(
@@ -487,7 +487,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
                 config,
                 test.workflow,
                 test.input,
-                mode=execution_mode,
+                mode=execution_action,
             )
             _validate_test_expectation(
                 test.expect.output_equals,

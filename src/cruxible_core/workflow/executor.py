@@ -8,7 +8,7 @@ whether canonical apply previews stay isolated or become committed graph state.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
@@ -47,8 +47,10 @@ from cruxible_core.workflow.transforms import (
     shape_items,
 )
 from cruxible_core.workflow.types import WorkflowExecutionResult
-
-WorkflowExecutionMode = Literal["run", "preview", "apply", "proposal"]
+from cruxible_core.workflow_execution_types import (
+    WorkflowExecutionAction,
+    WorkflowResultMode,
+)
 
 
 def execute_workflow(
@@ -57,7 +59,7 @@ def execute_workflow(
     workflow_name: str,
     input_payload: dict[str, Any],
     *,
-    mode: Literal["run", "preview", "apply"] = "run",
+    mode: WorkflowExecutionAction = "run",
     persist_receipt: bool = True,
     persist_traces: bool = True,
 ) -> WorkflowExecutionResult:
@@ -75,7 +77,7 @@ def execute_workflow(
     and write previews without mutating live state; an apply is the service
     replay path after preview identity has already been verified. Utility,
     proposal, and decision-support workflows execute against the live graph but
-    may only use executor ``run`` mode.
+    may only use the executor ``run`` action.
     """
     lock = load_lock(resolve_lock_path(instance))
     plan = compile_workflow(
@@ -87,21 +89,22 @@ def execute_workflow(
     )
     workflow = config.workflows[workflow_name]
     workflow_type = workflow.type
-    execution_mode: WorkflowExecutionMode
+    execution_action: WorkflowExecutionAction = mode
+    result_mode: WorkflowResultMode
     if workflow_type == "canonical":
-        if mode == "run":
+        if execution_action == "run":
             raise ConfigError(
                 "Canonical workflows use preview-first execution; direct executor "
                 "calls must pass mode='preview'. Commits must go through the "
                 "workflow apply service after preview verification."
             )
-        execution_mode = mode
+        result_mode = execution_action
     else:
-        if mode != "run":
+        if execution_action != "run":
             raise ConfigError(
-                f"{workflow_type} workflows only support executor mode 'run'"
+                f"{workflow_type} workflows only support executor action 'run'"
             )
-        execution_mode = "proposal" if workflow_type == "proposal" else "run"
+        result_mode = "proposal" if workflow_type == "proposal" else "run"
     head_snapshot_id = instance.get_head_snapshot_id()
     base_graph = instance.load_graph()
     graph = _clone_graph(base_graph) if workflow_type == "canonical" else base_graph
@@ -110,7 +113,7 @@ def execute_workflow(
         parameters=plan.input_payload,
         operation_type="workflow",
         head_snapshot_id=head_snapshot_id,
-        workflow_mode=execution_mode,
+        workflow_mode=result_mode,
     )
 
     step_outputs: dict[str, Any] = {}
@@ -471,7 +474,7 @@ def execute_workflow(
                     compiled_step.step_id,
                     step_outputs[compiled_step.apply_entities_spec.entities_from],
                     receipt_builder,
-                    persist_writes=execution_mode == "apply",
+                    persist_writes=execution_action == "apply",
                     parent_id=step_node,
                 )
                 preview_payload = entity_preview.model_dump(mode="python")
@@ -496,7 +499,7 @@ def execute_workflow(
                     compiled_step.step_id,
                     step_outputs[compiled_step.apply_relationships_spec.relationships_from],
                     receipt_builder,
-                    persist_writes=execution_mode == "apply",
+                    persist_writes=execution_action == "apply",
                     parent_id=step_node,
                 )
                 preview_payload = relationship_preview.model_dump(mode="python")
@@ -524,11 +527,11 @@ def execute_workflow(
         _annotate_workflow_receipt(
             receipt,
             plan=plan,
-            execution_mode=execution_mode,
+            result_mode=result_mode,
             apply_digest=apply_digest,
         )
 
-        if workflow_type == "canonical" and execution_mode == "apply":
+        if workflow_type == "canonical" and execution_action == "apply":
             snapshot = instance.commit_graph_snapshot(graph)
             committed_snapshot_id = snapshot.snapshot_id
             receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id
@@ -537,7 +540,7 @@ def execute_workflow(
         failed_receipt = _build_failed_workflow_receipt(
             receipt_builder,
             plan=plan,
-            execution_mode=execution_mode,
+            result_mode=result_mode,
             error=exc,
             results_recorded=results_recorded,
         )
@@ -552,7 +555,7 @@ def execute_workflow(
         workflow=workflow_name,
         output=output,
         receipt=receipt,
-        mode=execution_mode,
+        mode=result_mode,
         workflow_type=workflow_type,
         apply_digest=apply_digest,
         head_snapshot_id=head_snapshot_id,
@@ -570,14 +573,14 @@ def _annotate_workflow_receipt(
     receipt: Receipt,
     *,
     plan: Any,
-    execution_mode: WorkflowExecutionMode,
+    result_mode: WorkflowResultMode,
     apply_digest: str | None,
     error: BaseException | None = None,
 ) -> None:
-    """Attach workflow-level execution metadata to the receipt root."""
+    """Attach workflow-level result metadata to the receipt root."""
     receipt.nodes[0].detail.update(
         {
-            "mode": execution_mode,
+            "mode": result_mode,
             "config_digest": plan.config_digest,
             "lock_digest": plan.lock_digest,
             "apply_digest": apply_digest,
@@ -596,7 +599,7 @@ def _build_failed_workflow_receipt(
     receipt_builder: ReceiptBuilder,
     *,
     plan: Any,
-    execution_mode: WorkflowExecutionMode,
+    result_mode: WorkflowResultMode,
     error: BaseException,
     results_recorded: bool,
 ) -> Receipt:
@@ -608,7 +611,7 @@ def _build_failed_workflow_receipt(
     _annotate_workflow_receipt(
         receipt,
         plan=plan,
-        execution_mode=execution_mode,
+        result_mode=result_mode,
         apply_digest=None,
         error=error,
     )

@@ -36,8 +36,7 @@ from cruxible_core.snapshot.types import (
     WorldSnapshot,
 )
 from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
-
-WorkflowMode = Literal["run", "preview", "apply", "proposal"]
+from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
 @dataclass(frozen=True)
@@ -483,7 +482,7 @@ class WorkflowExecutionServiceResult:
     workflow: str
     output: Any
     receipt_id: str
-    mode: WorkflowMode
+    mode: WorkflowResultMode
     workflow_type: WorkflowType
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
@@ -502,13 +501,13 @@ class WorkflowExecutionServiceResult:
 
 @dataclass
 class RunServiceResult(WorkflowExecutionServiceResult):
-    mode: WorkflowMode = "run"
+    mode: WorkflowResultMode = "run"
     workflow_type: WorkflowType = "utility"
 
 
 @dataclass
 class ApplyWorkflowResult(WorkflowExecutionServiceResult):
-    mode: WorkflowMode = "apply"
+    mode: WorkflowResultMode = "apply"
     workflow_type: WorkflowType = "canonical"
 
 
@@ -542,7 +541,7 @@ class ProposeWorkflowResult:
     group_id: str | None
     group_status: GroupStatus | Literal["suppressed"]
     review_priority: ReviewPriority
-    mode: WorkflowMode = "proposal"
+    mode: WorkflowResultMode = "proposal"
     workflow_type: WorkflowType = "proposal"
     suppressed: bool = False
     suppressed_members: list[SuppressedProposalMember] = field(default_factory=list)

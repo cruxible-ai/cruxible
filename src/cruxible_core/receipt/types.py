@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from cruxible_core.primitives import new_id
+from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 OperationType = Literal[
     "query",
@@ -28,8 +29,8 @@ OperationType = Literal[
 ]
 """Coarse-grained category of operation that produced a receipt."""
 
-WorkflowReceiptMode = Literal["run", "preview", "apply", "proposal"]
-"""Workflow execution mode recorded on workflow receipts."""
+WorkflowReceiptMode = WorkflowResultMode
+"""Workflow result mode recorded on workflow receipts."""
 
 NodeType = Literal[
     "query",
@@ -99,7 +100,7 @@ class Receipt(BaseModel):
     )
     workflow_mode: WorkflowReceiptMode | None = Field(
         default=None,
-        description="Workflow receipt mode; unset for non-workflow receipts.",
+        description="Workflow result mode; unset for non-workflow receipts.",
     )
     committed: bool = Field(
         default=False,

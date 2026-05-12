@@ -29,6 +29,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, SignalBucketBasis, SignalValue
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
 class _DuplicateTrackedCollection(BaseModel):
@@ -139,7 +140,7 @@ class WorkflowExecutionResult(BaseModel):
     workflow: str
     output: Any
     receipt: Receipt
-    mode: Literal["run", "preview", "apply", "proposal"] = "run"
+    mode: WorkflowResultMode = "run"
     workflow_type: WorkflowType = "utility"
     apply_digest: str | None = None
     head_snapshot_id: str | None = None
