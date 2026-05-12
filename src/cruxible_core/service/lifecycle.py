@@ -175,8 +175,8 @@ def service_reload_config(
         if config_yaml is None and not overlay_path.exists():
             raise ConfigError(f"Overlay config not found: {overlay_path}")
 
-        base_path = root / upstream.config_path
-        active_path = root / upstream.active_config_path
+        base_path = root / upstream.upstream_config_path
+        active_path = instance.get_config_path()
         if config_yaml is not None:
             # Raw uploaded overlay YAML has no source filename; use the tracked
             # overlay path only as the base directory for relative extends and
@@ -208,7 +208,6 @@ def service_reload_config(
                 update={"overlay_config_path": overlay_config_path}
             )
             instance.set_upstream_metadata(updated)
-        instance.set_config_path(upstream.active_config_path)
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
             updated=True,

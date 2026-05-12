@@ -101,12 +101,12 @@ def _compose_from_upstream_metadata(
     assert upstream is not None
     root = instance.get_root_path()
 
-    active_path = root / upstream.active_config_path
+    active_path = instance.get_config_path()
     active_config = _try_load_config(active_path)
     if active_config is not None:
         return active_config
 
-    upstream_config_path = root / upstream.config_path
+    upstream_config_path = root / upstream.upstream_config_path
     overlay_config_path = root / upstream.overlay_config_path
     upstream_config = _try_load_config(upstream_config_path)
     overlay_config = _try_load_config(overlay_config_path)
@@ -194,7 +194,7 @@ def _surface_ownership_from_upstream_paths(
     upstream = instance.get_upstream_metadata()
     assert upstream is not None
     root = instance.get_root_path()
-    upstream_config = _try_load_config(root / upstream.config_path)
+    upstream_config = _try_load_config(root / upstream.upstream_config_path)
     overlay_config = _try_load_config(root / upstream.overlay_config_path)
     if upstream_config is None or overlay_config is None:
         return CompositionOwnershipView(source="upstream_metadata")

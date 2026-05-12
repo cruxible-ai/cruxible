@@ -125,10 +125,9 @@ def service_create_world_overlay(
         owned_entity_types=pulled.manifest.owned_entity_types,
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         overlay_config_path="config.yaml",
-        active_config_path=".cruxible/composed/config.yaml",
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
-        config_path=str((upstream_dir / "config.yaml").relative_to(root)),
+        upstream_config_path=str((upstream_dir / "config.yaml").relative_to(root)),
         lock_path=str((upstream_dir / "cruxible.lock.yaml").relative_to(root)),
         manifest_digest=_sha256_file(upstream_dir / "manifest.json"),
         graph_digest=_sha256_file(upstream_dir / "graph.json"),
@@ -227,9 +226,8 @@ def service_pull_world_apply(
     write_runtime_composed_config(
         base_path=upstream_dir / "config.yaml",
         overlay_path=root / upstream.overlay_config_path,
-        output_path=root / upstream.active_config_path,
+        output_path=instance.get_config_path(),
     )
-    instance.set_config_path(upstream.active_config_path)
 
     current_graph = instance.load_graph()
     local_graph = _extract_local_overlay_graph(current_graph, upstream)
@@ -255,10 +253,9 @@ def service_pull_world_apply(
         owned_entity_types=pulled.manifest.owned_entity_types,
         owned_relationship_types=pulled.manifest.owned_relationship_types,
         overlay_config_path=upstream.overlay_config_path,
-        active_config_path=upstream.active_config_path,
         manifest_path=str((upstream_dir / "manifest.json").relative_to(root)),
         graph_path=str((upstream_dir / "graph.json").relative_to(root)),
-        config_path=str((upstream_dir / "config.yaml").relative_to(root)),
+        upstream_config_path=str((upstream_dir / "config.yaml").relative_to(root)),
         lock_path=str((upstream_dir / "cruxible.lock.yaml").relative_to(root)),
         manifest_digest=_sha256_file(upstream_dir / "manifest.json"),
         graph_digest=_sha256_file(upstream_dir / "graph.json"),

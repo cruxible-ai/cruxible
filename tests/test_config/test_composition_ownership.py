@@ -161,6 +161,7 @@ def test_upstream_metadata_takes_precedence_over_extends(tmp_path: Path) -> None
         overlay_path=overlay,
         output_path=active,
     )
+    instance.set_config_path(active.name)
     overlay.write_text(
         OVERLAY_TEMPLATE.replace("__BASE_PATH__", str(overlay.parent / "missing.yaml"))
     )
@@ -173,9 +174,8 @@ def test_upstream_metadata_takes_precedence_over_extends(tmp_path: Path) -> None
             compatibility="additive_schema",
             owned_entity_types=["ReferenceThing"],
             owned_relationship_types=["reference_links_reference"],
-            config_path=base.name,
+            upstream_config_path=base.name,
             overlay_config_path=overlay.name,
-            active_config_path=active.name,
         )
     )
 

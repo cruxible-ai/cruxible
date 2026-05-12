@@ -77,10 +77,9 @@ class UpstreamMetadata(PublishedWorldManifest):
     requested_source_ref: str | None = None
     requested_transport_ref: str | None = None
     overlay_config_path: str = "config.yaml"
-    active_config_path: str = ".cruxible/composed/config.yaml"
     manifest_path: str = ".cruxible/upstream/current/manifest.json"
     graph_path: str = ".cruxible/upstream/current/graph.json"
-    config_path: str = ".cruxible/upstream/current/config.yaml"
+    upstream_config_path: str = ".cruxible/upstream/current/config.yaml"
     lock_path: str = ".cruxible/upstream/current/cruxible.lock.yaml"
     manifest_digest: str | None = None
     graph_digest: str | None = None

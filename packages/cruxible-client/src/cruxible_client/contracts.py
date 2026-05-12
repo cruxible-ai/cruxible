@@ -474,10 +474,9 @@ class UpstreamMetadataResult(BaseModel):
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     overlay_config_path: str
-    active_config_path: str
     manifest_path: str
     graph_path: str
-    config_path: str
+    upstream_config_path: str
     lock_path: str
     manifest_digest: str | None = None
     graph_digest: str | None = None
