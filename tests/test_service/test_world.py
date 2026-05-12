@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.service.world as world_service
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
 from cruxible_core.errors import OwnershipError
@@ -106,6 +107,7 @@ def _write_overlay_kit_manifest(
 def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root_instance, release_dir = published_release_fixture
     overlay_root = tmp_path / "cloned-model"
@@ -160,10 +162,20 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     assert preview.conflicts == []
     assert preview.upstream_entity_delta == 1
 
+    pull_count = 0
+    real_pull_bundle = world_service._pull_bundle
+
+    def counted_pull_bundle(transport_ref: str):
+        nonlocal pull_count
+        pull_count += 1
+        return real_pull_bundle(transport_ref)
+
+    monkeypatch.setattr(world_service, "_pull_bundle", counted_pull_bundle)
     applied = service_pull_world_apply(
         overlay_instance,
         expected_apply_digest=preview.apply_digest,
     )
+    assert pull_count == 1
     assert applied.release_id == "v1.1.0"
     assert applied.pre_pull_snapshot_id.startswith("snap_")
 

@@ -150,6 +150,16 @@ def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewRe
         raise ConfigError("Instance is not tracking an upstream world release")
 
     pulled = _pull_bundle(upstream.transport_ref)
+    return _build_world_pull_preview(instance, upstream=upstream, pulled=pulled)
+
+
+def _build_world_pull_preview(
+    instance: InstanceProtocol,
+    *,
+    upstream: UpstreamMetadata,
+    pulled: PulledReleaseBundle,
+) -> WorldPullPreviewResult:
+    """Evaluate a materialized upstream bundle against the current overlay."""
     warnings: list[str] = []
     conflicts: list[str] = []
     if pulled.manifest.release_id == upstream.release_id:
@@ -196,20 +206,22 @@ def service_pull_world_apply(
     expected_apply_digest: str,
 ) -> WorldPullApplyResult:
     """Apply a previewed upstream pull to a release-backed overlay instance."""
-    preview = service_pull_world_preview(instance)
+    upstream = instance.get_upstream_metadata()
+    if upstream is None:
+        raise ConfigError("Instance is not tracking an upstream world release")
+
+    pulled = _pull_bundle(upstream.transport_ref)
+    preview = _build_world_pull_preview(instance, upstream=upstream, pulled=pulled)
     if preview.apply_digest != expected_apply_digest:
         raise ConfigError("World pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
         raise ConfigError("World pull preview has blocking conflicts", errors=preview.conflicts)
 
-    upstream = instance.get_upstream_metadata()
-    assert upstream is not None
     pre_pull_snapshot_id = service_create_snapshot(
         instance,
         label=f"pre-pull-{preview.target_release_id}",
     ).snapshot.snapshot_id
 
-    pulled = _pull_bundle(upstream.transport_ref)
     root = instance.get_root_path()
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
     write_runtime_composed_config(
