@@ -225,8 +225,7 @@ class TestWorkflowExecutionServices:
 
         message = str(exc_info.value)
         assert "Workflow head snapshot changed between preview and apply." in message
-        assert "--apply-digest AND --head-snapshot" in message
-        assert "--preview-file <path>" in message
+        assert "apply digest and head snapshot id" in message
 
     def test_service_test_supports_expected_error_cases(
         self, workflow_instance: CruxibleInstance
@@ -256,6 +255,19 @@ class TestWorkflowExecutionServices:
 
         with pytest.raises(ConfigError, match="Test 'missing' not found in config"):
             service_test(workflow_instance, test_name="missing")
+
+    def test_service_test_rejects_unknown_workflow_name(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.tests[0].workflow = "missing_workflow"
+        workflow_instance.save_config(config)
+
+        with pytest.raises(
+            ConfigError,
+            match="Test 'promo_margin_smoke' references unknown workflow 'missing_workflow'",
+        ):
+            service_test(workflow_instance)
 
     def test_service_propose_workflow_creates_candidate_group_with_lineage(
         self, proposal_workflow_instance: CruxibleInstance

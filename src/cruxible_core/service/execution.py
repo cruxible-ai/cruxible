@@ -109,6 +109,8 @@ def _finalize_proposal_receipt(
     """Return the workflow receipt annotated with the governed proposal write result."""
     root = receipt.nodes[0]
     root_detail = dict(root.detail)
+    # Receipt.workflow_mode is the structural mode; this root detail is the
+    # agent-facing proposal bridge summary used by rendered receipt surfaces.
     root_detail.update(
         {
             "mode": "proposal",
@@ -282,9 +284,8 @@ def service_apply_workflow(
         if preview.head_snapshot_id != expected_head_snapshot_id:
             raise ConfigError(
                 "Workflow head snapshot changed between preview and apply.\n"
-                "Apply requires both --apply-digest AND --head-snapshot from the preview output,\n"
-                "or pass --preview-file <path> if you used 'run --save-preview'.\n"
-                "Rerun the preview if output was not captured."
+                "Apply requires the apply digest and head snapshot id produced by "
+                "the same preview execution."
             )
 
         current_lock = load_lock(resolve_lock_path(instance))
@@ -463,7 +464,11 @@ def service_propose_workflow(
 
 
 def service_test(instance: InstanceProtocol, test_name: str | None = None) -> TestServiceResult:
-    """Execute config-defined workflow tests."""
+    """Execute config-defined workflow fixture tests.
+
+    Config tests validate workflow output shape and canonical preview behavior.
+    They do not simulate proposal bridging or decision-record lifecycle gates.
+    """
     config = instance.load_config()
     tests = config.tests
     if test_name is not None:
@@ -472,15 +477,20 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
             raise ConfigError(f"Test '{test_name}' not found in config")
     if not tests:
         raise ConfigError("No workflow tests are defined in config")
+    for test in tests:
+        if test.workflow not in config.workflows:
+            raise ConfigError(
+                f"Test '{test.name}' references unknown workflow '{test.workflow}'"
+            )
 
     cases: list[WorkflowTestCaseResult] = []
     passed = 0
 
     for test in tests:
         try:
-            workflow = config.workflows.get(test.workflow)
+            workflow = config.workflows[test.workflow]
             execution_action: Literal["run", "preview"] = (
-                "preview" if workflow and workflow.type == "canonical" else "run"
+                "preview" if workflow.type == "canonical" else "run"
             )
             result = execute_workflow(
                 instance,
