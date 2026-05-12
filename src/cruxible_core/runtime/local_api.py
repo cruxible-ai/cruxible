@@ -1900,10 +1900,11 @@ def _handle_update_trust_status_local(
     check_permission("cruxible_update_trust_status", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
-    service_update_trust_status(instance, resolution_id, trust_status, reason=reason)
+    result = service_update_trust_status(instance, resolution_id, trust_status, reason=reason)
     return contracts.UpdateTrustStatusToolResult(
-        resolution_id=resolution_id,
-        trust_status=trust_status,
+        resolution_id=result.resolution_id,
+        trust_status=result.trust_status,
+        receipt_id=result.receipt_id,
     )
 
 

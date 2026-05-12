@@ -393,6 +393,7 @@ class TestUpdateTrustStatus:
         )
         assert result["resolution_id"] == res_id
         assert result["trust_status"] == "trusted"
+        assert result["receipt_id"].startswith("RCP-")
 
     def test_invalid_trust_status(self, server, instance_id):
         error = call_tool_expect_error(

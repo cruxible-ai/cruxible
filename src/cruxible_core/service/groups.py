@@ -38,6 +38,7 @@ from cruxible_core.service.types import (
     ProposeGroupResult,
     ResolveGroupResult,
     SuppressedProposalMember,
+    UpdateTrustStatusResult,
 )
 
 RelationshipTuple = tuple[str, str, str, str, str]
@@ -1422,7 +1423,7 @@ def service_update_trust_status(
     resolution_id: str,
     trust_status: Literal["trusted", "watch", "invalidated"],
     reason: str = "",
-) -> None:
+) -> UpdateTrustStatusResult:
     """Update trust_status on a confirmed approved resolution (thesis-scoped)."""
     _VALID = ("trusted", "watch", "invalidated")
     if trust_status not in _VALID:
@@ -1459,8 +1460,39 @@ def service_update_trust_status(
                 f"for this signature. Latest: {latest_id}"
             )
 
-        # 5. Update
-        with group_store.transaction():
-            group_store.update_resolution_trust_status(resolution_id, trust_status, reason)
+        ctx: MutationReceiptContext[UpdateTrustStatusResult]
+        with mutation_receipt(
+            instance,
+            "group_trust_update",
+            {
+                "resolution_id": resolution_id,
+                "trust_status": trust_status,
+                "reason": reason,
+            },
+        ) as ctx:
+            assert ctx.builder is not None
+            ctx.builder.record_validation(
+                passed=True,
+                detail={
+                    "resolution_id": resolution_id,
+                    "relationship_type": res.relationship_type,
+                    "signature": res.group_signature,
+                    "previous_trust_status": res.trust_status,
+                    "new_trust_status": trust_status,
+                    "reason": reason,
+                },
+            )
+            with group_store.transaction():
+                group_store.update_resolution_trust_status(resolution_id, trust_status, reason)
+            ctx.set_result(
+                UpdateTrustStatusResult(
+                    resolution_id=resolution_id,
+                    trust_status=trust_status,
+                )
+            )
     finally:
         group_store.close()
+
+    result = ctx.result
+    assert result is not None
+    return result

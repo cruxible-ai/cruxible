@@ -130,7 +130,10 @@ def _propose_and_approve(instance, from_id="BP-1", to_id="V-1", facts=None):
 class TestUpdateTrustStatus:
     def test_watch_to_trusted(self, instance: CruxibleInstance) -> None:
         res_id = _propose_and_approve(instance)
-        service_update_trust_status(instance, res_id, "trusted", "earned by review")
+        result = service_update_trust_status(instance, res_id, "trusted", "earned by review")
+        assert result.resolution_id == res_id
+        assert result.trust_status == "trusted"
+        assert result.receipt_id is not None
         store = instance.get_group_store()
         try:
             res = store.get_resolution(res_id)
@@ -138,6 +141,19 @@ class TestUpdateTrustStatus:
             assert res.trust_reason == "earned by review"
         finally:
             store.close()
+        receipt_store = instance.get_receipt_store()
+        try:
+            receipt = receipt_store.get_receipt(result.receipt_id)
+        finally:
+            receipt_store.close()
+        assert receipt is not None
+        assert receipt.operation_type == "group_trust_update"
+        assert receipt.committed is True
+        validation = next(node for node in receipt.nodes if node.node_type == "validation")
+        assert validation.detail["resolution_id"] == res_id
+        assert validation.detail["previous_trust_status"] == "watch"
+        assert validation.detail["new_trust_status"] == "trusted"
+        assert validation.detail["reason"] == "earned by review"
 
     def test_trusted_to_invalidated(self, instance: CruxibleInstance) -> None:
         res_id = _propose_and_approve(instance)

@@ -142,6 +142,7 @@ from cruxible_core.service.types import (
     TrustAdjustmentSuggestion,
     UncodedFeedbackExample,
     UncodedOutcomeExample,
+    UpdateTrustStatusResult,
     ValidateServiceResult,
     WorldOverlayResult,
     WorldPublishResult,
@@ -233,6 +234,7 @@ __all__ = [
     "TrustAdjustmentSuggestion",
     "UncodedFeedbackExample",
     "UncodedOutcomeExample",
+    "UpdateTrustStatusResult",
     "ValidateServiceResult",
     # Execution
     "service_lock",

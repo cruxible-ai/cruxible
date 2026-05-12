@@ -266,7 +266,7 @@ def group_resolve(
 @handle_errors
 def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
     """Update trust status on a resolution."""
-    _dispatch_cli_instance(
+    result = _dispatch_cli_instance(
         lambda client, instance_id: client.update_trust_status(
             instance_id,
             resolution_id,
@@ -283,6 +283,8 @@ def group_trust(resolution_id: str, trust_status: str, reason: str) -> None:
         command_name="group trust",
     )
     click.echo(f"Resolution {resolution_id} trust status set to '{trust_status}'.")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
 
 
 @group_group.command("get")

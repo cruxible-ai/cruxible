@@ -727,6 +727,7 @@ class ResolveGroupToolResult(BaseModel):
 class UpdateTrustStatusToolResult(BaseModel):
     resolution_id: str
     trust_status: str
+    receipt_id: str | None = None
 
 
 class GetGroupToolResult(BaseModel):

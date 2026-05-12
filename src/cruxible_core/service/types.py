@@ -692,6 +692,13 @@ class ListResolutionsResult:
 
 
 @dataclass
+class UpdateTrustStatusResult:
+    resolution_id: str
+    trust_status: TrustStatus
+    receipt_id: str | None = None
+
+
+@dataclass
 class GroupStatusHistoryItem:
     resolution_id: str
     action: ResolutionAction
