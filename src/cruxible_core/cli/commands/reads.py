@@ -4,19 +4,27 @@ inspect, analysis, and lookups."""
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import click
 import yaml
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.canonical_views import (
-    build_governance_view,
-    build_ontology_view,
-    build_overview_view,
-    build_query_view,
-    build_workflow_view,
-    canonical_view_payload,
+    GovernanceRelationshipView,
+    GovernanceView,
+    OntologyEntityView,
+    OntologyRelationshipView,
+    OntologyView,
+    OverviewView,
+    PendingBucketView,
+    QuerySummaryView,
+    QueryView,
+    WorkflowDependencyView,
+    WorkflowProviderSummaryView,
+    WorkflowStepSummaryView,
+    WorkflowSummaryView,
+    WorkflowView,
     render_governance_markdown,
     render_ontology_markdown,
     render_ontology_mermaid,
@@ -34,7 +42,6 @@ from cruxible_core.cli.commands._common import (
     _emit_json,
     _entities_from_payload,
     _get_client,
-    _groups_from_payload,
     _lookup_query_param_hints_local,
     _lookup_query_param_hints_server,
     _operation_context,
@@ -60,7 +67,6 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import GroupResolution
 from cruxible_core.service import (
     InspectEntityResult,
     service_analyze_feedback,
@@ -73,10 +79,9 @@ from cruxible_core.service import (
     service_get_relationship_lineage,
     service_get_trace,
     service_inspect_entity,
+    service_inspect_view,
     service_lint,
-    service_list_groups,
     service_list_queries,
-    service_list_resolutions,
     service_query,
     service_sample,
     service_schema,
@@ -95,75 +100,95 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
     }
 
 
-def _load_config_for_views() -> CoreConfig:
-    return _dispatch_cli_instance(
-        lambda client, instance_id: CoreConfig.model_validate(client.schema(instance_id)),
-        service_schema,
-    )
+CanonicalViewName = Literal["ontology", "workflows", "queries", "governance", "overview"]
 
 
-def _load_query_infos_for_views() -> list[dict[str, Any]]:
+def _load_inspect_view(
+    view: CanonicalViewName,
+    *,
+    limit: int = 200,
+) -> dict[str, Any]:
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_queries(instance_id),
-        service_list_queries,
+        lambda client, instance_id: client.inspect_view(instance_id, view, limit=limit),
+        lambda instance: service_inspect_view(instance, view, limit=limit),
     )
-    queries = (
-        result.queries
-        if isinstance(result, contracts.QueryListResult)
-        else cast(list[Any], result)
-    )
-    return [_query_definition_payload(query) for query in queries]
+    return result.payload
 
 
-def _load_governance_view(*, limit: int = 200):
-    config = _load_config_for_views()
-    groups_result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_groups(
-            instance_id,
-            status=cast(contracts.GroupStatus, "pending_review"),
-            limit=limit,
-        ),
-        lambda instance: service_list_groups(
-            instance,
-            status="pending_review",
-            limit=limit,
-        ),
+def _ontology_view_from_payload(payload: dict[str, Any]) -> OntologyView:
+    return OntologyView(
+        entity_count=payload["entity_count"],
+        relationship_count=payload["relationship_count"],
+        governed_relationship_count=payload["governed_relationship_count"],
+        entity_types=[
+            OntologyEntityView(**entity) for entity in payload.get("entity_types", [])
+        ],
+        relationships=[
+            OntologyRelationshipView(**relationship)
+            for relationship in payload.get("relationships", [])
+        ],
     )
-    if isinstance(groups_result, contracts.ListGroupsToolResult):
-        pending_groups = _groups_from_payload(groups_result.groups)
-        pending_total = groups_result.total
-    else:
-        pending_groups = groups_result.groups
-        pending_total = groups_result.total
 
-    resolutions_result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_resolutions(
-            instance_id,
-            limit=limit,
-        ),
-        lambda instance: service_list_resolutions(
-            instance,
-            limit=limit,
-        ),
-    )
-    if isinstance(resolutions_result, contracts.ListResolutionsToolResult):
-        domain_resolutions = [
-            GroupResolution.model_validate(resolution)
-            for resolution in resolutions_result.resolutions
-        ]
-        resolution_total = resolutions_result.total
-    else:
-        domain_resolutions = resolutions_result.resolutions
-        resolution_total = resolutions_result.total
 
-    view = build_governance_view(
-        config,
-        pending_groups=pending_groups,
-        pending_total=pending_total,
-        resolutions=domain_resolutions,
-        resolution_total=resolution_total,
+def _workflow_view_from_payload(payload: dict[str, Any]) -> WorkflowView:
+    return WorkflowView(
+        workflow_count=payload["workflow_count"],
+        workflows=[
+            WorkflowSummaryView(
+                **{
+                    **workflow,
+                    "provider_details": [
+                        WorkflowProviderSummaryView(**provider)
+                        for provider in workflow.get("provider_details", [])
+                    ],
+                    "steps": [
+                        WorkflowStepSummaryView(**step)
+                        for step in workflow.get("steps", [])
+                    ],
+                }
+            )
+            for workflow in payload.get("workflows", [])
+        ],
+        dependencies=[
+            WorkflowDependencyView(**dependency)
+            for dependency in payload.get("dependencies", [])
+        ],
     )
-    return config, view
+
+
+def _query_view_from_payload(payload: dict[str, Any]) -> QueryView:
+    return QueryView(
+        query_count=payload["query_count"],
+        queries=[QuerySummaryView(**query) for query in payload.get("queries", [])],
+    )
+
+
+def _governance_view_from_payload(payload: dict[str, Any]) -> GovernanceView:
+    return GovernanceView(
+        governed_relationship_count=payload["governed_relationship_count"],
+        pending_group_count=payload["pending_group_count"],
+        total_pending_groups=payload["total_pending_groups"],
+        approved_resolution_count=payload["approved_resolution_count"],
+        total_resolutions=payload["total_resolutions"],
+        pending_truncated=payload["pending_truncated"],
+        resolutions_truncated=payload["resolutions_truncated"],
+        relationships=[
+            GovernanceRelationshipView(**relationship)
+            for relationship in payload.get("relationships", [])
+        ],
+        pending_buckets=[
+            PendingBucketView(**bucket) for bucket in payload.get("pending_buckets", [])
+        ],
+    )
+
+
+def _overview_view_from_payload(payload: dict[str, Any]) -> OverviewView:
+    return OverviewView(
+        ontology=_ontology_view_from_payload(payload["ontology"]),
+        workflows=_workflow_view_from_payload(payload["workflows"]),
+        queries=_query_view_from_payload(payload["queries"]),
+        governance=_governance_view_from_payload(payload["governance"]),
+    )
 
 
 def _run_query_command(
@@ -712,18 +737,11 @@ def inspect_group() -> None:
 @handle_errors
 def inspect_ontology_cmd(fmt: str) -> None:
     """Show the canonical ontology view for the current instance config."""
-    config = _load_config_for_views()
-    stats = _dispatch_cli_instance(
-        lambda client, instance_id: client.stats(instance_id),
-        service_stats,
-    )
-    view = build_ontology_view(
-        config,
-        relationship_counts=stats.relationship_counts,
-    )
+    payload = _load_inspect_view("ontology")
     if fmt == "json":
-        _emit_json(canonical_view_payload(view))
+        _emit_json(payload)
         return
+    view = _ontology_view_from_payload(payload)
     if fmt == "mermaid":
         click.echo(render_ontology_mermaid(view))
         return
@@ -744,11 +762,11 @@ def inspect_ontology_cmd(fmt: str) -> None:
 @handle_errors
 def inspect_workflows_cmd(fmt: str) -> None:
     """Show the canonical workflow view for the current instance config."""
-    config = _load_config_for_views()
-    view = build_workflow_view(config)
+    payload = _load_inspect_view("workflows")
     if fmt == "json":
-        _emit_json(canonical_view_payload(view))
+        _emit_json(payload)
         return
+    view = _workflow_view_from_payload(payload)
     if fmt == "mermaid":
         click.echo(render_workflow_mermaid(view))
         return
@@ -773,12 +791,11 @@ def inspect_workflows_cmd(fmt: str) -> None:
 @handle_errors
 def inspect_queries_cmd(fmt: str) -> None:
     """Show the canonical query view for the current instance config."""
-    config = _load_config_for_views()
-    query_infos = _load_query_infos_for_views()
-    view = build_query_view(config, query_infos=query_infos)
+    payload = _load_inspect_view("queries")
     if fmt == "json":
-        _emit_json(canonical_view_payload(view))
+        _emit_json(payload)
         return
+    view = _query_view_from_payload(payload)
     if fmt == "mermaid":
         click.echo(render_query_mermaid(view))
         return
@@ -804,10 +821,11 @@ def inspect_queries_cmd(fmt: str) -> None:
 @handle_errors
 def inspect_governance_cmd(fmt: str, limit: int) -> None:
     """Show the canonical governance view for the current instance."""
-    _, view = _load_governance_view(limit=limit)
+    payload = _load_inspect_view("governance", limit=limit)
     if fmt == "json":
-        _emit_json(canonical_view_payload(view))
+        _emit_json(payload)
         return
+    view = _governance_view_from_payload(payload)
     click.echo(render_governance_markdown(view))
 
 
@@ -830,27 +848,11 @@ def inspect_governance_cmd(fmt: str, limit: int) -> None:
 @handle_errors
 def inspect_overview_cmd(fmt: str, limit: int) -> None:
     """Show the generated config overview built from canonical views."""
-    config = _load_config_for_views()
-    stats = _dispatch_cli_instance(
-        lambda client, instance_id: client.stats(instance_id),
-        service_stats,
-    )
-    ontology = build_ontology_view(
-        config,
-        relationship_counts=stats.relationship_counts,
-    )
-    workflows = build_workflow_view(config)
-    queries = build_query_view(config, query_infos=_load_query_infos_for_views())
-    _, governance = _load_governance_view(limit=limit)
-    overview = build_overview_view(
-        ontology=ontology,
-        workflows=workflows,
-        queries=queries,
-        governance=governance,
-    )
+    payload = _load_inspect_view("overview", limit=limit)
     if fmt == "json":
-        _emit_json(canonical_view_payload(overview))
+        _emit_json(payload)
         return
+    overview = _overview_view_from_payload(payload)
     click.echo(render_overview_markdown(overview))
 
 

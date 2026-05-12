@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 from click.testing import CliRunner
 from pydantic import ValidationError
 
@@ -605,23 +604,35 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
     assert captured["abandon"] == ("inst_123", "DR-2", "Superseded")
 
 
-def test_inspect_ontology_uses_existing_server_read_surfaces(
+def test_inspect_ontology_uses_server_inspect_view_surface(
     monkeypatch,
     runner: CliRunner,
 ):
     class StubClient:
-        def schema(self, instance_id):
+        def inspect_view(self, instance_id, view, *, limit=200):
             assert instance_id == "inst_123"
-            return yaml.safe_load(CAR_PARTS_YAML)
-
-        def stats(self, instance_id):
-            assert instance_id == "inst_123"
-            return contracts.StatsResult(
-                entity_count=4,
-                edge_count=4,
-                entity_counts={"Vehicle": 2, "Part": 2},
-                relationship_counts={"fits": 3, "replaces": 1},
-                head_snapshot_id=None,
+            assert view == "ontology"
+            assert limit == 200
+            return contracts.CanonicalViewResult(
+                view=view,
+                payload={
+                    "entity_count": 2,
+                    "relationship_count": 2,
+                    "governed_relationship_count": 0,
+                    "entity_types": [],
+                    "relationships": [
+                        {
+                            "name": "fits",
+                            "from_entity": "Part",
+                            "to_entity": "Vehicle",
+                            "mode": "deterministic",
+                            "cardinality": "many_to_many",
+                            "reverse_name": None,
+                            "description": None,
+                            "instance_count": 3,
+                        }
+                    ],
+                },
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -645,56 +656,88 @@ def test_inspect_ontology_uses_existing_server_read_surfaces(
     assert payload["relationships"][0]["instance_count"] in (1, 3)
 
 
-def test_inspect_overview_uses_existing_server_read_surfaces(
+def test_inspect_overview_uses_server_inspect_view_surface(
     monkeypatch,
     runner: CliRunner,
 ):
     class StubClient:
-        def schema(self, instance_id):
+        def inspect_view(self, instance_id, view, *, limit=200):
             assert instance_id == "inst_123"
-            return yaml.safe_load(CAR_PARTS_YAML)
-
-        def stats(self, instance_id):
-            assert instance_id == "inst_123"
-            return contracts.StatsResult(
-                entity_count=4,
-                edge_count=4,
-                entity_counts={"Vehicle": 2, "Part": 2},
-                relationship_counts={"fits": 3, "replaces": 1},
-                head_snapshot_id=None,
+            assert view == "overview"
+            assert limit == 200
+            return contracts.CanonicalViewResult(
+                view=view,
+                payload={
+                    "ontology": {
+                        "entity_count": 2,
+                        "relationship_count": 1,
+                        "governed_relationship_count": 0,
+                        "entity_types": [
+                            {
+                                "name": "Vehicle",
+                                "primary_key": "vehicle_id",
+                                "property_count": 1,
+                                "description": None,
+                            }
+                        ],
+                        "relationships": [
+                            {
+                                "name": "fits",
+                                "from_entity": "Part",
+                                "to_entity": "Vehicle",
+                                "mode": "deterministic",
+                                "cardinality": "many_to_many",
+                                "reverse_name": None,
+                                "description": None,
+                                "instance_count": 3,
+                            }
+                        ],
+                    },
+                    "workflows": {
+                        "workflow_count": 1,
+                        "workflows": [
+                            {
+                                "name": "sync_catalog",
+                                "mode": "utility",
+                                "step_count": 1,
+                                "queries": [],
+                                "providers": [],
+                                "provider_details": [],
+                                "consumes_relationships": [],
+                                "proposes_relationships": [],
+                                "applies_relationships": ["fits"],
+                                "steps": [],
+                            }
+                        ],
+                        "dependencies": [],
+                    },
+                    "queries": {
+                        "query_count": 1,
+                        "queries": [
+                            {
+                                "name": "parts_for_vehicle",
+                                "entry_point": "Vehicle",
+                                "required_params": ["vehicle_id"],
+                                "returns": "Part",
+                                "description": "Find compatible parts.",
+                                "example_ids": ["V-2024-CIVIC-EX"],
+                                "traversal_summary": ["Vehicle", "Part"],
+                            }
+                        ],
+                    },
+                    "governance": {
+                        "governed_relationship_count": 0,
+                        "pending_group_count": 0,
+                        "total_pending_groups": 0,
+                        "approved_resolution_count": 0,
+                        "total_resolutions": 0,
+                        "pending_truncated": False,
+                        "resolutions_truncated": False,
+                        "relationships": [],
+                        "pending_buckets": [],
+                    },
+                },
             )
-
-        def list_queries(self, instance_id):
-            assert instance_id == "inst_123"
-            return contracts.QueryListResult(
-                queries=[
-                    contracts.NamedQueryInfoResult(
-                        name="parts_for_vehicle",
-                        entry_point="Vehicle",
-                        required_params=["vehicle_id"],
-                        returns="Part",
-                        description="Find compatible parts.",
-                        example_ids=["V-2024-CIVIC-EX"],
-                    ),
-                    contracts.NamedQueryInfoResult(
-                        name="vehicles_for_part",
-                        entry_point="Part",
-                        required_params=["part_number"],
-                        returns="Vehicle",
-                        description="Find vehicles for a part.",
-                        example_ids=["BP-1001"],
-                    ),
-                ]
-            )
-
-        def list_groups(self, instance_id, relationship_type=None, status=None, limit=50):
-            assert instance_id == "inst_123"
-            assert status == "pending_review"
-            return contracts.ListGroupsToolResult(groups=[], total=0)
-
-        def list_resolutions(self, instance_id, relationship_type=None, action=None, limit=50):
-            assert instance_id == "inst_123"
-            return contracts.ListResolutionsToolResult(resolutions=[], total=0)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     runner.invoke(
