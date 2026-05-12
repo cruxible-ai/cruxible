@@ -1,4 +1,10 @@
-"""Workflow execution runtime."""
+"""Workflow execution runtime.
+
+This module is the workflow engine's coordinator. It does not own step-specific
+business rules; instead it compiles the workflow, dispatches each compiled step
+to the helper that owns that step kind, records receipt nodes, and decides
+whether canonical apply previews stay isolated or become committed graph state.
+"""
 
 from __future__ import annotations
 
@@ -52,7 +58,22 @@ def execute_workflow(
     persist_receipt: bool = True,
     persist_traces: bool = True,
 ) -> WorkflowExecutionResult:
-    """Execute a workflow against the current instance and persist traces/receipts."""
+    """Execute one compiled workflow plan and return its full runtime result.
+
+    The executor is below the service/CLI/MCP surfaces. Callers pass the already
+    loaded config plus an input payload, and this function loads the workflow
+    lock, compiles a plan, dispatches the compiled steps in order, and returns
+    both the public output and internal audit material such as traces, receipt
+    nodes, apply previews, alias-to-step mappings, and query receipt ids.
+
+    Canonical workflows are special: user-facing ``run`` calls are translated by
+    the service layer into preview execution before they reach this function. A
+    preview executes against a cloned graph so it can calculate the apply digest
+    and write previews without mutating live state; an apply is the service
+    replay path after preview identity has already been verified. Utility,
+    proposal, and decision-support workflows execute against the live graph but
+    may only use executor ``run`` mode.
+    """
     lock = load_lock(resolve_lock_path(instance))
     plan = compile_workflow(
         config,
@@ -63,17 +84,24 @@ def execute_workflow(
     )
     workflow = config.workflows[workflow_name]
     workflow_type = workflow.type
-    is_canonical = workflow_type == "canonical"
-    if is_canonical and mode == "run":
-        raise ConfigError("canonical workflows must be executed in preview or apply mode")
-    if not is_canonical and mode != "run":
-        raise ConfigError("only canonical workflows support preview or apply mode")
-    execution_mode: Literal["run", "preview", "apply", "proposal"] = (
-        "proposal" if workflow_type == "proposal" else mode
-    )
+    execution_mode: Literal["run", "preview", "apply", "proposal"]
+    if workflow_type == "canonical":
+        if mode == "run":
+            raise ConfigError(
+                "Canonical workflows use preview-first execution; direct executor "
+                "calls must pass mode='preview'. Commits must go through the "
+                "workflow apply service after preview verification."
+            )
+        execution_mode = mode
+    else:
+        if mode != "run":
+            raise ConfigError(
+                f"{workflow_type} workflows only support executor mode 'run'"
+            )
+        execution_mode = "proposal" if workflow_type == "proposal" else "run"
     head_snapshot_id = instance.get_head_snapshot_id()
     base_graph = instance.load_graph()
-    graph = _clone_graph(base_graph) if is_canonical else base_graph
+    graph = _clone_graph(base_graph) if workflow_type == "canonical" else base_graph
     receipt_builder = ReceiptBuilder(
         query_name=workflow_name,
         parameters=plan.input_payload,
@@ -491,7 +519,7 @@ def execute_workflow(
         }
     )
 
-    if is_canonical and execution_mode == "apply":
+    if workflow_type == "canonical" and execution_mode == "apply":
         snapshot = instance.commit_graph_snapshot(graph)
         committed_snapshot_id = snapshot.snapshot_id
         receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id
@@ -519,4 +547,5 @@ def execute_workflow(
 
 
 def _clone_graph(graph: EntityGraph) -> EntityGraph:
+    """Return an isolated graph copy for canonical preview/apply execution."""
     return EntityGraph.from_dict(graph.to_dict())

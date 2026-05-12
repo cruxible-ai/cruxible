@@ -691,7 +691,7 @@ class TestWorkflowExecutor:
 
         with pytest.raises(
             ConfigError,
-            match="canonical workflows must be executed in preview or apply mode",
+            match="Canonical workflows use preview-first execution",
         ):
             execute_workflow(
                 canonical_workflow_instance,
