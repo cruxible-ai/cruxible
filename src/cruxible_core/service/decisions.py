@@ -169,7 +169,7 @@ def ensure_decision_record_open(instance: InstanceProtocol, decision_record_id: 
         raise ConfigError(f"Decision record '{decision_record_id}' is not open")
 
 
-def _append_event_if_context(
+def record_decision_event_for_context(
     instance: InstanceProtocol,
     context: OperationContext | None,
     *,
@@ -183,11 +183,12 @@ def _append_event_if_context(
     head_snapshot_id: str | None = None,
     error: BaseException | None = None,
 ) -> None:
-    """Best-effort append of an operation event when a decision context exists.
+    """Best-effort append of a decision-record event when context requests it.
 
     A ``decision_record_id`` is the switch for decision recording mode: reads
-    and writes can both be captured as audit evidence for the decision. Event
-    append failures are logged but do not fail the underlying operation.
+    and writes can both be captured as audit evidence for the decision. This is
+    decision-record audit metadata, not an operation receipt. Event append
+    failures are logged but do not fail the underlying operation.
 
     ``started_at`` must be captured by the caller before doing the work so
     duration reflects real elapsed time. ``finished_at`` is captured here.

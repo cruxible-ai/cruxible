@@ -40,7 +40,7 @@ from cruxible_core.query.read_surface import (
     sample_entities as read_sample_entities,
 )
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service.decisions import _append_event_if_context
+from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
     InspectEntityResult,
     InspectNeighborResult,
@@ -97,7 +97,7 @@ def service_query(
             policy_summary=query_result.policy_summary,
         )
     except Exception as exc:
-        _append_event_if_context(
+        record_decision_event_for_context(
             instance,
             context,
             command=f"query:{query_name}",
@@ -109,7 +109,7 @@ def service_query(
         raise
 
     receipt_head_snapshot_id = result.receipt.head_snapshot_id if result.receipt else None
-    _append_event_if_context(
+    record_decision_event_for_context(
         instance,
         context,
         command=f"query:{query_name}",

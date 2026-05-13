@@ -17,6 +17,7 @@ from cruxible_core.service.config_mutations import (
     service_add_decision_policy,
 )
 from cruxible_core.service.decisions import (
+    record_decision_event_for_context,
     service_abandon_decision_record,
     service_create_decision_record,
     service_finalize_decision_record,
@@ -268,6 +269,7 @@ __all__ = [
     "service_config_compatibility_warnings",
     "service_lint",
     # Feedback
+    "record_decision_event_for_context",
     "service_create_decision_record",
     "service_get_decision_record",
     "service_list_decision_records",

@@ -12,8 +12,8 @@ from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import (
-    _append_event_if_context,
     ensure_decision_record_open,
+    record_decision_event_for_context,
 )
 from cruxible_core.service.groups import service_propose_group
 from cruxible_core.service.types import (
@@ -287,7 +287,7 @@ def service_run(
         )
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
-        _append_event_if_context(
+        record_decision_event_for_context(
             instance,
             context,
             command=f"workflow_run:{workflow_name}",
@@ -298,7 +298,7 @@ def service_run(
         )
         raise
 
-    _append_event_if_context(
+    record_decision_event_for_context(
         instance,
         context,
         command=f"workflow_run:{workflow_name}",
@@ -379,7 +379,7 @@ def service_apply_workflow(
         )
         service_result = _build_workflow_execution_result(result, ApplyWorkflowResult)
     except Exception as exc:
-        _append_event_if_context(
+        record_decision_event_for_context(
             instance,
             context,
             command=f"workflow_apply:{workflow_name}",
@@ -390,7 +390,7 @@ def service_apply_workflow(
         )
         raise
 
-    _append_event_if_context(
+    record_decision_event_for_context(
         instance,
         context,
         command=f"workflow_apply:{workflow_name}",
@@ -504,7 +504,7 @@ def service_propose_workflow(
             traces=result.traces,
         )
     except Exception as exc:
-        _append_event_if_context(
+        record_decision_event_for_context(
             instance,
             context,
             command=f"workflow_propose:{workflow_name}",
@@ -515,7 +515,7 @@ def service_propose_workflow(
         )
         raise
 
-    _append_event_if_context(
+    record_decision_event_for_context(
         instance,
         context,
         command=f"workflow_propose:{workflow_name}",
