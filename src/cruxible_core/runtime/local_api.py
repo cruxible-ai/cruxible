@@ -21,13 +21,13 @@ from cruxible_core.kits import (
     copy_kit_runtime_files,
     write_materialized_kit_metadata,
 )
-from cruxible_core.mcp.permissions import (
+from cruxible_core.runtime.instance import CruxibleInstance
+from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.runtime.permissions import (
     PermissionMode,
     check_permission,
     validate_root_dir,
 )
-from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,

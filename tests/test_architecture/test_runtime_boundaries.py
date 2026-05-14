@@ -12,8 +12,10 @@ from cruxible_core.cli.instance import CruxibleInstance as CliCruxibleInstance
 from cruxible_core.client import CruxibleClient as CoreCompatClient
 from cruxible_core.mcp import contracts as core_contracts
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp import permissions as mcp_permissions
 from cruxible_core.mcp.handlers import get_manager as handler_get_manager
 from cruxible_core.runtime import local_api
+from cruxible_core.runtime import permissions as runtime_permissions
 from cruxible_core.runtime.instance import CruxibleInstance as RuntimeCruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager as runtime_get_manager
 
@@ -50,6 +52,20 @@ def test_server_routes_do_not_import_mcp_handlers():
     for path in routes_dir.glob("*.py"):
         source = path.read_text()
         assert "from cruxible_core.mcp.handlers import" not in source, str(path)
+
+
+def test_runtime_and_server_do_not_import_mcp_permissions():
+    src_root = _repo_root() / "src/cruxible_core"
+    checked_dirs = [src_root / "runtime", src_root / "server"]
+    for directory in checked_dirs:
+        for path in directory.rglob("*.py"):
+            source = path.read_text()
+            assert "cruxible_core.mcp.permissions" not in source, str(path)
+
+
+def test_mcp_permission_exports_point_at_runtime_policy():
+    assert mcp_permissions.PermissionMode is runtime_permissions.PermissionMode
+    assert mcp_permissions.check_permission is runtime_permissions.check_permission
 
 
 def test_service_modules_do_not_import_cli_instance():

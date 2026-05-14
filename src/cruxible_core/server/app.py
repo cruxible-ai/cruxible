@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
-from cruxible_core.mcp.permissions import init_permissions
+from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.registry import get_registry

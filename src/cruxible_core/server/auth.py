@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from cruxible_core.mcp.permissions import PermissionMode, request_permission_scope
+from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
 from cruxible_core.server.config import (
     get_server_token,
     is_server_auth_enabled,

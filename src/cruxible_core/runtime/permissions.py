@@ -1,0 +1,373 @@
+"""Runtime permission modes for Cruxible operations.
+
+Controls which operations a runtime session can invoke, enforced via the
+``CRUXIBLE_MODE`` environment variable. Four cumulative tiers:
+
+- ``READ_ONLY``: query, inspect, validate, and plan workflows
+- ``GOVERNED_WRITE``: execute workflows that persist receipts and
+  propose or review via governed surfaces
+- ``GRAPH_WRITE``: raw graph mutation and proposal resolution
+- ``ADMIN``: apply canonical workflows, add constraints, create new instances
+
+Default is ``ADMIN`` (backward compatible), except when ``CRUXIBLE_AGENT_MODE=1``
+is active and ``CRUXIBLE_MODE`` is unset. In agent mode, the default is
+``GOVERNED_WRITE`` so agents use governed proposal surfaces unless explicitly
+granted broader permissions.
+
+Audit logging uses structlog to stderr so it never interferes with the
+MCP stdio transport on stdout. A safe stderr default is configured at
+module level (guarded by ``if not structlog.is_configured()``) so audit
+logs work even without an explicit ``configure_structlog()`` call.
+Production JSON formatting is set by ``server.main()``.
+"""
+
+from __future__ import annotations
+
+import contextvars
+import os
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from enum import IntEnum
+from pathlib import Path
+
+import structlog
+
+from cruxible_core.errors import ConfigError, PermissionDeniedError
+from cruxible_core.server.config import is_agent_mode
+
+# ---------------------------------------------------------------------------
+# Safe stderr default for structlog — never write to stdout (MCP stdio)
+# ---------------------------------------------------------------------------
+if not structlog.is_configured():
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.add_log_level,
+            structlog.dev.ConsoleRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        cache_logger_on_first_use=False,
+    )
+
+_log = structlog.get_logger("cruxible.permissions")
+
+
+# ---------------------------------------------------------------------------
+# Permission mode enum
+# ---------------------------------------------------------------------------
+
+
+class PermissionMode(IntEnum):
+    """Cumulative permission tiers: ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY."""
+
+    READ_ONLY = 1
+    GOVERNED_WRITE = 2
+    GRAPH_WRITE = 3
+    ADMIN = 4
+
+
+_MODE_NAMES: dict[str, PermissionMode] = {
+    "read_only": PermissionMode.READ_ONLY,
+    "governed_write": PermissionMode.GOVERNED_WRITE,
+    "graph_write": PermissionMode.GRAPH_WRITE,
+    "admin": PermissionMode.ADMIN,
+}
+
+# ---------------------------------------------------------------------------
+# Tool → minimum permission tier
+# ---------------------------------------------------------------------------
+
+TOOL_PERMISSIONS: dict[str, PermissionMode] = {
+    # READ_ONLY tools do not mutate graph/world state. Some may still append
+    # decision-event audit metadata when an explicit decision_record_id is supplied.
+    "cruxible_version": PermissionMode.READ_ONLY,
+    "cruxible_server_info": PermissionMode.READ_ONLY,
+    "cruxible_init": PermissionMode.READ_ONLY,  # admin gate for create inside handler
+    "cruxible_validate": PermissionMode.READ_ONLY,
+    "cruxible_schema": PermissionMode.READ_ONLY,
+    "cruxible_query": PermissionMode.READ_ONLY,
+    "cruxible_list_queries": PermissionMode.READ_ONLY,
+    "cruxible_describe_query": PermissionMode.READ_ONLY,
+    "cruxible_receipt": PermissionMode.READ_ONLY,
+    "cruxible_get_trace": PermissionMode.READ_ONLY,
+    "cruxible_list_traces": PermissionMode.READ_ONLY,
+    "cruxible_list": PermissionMode.READ_ONLY,
+    "cruxible_sample": PermissionMode.READ_ONLY,
+    "cruxible_evaluate": PermissionMode.READ_ONLY,
+    "cruxible_stats": PermissionMode.READ_ONLY,
+    "cruxible_lint": PermissionMode.READ_ONLY,
+    "cruxible_get_entity": PermissionMode.READ_ONLY,
+    "cruxible_get_relationship": PermissionMode.READ_ONLY,
+    "cruxible_relationship_lineage": PermissionMode.READ_ONLY,
+    "cruxible_inspect_entity": PermissionMode.READ_ONLY,
+    "cruxible_inspect_ontology": PermissionMode.READ_ONLY,
+    "cruxible_inspect_workflows": PermissionMode.READ_ONLY,
+    "cruxible_inspect_queries": PermissionMode.READ_ONLY,
+    "cruxible_inspect_governance": PermissionMode.READ_ONLY,
+    "cruxible_inspect_overview": PermissionMode.READ_ONLY,
+    "cruxible_render_wiki": PermissionMode.READ_ONLY,
+    "cruxible_get_group": PermissionMode.READ_ONLY,
+    "cruxible_group_status": PermissionMode.READ_ONLY,
+    "cruxible_list_groups": PermissionMode.READ_ONLY,
+    "cruxible_list_resolutions": PermissionMode.READ_ONLY,
+    "cruxible_get_feedback_profile": PermissionMode.READ_ONLY,
+    "cruxible_get_outcome_profile": PermissionMode.READ_ONLY,
+    "cruxible_analyze_feedback": PermissionMode.READ_ONLY,
+    "cruxible_analyze_outcomes": PermissionMode.READ_ONLY,
+    "cruxible_get_decision_record": PermissionMode.READ_ONLY,
+    "cruxible_list_decision_records": PermissionMode.READ_ONLY,
+    "cruxible_list_decision_events": PermissionMode.READ_ONLY,
+    "cruxible_world_status": PermissionMode.READ_ONLY,
+    "cruxible_world_pull_preview": PermissionMode.READ_ONLY,
+    "cruxible_list_snapshots": PermissionMode.READ_ONLY,
+    "cruxible_plan_workflow": PermissionMode.READ_ONLY,
+    # GOVERNED_WRITE tools
+    "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
+    "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
+    "cruxible_outcome": PermissionMode.GOVERNED_WRITE,
+    "cruxible_run_workflow": PermissionMode.GOVERNED_WRITE,
+    "cruxible_test_workflow": PermissionMode.GOVERNED_WRITE,
+    "cruxible_propose_workflow": PermissionMode.GOVERNED_WRITE,
+    "cruxible_propose_group": PermissionMode.GOVERNED_WRITE,
+    "cruxible_create_decision_record": PermissionMode.GOVERNED_WRITE,
+    "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
+    "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
+    # GRAPH_WRITE tools
+    "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
+    "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
+    "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
+    "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,
+    # ADMIN tools
+    "cruxible_add_constraint": PermissionMode.ADMIN,
+    "cruxible_add_decision_policy": PermissionMode.ADMIN,
+    "cruxible_lock_workflow": PermissionMode.ADMIN,
+    "cruxible_apply_workflow": PermissionMode.ADMIN,
+    "cruxible_reload_config": PermissionMode.ADMIN,
+    "cruxible_create_snapshot": PermissionMode.ADMIN,
+    "cruxible_clone_snapshot": PermissionMode.ADMIN,
+    "cruxible_world_publish": PermissionMode.ADMIN,
+    "cruxible_world_create_overlay": PermissionMode.ADMIN,
+    "cruxible_world_pull_apply": PermissionMode.ADMIN,
+}
+
+# ---------------------------------------------------------------------------
+# Cached state
+# ---------------------------------------------------------------------------
+
+_cached_mode: PermissionMode | None = None
+_cached_allowed_roots: list[Path] | None | bool = False  # False = not yet parsed
+
+# Per-request override (for cloud / multi-tenant use)
+_request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
+    "cruxible_permission_mode", default=None
+)
+
+
+# ---------------------------------------------------------------------------
+# Initialization and caching
+# ---------------------------------------------------------------------------
+
+
+def validate_allowed_roots() -> list[Path] | None:
+    """Parse and validate ``CRUXIBLE_ALLOWED_ROOTS`` at startup.
+
+    Returns ``None`` if the env var is unset.
+    Raises :class:`ConfigError` for empty lists or relative paths.
+    """
+    raw = os.environ.get("CRUXIBLE_ALLOWED_ROOTS")
+    if raw is None:
+        return None
+    paths = [p.strip() for p in raw.split(",") if p.strip()]
+    if not paths:
+        raise ConfigError("CRUXIBLE_ALLOWED_ROOTS is set but empty")
+    result: list[Path] = []
+    for p in paths:
+        path = Path(p)
+        if not path.is_absolute():
+            raise ConfigError(f"CRUXIBLE_ALLOWED_ROOTS contains relative path: '{p}'")
+        result.append(path.resolve())
+    return result
+
+
+def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
+    """Read ``CRUXIBLE_MODE`` env var and cache the result.
+
+    Args:
+        mode: Override for testing. If provided, skips env var lookup.
+
+    Returns:
+        The resolved :class:`PermissionMode`.
+
+    Raises:
+        ConfigError: If the env var contains an invalid value.
+    """
+    global _cached_mode, _cached_allowed_roots
+
+    if mode is not None:
+        _cached_mode = mode
+    else:
+        raw = os.environ.get("CRUXIBLE_MODE")
+        if raw is None:
+            _cached_mode = (
+                PermissionMode.GOVERNED_WRITE
+                if is_agent_mode()
+                else PermissionMode.ADMIN
+            )
+        else:
+            resolved = _MODE_NAMES.get(raw.lower())
+            if resolved is None:
+                valid = ", ".join(sorted(_MODE_NAMES))
+                raise ConfigError(f"Invalid CRUXIBLE_MODE='{raw}'. Valid values: {valid}")
+            _cached_mode = resolved
+
+    # Parse allowed roots (fail-fast on bad config)
+    _cached_allowed_roots = validate_allowed_roots()
+
+    return _cached_mode
+
+
+def get_current_mode() -> PermissionMode:
+    """Return the active permission mode.
+
+    Checks (in order):
+    1. Request-scoped contextvar (set via :func:`request_permission_scope`)
+    2. Module-level cached mode (from env var / :func:`init_permissions`)
+    """
+    request = _request_mode.get()
+    if request is not None:
+        return request
+
+    global _cached_mode
+    if _cached_mode is None:
+        init_permissions()
+    assert _cached_mode is not None
+    return _cached_mode
+
+
+def reset_permissions() -> None:
+    """Clear cached mode, allowed roots, and request scope. Used for test isolation."""
+    global _cached_mode, _cached_allowed_roots
+    _cached_mode = None
+    _cached_allowed_roots = False
+    _request_mode.set(None)
+
+
+@contextmanager
+def request_permission_scope(mode: PermissionMode) -> Iterator[None]:
+    """Temporarily override the permission mode for the current context.
+
+    Uses token-based reset so nested scopes restore correctly.
+    """
+    token = _request_mode.set(mode)
+    try:
+        yield
+    finally:
+        _request_mode.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Permission check
+# ---------------------------------------------------------------------------
+
+
+def check_permission(
+    tool_name: str,
+    *,
+    instance_id: str | None = None,
+    required_mode: PermissionMode | None = None,
+) -> None:
+    """Check whether the current mode permits calling *tool_name*.
+
+    Args:
+        tool_name: The operation or tool being called.
+        instance_id: Optional instance ID for audit logging.
+        required_mode: Override the tier from :data:`TOOL_PERMISSIONS`.
+
+    Raises:
+        PermissionDeniedError: If the current mode is insufficient.
+    """
+    current = get_current_mode()
+    if required_mode is not None:
+        effective = required_mode
+    else:
+        if tool_name not in TOOL_PERMISSIONS:
+            raise ConfigError(f"Tool '{tool_name}' has no entry in TOOL_PERMISSIONS")
+        effective = TOOL_PERMISSIONS[tool_name]
+
+    if current < effective:
+        _log.warning(
+            "permission_denied",
+            tool=tool_name,
+            mode=current.name,
+            required=effective.name,
+            instance_id=instance_id,
+        )
+        raise PermissionDeniedError(tool_name, current.name, effective.name)
+
+    # Audit log for mutations
+    if effective >= PermissionMode.GOVERNED_WRITE:
+        _log.info(
+            "mutation_allowed",
+            tool=tool_name,
+            mode=current.name,
+            instance_id=instance_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Root directory sandboxing
+# ---------------------------------------------------------------------------
+
+
+def validate_root_dir(root_dir: str) -> None:
+    """Validate *root_dir* against ``CRUXIBLE_ALLOWED_ROOTS`` if set."""
+    global _cached_allowed_roots
+    # Ensure allowed roots are parsed
+    if _cached_allowed_roots is False:
+        _cached_allowed_roots = validate_allowed_roots()
+
+    allowed = _cached_allowed_roots
+    if allowed is None:
+        return  # No restriction — backward compatible
+    if not isinstance(allowed, list):
+        return  # Not yet parsed — should not happen after init
+
+    resolved = Path(root_dir).resolve()
+    if not any(resolved == a or a in resolved.parents for a in allowed):
+        _log.warning(
+            "root_dir_denied",
+            root_dir=root_dir,
+            allowed_roots=[str(a) for a in allowed],
+        )
+        raise ConfigError(f"root_dir '{root_dir}' is not under any allowed root")
+
+
+# ---------------------------------------------------------------------------
+# Startup validation
+# ---------------------------------------------------------------------------
+
+
+def validate_tool_permissions(registered_tools: list[str]) -> None:
+    """Enforce exact set equality between registered tools and permission map.
+
+    Args:
+        registered_tools: Tool names registered on the FastMCP server.
+
+    Raises:
+        ConfigError: If there are ungated tools or stale permission entries.
+    """
+    registered = set(registered_tools)
+    permitted = set(TOOL_PERMISSIONS.keys())
+
+    ungated = registered - permitted
+    stale = permitted - registered
+
+    errors: list[str] = []
+    if ungated:
+        errors.append(f"Tools registered without permission entry: {sorted(ungated)}")
+    if stale:
+        errors.append(f"Permission entries without registered tool: {sorted(stale)}")
+
+    if errors:
+        raise ConfigError("Tool permission validation failed", errors=errors)
