@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from cruxible_core.config.composer import (
     compose_config_sequence,
     resolve_config_layers,
@@ -14,7 +16,13 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.kits import materialize_kit
+from cruxible_core.kits import (
+    KIT_MANIFEST_FILE,
+    config_yaml_has_kit_provider_refs,
+    copy_kit_runtime_files,
+    materialize_kit,
+    write_materialized_kit_metadata,
+)
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
     InitResult,
@@ -136,6 +144,53 @@ def service_init(
     return InitResult(instance=instance, warnings=warnings)
 
 
+def service_init_governed_upload(
+    root_dir: str | Path,
+    *,
+    workspace_root: str | Path,
+    config_yaml: str | None = None,
+    data_dir: str | None = None,
+    kit: str | None = None,
+) -> InitResult:
+    """Initialize a governed instance from caller-owned uploaded config content."""
+    governed_root = Path(root_dir)
+    caller_workspace = Path(workspace_root)
+    copied_kit_runtime_files = False
+
+    if config_yaml is not None:
+        has_kit_refs = config_yaml_has_kit_provider_refs(config_yaml)
+        config_yaml = _normalize_uploaded_config_yaml(
+            config_yaml,
+            config_base_dir=caller_workspace,
+        )
+        has_kit_refs = has_kit_refs or config_yaml_has_kit_provider_refs(config_yaml)
+        if has_kit_refs and not (caller_workspace / KIT_MANIFEST_FILE).exists():
+            raise ConfigError(
+                "Uploaded config contains kit:// provider refs, but the workspace root "
+                "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
+                "standalone kits, or `cruxible world create-overlay --kit` for overlay kits."
+            )
+        if (caller_workspace / KIT_MANIFEST_FILE).exists():
+            copy_kit_runtime_files(
+                caller_workspace,
+                governed_root,
+                include_entry_config=False,
+            )
+            copied_kit_runtime_files = True
+
+    result = service_init(
+        governed_root,
+        config_path=None,
+        config_yaml=config_yaml,
+        data_dir=data_dir,
+        kit=kit,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    )
+    if copied_kit_runtime_files:
+        write_materialized_kit_metadata(governed_root)
+    return result
+
+
 def _save_managed_config(root: Path, config: CoreConfig) -> str:
     """Persist the active config under instance-owned metadata."""
     managed_path = root / _MANAGED_CONFIG_RELATIVE_PATH
@@ -154,14 +209,35 @@ def _cleanup_managed_config(root: Path) -> None:
         pass
 
 
+def _normalize_uploaded_config_yaml(
+    config_yaml: str,
+    *,
+    config_base_dir: str | Path,
+) -> str:
+    """Compose raw uploaded YAML against the caller-side config base directory."""
+    config = load_config_from_string(config_yaml)
+    config = compose_config_sequence(
+        resolve_config_layers(config, config_dir=Path(config_base_dir)),
+    )
+    data = config.model_dump(mode="python", by_alias=True, exclude_none=True)
+    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+
+
 def service_reload_config(
     instance: InstanceProtocol,
     config_path: str | None = None,
     config_yaml: str | None = None,
+    *,
+    config_base_dir: str | Path | None = None,
 ) -> ReloadConfigResult:
     """Validate, replace, or repoint the active config for an existing instance."""
     if config_path is not None and config_yaml is not None:
         raise ConfigError("Provide config_path or config_yaml, not both")
+    if config_yaml is not None and config_base_dir is not None:
+        config_yaml = _normalize_uploaded_config_yaml(
+            config_yaml,
+            config_base_dir=config_base_dir,
+        )
 
     upstream = instance.get_upstream_metadata()
     if upstream is not None:

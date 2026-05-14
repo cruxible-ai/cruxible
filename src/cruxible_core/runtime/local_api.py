@@ -6,21 +6,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar
 
-import yaml
-
 from cruxible_client import contracts
-from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalBucketBasis
-from cruxible_core.kits import (
-    KIT_MANIFEST_FILE,
-    config_yaml_has_kit_provider_refs,
-    copy_kit_runtime_files,
-    write_materialized_kit_metadata,
-)
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
@@ -60,6 +50,7 @@ from cruxible_core.service import (
     service_get_trace,
     service_group_status,
     service_init,
+    service_init_governed_upload,
     service_inspect_entity,
     service_inspect_view,
     service_lint,
@@ -133,25 +124,6 @@ def _operation_context(
     if decision_record_id is None:
         return None
     return OperationContext(decision_record_id=decision_record_id, surface=surface)  # type: ignore[arg-type]
-
-
-def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -> str:
-    """Normalize uploaded config content for daemon-owned execution.
-
-    Relative extends and artifact URIs are resolved against the caller workspace root so
-    the daemon-owned active config can still execute correctly after being materialized
-    under server-owned storage.
-
-    V1 assumption: the local daemon can still read files in the caller workspace when
-    resolving relative extends paths. A fully isolated daemon will need callers to upload
-    fully resolved config content instead of relying on workspace filesystem access here.
-    """
-    config = load_config_from_string(config_yaml)
-    config = compose_config_sequence(
-        resolve_config_layers(config, config_dir=workspace_root),
-    )
-    data = config.model_dump(mode="python", by_alias=True, exclude_none=True)
-    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
 
 
 def init_local(
@@ -247,32 +219,13 @@ def init_governed(
             "CLI and MCP callers should read the config locally and send config_yaml "
             "instead of passing config_path."
         )
-    workspace_root = Path(root_dir)
-    copied_kit_runtime_files = False
-    if config_yaml is not None:
-        has_kit_refs = config_yaml_has_kit_provider_refs(config_yaml)
-        config_yaml = _normalize_governed_config_yaml(config_yaml, workspace_root=workspace_root)
-        has_kit_refs = has_kit_refs or config_yaml_has_kit_provider_refs(config_yaml)
-        if has_kit_refs and not (workspace_root / KIT_MANIFEST_FILE).exists():
-            raise ConfigError(
-                "Uploaded config contains kit:// provider refs, but the workspace root "
-                "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
-                "standalone kits, or `cruxible world create-overlay --kit` for overlay kits."
-            )
-        if (workspace_root / KIT_MANIFEST_FILE).exists():
-            copy_kit_runtime_files(workspace_root, governed_root, include_entry_config=False)
-            copied_kit_runtime_files = True
-
-    result = service_init(
+    result = service_init_governed_upload(
         governed_root,
-        config_path=None,
+        workspace_root=root_dir,
         config_yaml=config_yaml,
         data_dir=data_dir,
         kit=kit,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
     )
-    if copied_kit_runtime_files:
-        write_materialized_kit_metadata(governed_root)
     get_manager().register(registered.record.instance_id, result.instance)
     return contracts.InitResult(
         instance_id=registered.record.instance_id,
@@ -1510,6 +1463,7 @@ def reload_config(
         instance_id=instance_id,
         required_mode=PermissionMode.ADMIN,
     )
+    config_base_dir: Path | None = None
     if config_yaml is not None:
         record = get_registry().get(instance_id)
         if (
@@ -1517,12 +1471,14 @@ def reload_config(
             and record.backend == GOVERNED_DAEMON_BACKEND
             and record.workspace_root is not None
         ):
-            config_yaml = _normalize_governed_config_yaml(
-                config_yaml,
-                workspace_root=Path(record.workspace_root),
-            )
+            config_base_dir = Path(record.workspace_root)
     instance = get_manager().get(instance_id)
-    result = service_reload_config(instance, config_path=config_path, config_yaml=config_yaml)
+    result = service_reload_config(
+        instance,
+        config_path=config_path,
+        config_yaml=config_yaml,
+        config_base_dir=config_base_dir,
+    )
     return contracts.ReloadConfigResult(
         config_path=result.config_path,
         updated=result.updated,

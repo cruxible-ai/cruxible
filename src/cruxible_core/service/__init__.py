@@ -53,6 +53,7 @@ from cruxible_core.service.groups import (
 )
 from cruxible_core.service.lifecycle import (
     service_init,
+    service_init_governed_upload,
     service_reload_config,
     service_validate,
 )
@@ -302,6 +303,7 @@ __all__ = [
     "service_add_constraint",
     "service_add_decision_policy",
     "service_init",
+    "service_init_governed_upload",
     "service_list",
     "service_list_queries",
     "service_list_traces",

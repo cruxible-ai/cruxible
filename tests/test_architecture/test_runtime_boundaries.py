@@ -81,6 +81,18 @@ def test_runtime_local_api_defines_no_private_handle_functions():
     assert names == []
 
 
+def test_runtime_local_api_does_not_own_config_materialization():
+    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+    source = path.read_text()
+    forbidden = [
+        "cruxible_core.config.composer",
+        "cruxible_core.config.loader",
+        "cruxible_core.kits",
+    ]
+    for import_path in forbidden:
+        assert import_path not in source, import_path
+
+
 def test_mcp_permission_exports_point_at_runtime_policy():
     assert mcp_permissions.PermissionMode is runtime_permissions.PermissionMode
     assert mcp_permissions.check_permission is runtime_permissions.check_permission

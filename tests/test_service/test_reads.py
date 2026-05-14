@@ -26,6 +26,7 @@ from cruxible_core.service import (
     service_get_relationship_lineage,
     service_get_trace,
     service_init,
+    service_init_governed_upload,
     service_inspect_entity,
     service_list,
     service_list_traces,
@@ -36,6 +37,46 @@ from cruxible_core.service import (
     service_stats,
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
+
+
+def _kit_provider_config_yaml() -> str:
+    return (
+        "version: '1.0'\n"
+        "name: kit_ref_demo\n"
+        "entity_types:\n"
+        "  Demo:\n"
+        "    properties:\n"
+        "      demo_id: {type: string, primary_key: true}\n"
+        "relationships: []\n"
+        "contracts:\n"
+        "  EmptyInput:\n"
+        "    fields: {}\n"
+        "providers:\n"
+        "  p:\n"
+        "    kind: function\n"
+        "    contract_in: EmptyInput\n"
+        "    contract_out: EmptyInput\n"
+        "    ref: kit://providers/main.py::run\n"
+        "    version: 1.0.0\n"
+    )
+
+
+def _write_minimal_standalone_kit(root: Path) -> None:
+    root.joinpath("cruxible-kit.yaml").write_text(
+        "schema_version: cruxible.kit.v1\n"
+        "kit_id: demo\n"
+        "version: 0.2.0\n"
+        "role: standalone\n"
+        "entry_config: config.yaml\n"
+        "provider_paths:\n"
+        "  - providers\n"
+        "copy_paths: []\n"
+        "requires_extras: []\n"
+    )
+    root.joinpath("cruxible.lock.yaml").write_text(
+        "version: '1'\nconfig_digest: test\nartifacts: {}\nproviders: {}\n"
+    )
+
 
 # ---------------------------------------------------------------------------
 # service_init
@@ -187,6 +228,94 @@ class TestInit:
             instance_root / ".cruxible" / "configs" / "active.yaml"
         )
 
+    def test_governed_upload_init_resolves_extends_from_workspace(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        governed_root = tmp_path / "daemon" / "inst_123"
+        workspace.mkdir()
+        base = workspace / "base.yaml"
+        base.write_text(
+            'version: "1.0"\n'
+            "name: base\n"
+            "entity_types:\n"
+            "  Case:\n"
+            "    properties:\n"
+            "      case_id: {type: string, primary_key: true}\n"
+            "relationships:\n"
+            "  - name: cites\n"
+            "    from: Case\n"
+            "    to: Case\n"
+        )
+        uploaded = (
+            'version: "1.0"\n'
+            "name: overlay\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships:\n"
+            "  - name: follows\n"
+            "    from: Case\n"
+            "    to: Case\n"
+        )
+
+        result = service_init_governed_upload(
+            governed_root,
+            workspace_root=workspace,
+            config_yaml=uploaded,
+        )
+
+        config = result.instance.load_config()
+        assert result.instance.is_governed_mode()
+        assert result.instance.get_config_path() == (
+            governed_root / ".cruxible" / "configs" / "active.yaml"
+        )
+        assert "Case" in config.entity_types
+        assert config.get_relationship("cites") is not None
+        assert config.get_relationship("follows") is not None
+
+    def test_governed_upload_init_rejects_unmaterialized_kit_refs(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        governed_root = tmp_path / "daemon" / "inst_123"
+        workspace.mkdir()
+        uploaded = _kit_provider_config_yaml()
+
+        with pytest.raises(ConfigError, match="workspace root does not contain cruxible-kit.yaml"):
+            service_init_governed_upload(
+                governed_root,
+                workspace_root=workspace,
+                config_yaml=uploaded,
+            )
+
+    def test_governed_upload_init_copies_kit_runtime_files(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        governed_root = tmp_path / "daemon" / "inst_123"
+        workspace.mkdir()
+        _write_minimal_standalone_kit(workspace)
+        providers = workspace / "providers"
+        providers.mkdir()
+        (providers / "main.py").write_text(
+            "def run(_input, _context):\n"
+            "    return {}\n"
+        )
+
+        service_init_governed_upload(
+            governed_root,
+            workspace_root=workspace,
+            config_yaml=_kit_provider_config_yaml(),
+        )
+
+        assert (governed_root / "cruxible-kit.yaml").exists()
+        assert (governed_root / "cruxible.lock.yaml").exists()
+        assert (governed_root / "providers" / "main.py").exists()
+        assert (governed_root / ".cruxible" / "kit.json").exists()
+
     def test_init_with_extends_compose_conflict_cleanup(self, tmp_path: Path) -> None:
         base = tmp_path / "base.yaml"
         base.write_text(
@@ -261,6 +390,46 @@ class TestReloadConfigExtends:
         # still points at the overlay file. The validation passed because
         # composition happened before validate_config.
         assert len(reload_result.warnings) == 0 or reload_result.warnings is not None
+
+    def test_reload_uploaded_yaml_uses_config_base_dir(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(CAR_PARTS_YAML)
+        result = service_init(tmp_path, config_path="config.yaml")
+        instance = result.instance
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        base = workspace / "base.yaml"
+        base.write_text(
+            'version: "1.0"\n'
+            "name: base\n"
+            "entity_types:\n"
+            "  Case:\n"
+            "    properties:\n"
+            "      case_id: {type: string, primary_key: true}\n"
+            "relationships: []\n"
+        )
+        uploaded = (
+            'version: "1.0"\n'
+            "name: overlay\n"
+            "extends: base.yaml\n"
+            "entity_types: {}\n"
+            "relationships:\n"
+            "  - name: follows\n"
+            "    from: Case\n"
+            "    to: Case\n"
+        )
+
+        reload_result = service_reload_config(
+            instance,
+            config_yaml=uploaded,
+            config_base_dir=workspace,
+        )
+
+        config = instance.load_config()
+        assert reload_result.updated is True
+        assert "Case" in config.entity_types
+        assert config.get_relationship("follows") is not None
 
 
 # ---------------------------------------------------------------------------
