@@ -21,7 +21,7 @@ async def create_decision_record(
     instance_id: str,
     req: DecisionRecordCreateRequest,
 ) -> contracts.DecisionRecordResult:
-    return local_api._handle_create_decision_record_local(
+    return local_api.create_decision_record(
         resolve_server_instance_id(instance_id),
         question=req.question,
         subject_type=req.subject_type,
@@ -39,7 +39,7 @@ async def list_decision_records(
     decision_class: contracts.DecisionClass | None = None,
     limit: int = Query(default=100, ge=1),
 ) -> contracts.DecisionRecordListResult:
-    return local_api._handle_list_decision_records_local(
+    return local_api.list_decision_records(
         resolve_server_instance_id(instance_id),
         status=status,
         subject_type=subject_type,
@@ -61,7 +61,7 @@ async def list_decision_events(
     status: str | None = None,
     limit: int = Query(default=100, ge=1),
 ) -> contracts.DecisionEventListResult:
-    return local_api._handle_list_decision_events_local(
+    return local_api.list_decision_events(
         resolve_server_instance_id(instance_id),
         decision_record_id=decision_record_id,
         receipt_id=receipt_id,
@@ -80,7 +80,7 @@ async def get_decision_record(
     decision_record_id: str,
     include_events: bool = True,
 ) -> contracts.DecisionRecordResult:
-    return local_api._handle_get_decision_record_local(
+    return local_api.get_decision_record(
         resolve_server_instance_id(instance_id),
         decision_record_id,
         include_events=include_events,
@@ -96,7 +96,7 @@ async def finalize_decision_record(
     decision_record_id: str,
     req: DecisionRecordFinalizeRequest,
 ) -> contracts.DecisionRecordResult:
-    return local_api._handle_finalize_decision_record_local(
+    return local_api.finalize_decision_record(
         resolve_server_instance_id(instance_id),
         decision_record_id,
         final_decision=req.final_decision,
@@ -114,7 +114,7 @@ async def abandon_decision_record(
     decision_record_id: str,
     req: DecisionRecordAbandonRequest,
 ) -> contracts.DecisionRecordResult:
-    return local_api._handle_abandon_decision_record_local(
+    return local_api.abandon_decision_record(
         resolve_server_instance_id(instance_id),
         decision_record_id,
         reason=req.reason,

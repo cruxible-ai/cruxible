@@ -42,7 +42,7 @@ def test_mcp_local_wrappers_delegate_to_runtime_local_api(monkeypatch):
     )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(local_api, "_handle_evaluate_local", lambda *args, **kwargs: sentinel)
+    monkeypatch.setattr(local_api, "evaluate", lambda *args, **kwargs: sentinel)
 
     assert handlers.handle_evaluate("instance-id") is sentinel
 
@@ -61,6 +61,24 @@ def test_runtime_and_server_do_not_import_mcp_permissions():
         for path in directory.rglob("*.py"):
             source = path.read_text()
             assert "cruxible_core.mcp.permissions" not in source, str(path)
+
+
+def test_src_does_not_call_runtime_private_local_api_handlers():
+    src_root = _repo_root() / "src/cruxible_core"
+    for path in src_root.rglob("*.py"):
+        source = path.read_text()
+        assert "local_api._handle_" not in source, str(path)
+
+
+def test_runtime_local_api_defines_no_private_handle_functions():
+    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    names = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("_handle_")
+    ]
+    assert names == []
 
 
 def test_mcp_permission_exports_point_at_runtime_policy():

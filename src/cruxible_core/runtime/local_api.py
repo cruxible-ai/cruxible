@@ -1,4 +1,4 @@
-"""Local execution helpers shared by HTTP routes and MCP handlers."""
+"""Runtime facade shared by HTTP routes and MCP handlers."""
 
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def _normalize_governed_config_yaml(config_yaml: str, *, workspace_root: Path) -
     return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
 
 
-def _handle_init_local(
+def init_local(
     root_dir: str,
     config_path: str | None = None,
     config_yaml: str | None = None,
@@ -203,7 +203,7 @@ def _handle_init_local(
     return contracts.InitResult(instance_id=instance_id, status="initialized")
 
 
-def _handle_init_governed(
+def init_governed(
     root_dir: str,
     config_path: str | None = None,
     config_yaml: str | None = None,
@@ -281,7 +281,7 @@ def _handle_init_governed(
     )
 
 
-def _handle_validate_local(
+def validate(
     config_path: str | None = None,
     config_yaml: str | None = None,
 ) -> contracts.ValidateResult:
@@ -300,7 +300,7 @@ def _handle_validate_local(
     )
 
 
-def _handle_server_info_local() -> contracts.ServerInfoResult:
+def server_info() -> contracts.ServerInfoResult:
     """Return live daemon metadata without requiring an instance."""
     check_permission("cruxible_server_info")
     result = service_server_info()
@@ -312,7 +312,7 @@ def _handle_server_info_local() -> contracts.ServerInfoResult:
     )
 
 
-def _handle_workflow_lock_local(
+def workflow_lock(
     instance_id: str,
     force: bool = False,
 ) -> contracts.WorkflowLockResult:
@@ -332,7 +332,7 @@ def _handle_workflow_lock_local(
     )
 
 
-def _handle_workflow_plan_local(
+def workflow_plan(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
@@ -348,7 +348,7 @@ def _handle_workflow_plan_local(
     return contracts.WorkflowPlanResult(plan=result.plan.model_dump(mode="json"))
 
 
-def _handle_workflow_run_local(
+def workflow_run(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
@@ -372,7 +372,7 @@ def _handle_workflow_run_local(
     return _build_workflow_execution_contract(result, contracts.WorkflowRunResult)
 
 
-def _handle_workflow_apply_local(
+def workflow_apply(
     instance_id: str,
     workflow_name: str,
     expected_apply_digest: str,
@@ -400,7 +400,7 @@ def _handle_workflow_apply_local(
     return _build_workflow_execution_contract(result, contracts.WorkflowApplyResult)
 
 
-def _handle_workflow_test_local(
+def workflow_test(
     instance_id: str,
     name: str | None = None,
 ) -> contracts.WorkflowTestResult:
@@ -430,7 +430,7 @@ def _handle_workflow_test_local(
     )
 
 
-def _handle_propose_workflow_local(
+def propose_workflow(
     instance_id: str,
     workflow_name: str,
     input_payload: dict[str, Any] | None = None,
@@ -478,7 +478,7 @@ def _handle_propose_workflow_local(
     )
 
 
-def _handle_create_snapshot_local(
+def create_snapshot(
     instance_id: str,
     label: str | None = None,
 ) -> contracts.SnapshotCreateResult:
@@ -495,7 +495,7 @@ def _handle_create_snapshot_local(
     )
 
 
-def _handle_create_decision_record_local(
+def create_decision_record(
     instance_id: str,
     *,
     question: str,
@@ -515,7 +515,7 @@ def _handle_create_decision_record_local(
     return contracts.DecisionRecordResult(record=result.record.model_dump(mode="json"))
 
 
-def _handle_get_decision_record_local(
+def get_decision_record(
     instance_id: str,
     decision_record_id: str,
     *,
@@ -534,7 +534,7 @@ def _handle_get_decision_record_local(
     )
 
 
-def _handle_list_decision_records_local(
+def list_decision_records(
     instance_id: str,
     *,
     status: str | None = None,
@@ -558,7 +558,7 @@ def _handle_list_decision_records_local(
     )
 
 
-def _handle_list_decision_events_local(
+def list_decision_events(
     instance_id: str,
     *,
     decision_record_id: str | None = None,
@@ -582,7 +582,7 @@ def _handle_list_decision_events_local(
     )
 
 
-def _handle_finalize_decision_record_local(
+def finalize_decision_record(
     instance_id: str,
     decision_record_id: str,
     *,
@@ -605,7 +605,7 @@ def _handle_finalize_decision_record_local(
     )
 
 
-def _handle_abandon_decision_record_local(
+def abandon_decision_record(
     instance_id: str,
     decision_record_id: str,
     *,
@@ -620,7 +620,7 @@ def _handle_abandon_decision_record_local(
     )
 
 
-def _handle_list_snapshots_local(instance_id: str) -> contracts.SnapshotListResult:
+def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
     """List immutable snapshots for an instance."""
     check_permission(
         "snapshot_list",
@@ -637,7 +637,7 @@ def _handle_list_snapshots_local(instance_id: str) -> contracts.SnapshotListResu
     )
 
 
-def _handle_clone_snapshot_local(
+def clone_snapshot_local(
     instance_id: str,
     snapshot_id: str,
     root_dir: str,
@@ -659,7 +659,7 @@ def _handle_clone_snapshot_local(
     )
 
 
-def _handle_clone_snapshot_governed(
+def clone_snapshot_governed(
     instance_id: str,
     snapshot_id: str,
     root_dir: str,
@@ -686,7 +686,7 @@ def _handle_clone_snapshot_governed(
     )
 
 
-def _handle_query_local(
+def query(
     instance_id: str,
     query_name: str,
     params: dict[str, Any] | None = None,
@@ -736,7 +736,7 @@ def _handle_query_local(
     )
 
 
-def _handle_render_wiki_local(
+def render_wiki(
     instance_id: str,
     *,
     focus: list[str] | None = None,
@@ -769,7 +769,7 @@ def _handle_render_wiki_local(
     )
 
 
-def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
+def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     """Retrieve a stored receipt by ID."""
     check_permission("cruxible_receipt")
     instance = get_manager().get(instance_id)
@@ -777,7 +777,7 @@ def _handle_receipt_local(instance_id: str, receipt_id: str) -> dict[str, Any]:
     return receipt.model_dump(mode="json")
 
 
-def _handle_get_trace_local(instance_id: str, trace_id: str) -> dict[str, Any]:
+def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
     """Retrieve a stored provider execution trace by ID."""
     check_permission(
         "cruxible_get_trace",
@@ -789,7 +789,7 @@ def _handle_get_trace_local(instance_id: str, trace_id: str) -> dict[str, Any]:
     return trace.model_dump(mode="json")
 
 
-def _handle_list_traces_local(
+def list_traces(
     instance_id: str,
     *,
     workflow_name: str | None = None,
@@ -814,7 +814,7 @@ def _handle_list_traces_local(
     return contracts.TraceListResult(traces=result.traces, count=result.count)
 
 
-def _handle_feedback_local(
+def feedback(
     instance_id: str,
     receipt_id: str,
     action: contracts.FeedbackAction,
@@ -862,7 +862,7 @@ def _handle_feedback_local(
     )
 
 
-def _handle_feedback_batch_local(
+def feedback_batch(
     instance_id: str,
     items: list[contracts.FeedbackBatchItemInput],
     *,
@@ -903,7 +903,7 @@ def _handle_feedback_batch_local(
     )
 
 
-def _handle_outcome_local(
+def outcome(
     instance_id: str,
     receipt_id: str | None,
     outcome: contracts.OutcomeValue,
@@ -933,7 +933,7 @@ def _handle_outcome_local(
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 
 
-def _handle_list_local(
+def list_resources(
     instance_id: str,
     resource_type: contracts.ResourceType,
     entity_type: str | None = None,
@@ -971,7 +971,7 @@ def _handle_list_local(
     return contracts.ListResult(items=items, total=result.total)
 
 
-def _handle_evaluate_local(
+def evaluate(
     instance_id: str,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
@@ -998,7 +998,7 @@ def _handle_evaluate_local(
     )
 
 
-def _handle_lint_local(
+def lint(
     instance_id: str,
     *,
     max_findings: int = 100,
@@ -1048,7 +1048,7 @@ def _handle_lint_local(
     )
 
 
-def _handle_schema_local(instance_id: str) -> dict[str, Any]:
+def schema(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
     check_permission("cruxible_schema")
     instance = get_manager().get(instance_id)
@@ -1056,7 +1056,7 @@ def _handle_schema_local(instance_id: str) -> dict[str, Any]:
     return config.model_dump(mode="json")
 
 
-def _handle_list_queries_local(instance_id: str) -> contracts.QueryListResult:
+def list_queries(instance_id: str) -> contracts.QueryListResult:
     """List named-query definitions for an instance."""
     check_permission("cruxible_list_queries", instance_id=instance_id)
     instance = get_manager().get(instance_id)
@@ -1076,7 +1076,7 @@ def _handle_list_queries_local(instance_id: str) -> contracts.QueryListResult:
     )
 
 
-def _handle_describe_query_local(
+def describe_query(
     instance_id: str,
     query_name: str,
 ) -> contracts.NamedQueryInfoResult:
@@ -1094,7 +1094,7 @@ def _handle_describe_query_local(
     )
 
 
-def _handle_get_feedback_profile_local(
+def get_feedback_profile(
     instance_id: str,
     relationship_type: str,
 ) -> contracts.FeedbackProfileResult:
@@ -1118,7 +1118,7 @@ def _handle_get_feedback_profile_local(
     )
 
 
-def _handle_get_outcome_profile_local(
+def get_outcome_profile(
     instance_id: str,
     *,
     anchor_type: contracts.OutcomeAnchorType,
@@ -1156,7 +1156,7 @@ def _handle_get_outcome_profile_local(
     )
 
 
-def _handle_analyze_feedback_local(
+def analyze_feedback(
     instance_id: str,
     relationship_type: str,
     *,
@@ -1275,7 +1275,7 @@ def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.Analy
     )
 
 
-def _handle_analyze_outcomes_local(
+def analyze_outcomes(
     instance_id: str,
     *,
     anchor_type: contracts.OutcomeAnchorType,
@@ -1421,7 +1421,7 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
     )
 
 
-def _handle_stats_local(instance_id: str) -> contracts.StatsResult:
+def stats(instance_id: str) -> contracts.StatsResult:
     """Return grouped entity and relationship counts."""
     check_permission(
         "cruxible_stats",
@@ -1439,7 +1439,7 @@ def _handle_stats_local(instance_id: str) -> contracts.StatsResult:
     )
 
 
-def _handle_inspect_entity_local(
+def inspect_entity(
     instance_id: str,
     entity_type: str,
     entity_id: str,
@@ -1482,7 +1482,7 @@ def _handle_inspect_entity_local(
     )
 
 
-def _handle_inspect_view_local(
+def inspect_view(
     instance_id: str,
     view: str,
     *,
@@ -1499,7 +1499,7 @@ def _handle_inspect_view_local(
     return contracts.CanonicalViewResult(view=result.view, payload=result.payload)
 
 
-def _handle_reload_config_local(
+def reload_config(
     instance_id: str,
     config_path: str | None = None,
     config_yaml: str | None = None,
@@ -1530,7 +1530,7 @@ def _handle_reload_config_local(
     )
 
 
-def _handle_sample_local(
+def sample(
     instance_id: str,
     entity_type: str,
     limit: int = 5,
@@ -1546,7 +1546,7 @@ def _handle_sample_local(
     )
 
 
-def _handle_add_relationship_impl(
+def add_relationships_with_provenance(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
     *,
@@ -1581,12 +1581,12 @@ def _handle_add_relationship_impl(
     )
 
 
-def _handle_add_relationship_local(
+def add_relationships(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
-    return _handle_add_relationship_impl(
+    return add_relationships_with_provenance(
         instance_id,
         relationships,
         provenance_source="mcp_add",
@@ -1594,7 +1594,7 @@ def _handle_add_relationship_local(
     )
 
 
-def _handle_add_entity_local(
+def add_entities(
     instance_id: str,
     entities: list[contracts.EntityInput],
 ) -> contracts.AddEntityResult:
@@ -1618,7 +1618,7 @@ def _handle_add_entity_local(
     )
 
 
-def _handle_add_constraint_local(
+def add_constraint(
     instance_id: str,
     name: str,
     rule: str,
@@ -1643,7 +1643,7 @@ def _handle_add_constraint_local(
     )
 
 
-def _handle_add_decision_policy_local(
+def add_decision_policy(
     instance_id: str,
     *,
     name: str,
@@ -1681,7 +1681,7 @@ def _handle_add_decision_policy_local(
     )
 
 
-def _handle_get_entity_local(
+def get_entity(
     instance_id: str,
     entity_type: str,
     entity_id: str,
@@ -1700,7 +1700,7 @@ def _handle_get_entity_local(
     )
 
 
-def _handle_get_relationship_local(
+def get_relationship(
     instance_id: str,
     from_type: str,
     from_id: str,
@@ -1742,7 +1742,7 @@ def _handle_get_relationship_local(
     )
 
 
-def _handle_relationship_lineage_local(
+def get_relationship_lineage(
     instance_id: str,
     from_type: str,
     from_id: str,
@@ -1787,7 +1787,7 @@ def _handle_relationship_lineage_local(
     )
 
 
-def _handle_propose_group_local(
+def propose_group(
     instance_id: str,
     relationship_type: str,
     members: list[contracts.MemberInput],
@@ -1859,7 +1859,7 @@ def _handle_propose_group_local(
     )
 
 
-def _handle_resolve_group_local(
+def resolve_group(
     instance_id: str,
     group_id: str,
     action: contracts.GroupAction,
@@ -1889,7 +1889,7 @@ def _handle_resolve_group_local(
     )
 
 
-def _handle_update_trust_status_local(
+def update_trust_status(
     instance_id: str,
     resolution_id: str,
     trust_status: contracts.GroupTrustStatus,
@@ -1907,7 +1907,7 @@ def _handle_update_trust_status_local(
     )
 
 
-def _handle_get_group_local(
+def get_group(
     instance_id: str,
     group_id: str,
 ) -> contracts.GetGroupToolResult:
@@ -1929,7 +1929,7 @@ def _handle_get_group_local(
     )
 
 
-def _handle_list_groups_local(
+def list_groups(
     instance_id: str,
     relationship_type: str | None = None,
     status: contracts.GroupStatus | None = None,
@@ -1951,7 +1951,7 @@ def _handle_list_groups_local(
     )
 
 
-def _handle_group_status_local(
+def get_group_status(
     instance_id: str,
     *,
     group_id: str | None = None,
@@ -1987,7 +1987,7 @@ def _handle_group_status_local(
     )
 
 
-def _handle_list_resolutions_local(
+def list_resolutions(
     instance_id: str,
     relationship_type: str | None = None,
     action: contracts.GroupAction | None = None,
@@ -2009,7 +2009,7 @@ def _handle_list_resolutions_local(
     )
 
 
-def _handle_world_publish_local(
+def world_publish(
     instance_id: str,
     transport_ref: str,
     world_id: str,
@@ -2037,7 +2037,7 @@ def _handle_world_publish_local(
     )
 
 
-def _handle_create_world_overlay_local(
+def create_world_overlay_local(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
@@ -2068,7 +2068,7 @@ def _handle_create_world_overlay_local(
     )
 
 
-def _handle_create_world_overlay_governed(
+def create_world_overlay_governed(
     transport_ref: str | None,
     world_ref: str | None,
     kit: str | None,
@@ -2100,7 +2100,7 @@ def _handle_create_world_overlay_governed(
     )
 
 
-def _handle_world_status_local(instance_id: str) -> contracts.WorldStatusResult:
+def world_status(instance_id: str) -> contracts.WorldStatusResult:
     """Return upstream tracking metadata for a release-backed overlay."""
     check_permission(
         "cruxible_world_status",
@@ -2117,7 +2117,7 @@ def _handle_world_status_local(instance_id: str) -> contracts.WorldStatusResult:
     return contracts.WorldStatusResult(upstream=upstream)
 
 
-def _handle_world_pull_preview_local(instance_id: str) -> contracts.WorldPullPreviewResult:
+def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
     """Preview pulling a newer upstream release into an overlay."""
     check_permission(
         "cruxible_world_pull_preview",
@@ -2139,7 +2139,7 @@ def _handle_world_pull_preview_local(instance_id: str) -> contracts.WorldPullPre
     )
 
 
-def _handle_world_pull_apply_local(
+def world_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
 ) -> contracts.WorldPullApplyResult:

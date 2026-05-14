@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1", tags=["instances"])
 @router.post("/instances", response_model=contracts.InitResult)
 async def init_instance(req: InitRequest) -> contracts.InitResult:
     """Create or reload an instance, returning an opaque server ID."""
-    return local_api._handle_init_governed(
+    return local_api.init_governed(
         root_dir=req.root_dir,
         config_path=req.config_path,
         config_yaml=req.config_yaml,
@@ -26,7 +26,7 @@ async def init_instance(req: InitRequest) -> contracts.InitResult:
 @router.post("/validate", response_model=contracts.ValidateResult)
 async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
     """Validate a config file or inline YAML."""
-    return local_api._handle_validate_local(
+    return local_api.validate(
         config_path=req.config_path,
         config_yaml=req.config_yaml,
     )
@@ -35,4 +35,4 @@ async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
 @router.get("/server/info", response_model=contracts.ServerInfoResult)
 async def server_info() -> contracts.ServerInfoResult:
     """Return live daemon metadata for clients and agent skills."""
-    return local_api._handle_server_info_local()
+    return local_api.server_info()

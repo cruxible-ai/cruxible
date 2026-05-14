@@ -23,7 +23,7 @@ async def workflow_lock(
     req: WorkflowLockRequest | None = None,
 ) -> contracts.WorkflowLockResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_lock_local(
+    return local_api.workflow_lock(
         resolved_instance_id,
         force=req.force if req is not None else False,
     )
@@ -35,7 +35,7 @@ async def workflow_plan(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowPlanResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_plan_local(
+    return local_api.workflow_plan(
         resolved_instance_id,
         req.workflow_name,
         req.input,
@@ -48,7 +48,7 @@ async def workflow_run(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowRunResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_run_local(
+    return local_api.workflow_run(
         resolved_instance_id,
         req.workflow_name,
         req.input,
@@ -63,7 +63,7 @@ async def workflow_apply(
     req: WorkflowApplyRequest,
 ) -> contracts.WorkflowApplyResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_apply_local(
+    return local_api.workflow_apply(
         resolved_instance_id,
         req.workflow_name,
         req.expected_apply_digest,
@@ -80,7 +80,7 @@ async def workflow_test(
     req: WorkflowTestRequest,
 ) -> contracts.WorkflowTestResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_workflow_test_local(resolved_instance_id, req.name)
+    return local_api.workflow_test(resolved_instance_id, req.name)
 
 
 @router.post("/{instance_id}/workflows/propose", response_model=contracts.WorkflowProposeResult)
@@ -89,7 +89,7 @@ async def workflow_propose(
     req: WorkflowInputRequest,
 ) -> contracts.WorkflowProposeResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_propose_workflow_local(
+    return local_api.propose_workflow(
         resolved_instance_id,
         req.workflow_name,
         req.input,

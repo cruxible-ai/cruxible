@@ -18,13 +18,13 @@ async def create_snapshot(
     req: SnapshotCreateRequest,
 ) -> contracts.SnapshotCreateResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_create_snapshot_local(resolved_instance_id, req.label)
+    return local_api.create_snapshot(resolved_instance_id, req.label)
 
 
 @router.get("/{instance_id}/snapshots", response_model=contracts.SnapshotListResult)
 async def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_list_snapshots_local(resolved_instance_id)
+    return local_api.list_snapshots(resolved_instance_id)
 
 
 @router.post("/{instance_id}/clone", response_model=contracts.CloneSnapshotResult)
@@ -33,7 +33,7 @@ async def clone_snapshot(
     req: CloneSnapshotRequest,
 ) -> contracts.CloneSnapshotResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_clone_snapshot_governed(
+    return local_api.clone_snapshot_governed(
         resolved_instance_id,
         req.snapshot_id,
         req.root_dir,

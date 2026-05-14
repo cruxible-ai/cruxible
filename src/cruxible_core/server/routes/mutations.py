@@ -35,7 +35,7 @@ async def add_entities(
     instance_id: str,
     req: AddEntitiesRequest,
 ) -> contracts.AddEntityResult:
-    return local_api._handle_add_entity_local(
+    return local_api.add_entities(
         instance_id=resolve_server_instance_id(instance_id),
         entities=req.entities,
     )
@@ -48,7 +48,7 @@ async def add_relationships(
 ) -> contracts.AddRelationshipResult:
     _reject_in_agent_mode("add-relationship")
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_add_relationship_impl(
+    return local_api.add_relationships_with_provenance(
         instance_id=resolved_instance_id,
         relationships=req.relationships,
         provenance_source="http_api",
@@ -62,7 +62,7 @@ async def add_constraint(
     req: AddConstraintRequest,
 ) -> contracts.AddConstraintResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_add_constraint_local(
+    return local_api.add_constraint(
         instance_id=resolved_instance_id,
         name=req.name,
         rule=req.rule,
@@ -80,7 +80,7 @@ async def add_decision_policy(
     req: AddDecisionPolicyRequest,
 ) -> contracts.AddDecisionPolicyResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_add_decision_policy_local(
+    return local_api.add_decision_policy(
         instance_id=resolved_instance_id,
         name=req.name,
         applies_to=req.applies_to,
@@ -100,7 +100,7 @@ async def reload_config(
     instance_id: str,
     req: ReloadConfigRequest,
 ) -> contracts.ReloadConfigResult:
-    return local_api._handle_reload_config_local(
+    return local_api.reload_config(
         instance_id=resolve_server_instance_id(instance_id),
         config_path=req.config_path,
         config_yaml=req.config_yaml,

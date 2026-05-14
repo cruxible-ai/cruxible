@@ -36,7 +36,7 @@ def _parse_property_filter(property_filter: str | None) -> dict[str, Any] | None
 @router.post("/{instance_id}/query", response_model=contracts.QueryToolResult)
 async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_query_local(
+    return local_api.query(
         instance_id=resolved_instance_id,
         query_name=req.query_name,
         params=req.params,
@@ -52,7 +52,7 @@ async def render_wiki(
     req: RenderWikiRequest,
 ) -> contracts.WikiRenderResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_render_wiki_local(
+    return local_api.render_wiki(
         instance_id=resolved_instance_id,
         focus=req.focus,
         include_types=req.include_types,
@@ -64,7 +64,7 @@ async def render_wiki(
 
 @router.get("/{instance_id}/receipts/{receipt_id}")
 async def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
-    return local_api._handle_receipt_local(
+    return local_api.receipt(
         instance_id=resolve_server_instance_id(instance_id),
         receipt_id=receipt_id,
     )
@@ -72,7 +72,7 @@ async def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
 
 @router.get("/{instance_id}/traces/{trace_id}")
 async def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
-    return local_api._handle_get_trace_local(
+    return local_api.get_trace(
         instance_id=resolve_server_instance_id(instance_id),
         trace_id=trace_id,
     )
@@ -86,7 +86,7 @@ async def list_traces(
     limit: int = 100,
     offset: int = 0,
 ) -> contracts.TraceListResult:
-    return local_api._handle_list_traces_local(
+    return local_api.list_traces(
         instance_id=resolve_server_instance_id(instance_id),
         workflow_name=workflow_name,
         provider_name=provider_name,
@@ -108,7 +108,7 @@ async def list_resources(
     operation_type: str | None = None,
 ) -> contracts.ListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_list_local(
+    return local_api.list_resources(
         instance_id=resolved_instance_id,
         resource_type=resource_type,
         entity_type=entity_type,
@@ -123,12 +123,12 @@ async def list_resources(
 
 @router.get("/{instance_id}/schema")
 async def schema(instance_id: str) -> dict[str, Any]:
-    return local_api._handle_schema_local(resolve_server_instance_id(instance_id))
+    return local_api.schema(resolve_server_instance_id(instance_id))
 
 
 @router.get("/{instance_id}/queries", response_model=contracts.QueryListResult)
 async def list_queries(instance_id: str) -> contracts.QueryListResult:
-    return local_api._handle_list_queries_local(resolve_server_instance_id(instance_id))
+    return local_api.list_queries(resolve_server_instance_id(instance_id))
 
 
 @router.get(
@@ -139,7 +139,7 @@ async def describe_query(
     instance_id: str,
     query_name: str,
 ) -> contracts.NamedQueryInfoResult:
-    return local_api._handle_describe_query_local(
+    return local_api.describe_query(
         resolve_server_instance_id(instance_id),
         query_name,
     )
@@ -147,12 +147,12 @@ async def describe_query(
 
 @router.get("/{instance_id}/stats", response_model=contracts.StatsResult)
 async def stats(instance_id: str) -> contracts.StatsResult:
-    return local_api._handle_stats_local(resolve_server_instance_id(instance_id))
+    return local_api.stats(resolve_server_instance_id(instance_id))
 
 
 @router.get("/{instance_id}/sample/{entity_type}", response_model=contracts.SampleResult)
 async def sample(instance_id: str, entity_type: str, limit: int = 5) -> contracts.SampleResult:
-    return local_api._handle_sample_local(
+    return local_api.sample(
         resolve_server_instance_id(instance_id),
         entity_type,
         limit=limit,
@@ -162,7 +162,7 @@ async def sample(instance_id: str, entity_type: str, limit: int = 5) -> contract
 @router.post("/{instance_id}/evaluate", response_model=contracts.EvaluateResult)
 async def evaluate(instance_id: str, req: EvaluateRequest) -> contracts.EvaluateResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_evaluate_local(
+    return local_api.evaluate(
         instance_id=resolved_instance_id,
         max_findings=req.max_findings,
         exclude_orphan_types=req.exclude_orphan_types,
@@ -172,7 +172,7 @@ async def evaluate(instance_id: str, req: EvaluateRequest) -> contracts.Evaluate
 @router.post("/{instance_id}/lint", response_model=contracts.LintResult)
 async def lint(instance_id: str, req: LintRequest) -> contracts.LintResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_lint_local(
+    return local_api.lint(
         instance_id=resolved_instance_id,
         max_findings=req.max_findings,
         analysis_limit=req.analysis_limit,
@@ -190,7 +190,7 @@ async def get_entity(
     entity_type: str,
     entity_id: str,
 ) -> contracts.GetEntityResult:
-    return local_api._handle_get_entity_local(
+    return local_api.get_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
         entity_id,
@@ -209,7 +209,7 @@ async def inspect_entity(
     relationship_type: str | None = None,
     limit: int | None = None,
 ) -> contracts.InspectEntityResult:
-    return local_api._handle_inspect_entity_local(
+    return local_api.inspect_entity(
         resolve_server_instance_id(instance_id),
         entity_type,
         entity_id,
@@ -228,7 +228,7 @@ async def inspect_view(
     view: str,
     limit: int = Query(200),
 ) -> contracts.CanonicalViewResult:
-    return local_api._handle_inspect_view_local(
+    return local_api.inspect_view(
         resolve_server_instance_id(instance_id),
         view,
         limit=limit,
@@ -249,7 +249,7 @@ async def get_relationship_lineage(
     edge_key: int | None = None,
 ) -> contracts.RelationshipLineageResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_relationship_lineage_local(
+    return local_api.get_relationship_lineage(
         instance_id=resolved_instance_id,
         from_type=from_type,
         from_id=from_id,
@@ -274,7 +274,7 @@ async def get_relationship(
     edge_key: int | None = None,
 ) -> contracts.GetRelationshipResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_get_relationship_local(
+    return local_api.get_relationship(
         instance_id=resolved_instance_id,
         from_type=from_type,
         from_id=from_id,
@@ -287,7 +287,7 @@ async def get_relationship(
 
 @router.get("/{instance_id}/groups/{group_id}", response_model=contracts.GetGroupToolResult)
 async def get_group(instance_id: str, group_id: str) -> contracts.GetGroupToolResult:
-    return local_api._handle_get_group_local(resolve_server_instance_id(instance_id), group_id)
+    return local_api.get_group(resolve_server_instance_id(instance_id), group_id)
 
 
 @router.get(
@@ -298,7 +298,7 @@ async def get_group_status_by_group(
     instance_id: str,
     group_id: str,
 ) -> contracts.GroupBucketStatusToolResult:
-    return local_api._handle_group_status_local(
+    return local_api.get_group_status(
         resolve_server_instance_id(instance_id),
         group_id=group_id,
     )
@@ -312,7 +312,7 @@ async def get_group_status_by_signature(
     instance_id: str,
     signature: str,
 ) -> contracts.GroupBucketStatusToolResult:
-    return local_api._handle_group_status_local(
+    return local_api.get_group_status(
         resolve_server_instance_id(instance_id),
         signature=signature,
     )
@@ -326,7 +326,7 @@ async def list_groups(
     limit: int = 50,
 ) -> contracts.ListGroupsToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_list_groups_local(
+    return local_api.list_groups(
         resolved_instance_id,
         relationship_type=relationship_type,
         status=status,
@@ -342,7 +342,7 @@ async def list_resolutions(
     limit: int = 50,
 ) -> contracts.ListResolutionsToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api._handle_list_resolutions_local(
+    return local_api.list_resolutions(
         resolved_instance_id,
         relationship_type=relationship_type,
         action=action,

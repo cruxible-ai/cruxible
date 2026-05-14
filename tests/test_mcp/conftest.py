@@ -102,7 +102,7 @@ class GovernedLocalClient:
         data_dir: str | None = None,
         kit: str | None = None,
     ):
-        return local_api._handle_init_governed(
+        return local_api.init_governed(
             root_dir=root_dir,
             config_path=config_path,
             config_yaml=config_yaml,
@@ -111,16 +111,16 @@ class GovernedLocalClient:
         )
 
     def validate(self, config_path: str | None = None, config_yaml: str | None = None):
-        return local_api._handle_validate_local(config_path=config_path, config_yaml=config_yaml)
+        return local_api.validate(config_path=config_path, config_yaml=config_yaml)
 
     def server_info(self):
-        return local_api._handle_server_info_local()
+        return local_api.server_info()
 
     def workflow_lock(self, instance_id: str, *, force: bool = False):
-        return local_api._handle_workflow_lock_local(instance_id, force=force)
+        return local_api.workflow_lock(instance_id, force=force)
 
     def workflow_plan(self, instance_id: str, *, workflow_name: str, input_payload=None):
-        return local_api._handle_workflow_plan_local(instance_id, workflow_name, input_payload)
+        return local_api.workflow_plan(instance_id, workflow_name, input_payload)
 
     def workflow_run(
         self,
@@ -130,7 +130,7 @@ class GovernedLocalClient:
         input_payload=None,
         decision_record_id: str | None = None,
     ):
-        return local_api._handle_workflow_run_local(
+        return local_api.workflow_run(
             instance_id,
             workflow_name,
             input_payload,
@@ -148,7 +148,7 @@ class GovernedLocalClient:
         input_payload=None,
         decision_record_id: str | None = None,
     ):
-        return local_api._handle_workflow_apply_local(
+        return local_api.workflow_apply(
             instance_id,
             workflow_name,
             expected_apply_digest,
@@ -166,33 +166,12 @@ class GovernedLocalClient:
         input_payload=None,
         decision_record_id: str | None = None,
     ):
-        return local_api._handle_propose_workflow_local(
+        return local_api.propose_workflow(
             instance_id,
             workflow_name,
             input_payload,
             decision_record_id=decision_record_id,
             surface="mcp",
-        )
-
-    def ingest(
-        self,
-        instance_id: str,
-        mapping_name: str,
-        *,
-        file_path: str | None = None,
-        data_csv: str | None = None,
-        data_json=None,
-        data_ndjson: str | None = None,
-        upload_id: str | None = None,
-    ):
-        return local_api._handle_ingest_local(
-            instance_id,
-            mapping_name,
-            file_path=file_path,
-            data_csv=data_csv,
-            data_json=data_json,
-            data_ndjson=data_ndjson,
-            upload_id=upload_id,
         )
 
     def query(
@@ -203,7 +182,7 @@ class GovernedLocalClient:
         limit: int | None = None,
         decision_record_id: str | None = None,
     ):
-        return local_api._handle_query_local(
+        return local_api.query(
             instance_id,
             query_name,
             params,
@@ -221,7 +200,7 @@ class GovernedLocalClient:
         subject_id: str | None = None,
         opened_by: str = "human",
     ):
-        return local_api._handle_create_decision_record_local(
+        return local_api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
@@ -236,7 +215,7 @@ class GovernedLocalClient:
         *,
         include_events: bool = True,
     ):
-        return local_api._handle_get_decision_record_local(
+        return local_api.get_decision_record(
             instance_id,
             decision_record_id,
             include_events=include_events,
@@ -252,7 +231,7 @@ class GovernedLocalClient:
         decision_class: str | None = None,
         limit: int = 100,
     ):
-        return local_api._handle_list_decision_records_local(
+        return local_api.list_decision_records(
             instance_id,
             status=status,
             subject_type=subject_type,
@@ -271,7 +250,7 @@ class GovernedLocalClient:
         status: str | None = None,
         limit: int = 100,
     ):
-        return local_api._handle_list_decision_events_local(
+        return local_api.list_decision_events(
             instance_id,
             decision_record_id=decision_record_id,
             receipt_id=receipt_id,
@@ -289,7 +268,7 @@ class GovernedLocalClient:
         decision_class: str,
         rationale: str = "",
     ):
-        return local_api._handle_finalize_decision_record_local(
+        return local_api.finalize_decision_record(
             instance_id,
             decision_record_id,
             final_decision=final_decision,
@@ -304,32 +283,51 @@ class GovernedLocalClient:
         *,
         reason: str = "",
     ):
-        return local_api._handle_abandon_decision_record_local(
+        return local_api.abandon_decision_record(
             instance_id,
             decision_record_id,
             reason=reason,
         )
 
     def list_queries(self, instance_id: str):
-        return local_api._handle_list_queries_local(instance_id)
+        return local_api.list_queries(instance_id)
 
     def describe_query(self, instance_id: str, query_name: str):
-        return local_api._handle_describe_query_local(instance_id, query_name)
+        return local_api.describe_query(instance_id, query_name)
 
     def receipt(self, instance_id: str, receipt_id: str):
-        return local_api._handle_receipt_local(instance_id, receipt_id)
+        return local_api.receipt(instance_id, receipt_id)
 
     def feedback(self, instance_id: str, **kwargs):
-        return local_api._handle_feedback_local(instance_id, **kwargs)
+        return local_api.feedback(instance_id, **kwargs)
 
     def feedback_batch(self, instance_id: str, *, items, source: str):
-        return local_api._handle_feedback_batch_local(instance_id, items=items, source=source)
+        return local_api.feedback_batch(instance_id, items=items, source=source)
 
-    def outcome(self, instance_id: str, *, receipt_id: str, outcome: str, detail=None):
-        return local_api._handle_outcome_local(
+    def outcome(
+        self,
+        instance_id: str,
+        *,
+        receipt_id: str | None = None,
+        outcome: str,
+        anchor_type: str = "receipt",
+        anchor_id: str | None = None,
+        source: str = "human",
+        outcome_code: str | None = None,
+        scope_hints: dict | None = None,
+        outcome_profile_key: str | None = None,
+        detail=None,
+    ):
+        return local_api.outcome(
             instance_id,
             receipt_id=receipt_id,
             outcome=outcome,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            source=source,
+            outcome_code=outcome_code,
+            scope_hints=scope_hints,
+            outcome_profile_key=outcome_profile_key,
             detail=detail,
         )
 
@@ -342,7 +340,7 @@ class GovernedLocalClient:
         relationship_type: str | None = None,
         property_filter: dict | None = None,
     ):
-        return local_api._handle_list_local(
+        return local_api.list_resources(
             instance_id,
             resource_type=resource_type,
             entity_type=entity_type,
@@ -350,23 +348,47 @@ class GovernedLocalClient:
             property_filter=property_filter,
         )
 
-    def evaluate(self, instance_id: str, *, query_name: str, params: dict):
-        return local_api._handle_evaluate_local(instance_id, query_name, params)
+    def evaluate(
+        self,
+        instance_id: str,
+        *,
+        max_findings: int = 100,
+        exclude_orphan_types: list[str] | None = None,
+    ):
+        return local_api.evaluate(
+            instance_id,
+            max_findings=max_findings,
+            exclude_orphan_types=exclude_orphan_types,
+        )
 
     def schema(self, instance_id: str):
-        return local_api._handle_schema_local(instance_id)
+        return local_api.schema(instance_id)
 
     def sample(self, instance_id: str, entity_type: str, limit: int | None = None):
-        return local_api._handle_sample_local(instance_id, entity_type, limit=limit)
+        return local_api.sample(instance_id, entity_type, limit=limit)
 
     def add_relationships(self, instance_id: str, relationships):
-        return local_api._handle_add_relationship_local(instance_id, relationships)
+        return local_api.add_relationships(instance_id, relationships)
 
     def add_entities(self, instance_id: str, entities):
-        return local_api._handle_add_entity_local(instance_id, entities)
+        return local_api.add_entities(instance_id, entities)
 
-    def add_constraint(self, instance_id: str, *, expression: str, name: str | None = None):
-        return local_api._handle_add_constraint_local(instance_id, expression, name)
+    def add_constraint(
+        self,
+        instance_id: str,
+        *,
+        name: str,
+        rule: str,
+        severity: str = "warning",
+        description: str | None = None,
+    ):
+        return local_api.add_constraint(
+            instance_id,
+            name=name,
+            rule=rule,
+            severity=severity,
+            description=description,
+        )
 
     def add_decision_policy(
         self,
@@ -374,23 +396,31 @@ class GovernedLocalClient:
         *,
         name: str,
         applies_to: str,
-        condition: str,
-        action: str,
-        priority: int = 100,
-        stop_on_match: bool = True,
+        relationship_type: str,
+        effect: str,
+        match=None,
+        description: str | None = None,
+        rationale: str = "",
+        query_name: str | None = None,
+        workflow_name: str | None = None,
+        expires_at: str | None = None,
     ):
-        return local_api._handle_add_decision_policy_local(
+        return local_api.add_decision_policy(
             instance_id,
             name=name,
             applies_to=applies_to,
-            condition=condition,
-            action=action,
-            priority=priority,
-            stop_on_match=stop_on_match,
+            relationship_type=relationship_type,
+            effect=effect,
+            match=match,
+            description=description,
+            rationale=rationale,
+            query_name=query_name,
+            workflow_name=workflow_name,
+            expires_at=expires_at,
         )
 
     def get_entity(self, instance_id: str, entity_type: str, entity_id: str):
-        return local_api._handle_get_entity_local(instance_id, entity_type, entity_id)
+        return local_api.get_entity(instance_id, entity_type, entity_id)
 
     def get_relationship(
         self,
@@ -403,7 +433,7 @@ class GovernedLocalClient:
         to_id: str,
         edge_key: str | None = None,
     ):
-        return local_api._handle_get_relationship_local(
+        return local_api.get_relationship(
             instance_id,
             from_type=from_type,
             from_id=from_id,
@@ -424,7 +454,7 @@ class GovernedLocalClient:
         to_id: str,
         edge_key: int | None = None,
     ):
-        return local_api._handle_relationship_lineage_local(
+        return local_api.get_relationship_lineage(
             instance_id,
             from_type=from_type,
             from_id=from_id,
@@ -447,7 +477,7 @@ class GovernedLocalClient:
         proposed_by: str = "agent",
         suggested_priority: str | None = None,
     ):
-        return local_api._handle_propose_group_local(
+        return local_api.propose_group(
             instance_id,
             relationship_type=relationship_type,
             members=members,
@@ -469,7 +499,7 @@ class GovernedLocalClient:
         resolved_by: str = "human",
         expected_pending_version: int = 1,
     ):
-        return local_api._handle_resolve_group_local(
+        return local_api.resolve_group(
             instance_id,
             group_id=group_id,
             action=action,
@@ -486,7 +516,7 @@ class GovernedLocalClient:
         trust_status: str,
         reason: str = "",
     ):
-        return local_api._handle_update_trust_status_local(
+        return local_api.update_trust_status(
             instance_id,
             resolution_id=resolution_id,
             trust_status=trust_status,
@@ -494,7 +524,7 @@ class GovernedLocalClient:
         )
 
     def get_group(self, instance_id: str, group_id: str):
-        return local_api._handle_get_group_local(instance_id, group_id)
+        return local_api.get_group(instance_id, group_id)
 
     def get_group_status(
         self,
@@ -503,7 +533,7 @@ class GovernedLocalClient:
         group_id: str | None = None,
         signature: str | None = None,
     ):
-        return local_api._handle_group_status_local(
+        return local_api.get_group_status(
             instance_id,
             group_id=group_id,
             signature=signature,
@@ -517,7 +547,7 @@ class GovernedLocalClient:
         status: str | None = None,
         limit: int = 50,
     ):
-        return local_api._handle_list_groups_local(
+        return local_api.list_groups(
             instance_id,
             relationship_type=relationship_type,
             status=status,
@@ -532,7 +562,7 @@ class GovernedLocalClient:
         action: str | None = None,
         limit: int = 50,
     ):
-        return local_api._handle_list_resolutions_local(
+        return local_api.list_resolutions(
             instance_id,
             relationship_type=relationship_type,
             action=action,
@@ -548,7 +578,7 @@ class GovernedLocalClient:
         kit: str | None = None,
         no_kit: bool = False,
     ):
-        return local_api._handle_create_world_overlay_governed(
+        return local_api.create_world_overlay_governed(
             transport_ref,
             world_ref,
             kit,
@@ -556,17 +586,34 @@ class GovernedLocalClient:
             root_dir,
         )
 
-    def world_publish(self, instance_id: str, *, output_dir: str | None = None):
-        return local_api._handle_world_publish_local(instance_id, output_dir=output_dir)
+    def world_publish(
+        self,
+        instance_id: str,
+        *,
+        transport_ref: str,
+        world_id: str,
+        release_id: str,
+        compatibility: str,
+    ):
+        return local_api.world_publish(
+            instance_id,
+            transport_ref=transport_ref,
+            world_id=world_id,
+            release_id=release_id,
+            compatibility=compatibility,
+        )
 
     def world_status(self, instance_id: str):
-        return local_api._handle_world_status_local(instance_id)
+        return local_api.world_status(instance_id)
 
     def world_pull_preview(self, instance_id: str):
-        return local_api._handle_world_pull_preview_local(instance_id)
+        return local_api.world_pull_preview(instance_id)
 
-    def world_pull_apply(self, instance_id: str):
-        return local_api._handle_world_pull_apply_local(instance_id)
+    def world_pull_apply(self, instance_id: str, *, expected_apply_digest: str):
+        return local_api.world_pull_apply(
+            instance_id,
+            expected_apply_digest=expected_apply_digest,
+        )
 
 
 @pytest.fixture
