@@ -716,6 +716,36 @@ def service_get_outcome_profile(
     )
 
 
+def _feedback_target_label(target: RelationshipInstance) -> str:
+    """Return a compact edge label for feedback receipt details."""
+    return (
+        f"{target.from_type}:{target.from_id}:"
+        f"{target.relationship_type}:{target.to_type}:{target.to_id}"
+    )
+
+
+def _apply_feedback_record(
+    graph,
+    record: FeedbackRecord,
+    *,
+    group_override: bool,
+) -> bool:
+    """Apply one normalized feedback record and any requested group override."""
+    applied = apply_feedback(graph, record)
+    if group_override:
+        target = record.target
+        graph.update_edge_properties(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship_type,
+            {"group_override": True},
+            edge_key=target.edge_key,
+        )
+    return applied
+
+
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str,
@@ -761,9 +791,6 @@ def service_feedback(
         group_override=group_override,
     )
 
-    target_str = (
-        f"{target.from_type}:{target.from_id}:{target.relationship_type}:{target.to_type}:{target.to_id}"
-    )
     feedback_store = instance.get_feedback_store()
     ctx: MutationReceiptContext[FeedbackServiceResult]
     with mutation_receipt(
@@ -773,24 +800,22 @@ def service_feedback(
         store=feedback_store,
     ) as ctx:
         assert ctx.builder is not None
-        feedback_store.save_feedback(record)
+        with feedback_store.transaction():
+            feedback_store.save_feedback_batch([record])
 
-        applied = apply_feedback(graph, record)
-        ctx.builder.record_feedback_applied(target_str, action, applied)
-
-        # Stamp group_override on the edge after applying feedback
-        if group_override:
-            graph.update_edge_properties(
-                target.from_type,
-                target.from_id,
-                target.to_type,
-                target.to_id,
-                target.relationship_type,
-                {"group_override": True},
-                edge_key=target.edge_key,
+            applied = _apply_feedback_record(
+                graph,
+                record,
+                group_override=group_override,
+            )
+            ctx.builder.record_feedback_applied(
+                _feedback_target_label(record.target),
+                action,
+                applied,
             )
 
-        save_graph_for_mutation(instance, graph)
+            save_graph_for_mutation(instance, graph)
+
         ctx.set_result(FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied))
 
     result = ctx.result
@@ -865,25 +890,18 @@ def service_feedback_batch(
 
             applied_count = 0
             for record, item in zip(records, items, strict=True):
-                target = record.target
-                target_str = (
-                    f"{target.from_type}:{target.from_id}:"
-                    f"{target.relationship_type}:{target.to_type}:{target.to_id}"
+                applied = _apply_feedback_record(
+                    graph,
+                    record,
+                    group_override=item.group_override,
                 )
-                applied = apply_feedback(graph, record)
                 if applied:
                     applied_count += 1
-                ctx.builder.record_feedback_applied(target_str, record.action, applied)
-                if item.group_override:
-                    graph.update_edge_properties(
-                        target.from_type,
-                        target.from_id,
-                        target.to_type,
-                        target.to_id,
-                        target.relationship_type,
-                        {"group_override": True},
-                        edge_key=target.edge_key,
-                    )
+                ctx.builder.record_feedback_applied(
+                    _feedback_target_label(record.target),
+                    record.action,
+                    applied,
+                )
 
             save_graph_for_mutation(instance, graph)
 

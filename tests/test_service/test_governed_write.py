@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_core.errors import ReceiptNotFoundError
+from cruxible_core.errors import ReceiptNotFoundError, RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
+    service_feedback,
     service_feedback_batch,
     service_query,
 )
@@ -92,6 +93,50 @@ def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
                 )
             ],
             source="human",
+        )
+
+    feedback_store = populated_instance.get_feedback_store()
+    try:
+        assert feedback_store.count_feedback() == 0
+    finally:
+        feedback_store.close()
+
+
+def test_service_feedback_ambiguous_edge_rolls_back_feedback_record(populated_instance):
+    query_result = service_query(
+        populated_instance,
+        "parts_for_vehicle",
+        {"vehicle_id": "V-2024-CIVIC-EX"},
+    )
+    receipt_id = query_result.receipt_id
+    assert receipt_id is not None
+
+    graph = populated_instance.load_graph()
+    graph.add_relationship(
+        RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1001",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
+            properties={"verified": False, "source": "duplicate"},
+        )
+    )
+    populated_instance.save_graph(graph)
+
+    with pytest.raises(RelationshipAmbiguityError):
+        service_feedback(
+            populated_instance,
+            receipt_id=receipt_id,
+            action="approve",
+            source="human",
+            target=RelationshipInstance(
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
+            ),
         )
 
     feedback_store = populated_instance.get_feedback_store()
