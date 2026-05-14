@@ -11,6 +11,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
@@ -361,9 +362,23 @@ def resolve_instance(tmp_path: Path) -> CruxibleInstance:
     )
     graph.add_entity(
         EntityInstance(
+            entity_type="Part",
+            entity_id="BP-2",
+            properties={"part_number": "BP-2", "name": "Pads 2", "category": "brakes"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
             entity_type="Vehicle",
             entity_id="V-1",
             properties={"vehicle_id": "V-1", "year": 2024, "make": "Honda", "model": "Civic"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Vehicle",
+            entity_id="V-2",
+            properties={"vehicle_id": "V-2", "year": 2024, "make": "Honda", "model": "Accord"},
         )
     )
     inst.save_graph(graph)
@@ -394,6 +409,17 @@ def _propose_group(instance: CruxibleInstance, members=None) -> str:
     return result.group_id
 
 
+def _load_receipt(instance: CruxibleInstance, receipt_id: str | None) -> Receipt:
+    assert receipt_id is not None
+    store = instance.get_receipt_store()
+    try:
+        receipt = store.get_receipt(receipt_id)
+    finally:
+        store.close()
+    assert receipt is not None
+    return receipt
+
+
 class TestGroupResolveReceipts:
     def test_resolve_approve_produces_receipt(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
@@ -414,6 +440,76 @@ class TestGroupResolveReceipts:
         assert receipt.operation_type == "group_resolve"
         assert receipt.committed is True
 
+    def test_resolve_approve_receipt_records_write_and_final_validation_shape(
+        self,
+        resolve_instance: CruxibleInstance,
+    ):
+        graph = resolve_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"verified": True},
+            )
+        )
+        resolve_instance.save_graph(graph)
+
+        group_id = _propose_group(
+            resolve_instance,
+            [_resolve_member("BP-1", "V-1"), _resolve_member("BP-2", "V-2")],
+        )
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+        receipt = _load_receipt(resolve_instance, result.receipt_id)
+
+        assert receipt.operation_type == "group_resolve"
+        assert receipt.committed is True
+        write_nodes = [node for node in receipt.nodes if node.node_type == "relationship_write"]
+        assert [node.detail for node in write_nodes] == [
+            {
+                "from_type": "Part",
+                "from_id": "BP-2",
+                "to_type": "Vehicle",
+                "to_id": "V-2",
+                "relationship": "fits",
+                "is_update": False,
+            }
+        ]
+
+        final_validation = next(
+            node
+            for node in receipt.nodes
+            if node.node_type == "validation"
+            and node.detail.get("resolution_id") == result.resolution_id
+        )
+        assert final_validation.detail["passed"] is True
+        assert final_validation.detail["pending_version_at_resolve"] == 1
+        assert final_validation.detail["applied_tuples"] == [
+            {
+                "from_type": "Part",
+                "from_id": "BP-2",
+                "to_type": "Vehicle",
+                "to_id": "V-2",
+                "relationship_type": "fits",
+            }
+        ]
+        assert final_validation.detail["skipped_tuples_existing_edges"] == [
+            {
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "relationship_type": "fits",
+            }
+        ]
+
     def test_resolve_reject_produces_receipt(self, resolve_instance: CruxibleInstance):
         group_id = _propose_group(resolve_instance)
         result = service_resolve_group(
@@ -432,6 +528,28 @@ class TestGroupResolveReceipts:
         assert receipt is not None
         assert receipt.operation_type == "group_resolve"
         assert receipt.committed is True
+
+    def test_resolve_reject_receipt_records_validation_without_relationship_writes(
+        self,
+        resolve_instance: CruxibleInstance,
+    ):
+        group_id = _propose_group(resolve_instance)
+        result = service_resolve_group(
+            resolve_instance,
+            group_id,
+            "reject",
+            expected_pending_version=1,
+        )
+        receipt = _load_receipt(resolve_instance, result.receipt_id)
+
+        assert receipt.operation_type == "group_resolve"
+        assert receipt.committed is True
+        assert [node for node in receipt.nodes if node.node_type == "relationship_write"] == []
+        validation = next(node for node in receipt.nodes if node.node_type == "validation")
+        assert validation.detail["passed"] is True
+        assert validation.detail["action"] == "reject"
+        assert validation.detail["members"] == 1
+        assert validation.detail["pending_version_at_resolve"] == 1
 
     def test_resolve_no_inner_relationship_receipt(self, resolve_instance: CruxibleInstance):
         """Only 1 receipt (group_resolve), not 2 — inner add_relationships suppressed."""
