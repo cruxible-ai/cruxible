@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cruxible_core.config.property_validation import entity_properties_with_identity
-from cruxible_core.config.schema import ProposalPolicySchema
+from cruxible_core.config.schema import CoreConfig, ProposalPolicySchema, RelationshipSchema
 from cruxible_core.errors import (
     ConfigError,
     DataValidationError,
@@ -21,10 +22,18 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
 )
 from cruxible_core.group.signature import compute_group_signature
-from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+from cruxible_core.group.types import (
+    CandidateGroup,
+    CandidateMember,
+    GroupResolution,
+    GroupStatus,
+    ReviewPriority,
+    TrustStatus,
+)
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.filters import matches_exact_filter
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service.mutation_receipts import MutationReceiptContext, mutation_receipt
 from cruxible_core.service.mutations import service_add_relationships
 from cruxible_core.service.types import (
@@ -41,14 +50,181 @@ from cruxible_core.service.types import (
     UpdateTrustStatusResult,
 )
 
-RelationshipTuple = tuple[str, str, str, str, str]
+
+@dataclass(frozen=True)
+class _RelationshipKey:
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    relationship_type: str
+
+    @classmethod
+    def from_member(cls, member: CandidateMember | RelationshipInstance) -> _RelationshipKey:
+        return cls(
+            from_type=member.from_type,
+            from_id=member.from_id,
+            to_type=member.to_type,
+            to_id=member.to_id,
+            relationship_type=member.relationship_type,
+        )
+
+    @classmethod
+    def from_edge(cls, edge: dict[str, Any]) -> _RelationshipKey:
+        return cls(
+            from_type=edge["from_type"],
+            from_id=edge["from_id"],
+            to_type=edge["to_type"],
+            to_id=edge["to_id"],
+            relationship_type=edge["relationship_type"],
+        )
+
+    @classmethod
+    def from_suppressed_member(
+        cls,
+        member: SuppressedProposalMember,
+    ) -> _RelationshipKey:
+        return cls(
+            from_type=member.from_type,
+            from_id=member.from_id,
+            to_type=member.to_type,
+            to_id=member.to_id,
+            relationship_type=member.relationship_type,
+        )
+
+    @classmethod
+    def from_store_tuple(
+        cls,
+        value: tuple[str, str, str, str, str],
+    ) -> _RelationshipKey:
+        from_type, from_id, to_type, to_id, relationship_type = value
+        return cls(
+            from_type=from_type,
+            from_id=from_id,
+            to_type=to_type,
+            to_id=to_id,
+            relationship_type=relationship_type,
+        )
+
+    def as_store_tuple(self) -> tuple[str, str, str, str, str]:
+        return (
+            self.from_type,
+            self.from_id,
+            self.to_type,
+            self.to_id,
+            self.relationship_type,
+        )
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "from_type": self.from_type,
+            "from_id": self.from_id,
+            "to_type": self.to_type,
+            "to_id": self.to_id,
+            "relationship_type": self.relationship_type,
+        }
+
+    def validation_args(self) -> dict[str, str]:
+        return {
+            "from_type": self.from_type,
+            "from_id": self.from_id,
+            "relationship": self.relationship_type,
+            "to_type": self.to_type,
+            "to_id": self.to_id,
+        }
+
+    def to_relationship_instance(self, *, properties: dict[str, Any]) -> RelationshipInstance:
+        return RelationshipInstance(**self.payload(), properties=properties)
+
+    def to_suppressed_member(
+        self,
+        *,
+        reason: Literal["existing_edge", "pending_proposal"],
+        group: CandidateGroup | None = None,
+    ) -> SuppressedProposalMember:
+        group_context: dict[str, str | None] = {}
+        if group is not None:
+            group_context = {
+                "existing_group_id": group.group_id,
+                "existing_group_status": group.status,
+                "existing_signature": group.signature,
+                "source_workflow_name": group.source_workflow_name,
+            }
+        return SuppressedProposalMember(
+            **self.payload(),
+            reason=reason,
+            **group_context,
+        )
+
+    def label(self) -> str:
+        return f"{self.from_type}:{self.from_id}->{self.to_type}:{self.to_id}"
+
+    def relationship_label(self) -> str:
+        return (
+            f"{self.from_type}:{self.from_id} -[{self.relationship_type}]-> "
+            f"{self.to_type}:{self.to_id}"
+        )
+
+
+@dataclass(frozen=True)
+class _SuppressedMemberKey:
+    relationship: _RelationshipKey
+    reason: str
+
+    @classmethod
+    def from_member(cls, member: SuppressedProposalMember) -> _SuppressedMemberKey:
+        return cls(
+            relationship=_RelationshipKey.from_suppressed_member(member),
+            reason=member.reason,
+        )
+
+
+@dataclass(frozen=True)
+class _ProposalMetadata:
+    thesis_text: str
+    thesis_facts: dict[str, Any]
+    analysis_state: dict[str, Any]
+    signal_sources_used: list[str]
+    proposed_by: Literal["human", "agent"]
+    suggested_priority: str | None
+    source_workflow_name: str | None
+    source_workflow_receipt_id: str | None
+    source_trace_ids: list[str]
+    source_step_ids: list[str]
+
+
+@dataclass(frozen=True)
+class _MemberChanges:
+    added: list[CandidateMember]
+    removed: list[CandidateMember]
+
+
+@dataclass(frozen=True)
+class _ResolveTarget:
+    group: CandidateGroup
+    members: list[CandidateMember]
+    is_retry: bool
+
+
+@dataclass(frozen=True)
+class _ApprovalValidation:
+    valid_inputs: list[RelationshipInstance]
+    edges_skipped: int
+    skipped_existing: list[dict[str, str]]
+    applied_tuples: list[dict[str, str]]
+    validation_failures: int
+    validation_errors: list[str]
+
+
+_VALID_RESOLVE_ACTIONS = ("approve", "reject")
+_VALID_RESOLVE_SOURCES = ("human", "agent")
 
 
 def derive_review_priority(
     members: list[CandidateMember],
     proposal_policy: ProposalPolicySchema | None,
     prior_resolution: GroupResolution | None,
-) -> str:
+) -> ReviewPriority:
     """Derive review_priority mechanically from universal states.
 
     Returns: "critical", "review", or "normal".
@@ -96,55 +272,37 @@ def derive_review_priority(
     return "normal"
 
 
-def _relationship_tuple(member: CandidateMember | RelationshipInstance) -> RelationshipTuple:
-    return (
-        member.from_type,
-        member.from_id,
-        member.to_type,
-        member.to_id,
-        member.relationship_type,
-    )
+def _relationship_key(member: CandidateMember | RelationshipInstance) -> _RelationshipKey:
+    return _RelationshipKey.from_member(member)
+
+
+def _relationship_payload(member: CandidateMember | RelationshipInstance) -> dict[str, str]:
+    return _relationship_key(member).payload()
 
 
 def _summarize_tuples(members: list[CandidateMember]) -> list[dict[str, str]]:
-    return [
-        {
-            "from_type": member.from_type,
-            "from_id": member.from_id,
-            "to_type": member.to_type,
-            "to_id": member.to_id,
-            "relationship_type": member.relationship_type,
-        }
-        for member in members
-    ]
+    return [_relationship_payload(member) for member in members]
+
+
+def _member_label(member: CandidateMember | RelationshipInstance) -> str:
+    return _relationship_key(member).label()
+
+
+def _member_relationship_label(member: CandidateMember | RelationshipInstance) -> str:
+    return _relationship_key(member).relationship_label()
 
 
 def _suppressed_member_for_existing_edge(member: CandidateMember) -> SuppressedProposalMember:
-    return SuppressedProposalMember(
-        relationship_type=member.relationship_type,
-        from_type=member.from_type,
-        from_id=member.from_id,
-        to_type=member.to_type,
-        to_id=member.to_id,
-        reason="existing_edge",
-    )
+    return _relationship_key(member).to_suppressed_member(reason="existing_edge")
 
 
 def _suppressed_member_for_pending_group(
     member: CandidateMember,
     group: CandidateGroup,
 ) -> SuppressedProposalMember:
-    return SuppressedProposalMember(
-        relationship_type=member.relationship_type,
-        from_type=member.from_type,
-        from_id=member.from_id,
-        to_type=member.to_type,
-        to_id=member.to_id,
+    return _relationship_key(member).to_suppressed_member(
         reason="pending_proposal",
-        existing_group_id=group.group_id,
-        existing_group_status=group.status,
-        existing_signature=group.signature,
-        source_workflow_name=group.source_workflow_name,
+        group=group,
     )
 
 
@@ -152,31 +310,17 @@ def _merge_suppressed_members(
     existing: list[SuppressedProposalMember],
     additions: list[SuppressedProposalMember],
 ) -> list[SuppressedProposalMember]:
-    merged: dict[tuple[str, str, str, str, str, str], SuppressedProposalMember] = {
-        (
-            item.from_type,
-            item.from_id,
-            item.to_type,
-            item.to_id,
-            item.relationship_type,
-            item.reason,
-        ): item
-        for item in existing
-    }
+    merged = {_SuppressedMemberKey.from_member(item): item for item in existing}
     for item in additions:
-        key = (
-            item.from_type,
-            item.from_id,
-            item.to_type,
-            item.to_id,
-            item.relationship_type,
-            item.reason,
-        )
-        merged.setdefault(key, item)
+        merged.setdefault(_SuppressedMemberKey.from_member(item), item)
     return list(merged.values())
 
 
-def _filter_relationship_tuple_conflicts(
+def _has_live_relationship(graph: EntityGraph, member: CandidateMember) -> bool:
+    return graph.has_live_relationship(**_relationship_key(member).payload())
+
+
+def _filter_relationship_key_conflicts(
     *,
     graph: EntityGraph,
     group_store: GroupStoreProtocol,
@@ -187,25 +331,23 @@ def _filter_relationship_tuple_conflicts(
     if not members:
         return [], []
 
-    conflicts = group_store.find_pending_groups_for_tuples(
+    conflicts_by_store_key = group_store.find_pending_groups_for_tuples(
         relationship_type,
-        [_relationship_tuple(member) for member in members],
+        [_relationship_key(member).as_store_tuple() for member in members],
         exclude_group_id=exclude_group_id,
         statuses=("pending_review", "applying"),
     )
+    conflicts = {
+        _RelationshipKey.from_store_tuple(key): group
+        for key, group in conflicts_by_store_key.items()
+    }
     retained: list[CandidateMember] = []
     suppressed: list[SuppressedProposalMember] = []
     for member in members:
-        if graph.has_live_relationship(
-            member.from_type,
-            member.from_id,
-            member.to_type,
-            member.to_id,
-            member.relationship_type,
-        ):
+        if _has_live_relationship(graph, member):
             suppressed.append(_suppressed_member_for_existing_edge(member))
             continue
-        pending_group = conflicts.get(_relationship_tuple(member))
+        pending_group = conflicts.get(_relationship_key(member))
         if pending_group is not None:
             suppressed.append(_suppressed_member_for_pending_group(member, pending_group))
             continue
@@ -217,23 +359,32 @@ def _merge_pending_members(
     existing_members: list[CandidateMember],
     current_members: list[CandidateMember],
 ) -> list[CandidateMember]:
-    merged: dict[RelationshipTuple, CandidateMember] = {
-        _relationship_tuple(member): member for member in existing_members
+    merged: dict[_RelationshipKey, CandidateMember] = {
+        _relationship_key(member): member for member in existing_members
     }
     for member in current_members:
-        merged[_relationship_tuple(member)] = member
+        merged[_relationship_key(member)] = member
     return list(merged.values())
 
 
-def _has_active_override(instance: InstanceProtocol, member: CandidateMember) -> bool:
-    graph = instance.load_graph()
-    relationship = graph.get_relationship(
-        member.from_type,
-        member.from_id,
-        member.to_type,
-        member.to_id,
-        member.relationship_type,
+def _member_changes(
+    existing_members: list[CandidateMember],
+    current_members: list[CandidateMember],
+) -> _MemberChanges:
+    existing_keys = {_relationship_key(member) for member in existing_members}
+    current_keys = {_relationship_key(member) for member in current_members}
+    return _MemberChanges(
+        added=[
+            member for member in current_members if _relationship_key(member) not in existing_keys
+        ],
+        removed=[
+            member for member in existing_members if _relationship_key(member) not in current_keys
+        ],
     )
+
+
+def _has_active_override(graph: EntityGraph, member: CandidateMember) -> bool:
+    relationship = graph.get_relationship(**_relationship_key(member).payload())
     if relationship is None:
         return False
     review_status = relationship.properties.get("review_status")
@@ -242,6 +393,468 @@ def _has_active_override(instance: InstanceProtocol, member: CandidateMember) ->
     if review_status == "pending_review":
         return True
     return review_status in REJECTED_STATUSES
+
+
+def _members_have_active_override(graph: EntityGraph, members: list[CandidateMember]) -> bool:
+    return any(_has_active_override(graph, member) for member in members)
+
+
+def _proposal_result(
+    *,
+    group_id: str | None,
+    signature: str,
+    status: GroupStatus | Literal["suppressed"],
+    review_priority: ReviewPriority,
+    member_count: int,
+    prior_resolution: GroupResolution | None,
+    suppressed_members: list[SuppressedProposalMember],
+    policy_summary: dict[str, int],
+    suppressed: bool = False,
+) -> ProposeGroupResult:
+    return ProposeGroupResult(
+        group_id=group_id,
+        signature=signature,
+        status=status,
+        review_priority=review_priority,
+        member_count=member_count,
+        prior_resolution=prior_resolution,
+        suppressed=suppressed,
+        suppressed_members=suppressed_members,
+        policy_summary=policy_summary,
+    )
+
+
+def _group_update_fields(
+    metadata: _ProposalMetadata,
+    *,
+    member_count: int,
+    review_priority: ReviewPriority,
+) -> dict[str, Any]:
+    return {
+        "status": "pending_review",
+        "thesis_text": metadata.thesis_text,
+        "thesis_facts": metadata.thesis_facts,
+        "analysis_state": metadata.analysis_state,
+        "signal_sources_used": metadata.signal_sources_used,
+        "proposed_by": metadata.proposed_by,
+        "member_count": member_count,
+        "review_priority": review_priority,
+        "suggested_priority": metadata.suggested_priority,
+        "source_workflow_name": metadata.source_workflow_name,
+        "source_workflow_receipt_id": metadata.source_workflow_receipt_id,
+        "source_trace_ids": metadata.source_trace_ids,
+        "source_step_ids": metadata.source_step_ids,
+        "resolution_id": None,
+    }
+
+
+def _new_candidate_group(
+    *,
+    group_id: str,
+    relationship_type: str,
+    signature: str,
+    status: GroupStatus,
+    metadata: _ProposalMetadata,
+    member_count: int,
+    review_priority: ReviewPriority,
+) -> CandidateGroup:
+    return CandidateGroup(
+        group_id=group_id,
+        relationship_type=relationship_type,
+        signature=signature,
+        status=status,
+        thesis_text=metadata.thesis_text,
+        thesis_facts=metadata.thesis_facts,
+        analysis_state=metadata.analysis_state,
+        signal_sources_used=metadata.signal_sources_used,
+        proposed_by=metadata.proposed_by,
+        member_count=member_count,
+        pending_version=1,
+        review_priority=review_priority,
+        suggested_priority=metadata.suggested_priority,
+        source_workflow_name=metadata.source_workflow_name,
+        source_workflow_receipt_id=metadata.source_workflow_receipt_id,
+        source_trace_ids=metadata.source_trace_ids,
+        source_step_ids=metadata.source_step_ids,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _review_priority_for_members(
+    *,
+    graph: EntityGraph,
+    members: list[CandidateMember],
+    proposal_policy: ProposalPolicySchema | None,
+    prior_resolution: GroupResolution | None,
+    force_review: bool,
+) -> ReviewPriority:
+    review_priority = derive_review_priority(members, proposal_policy, prior_resolution)
+    if force_review and review_priority == "normal":
+        review_priority = "review"
+    if _members_have_active_override(graph, members) and review_priority == "normal":
+        review_priority = "review"
+    return review_priority
+
+
+def _should_auto_resolve(
+    *,
+    members: list[CandidateMember],
+    proposal_policy: ProposalPolicySchema | None,
+    prior_resolution: GroupResolution | None,
+    force_review: bool,
+    has_override: bool,
+) -> bool:
+    if force_review or has_override:
+        return False
+    if prior_resolution is None or prior_resolution.trust_status == "invalidated":
+        return False
+    if proposal_policy is None:
+        return False
+
+    trust_requirement = proposal_policy.auto_resolve_requires_prior_trust
+    if trust_requirement == "trusted_only":
+        trust_ok = prior_resolution.trust_status == "trusted"
+    elif trust_requirement == "trusted_or_watch":
+        trust_ok = prior_resolution.trust_status in ("trusted", "watch")
+    else:
+        trust_ok = False
+    return trust_ok and _check_auto_resolve_signals(members, proposal_policy)
+
+
+def _validate_group_proposal_inputs(
+    *,
+    rel_schema: RelationshipSchema,
+    relationship_type: str,
+    members: list[CandidateMember],
+    thesis_facts: dict[str, Any],
+) -> None:
+    if not members:
+        raise ConfigError("Members list must not be empty")
+
+    for member in members:
+        key = _relationship_key(member)
+        if key.relationship_type != relationship_type:
+            raise ConfigError(
+                f"Member {key.from_id}\u2192{key.to_id} has relationship_type "
+                f"'{key.relationship_type}' but group is for '{relationship_type}'"
+            )
+        if key.from_type != rel_schema.from_entity:
+            raise ConfigError(
+                f"Member {key.from_id} from_type '{key.from_type}' does not match "
+                f"relationship '{relationship_type}' which expects '{rel_schema.from_entity}'"
+            )
+        if key.to_type != rel_schema.to_entity:
+            raise ConfigError(
+                f"Member {key.to_id} to_type '{key.to_type}' does not match "
+                f"relationship '{relationship_type}' which expects '{rel_schema.to_entity}'"
+            )
+
+    try:
+        canonical_json(thesis_facts)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
+
+    seen_members: set[_RelationshipKey] = set()
+    for member in members:
+        key = _relationship_key(member)
+        if key in seen_members:
+            raise ConfigError(
+                f"Duplicate member: {key.from_type}:{key.from_id} \u2192 "
+                f"{key.to_type}:{key.to_id} via {key.relationship_type}"
+            )
+        seen_members.add(key)
+
+
+def _validate_proposal_signals(
+    *,
+    members: list[CandidateMember],
+    proposal_policy: ProposalPolicySchema | None,
+    signal_sources_used: list[str],
+) -> None:
+    for member in members:
+        key = _relationship_key(member)
+        seen_signal_sources: set[str] = set()
+        for signal in member.signals:
+            if signal.signal_source in seen_signal_sources:
+                raise ConfigError(
+                    f"Member {key.from_id}\u2192{key.to_id} has duplicate signals "
+                    f"from signal source '{signal.signal_source}'"
+                )
+            seen_signal_sources.add(signal.signal_source)
+
+            if proposal_policy is not None and proposal_policy.signals:
+                if signal.signal_source not in proposal_policy.signals:
+                    declared = ", ".join(sorted(proposal_policy.signals.keys()))
+                    raise ConfigError(
+                        f"Signal from undeclared signal source '{signal.signal_source}'; "
+                        f"declared: {declared}"
+                    )
+
+    if proposal_policy is None or not proposal_policy.signals:
+        return
+
+    for source_name, signal_config in proposal_policy.signals.items():
+        if signal_config.role not in ("blocking", "required"):
+            continue
+        for member in members:
+            key = _relationship_key(member)
+            member_signal_sources = {signal.signal_source for signal in member.signals}
+            if source_name not in member_signal_sources:
+                raise ConfigError(
+                    f"Member {key.from_id}\u2192{key.to_id} missing signal "
+                    f"from {signal_config.role} signal source '{source_name}'"
+                )
+
+    for source_name in signal_sources_used:
+        if source_name not in proposal_policy.signals:
+            raise ConfigError(
+                f"Signal source '{source_name}' not declared in proposal_policy.signals"
+            )
+
+    if len(members) > proposal_policy.max_group_size:
+        raise ConfigError(
+            f"Group size {len(members)} exceeds max_group_size "
+            f"{proposal_policy.max_group_size}"
+        )
+
+
+def _clear_pending_group(
+    *,
+    instance: InstanceProtocol,
+    group_store: GroupStoreProtocol,
+    pending_group: CandidateGroup,
+    old_members: list[CandidateMember],
+    signature: str,
+    prior_resolution: GroupResolution | None,
+    suppressed_members: list[SuppressedProposalMember],
+    policy_summary: dict[str, int],
+) -> ProposeGroupResult:
+    ctx: MutationReceiptContext[ProposeGroupResult]
+    with mutation_receipt(
+        instance,
+        "group_clear",
+        {
+            "group_id": pending_group.group_id,
+            "signature": signature,
+            "final_version_before_clear": pending_group.pending_version,
+        },
+    ) as ctx:
+        assert ctx.builder is not None
+        ctx.builder.record_validation(
+            passed=True,
+            detail={
+                "group_id": pending_group.group_id,
+                "signature": signature,
+                "final_version_before_clear": pending_group.pending_version,
+                "cleared_tuples": _summarize_tuples(old_members),
+            },
+        )
+        with group_store.transaction():
+            group_store.delete_group(pending_group.group_id)
+        ctx.set_result(
+            _proposal_result(
+                group_id=None,
+                signature=signature,
+                status="suppressed",
+                review_priority="review",
+                member_count=0,
+                prior_resolution=prior_resolution,
+                suppressed=True,
+                suppressed_members=suppressed_members,
+                policy_summary=policy_summary,
+            )
+        )
+    result = ctx.result
+    assert result is not None
+    return result
+
+
+def _rewrite_pending_group(
+    *,
+    instance: InstanceProtocol,
+    group_store: GroupStoreProtocol,
+    pending_group: CandidateGroup,
+    old_members: list[CandidateMember],
+    pending_members: list[CandidateMember],
+    metadata: _ProposalMetadata,
+    signature: str,
+    review_priority: ReviewPriority,
+    prior_resolution: GroupResolution | None,
+    suppressed_members: list[SuppressedProposalMember],
+    policy_summary: dict[str, int],
+) -> ProposeGroupResult:
+    changes = _member_changes(old_members, pending_members)
+    group = pending_group.model_copy(
+        update={
+            **_group_update_fields(
+                metadata,
+                member_count=len(pending_members),
+                review_priority=review_priority,
+            ),
+            "pending_version": pending_group.pending_version + 1,
+        }
+    )
+
+    ctx: MutationReceiptContext[ProposeGroupResult]
+    with mutation_receipt(
+        instance,
+        "group_rewrite",
+        {
+            "group_id": pending_group.group_id,
+            "signature": signature,
+            "prior_version": pending_group.pending_version,
+            "new_version": group.pending_version,
+        },
+    ) as ctx:
+        assert ctx.builder is not None
+        ctx.builder.record_validation(
+            passed=True,
+            detail={
+                "group_id": pending_group.group_id,
+                "signature": signature,
+                "prior_version": pending_group.pending_version,
+                "new_version": group.pending_version,
+                "added_tuples": _summarize_tuples(changes.added),
+                "removed_tuples": _summarize_tuples(changes.removed),
+            },
+        )
+        with group_store.transaction():
+            group_store.save_group(group)
+            group_store.replace_members(group.group_id, pending_members)
+        ctx.set_result(
+            _proposal_result(
+                group_id=group.group_id,
+                signature=signature,
+                status="pending_review",
+                review_priority=review_priority,
+                member_count=len(pending_members),
+                prior_resolution=prior_resolution,
+                suppressed_members=suppressed_members,
+                policy_summary=policy_summary,
+            )
+        )
+    result = ctx.result
+    assert result is not None
+    return result
+
+
+def _create_group_or_rewrite_concurrent(
+    *,
+    instance: InstanceProtocol,
+    graph: EntityGraph,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+    pending_members: list[CandidateMember],
+    delta_members: list[CandidateMember],
+    metadata: _ProposalMetadata,
+    relationship_type: str,
+    signature: str,
+    pending_refresh_mode: Literal["replace", "retain_missing"],
+    proposal_policy: ProposalPolicySchema | None,
+    prior_resolution: GroupResolution | None,
+    force_review: bool,
+    has_override: bool,
+    status: GroupStatus,
+    review_priority: ReviewPriority,
+    suppressed_members: list[SuppressedProposalMember],
+    policy_summary: dict[str, int],
+) -> ProposeGroupResult:
+    ctx: MutationReceiptContext[ProposeGroupResult]
+    with mutation_receipt(
+        instance,
+        "group_propose",
+        {
+            "group_id": group.group_id,
+            "signature": signature,
+            "pending_version": 1,
+            "member_count": len(pending_members),
+            "member_tuples": _summarize_tuples(pending_members),
+        },
+    ) as ctx:
+        assert ctx.builder is not None
+        if has_override:
+            ctx.builder.record_validation(
+                passed=False,
+                detail={"reason": "held_for_review_due_to_override"},
+            )
+        with group_store.transaction():
+            try:
+                group_store.save_group(group)
+                group_store.save_members(group.group_id, pending_members)
+            except sqlite3.IntegrityError:
+                concurrent_pending = group_store.find_pending_group(
+                    relationship_type,
+                    signature,
+                )
+                if concurrent_pending is None:
+                    raise
+                concurrent_members = group_store.get_members(concurrent_pending.group_id)
+                rewritten_members = pending_members
+                if pending_refresh_mode == "retain_missing":
+                    rewritten_members = _merge_pending_members(
+                        concurrent_members,
+                        delta_members,
+                    )
+                rewritten_review_priority = _review_priority_for_members(
+                    graph=graph,
+                    members=rewritten_members,
+                    proposal_policy=proposal_policy,
+                    prior_resolution=prior_resolution,
+                    force_review=force_review,
+                )
+                changes = _member_changes(concurrent_members, rewritten_members)
+                rewritten = concurrent_pending.model_copy(
+                    update={
+                        **_group_update_fields(
+                            metadata,
+                            member_count=len(rewritten_members),
+                            review_priority=rewritten_review_priority,
+                        ),
+                        "pending_version": concurrent_pending.pending_version + 1,
+                    }
+                )
+                group_store.save_group(rewritten)
+                group_store.replace_members(rewritten.group_id, rewritten_members)
+                ctx.builder.record_validation(
+                    passed=True,
+                    detail={
+                        "race_resolved_as_rewrite": True,
+                        "group_id": rewritten.group_id,
+                        "prior_version": concurrent_pending.pending_version,
+                        "new_version": rewritten.pending_version,
+                        "added_tuples": _summarize_tuples(changes.added),
+                        "removed_tuples": _summarize_tuples(changes.removed),
+                    },
+                )
+                ctx.set_result(
+                    _proposal_result(
+                        group_id=rewritten.group_id,
+                        signature=signature,
+                        status="pending_review",
+                        review_priority=rewritten_review_priority,
+                        member_count=len(rewritten_members),
+                        prior_resolution=prior_resolution,
+                        suppressed_members=suppressed_members,
+                        policy_summary=policy_summary,
+                    )
+                )
+            else:
+                ctx.set_result(
+                    _proposal_result(
+                        group_id=group.group_id,
+                        signature=signature,
+                        status=status,
+                        review_priority=review_priority,
+                        member_count=len(pending_members),
+                        prior_resolution=prior_resolution,
+                        suppressed_members=suppressed_members,
+                        policy_summary=policy_summary,
+                    )
+                )
+
+    result = ctx.result
+    assert result is not None
+    return result
 
 
 def service_propose_group(
@@ -268,50 +881,28 @@ def service_propose_group(
     source_trace_ids = source_trace_ids or []
     source_step_ids = source_step_ids or []
     policy_summary: dict[str, int] = {}
+    metadata = _ProposalMetadata(
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        analysis_state=analysis_state,
+        signal_sources_used=signal_sources_used,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=source_step_ids,
+    )
 
-    # 1. Validate relationship_type
     rel_schema = config.get_relationship(relationship_type)
     if rel_schema is None:
         raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
-
-    # 2. Validate members not empty
-    if not members:
-        raise ConfigError("Members list must not be empty")
-
-    # 3. Validate each member
-    for m in members:
-        if m.relationship_type != relationship_type:
-            raise ConfigError(
-                f"Member {m.from_id}\u2192{m.to_id} has relationship_type "
-                f"'{m.relationship_type}' but group is for '{relationship_type}'"
-            )
-        if m.from_type != rel_schema.from_entity:
-            raise ConfigError(
-                f"Member {m.from_id} from_type '{m.from_type}' does not match "
-                f"relationship '{relationship_type}' which expects '{rel_schema.from_entity}'"
-            )
-        if m.to_type != rel_schema.to_entity:
-            raise ConfigError(
-                f"Member {m.to_id} to_type '{m.to_type}' does not match "
-                f"relationship '{relationship_type}' which expects '{rel_schema.to_entity}'"
-            )
-
-    # 4. thesis_facts serialization check (canonical_json rejects NaN/Infinity).
-    try:
-        canonical_json(thesis_facts)
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
-
-    # 5. Duplicate member check
-    seen_members: set[tuple[str, str, str, str, str]] = set()
-    for m in members:
-        key = (m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type)
-        if key in seen_members:
-            raise ConfigError(
-                f"Duplicate member: {m.from_type}:{m.from_id} \u2192 "
-                f"{m.to_type}:{m.to_id} via {m.relationship_type}"
-            )
-        seen_members.add(key)
+    _validate_group_proposal_inputs(
+        rel_schema=rel_schema,
+        relationship_type=relationship_type,
+        members=members,
+        thesis_facts=thesis_facts,
+    )
 
     graph = instance.load_graph()
     # Workflow policy accounting intentionally reflects the original proposal set.
@@ -343,7 +934,7 @@ def service_propose_group(
         )
         suppressed_members: list[SuppressedProposalMember] = []
         if rel_schema.proposal_identity == "relationship_tuple":
-            members, suppressed_members = _filter_relationship_tuple_conflicts(
+            members, suppressed_members = _filter_relationship_key_conflicts(
                 graph=graph,
                 group_store=group_store,
                 relationship_type=relationship_type,
@@ -353,68 +944,30 @@ def service_propose_group(
                 ),
             )
 
-        # 6. Signal validation (retained members)
-        for m in members:
-            seen_signal_sources: set[str] = set()
-            for sig in m.signals:
-                if sig.signal_source in seen_signal_sources:
-                    raise ConfigError(
-                        f"Member {m.from_id}\u2192{m.to_id} has duplicate signals "
-                        f"from signal source '{sig.signal_source}'"
-                    )
-                seen_signal_sources.add(sig.signal_source)
-
-                if proposal_policy is not None and proposal_policy.signals:
-                    if sig.signal_source not in proposal_policy.signals:
-                        declared = ", ".join(sorted(proposal_policy.signals.keys()))
-                        raise ConfigError(
-                            f"Signal from undeclared signal source '{sig.signal_source}'; "
-                            f"declared: {declared}"
-                        )
-
-        # 7. Config guardrails (if a proposal_policy section exists).
-        if proposal_policy is not None and proposal_policy.signals:
-            # Blocking + required signal_sources: every retained member must have a signal
-            for iname, icfg in proposal_policy.signals.items():
-                if icfg.role in ("blocking", "required"):
-                    for m in members:
-                        member_signal_sources = {s.signal_source for s in m.signals}
-                        if iname not in member_signal_sources:
-                            raise ConfigError(
-                                f"Member {m.from_id}\u2192{m.to_id} missing signal "
-                                f"from {icfg.role} signal source '{iname}'"
-                            )
-
-            # signal_sources_used validation
-            for iname in signal_sources_used:
-                if iname not in proposal_policy.signals:
-                    raise ConfigError(
-                        f"Signal source '{iname}' not declared in proposal_policy.signals"
-                    )
-
-            # max_group_size
-            if len(members) > proposal_policy.max_group_size:
-                raise ConfigError(
-                    "Group size "
-                    f"{len(members)} exceeds max_group_size "
-                    f"{proposal_policy.max_group_size}"
-                )
+        _validate_proposal_signals(
+            members=members,
+            proposal_policy=proposal_policy,
+            signal_sources_used=signal_sources_used,
+        )
 
         prior = group_store.find_resolution(
             relationship_type, signature, action="approve", confirmed=True
         )
-        approved_tuples = group_store.list_approved_relationship_tuples(
+        approved_store_tuples = group_store.list_approved_relationship_tuples(
             relationship_type,
             signature,
         )
-        delta_members = [m for m in members if _relationship_tuple(m) not in approved_tuples]
+        approved_keys = {
+            _RelationshipKey.from_store_tuple(value) for value in approved_store_tuples
+        }
+        delta_members = [m for m in members if _relationship_key(m) not in approved_keys]
         if rel_schema.proposal_identity == "relationship_tuple":
             suppressed_members = _merge_suppressed_members(
                 suppressed_members,
                 [
                     _suppressed_member_for_existing_edge(member)
                     for member in members
-                    if _relationship_tuple(member) in approved_tuples
+                    if _relationship_key(member) in approved_keys
                 ],
             )
         pending_members = delta_members
@@ -423,7 +976,7 @@ def service_propose_group(
 
         if not delta_members:
             if pending_group is None:
-                return ProposeGroupResult(
+                return _proposal_result(
                     group_id=None,
                     signature=signature,
                     status="suppressed",
@@ -436,7 +989,7 @@ def service_propose_group(
                 )
 
             if pending_refresh_mode == "retain_missing":
-                return ProposeGroupResult(
+                return _proposal_result(
                     group_id=pending_group.group_id,
                     signature=signature,
                     status="pending_review",
@@ -447,304 +1000,90 @@ def service_propose_group(
                     policy_summary=policy_summary,
                 )
 
-            ctx: MutationReceiptContext[ProposeGroupResult]
-            with mutation_receipt(
-                instance,
-                "group_clear",
-                {
-                    "group_id": pending_group.group_id,
-                    "signature": signature,
-                    "final_version_before_clear": pending_group.pending_version,
-                },
-            ) as ctx:
-                assert ctx.builder is not None
-                ctx.builder.record_validation(
-                    passed=True,
-                    detail={
-                        "group_id": pending_group.group_id,
-                        "signature": signature,
-                        "final_version_before_clear": pending_group.pending_version,
-                        "cleared_tuples": _summarize_tuples(old_members),
-                    },
-                )
-                with group_store.transaction():
-                    group_store.delete_group(pending_group.group_id)
-                ctx.set_result(
-                    ProposeGroupResult(
-                        group_id=None,
-                        signature=signature,
-                        status="suppressed",
-                        review_priority="review",
-                        member_count=0,
-                        prior_resolution=prior,
-                        suppressed=True,
-                        suppressed_members=suppressed_members,
-                        policy_summary=policy_summary,
-                    )
-                )
-            result = ctx.result
-            assert result is not None
-            return result
+            return _clear_pending_group(
+                instance=instance,
+                group_store=group_store,
+                pending_group=pending_group,
+                old_members=old_members,
+                signature=signature,
+                prior_resolution=prior,
+                suppressed_members=suppressed_members,
+                policy_summary=policy_summary,
+            )
 
-        review_priority = derive_review_priority(pending_members, proposal_policy, prior)
-        if force_review and review_priority == "normal":
-            review_priority = "review"
-
-        has_override = any(_has_active_override(instance, member) for member in delta_members)
-        pending_has_override = any(
-            _has_active_override(instance, member) for member in pending_members
+        review_priority = _review_priority_for_members(
+            graph=graph,
+            members=pending_members,
+            proposal_policy=proposal_policy,
+            prior_resolution=prior,
+            force_review=force_review,
         )
-        if pending_has_override and review_priority == "normal":
-            review_priority = "review"
-        auto_resolve = False
-        if (
-            pending_group is None
-            and not force_review
-            and not has_override
-            and prior is not None
-            and prior.trust_status != "invalidated"
-            and proposal_policy is not None
-        ):
-            trust_ok = False
-            if proposal_policy.auto_resolve_requires_prior_trust == "trusted_only":
-                trust_ok = prior.trust_status == "trusted"
-            elif proposal_policy.auto_resolve_requires_prior_trust == "trusted_or_watch":
-                trust_ok = prior.trust_status in ("trusted", "watch")
-            if trust_ok and _check_auto_resolve_signals(delta_members, proposal_policy):
-                auto_resolve = True
-
-        if force_review or has_override:
-            status: Literal["pending_review", "auto_resolved"] = "pending_review"
-        elif auto_resolve:
-            status = "auto_resolved"
+        has_override = _members_have_active_override(graph, delta_members)
+        auto_resolve = pending_group is None and _should_auto_resolve(
+            members=delta_members,
+            proposal_policy=proposal_policy,
+            prior_resolution=prior,
+            force_review=force_review,
+            has_override=has_override,
+        )
+        if auto_resolve:
+            status: GroupStatus = "auto_resolved"
         else:
             status = "pending_review"
 
         if pending_group is not None:
-            old_keys = {_relationship_tuple(member) for member in old_members}
-            new_keys = {_relationship_tuple(member) for member in pending_members}
-            added_members = [
-                member for member in pending_members if _relationship_tuple(member) not in old_keys
-            ]
-            removed_members = [
-                member
-                for member in old_members
-                if _relationship_tuple(member) not in new_keys
-            ]
-
-            group = pending_group.model_copy(
-                update={
-                    "status": "pending_review",
-                    "thesis_text": thesis_text,
-                    "thesis_facts": thesis_facts,
-                    "analysis_state": analysis_state,
-                    "signal_sources_used": signal_sources_used,
-                    "proposed_by": proposed_by,
-                    "member_count": len(pending_members),
-                    "pending_version": pending_group.pending_version + 1,
-                    "review_priority": review_priority,
-                    "suggested_priority": suggested_priority,
-                    "source_workflow_name": source_workflow_name,
-                    "source_workflow_receipt_id": source_workflow_receipt_id,
-                    "source_trace_ids": source_trace_ids,
-                    "source_step_ids": source_step_ids,
-                    "resolution_id": None,
-                }
+            return _rewrite_pending_group(
+                instance=instance,
+                group_store=group_store,
+                pending_group=pending_group,
+                old_members=old_members,
+                pending_members=pending_members,
+                metadata=metadata,
+                signature=signature,
+                review_priority=review_priority,
+                prior_resolution=prior,
+                suppressed_members=suppressed_members,
+                policy_summary=policy_summary,
             )
-            ctx = MutationReceiptContext[ProposeGroupResult](builder=None)
-            with mutation_receipt(
-                instance,
-                "group_rewrite",
-                {
-                    "group_id": pending_group.group_id,
-                    "signature": signature,
-                    "prior_version": pending_group.pending_version,
-                    "new_version": group.pending_version,
-                },
-            ) as ctx:
-                assert ctx.builder is not None
-                ctx.builder.record_validation(
-                    passed=True,
-                    detail={
-                        "group_id": pending_group.group_id,
-                        "signature": signature,
-                        "prior_version": pending_group.pending_version,
-                        "new_version": group.pending_version,
-                        "added_tuples": _summarize_tuples(added_members),
-                        "removed_tuples": _summarize_tuples(removed_members),
-                    },
-                )
-                with group_store.transaction():
-                    group_store.save_group(group)
-                    group_store.replace_members(group.group_id, pending_members)
-                ctx.set_result(
-                    ProposeGroupResult(
-                        group_id=group.group_id,
-                        signature=signature,
-                        status="pending_review",
-                        review_priority=review_priority,
-                        member_count=len(pending_members),
-                        prior_resolution=prior,
-                        suppressed_members=suppressed_members,
-                        policy_summary=policy_summary,
-                    )
-                )
-            result = ctx.result
-            assert result is not None
-            return result
 
         group_id = new_id("GRP")
-        group = CandidateGroup(
+        group = _new_candidate_group(
             group_id=group_id,
             relationship_type=relationship_type,
             signature=signature,
             status=status,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            signal_sources_used=signal_sources_used,
-            proposed_by=proposed_by,
+            metadata=metadata,
             member_count=len(pending_members),
-            pending_version=1,
             review_priority=review_priority,
-            suggested_priority=suggested_priority,
-            source_workflow_name=source_workflow_name,
-            source_workflow_receipt_id=source_workflow_receipt_id,
-            source_trace_ids=source_trace_ids,
-            source_step_ids=source_step_ids,
-            created_at=datetime.now(timezone.utc),
         )
-
-        ctx = MutationReceiptContext[ProposeGroupResult](builder=None)
-        with mutation_receipt(
-            instance,
-            "group_propose",
-            {
-                "group_id": group_id,
-                "signature": signature,
-                "pending_version": 1,
-                "member_count": len(pending_members),
-                "member_tuples": _summarize_tuples(pending_members),
-            },
-        ) as ctx:
-            assert ctx.builder is not None
-            if has_override:
-                ctx.builder.record_validation(
-                    passed=False,
-                    detail={"reason": "held_for_review_due_to_override"},
-                )
-            with group_store.transaction():
-                try:
-                    group_store.save_group(group)
-                    group_store.save_members(group_id, pending_members)
-                except sqlite3.IntegrityError:
-                    concurrent_pending = group_store.find_pending_group(
-                        relationship_type,
-                        signature,
-                    )
-                    if concurrent_pending is None:
-                        raise
-                    concurrent_members = group_store.get_members(concurrent_pending.group_id)
-                    concurrent_keys = {_relationship_tuple(member) for member in concurrent_members}
-                    rewritten_members = pending_members
-                    if pending_refresh_mode == "retain_missing":
-                        rewritten_members = _merge_pending_members(
-                            concurrent_members,
-                            delta_members,
-                        )
-                    rewritten_review_priority = derive_review_priority(
-                        rewritten_members,
-                        proposal_policy,
-                        prior,
-                    )
-                    if force_review and rewritten_review_priority == "normal":
-                        rewritten_review_priority = "review"
-                    if (
-                        any(_has_active_override(instance, member) for member in rewritten_members)
-                        and rewritten_review_priority == "normal"
-                    ):
-                        rewritten_review_priority = "review"
-                    added_members = [
-                        member
-                        for member in rewritten_members
-                        if _relationship_tuple(member) not in concurrent_keys
-                    ]
-                    removed_members = [
-                        member
-                        for member in concurrent_members
-                        if _relationship_tuple(member) not in {
-                            _relationship_tuple(item) for item in rewritten_members
-                        }
-                    ]
-                    rewritten = concurrent_pending.model_copy(
-                        update={
-                            "status": "pending_review",
-                            "thesis_text": thesis_text,
-                            "thesis_facts": thesis_facts,
-                            "analysis_state": analysis_state,
-                            "signal_sources_used": signal_sources_used,
-                            "proposed_by": proposed_by,
-                            "member_count": len(rewritten_members),
-                            "pending_version": concurrent_pending.pending_version + 1,
-                            "review_priority": rewritten_review_priority,
-                            "suggested_priority": suggested_priority,
-                            "source_workflow_name": source_workflow_name,
-                            "source_workflow_receipt_id": source_workflow_receipt_id,
-                            "source_trace_ids": source_trace_ids,
-                            "source_step_ids": source_step_ids,
-                            "resolution_id": None,
-                        }
-                    )
-                    group_store.save_group(rewritten)
-                    group_store.replace_members(rewritten.group_id, rewritten_members)
-                    ctx.builder.record_validation(
-                        passed=True,
-                        detail={
-                            "race_resolved_as_rewrite": True,
-                            "group_id": rewritten.group_id,
-                            "prior_version": concurrent_pending.pending_version,
-                            "new_version": rewritten.pending_version,
-                            "added_tuples": _summarize_tuples(added_members),
-                            "removed_tuples": _summarize_tuples(removed_members),
-                        },
-                    )
-                    ctx.set_result(
-                        ProposeGroupResult(
-                            group_id=rewritten.group_id,
-                            signature=signature,
-                            status="pending_review",
-                            review_priority=rewritten_review_priority,
-                            member_count=len(rewritten_members),
-                            prior_resolution=prior,
-                            suppressed_members=suppressed_members,
-                            policy_summary=policy_summary,
-                        )
-                    )
-                else:
-                    ctx.set_result(
-                        ProposeGroupResult(
-                            group_id=group_id,
-                            signature=signature,
-                            status=status,
-                            review_priority=review_priority,
-                            member_count=len(pending_members),
-                            prior_resolution=prior,
-                            suppressed_members=suppressed_members,
-                            policy_summary=policy_summary,
-                        )
-                    )
-
-        result = ctx.result
-        assert result is not None
-        return result
+        return _create_group_or_rewrite_concurrent(
+            instance=instance,
+            graph=graph,
+            group_store=group_store,
+            group=group,
+            pending_members=pending_members,
+            delta_members=delta_members,
+            metadata=metadata,
+            relationship_type=relationship_type,
+            signature=signature,
+            pending_refresh_mode=pending_refresh_mode,
+            proposal_policy=proposal_policy,
+            prior_resolution=prior,
+            force_review=force_review,
+            has_override=has_override,
+            status=status,
+            review_priority=review_priority,
+            suppressed_members=suppressed_members,
+            policy_summary=policy_summary,
+        )
     finally:
         group_store.close()
 
 
 def _apply_workflow_policies(
     *,
-    config,
-    graph,
+    config: CoreConfig,
+    graph: EntityGraph,
     relationship_type: str,
     members: list[CandidateMember],
     workflow_name: str | None,
@@ -769,8 +1108,9 @@ def _apply_workflow_policies(
     kept: list[CandidateMember] = []
     force_review = False
     for member in members:
-        from_entity = graph.get_entity(member.from_type, member.from_id)
-        to_entity = graph.get_entity(member.to_type, member.to_id)
+        key = _relationship_key(member)
+        from_entity = graph.get_entity(key.from_type, key.from_id)
+        to_entity = graph.get_entity(key.to_type, key.to_id)
         matched_effects: list[str] = []
         for policy in policies:
             if from_entity is None or to_entity is None:
@@ -851,6 +1191,349 @@ def _check_auto_resolve_signals(
     return True
 
 
+def _validate_resolve_request(
+    *,
+    action: str,
+    resolved_by: str,
+    expected_pending_version: int | None,
+) -> None:
+    if action not in _VALID_RESOLVE_ACTIONS:
+        raise ConfigError(
+            f"Invalid action '{action}'. Use: {', '.join(_VALID_RESOLVE_ACTIONS)}"
+        )
+    if resolved_by not in _VALID_RESOLVE_SOURCES:
+        raise ConfigError(
+            f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_RESOLVE_SOURCES)}"
+        )
+    if expected_pending_version is None:
+        raise ConfigError("Resolve requires expected_pending_version")
+
+
+def _load_group_for_resolve(
+    group_store: GroupStoreProtocol,
+    *,
+    group_id: str,
+    action: Literal["approve", "reject"],
+) -> _ResolveTarget:
+    group = group_store.get_group(group_id)
+    if group is None:
+        raise GroupNotFoundError(group_id)
+
+    if group.status == "resolved":
+        raise ConfigError("Group already resolved")
+    if group.status == "applying" and action != "approve":
+        raise ConfigError("Group is in applying state from a prior approve — cannot reject")
+
+    return _ResolveTarget(
+        group=group,
+        members=group_store.get_members(group_id),
+        is_retry=group.status == "applying",
+    )
+
+
+def _validate_resolve_pending_version(
+    *,
+    group: CandidateGroup,
+    expected_pending_version: int,
+) -> None:
+    if group.pending_version != expected_pending_version:
+        raise ConfigError(
+            "Group changed during review; expected pending_version "
+            f"{expected_pending_version}, found {group.pending_version}"
+        )
+
+
+def _reject_group(
+    *,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+    members: list[CandidateMember],
+    rationale: str,
+    resolved_by: Literal["human", "agent"],
+    builder: ReceiptBuilder,
+) -> ResolveGroupResult:
+    builder.record_validation(
+        passed=True,
+        detail={
+            "action": "reject",
+            "members": len(members),
+            "pending_version_at_resolve": group.pending_version,
+        },
+    )
+    with group_store.transaction():
+        resolution_id = group_store.save_resolution(
+            group.relationship_type,
+            group.signature,
+            "reject",
+            rationale,
+            group.thesis_text,
+            group.thesis_facts,
+            group.analysis_state,
+            resolved_by,
+            trust_status="watch",
+            confirmed=True,
+        )
+        group_store.update_group_status(
+            group.group_id,
+            "resolved",
+            resolution_id=resolution_id,
+        )
+    return ResolveGroupResult(
+        group_id=group.group_id,
+        action="reject",
+        edges_created=0,
+        edges_skipped=0,
+        resolution_id=resolution_id,
+    )
+
+
+def _validate_approval_members(
+    *,
+    config: CoreConfig,
+    graph: EntityGraph,
+    members: list[CandidateMember],
+    builder: ReceiptBuilder,
+) -> _ApprovalValidation:
+    valid_inputs: list[RelationshipInstance] = []
+    edges_skipped = 0
+    skipped_existing: list[dict[str, str]] = []
+    applied_tuples: list[dict[str, str]] = []
+    validation_failures = 0
+    validation_errors: list[str] = []
+
+    for member in members:
+        key = _relationship_key(member)
+        count = graph.relationship_count_between(**key.payload())
+        if count > 0:
+            builder.record_validation(
+                passed=False,
+                detail={
+                    "member": _member_label(member),
+                    "reason": "edge_exists",
+                },
+            )
+            edges_skipped += 1
+            skipped_existing.append(_member_tuple_payload(member))
+            continue
+
+        try:
+            validated = validate_relationship(
+                config,
+                graph,
+                **key.validation_args(),
+                properties=member.properties,
+            )
+        except DataValidationError as exc:
+            builder.record_validation(
+                passed=False,
+                detail={
+                    "member": _member_label(member),
+                    "reason": "validation_failed",
+                },
+            )
+            edges_skipped += 1
+            validation_failures += 1
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
+            validation_errors.append(f"{_member_relationship_label(member)}: {detail}")
+            continue
+
+        builder.record_validation(
+            passed=True,
+            detail={"member": _member_label(member)},
+        )
+        valid_inputs.append(
+            key.to_relationship_instance(properties=validated.relationship.properties)
+        )
+        applied_tuples.append(_member_tuple_payload(member))
+
+    return _ApprovalValidation(
+        valid_inputs=valid_inputs,
+        edges_skipped=edges_skipped,
+        skipped_existing=skipped_existing,
+        applied_tuples=applied_tuples,
+        validation_failures=validation_failures,
+        validation_errors=validation_errors,
+    )
+
+
+def _inherited_trust_status(prior: GroupResolution | None) -> TrustStatus:
+    if prior is not None and prior.trust_status in ("trusted", "watch"):
+        return prior.trust_status
+    return "watch"
+
+
+def _start_approval_resolution(
+    *,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+    rationale: str,
+    resolved_by: Literal["human", "agent"],
+    is_retry: bool,
+    validation: _ApprovalValidation,
+) -> str:
+    if is_retry:
+        return cast(str, group.resolution_id)
+
+    if not validation.valid_inputs and not validation.skipped_existing:
+        if validation.validation_errors:
+            raise DataValidationError(
+                "Cannot approve group: candidate validation failed",
+                errors=validation.validation_errors,
+            )
+        raise ConfigError("Cannot approve: no creatable edges")
+
+    prior = group_store.find_resolution(
+        group.relationship_type,
+        group.signature,
+        action="approve",
+        confirmed=True,
+    )
+    with group_store.transaction():
+        resolution_id = group_store.save_resolution(
+            group.relationship_type,
+            group.signature,
+            "approve",
+            rationale,
+            group.thesis_text,
+            group.thesis_facts,
+            group.analysis_state,
+            resolved_by,
+            trust_status=_inherited_trust_status(prior),
+            confirmed=False,
+        )
+        group_store.update_group_status(
+            group.group_id,
+            "applying",
+            resolution_id=resolution_id,
+        )
+    return resolution_id
+
+
+def _record_relationship_write_nodes(
+    builder: ReceiptBuilder,
+    relationships: list[RelationshipInstance],
+) -> None:
+    for relationship in relationships:
+        builder.record_relationship_write(
+            from_type=relationship.from_type,
+            from_id=relationship.from_id,
+            to_type=relationship.to_type,
+            to_id=relationship.to_id,
+            relationship=relationship.relationship_type,
+            is_update=False,
+        )
+
+
+def _apply_resolved_relationships(
+    *,
+    instance: InstanceProtocol,
+    group_id: str,
+    relationships: list[RelationshipInstance],
+) -> int:
+    if not relationships:
+        return 0
+    add_result = service_add_relationships(
+        instance,
+        relationships,
+        source="group_resolve",
+        source_ref=f"group:{group_id}",
+        _create_receipt=False,
+    )
+    return add_result.added
+
+
+def _revalidated_trust_status(
+    *,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+) -> TrustStatus | None:
+    prior = group_store.find_resolution(
+        group.relationship_type,
+        group.signature,
+        action="approve",
+        confirmed=True,
+    )
+    if prior is not None and prior.trust_status == "invalidated":
+        return "watch"
+    return None
+
+
+def _confirm_approval_resolution(
+    *,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+    resolution_id: str,
+) -> None:
+    revalidated_trust = _revalidated_trust_status(
+        group_store=group_store,
+        group=group,
+    )
+    with group_store.transaction():
+        group_store.confirm_resolution(
+            resolution_id,
+            trust_status=revalidated_trust,
+        )
+        group_store.update_group_status(group.group_id, "resolved")
+
+
+def _approve_group(
+    *,
+    instance: InstanceProtocol,
+    group_store: GroupStoreProtocol,
+    group: CandidateGroup,
+    members: list[CandidateMember],
+    rationale: str,
+    resolved_by: Literal["human", "agent"],
+    is_retry: bool,
+    builder: ReceiptBuilder,
+) -> ResolveGroupResult:
+    instance.invalidate_graph_cache()
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    validation = _validate_approval_members(
+        config=config,
+        graph=graph,
+        members=members,
+        builder=builder,
+    )
+    resolution_id = _start_approval_resolution(
+        group_store=group_store,
+        group=group,
+        rationale=rationale,
+        resolved_by=resolved_by,
+        is_retry=is_retry,
+        validation=validation,
+    )
+    _record_relationship_write_nodes(builder, validation.valid_inputs)
+    edges_created = _apply_resolved_relationships(
+        instance=instance,
+        group_id=group.group_id,
+        relationships=validation.valid_inputs,
+    )
+    _confirm_approval_resolution(
+        group_store=group_store,
+        group=group,
+        resolution_id=resolution_id,
+    )
+    builder.record_validation(
+        passed=validation.validation_failures == 0,
+        detail={
+            "pending_version_at_resolve": group.pending_version,
+            "resolution_id": resolution_id,
+            "applied_tuples": validation.applied_tuples,
+            "skipped_tuples_existing_edges": validation.skipped_existing,
+        },
+    )
+    return ResolveGroupResult(
+        group_id=group.group_id,
+        action="approve",
+        edges_created=edges_created,
+        edges_skipped=validation.edges_skipped,
+        resolution_id=resolution_id,
+    )
+
+
 def service_resolve_group(
     instance: InstanceProtocol,
     group_id: str,
@@ -860,34 +1543,20 @@ def service_resolve_group(
     expected_pending_version: int | None = None,
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
-    # 1. Validate inputs
-    _VALID_ACTIONS = ("approve", "reject")
-    if action not in _VALID_ACTIONS:
-        raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_ACTIONS)}")
-    _VALID_SOURCES = ("human", "agent")
-    if resolved_by not in _VALID_SOURCES:
-        raise ConfigError(f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_SOURCES)}")
-    if expected_pending_version is None:
-        raise ConfigError("Resolve requires expected_pending_version")
+    _validate_resolve_request(
+        action=action,
+        resolved_by=resolved_by,
+        expected_pending_version=expected_pending_version,
+    )
+    assert expected_pending_version is not None
 
     group_store = instance.get_group_store()
-
-    # 2. Load group — close store on failure before builder exists
     try:
-        group = group_store.get_group(group_id)
-        if group is None:
-            raise GroupNotFoundError(group_id)
-
-        # 3. Status guard
-        if group.status == "resolved":
-            raise ConfigError("Group already resolved")
-        if group.status == "applying" and action != "approve":
-            raise ConfigError("Group is in applying state from a prior approve — cannot reject")
-
-        is_retry = group.status == "applying"
-
-        # 4. Load members
-        members = group_store.get_members(group_id)
+        target = _load_group_for_resolve(
+            group_store,
+            group_id=group_id,
+            action=action,
+        )
     except Exception:
         group_store.close()
         raise
@@ -904,244 +1573,31 @@ def service_resolve_group(
         store=group_store,
     ) as ctx:
         assert ctx.builder is not None
-        if group.pending_version != expected_pending_version:
-            raise ConfigError(
-                "Group changed during review; expected pending_version "
-                f"{expected_pending_version}, found {group.pending_version}"
-            )
-        # 6. Reject path — no graph mutation
+        _validate_resolve_pending_version(
+            group=target.group,
+            expected_pending_version=expected_pending_version,
+        )
         if action == "reject":
-            ctx.builder.record_validation(
-                passed=True,
-                detail={
-                    "action": "reject",
-                    "members": len(members),
-                    "pending_version_at_resolve": group.pending_version,
-                },
-            )
-            with group_store.transaction():
-                res_id = group_store.save_resolution(
-                    group.relationship_type,
-                    group.signature,
-                    "reject",
-                    rationale,
-                    group.thesis_text,
-                    group.thesis_facts,
-                    group.analysis_state,
-                    resolved_by,
-                    trust_status="watch",
-                    confirmed=True,
-                )
-                group_store.update_group_status(group_id, "resolved", resolution_id=res_id)
-            ctx.set_result(
-                ResolveGroupResult(
-                    group_id=group_id,
-                    action="reject",
-                    edges_created=0,
-                    edges_skipped=0,
-                    resolution_id=res_id,
-                )
+            result = _reject_group(
+                group_store=group_store,
+                group=target.group,
+                members=target.members,
+                rationale=rationale,
+                resolved_by=resolved_by,
+                builder=ctx.builder,
             )
         else:
-            # 5. Approve — per-member validation
-            instance.invalidate_graph_cache()
-            config = instance.load_config()
-            graph = instance.load_graph()
-
-            valid_inputs: list[RelationshipInstance] = []
-            edges_skipped = 0
-            skipped_existing: list[dict[str, str]] = []
-            applied_tuples: list[dict[str, str]] = []
-            validation_failures = 0
-            validation_errors: list[str] = []
-
-            for m in members:
-                # 5a. Count-based existence check
-                count = graph.relationship_count_between(
-                    m.from_type, m.from_id, m.to_type, m.to_id, m.relationship_type
-                )
-                if count > 0:
-                    ctx.builder.record_validation(
-                        passed=False,
-                        detail={
-                            "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
-                            "reason": "edge_exists",
-                        },
-                    )
-                    edges_skipped += 1
-                    skipped_existing.append(
-                        {
-                            "from_type": m.from_type,
-                            "from_id": m.from_id,
-                            "to_type": m.to_type,
-                            "to_id": m.to_id,
-                            "relationship_type": m.relationship_type,
-                        }
-                    )
-                    continue
-
-                # 5b. Validate
-                try:
-                    validated = validate_relationship(
-                        config,
-                        graph,
-                        m.from_type,
-                        m.from_id,
-                        m.relationship_type,
-                        m.to_type,
-                        m.to_id,
-                        m.properties,
-                    )
-                except DataValidationError as exc:
-                    ctx.builder.record_validation(
-                        passed=False,
-                        detail={
-                            "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
-                            "reason": "validation_failed",
-                        },
-                    )
-                    edges_skipped += 1
-                    validation_failures += 1
-                    detail = "; ".join(exc.errors) if exc.errors else str(exc)
-                    validation_errors.append(
-                        f"{m.from_type}:{m.from_id} -[{m.relationship_type}]-> "
-                        f"{m.to_type}:{m.to_id}: {detail}"
-                    )
-                    continue
-
-                ctx.builder.record_validation(
-                    passed=True,
-                    detail={
-                        "member": f"{m.from_type}:{m.from_id}->{m.to_type}:{m.to_id}",
-                    },
-                )
-
-                # 5c. Valid — add to batch
-                valid_inputs.append(
-                    RelationshipInstance(
-                        from_type=m.from_type,
-                        from_id=m.from_id,
-                        relationship_type=m.relationship_type,
-                        to_type=m.to_type,
-                        to_id=m.to_id,
-                        properties=validated.relationship.properties,
-                    )
-                )
-                applied_tuples.append(
-                    {
-                        "from_type": m.from_type,
-                        "from_id": m.from_id,
-                        "to_type": m.to_type,
-                        "to_id": m.to_id,
-                        "relationship_type": m.relationship_type,
-                    }
-                )
-
-            # 7. Approve — store-first, then graph
-            resolution_id: str
-            if not is_retry:
-                # 7a. First attempt: create resolution
-                if not valid_inputs and not skipped_existing:
-                    if validation_errors:
-                        raise DataValidationError(
-                            "Cannot approve group: candidate validation failed",
-                            errors=validation_errors,
-                        )
-                    raise ConfigError("Cannot approve: no creatable edges")
-
-                # Inherit trust from prior confirmed approval
-                prior = group_store.find_resolution(
-                    group.relationship_type,
-                    group.signature,
-                    action="approve",
-                    confirmed=True,
-                )
-                inherited_trust = "watch"
-                if prior is not None:
-                    prior_trust = prior.trust_status
-                    if prior_trust in ("trusted", "watch"):
-                        inherited_trust = prior_trust
-
-                with group_store.transaction():
-                    resolution_id = group_store.save_resolution(
-                        group.relationship_type,
-                        group.signature,
-                        "approve",
-                        rationale,
-                        group.thesis_text,
-                        group.thesis_facts,
-                        group.analysis_state,
-                        resolved_by,
-                        trust_status=inherited_trust,
-                        confirmed=False,
-                    )
-                    group_store.update_group_status(
-                        group_id, "applying", resolution_id=resolution_id
-                    )
-            else:
-                # 7b. Retry path: reuse existing resolution_id
-                resolution_id = group.resolution_id  # type: ignore[assignment]
-
-            # Record relationship_write nodes before inner call
-            for inp in valid_inputs:
-                ctx.builder.record_relationship_write(
-                    from_type=inp.from_type,
-                    from_id=inp.from_id,
-                    to_type=inp.to_type,
-                    to_id=inp.to_id,
-                    relationship=inp.relationship_type,
-                    is_update=False,
-                )
-
-            # 7c. Graph write — suppress inner receipt
-            edges_created = 0
-            if valid_inputs:
-                add_result = service_add_relationships(
-                    instance,
-                    valid_inputs,
-                    source="group_resolve",
-                    source_ref=f"group:{group_id}",
-                    _create_receipt=False,
-                )
-                edges_created = add_result.added
-
-            # 7d. Confirm + transition to resolved
-            # Revalidate inherited trust
-            prior = group_store.find_resolution(
-                group.relationship_type,
-                group.signature,
-                action="approve",
-                confirmed=True,
+            result = _approve_group(
+                instance=instance,
+                group_store=group_store,
+                group=target.group,
+                members=target.members,
+                rationale=rationale,
+                resolved_by=resolved_by,
+                is_retry=target.is_retry,
+                builder=ctx.builder,
             )
-            revalidated_trust: str | None = None
-            if prior is not None:
-                prior_trust = prior.trust_status
-                if prior_trust == "invalidated":
-                    revalidated_trust = "watch"
-
-            with group_store.transaction():
-                group_store.confirm_resolution(resolution_id, trust_status=revalidated_trust)
-                group_store.update_group_status(group_id, "resolved")
-
-            ctx.builder.record_validation(
-                passed=validation_failures == 0,
-                detail={
-                    "pending_version_at_resolve": group.pending_version,
-                    "resolution_id": resolution_id,
-                    "applied_tuples": applied_tuples,
-                    "skipped_tuples_existing_edges": skipped_existing,
-                },
-            )
-
-            ctx.set_result(
-                ResolveGroupResult(
-                    group_id=group_id,
-                    action="approve",
-                    edges_created=edges_created,
-                    edges_skipped=edges_skipped,
-                    resolution_id=resolution_id,
-                )
-            )
+        ctx.set_result(result)
 
     result = ctx.result
     assert result is not None
@@ -1149,13 +1605,7 @@ def service_resolve_group(
 
 
 def _member_tuple_payload(member: CandidateMember) -> dict[str, str]:
-    return {
-        "from_type": member.from_type,
-        "from_id": member.from_id,
-        "to_type": member.to_type,
-        "to_id": member.to_id,
-        "relationship_type": member.relationship_type,
-    }
+    return _relationship_payload(member)
 
 
 def _property_delta(
@@ -1183,13 +1633,11 @@ def _current_edges_for_member(
     graph: EntityGraph,
     member: CandidateMember,
 ) -> list[dict[str, Any]]:
+    member_key = _relationship_key(member)
     return [
         edge
-        for edge in graph.iter_edges(relationship_type=member.relationship_type)
-        if edge["from_type"] == member.from_type
-        and edge["from_id"] == member.from_id
-        and edge["to_type"] == member.to_type
-        and edge["to_id"] == member.to_id
+        for edge in graph.iter_edges(relationship_type=member_key.relationship_type)
+        if _RelationshipKey.from_edge(edge) == member_key
     ]
 
 
@@ -1317,7 +1765,7 @@ def service_group_status(
             if reference_group is not None
             else resolutions[0].relationship_type
         )
-        accepted_tuples = group_store.list_approved_relationship_tuples(
+        accepted_store_tuples = group_store.list_approved_relationship_tuples(
             relationship_type,
             signature,
         )
@@ -1355,7 +1803,7 @@ def service_group_status(
             thesis_text=thesis_text,
             thesis_facts=thesis_facts,
             latest_trust_status=latest_approved.trust_status if latest_approved else None,
-            accepted_tuple_count=len(accepted_tuples),
+            accepted_tuple_count=len(accepted_store_tuples),
             pending_delta_count=pending.member_count if pending is not None else 0,
             pending_group_id=pending.group_id if pending is not None else None,
             pending_version=pending.pending_version if pending is not None else None,
