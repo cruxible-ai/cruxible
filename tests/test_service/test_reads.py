@@ -554,6 +554,105 @@ class TestGetRelationship:
         assert lineage.relationship is not None
         assert lineage.warnings == ["missing_provenance"]
 
+    def test_lineage_warns_when_relationship_not_found(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        lineage = service_get_relationship_lineage(
+            populated_instance,
+            from_type="Part",
+            from_id="BP-1001",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-NOT-FOUND",
+        )
+
+        assert lineage.found is False
+        assert lineage.relationship is None
+        assert lineage.warnings == ["relationship_not_found"]
+
+    def test_lineage_warns_on_non_group_provenance(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1002",
+                to_type="Vehicle",
+                to_id="V-2024-ACCORD-SPORT",
+                properties={
+                    "verified": True,
+                    "_provenance": {
+                        "source": "workflow_apply",
+                        "source_ref": "workflow:canonical-fitment",
+                    },
+                },
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        lineage = service_get_relationship_lineage(
+            populated_instance,
+            from_type="Part",
+            from_id="BP-1002",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
+        )
+
+        assert lineage.found is True
+        assert lineage.relationship is not None
+        assert lineage.provenance == {
+            "source": "workflow_apply",
+            "source_ref": "workflow:canonical-fitment",
+        }
+        assert lineage.group is None
+        assert lineage.warnings == ["non_group_provenance"]
+
+    def test_lineage_warns_when_group_provenance_points_to_missing_group(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1002",
+                to_type="Vehicle",
+                to_id="V-2024-ACCORD-SPORT",
+                properties={
+                    "verified": True,
+                    "_provenance": {
+                        "source": "group_resolve",
+                        "source_ref": "group:GRP-missing",
+                    },
+                },
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        lineage = service_get_relationship_lineage(
+            populated_instance,
+            from_type="Part",
+            from_id="BP-1002",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
+        )
+
+        assert lineage.found is True
+        assert lineage.relationship is not None
+        assert lineage.provenance == {
+            "source": "group_resolve",
+            "source_ref": "group:GRP-missing",
+        }
+        assert lineage.group is None
+        assert lineage.warnings == ["missing_group"]
+
 
 # ---------------------------------------------------------------------------
 # service_get_receipt
