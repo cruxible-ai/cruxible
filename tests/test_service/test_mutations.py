@@ -8,7 +8,11 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
+    EntityWriteInput,
+    RelationshipWriteInput,
     service_add_entities,
+    service_add_entity_inputs,
+    service_add_relationship_inputs,
     service_add_relationships,
 )
 
@@ -46,6 +50,27 @@ class TestAddEntities:
         entity = graph.get_entity("Vehicle", "V-1")
         assert entity is not None
         assert entity.properties["make"] == "Honda"
+
+    def test_input_wrapper(self, initialized_instance: CruxibleInstance) -> None:
+        result = service_add_entity_inputs(
+            initialized_instance,
+            [
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-1",
+                    properties={
+                        "vehicle_id": "V-1",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                )
+            ],
+        )
+
+        assert result.added == 1
+        graph = initialized_instance.load_graph()
+        assert graph.get_entity("Vehicle", "V-1") is not None
 
     def test_batch(self, initialized_instance: CruxibleInstance) -> None:
         entities = [
@@ -112,6 +137,28 @@ class TestAddRelationships:
         rel = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-ACCORD-SPORT", "fits")
         assert rel is not None
         assert rel.properties.get("_provenance") is not None
+
+    def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
+        result = service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="test_input_wrapper",
+        )
+
+        assert result.added == 1
+        graph = populated_instance.load_graph()
+        rel = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-ACCORD-SPORT", "fits")
+        assert rel is not None
 
     def test_batch(self, populated_instance: CruxibleInstance) -> None:
         result = service_add_relationships(
@@ -181,4 +228,3 @@ class TestAddRelationships:
         prov = rel.properties["_provenance"]
         assert prov["source"] == "agent_review"
         assert prov["source_ref"] == "review-123"
-

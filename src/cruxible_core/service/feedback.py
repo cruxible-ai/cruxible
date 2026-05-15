@@ -38,8 +38,10 @@ from cruxible_core.service.mutation_receipts import (
 )
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
+    FeedbackItemInput,
     FeedbackServiceResult,
     OutcomeServiceResult,
+    RelationshipTargetInput,
 )
 
 _VALID_ACTIONS = ("approve", "reject", "correct", "flag")
@@ -732,6 +734,30 @@ def _feedback_target_label(target: RelationshipInstance) -> str:
     )
 
 
+def _relationship_target_from_input(target: RelationshipTargetInput) -> RelationshipInstance:
+    return RelationshipInstance(
+        from_type=target.from_type,
+        from_id=target.from_id,
+        relationship_type=target.relationship_type,
+        to_type=target.to_type,
+        to_id=target.to_id,
+        edge_key=target.edge_key,
+    )
+
+
+def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchItem:
+    return FeedbackBatchItem(
+        receipt_id=item.receipt_id,
+        action=item.action,
+        target=_relationship_target_from_input(item.target),
+        reason=item.reason,
+        reason_code=item.reason_code,
+        scope_hints=item.scope_hints or {},
+        corrections=item.corrections or {},
+        group_override=item.group_override,
+    )
+
+
 def _apply_feedback_record(
     graph,
     record: FeedbackRecord,
@@ -752,6 +778,27 @@ def _apply_feedback_record(
             edge_key=target.edge_key,
         )
     return applied
+
+
+def service_feedback_input(
+    instance: InstanceProtocol,
+    item: FeedbackItemInput,
+    *,
+    source: Literal["human", "agent"],
+) -> FeedbackServiceResult:
+    """Normalize one feedback input payload, then record edge feedback."""
+    return service_feedback(
+        instance,
+        receipt_id=item.receipt_id,
+        action=item.action,
+        source=source,
+        target=_relationship_target_from_input(item.target),
+        reason=item.reason,
+        reason_code=item.reason_code,
+        scope_hints=item.scope_hints,
+        corrections=item.corrections,
+        group_override=item.group_override,
+    )
 
 
 def service_feedback(
@@ -829,6 +876,20 @@ def service_feedback(
     result = ctx.result
     assert result is not None
     return result
+
+
+def service_feedback_batch_inputs(
+    instance: InstanceProtocol,
+    items: list[FeedbackItemInput],
+    *,
+    source: Literal["human", "agent"],
+) -> FeedbackBatchServiceResult:
+    """Normalize batch feedback input payloads, then record them together."""
+    return service_feedback_batch(
+        instance,
+        [_feedback_batch_item_from_input(item) for item in items],
+        source=source,
+    )
 
 
 def service_feedback_batch(

@@ -21,7 +21,10 @@ from cruxible_core.errors import (
 )
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
+    FeedbackItemInput,
+    RelationshipTargetInput,
     service_feedback,
+    service_feedback_input,
     service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
@@ -208,6 +211,27 @@ class TestFeedback:
         rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
         assert rel is not None
         assert rel.properties.get("review_status") == "human_approved"
+
+    def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
+        receipt_id = self._run_query(populated_instance)
+        result = service_feedback_input(
+            populated_instance,
+            FeedbackItemInput(
+                receipt_id=receipt_id,
+                action="approve",
+                target=RelationshipTargetInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
+                ),
+            ),
+            source="human",
+        )
+
+        assert result.feedback_id.startswith("FB-")
+        assert result.applied is True
 
     def test_validates_correction_property_schema(
         self, populated_instance: CruxibleInstance

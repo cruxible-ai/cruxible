@@ -8,8 +8,6 @@ from typing import Any, TypeVar
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.feedback.types import FeedbackBatchItem
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
@@ -24,8 +22,8 @@ from cruxible_core.service import (
     service_abandon_decision_record,
     service_add_constraint,
     service_add_decision_policy,
-    service_add_entities,
-    service_add_relationships,
+    service_add_entity_inputs,
+    service_add_relationship_inputs,
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
@@ -36,8 +34,8 @@ from cruxible_core.service import (
     service_create_world_overlay,
     service_describe_query,
     service_evaluate,
-    service_feedback,
-    service_feedback_batch,
+    service_feedback_batch_inputs,
+    service_feedback_input,
     service_finalize_decision_record,
     service_get_decision_record,
     service_get_entity,
@@ -84,7 +82,15 @@ from cruxible_core.service import (
     service_validate,
     service_world_status,
 )
-from cruxible_core.service.types import GroupMemberInput, GroupSignalInput, OperationContext
+from cruxible_core.service.types import (
+    EntityWriteInput,
+    FeedbackItemInput,
+    GroupMemberInput,
+    GroupSignalInput,
+    OperationContext,
+    RelationshipTargetInput,
+    RelationshipWriteInput,
+)
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -783,7 +789,7 @@ def feedback(
     check_permission("cruxible_feedback", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
-    target = RelationshipInstance(
+    target = RelationshipTargetInput(
         from_type=from_type,
         from_id=from_id,
         relationship_type=relationship,
@@ -791,17 +797,19 @@ def feedback(
         to_id=to_id,
         edge_key=edge_key,
     )
-    result = service_feedback(
+    result = service_feedback_input(
         instance,
-        receipt_id=receipt_id,
-        action=action,
+        FeedbackItemInput(
+            receipt_id=receipt_id,
+            action=action,
+            target=target,
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
+            corrections=corrections,
+            group_override=group_override,
+        ),
         source=source,
-        target=target,
-        reason=reason,
-        reason_code=reason_code,
-        scope_hints=scope_hints,
-        corrections=corrections,
-        group_override=group_override,
     )
     return contracts.FeedbackResult(
         feedback_id=result.feedback_id,
@@ -819,13 +827,13 @@ def feedback_batch(
     """Record batch edge feedback tied to prior receipts."""
     check_permission("cruxible_feedback_batch", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_feedback_batch(
+    result = service_feedback_batch_inputs(
         instance,
         [
-            FeedbackBatchItem(
+            FeedbackItemInput(
                 receipt_id=item.receipt_id,
                 action=item.action,
-                target=RelationshipInstance(
+                target=RelationshipTargetInput(
                     from_type=item.target.from_type,
                     from_id=item.target.from_id,
                     relationship_type=item.target.relationship,
@@ -1509,7 +1517,7 @@ def add_relationships_with_provenance(
     instance = get_manager().get(instance_id)
 
     inputs = [
-        RelationshipInstance(
+        RelationshipWriteInput(
             from_type=edge.from_type,
             from_id=edge.from_id,
             relationship_type=edge.relationship,
@@ -1519,7 +1527,7 @@ def add_relationships_with_provenance(
         )
         for edge in relationships
     ]
-    result = service_add_relationships(
+    result = service_add_relationship_inputs(
         instance,
         inputs,
         source=provenance_source,
@@ -1554,14 +1562,14 @@ def add_entities(
     instance = get_manager().get(instance_id)
 
     inputs = [
-        EntityInstance(
+        EntityWriteInput(
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
         )
         for entity in entities
     ]
-    result = service_add_entities(instance, inputs)
+    result = service_add_entity_inputs(instance, inputs)
     return contracts.AddEntityResult(
         entities_added=result.added,
         entities_updated=result.updated,

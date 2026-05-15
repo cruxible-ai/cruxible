@@ -76,6 +76,45 @@ NeighborDirection = Literal["incoming", "outgoing"]
 
 
 @dataclass
+class EntityWriteInput:
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RelationshipWriteInput:
+    from_type: str
+    from_id: str
+    relationship_type: str
+    to_type: str
+    to_id: str
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RelationshipTargetInput:
+    from_type: str
+    from_id: str
+    relationship_type: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+
+
+@dataclass
+class FeedbackItemInput:
+    receipt_id: str
+    action: Literal["approve", "reject", "correct", "flag"]
+    target: RelationshipTargetInput
+    reason: str = ""
+    reason_code: str | None = None
+    scope_hints: dict[str, Any] | None = None
+    corrections: dict[str, Any] | None = None
+    group_override: bool = False
+
+
+@dataclass
 class AddEntityResult:
     added: int
     updated: int

@@ -17,11 +17,11 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.feedback.types import FeedbackBatchItem
-from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
-    service_feedback,
-    service_feedback_batch,
+    FeedbackItemInput,
+    RelationshipTargetInput,
+    service_feedback_batch_inputs,
+    service_feedback_input,
     service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
@@ -83,7 +83,7 @@ def feedback_cmd(
     if corrections_dict is not None and not isinstance(corrections_dict, dict):
         raise click.BadParameter("--corrections must be a JSON object")
 
-    target = RelationshipInstance(
+    target = RelationshipTargetInput(
         from_type=from_type,
         from_id=from_id,
         relationship_type=relationship,
@@ -108,15 +108,17 @@ def feedback_cmd(
             corrections=corrections_dict,
             group_override=group_override,
         ),
-        lambda instance: service_feedback(
+        lambda instance: service_feedback_input(
             instance,
-            receipt_id=receipt_id,
-            action=cast(contracts.FeedbackAction, action),
+            FeedbackItemInput(
+                receipt_id=receipt_id,
+                action=cast(contracts.FeedbackAction, action),
+                target=target,
+                reason=reason,
+                corrections=corrections_dict,
+                group_override=group_override,
+            ),
             source=cast(contracts.FeedbackSource, source),
-            target=target,
-            reason=reason,
-            corrections=corrections_dict,
-            group_override=group_override,
         ),
         allow_local=False,
         command_name="feedback",
@@ -185,13 +187,13 @@ def feedback_batch_cmd(
             items=batch_items,
             source=cast(contracts.FeedbackSource, source),
         ),
-        lambda instance: service_feedback_batch(
+        lambda instance: service_feedback_batch_inputs(
             instance,
             [
-                FeedbackBatchItem(
+                FeedbackItemInput(
                     receipt_id=item.receipt_id,
                     action=item.action,
-                    target=RelationshipInstance(
+                    target=RelationshipTargetInput(
                         from_type=item.target.from_type,
                         from_id=item.target.from_id,
                         relationship_type=item.target.relationship,

@@ -22,7 +22,42 @@ from cruxible_core.service.mutation_receipts import (
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
+    EntityWriteInput,
+    RelationshipWriteInput,
 )
+
+
+def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
+    return EntityInstance(
+        entity_type=value.entity_type,
+        entity_id=value.entity_id,
+        properties=value.properties,
+    )
+
+
+def _relationship_from_input(value: RelationshipWriteInput) -> RelationshipInstance:
+    return RelationshipInstance(
+        from_type=value.from_type,
+        from_id=value.from_id,
+        relationship_type=value.relationship_type,
+        to_type=value.to_type,
+        to_id=value.to_id,
+        properties=value.properties,
+    )
+
+
+def service_add_entity_inputs(
+    instance: InstanceProtocol,
+    entities: Sequence[EntityWriteInput],
+    *,
+    _create_receipt: bool = True,
+) -> AddEntityResult:
+    """Normalize entity write inputs, then add or update graph entities."""
+    return service_add_entities(
+        instance,
+        [_entity_from_input(entity) for entity in entities],
+        _create_receipt=_create_receipt,
+    )
 
 
 def service_add_entities(
@@ -115,6 +150,24 @@ def service_add_entities(
     result = ctx.result
     assert result is not None
     return result
+
+
+def service_add_relationship_inputs(
+    instance: InstanceProtocol,
+    relationships: Sequence[RelationshipWriteInput],
+    source: str,
+    source_ref: str,
+    *,
+    _create_receipt: bool = True,
+) -> AddRelationshipResult:
+    """Normalize relationship write inputs, then add or update graph relationships."""
+    return service_add_relationships(
+        instance,
+        [_relationship_from_input(relationship) for relationship in relationships],
+        source=source,
+        source_ref=source_ref,
+        _create_receipt=_create_receipt,
+    )
 
 
 def service_add_relationships(

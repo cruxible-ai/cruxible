@@ -8,8 +8,11 @@ from cruxible_core.errors import ReceiptNotFoundError, RelationshipAmbiguityErro
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
+    FeedbackItemInput,
+    RelationshipTargetInput,
     service_feedback,
     service_feedback_batch,
+    service_feedback_batch_inputs,
     service_query,
 )
 
@@ -73,6 +76,37 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
         feedback_store.close()
     assert len(records) == 2
     assert {record.receipt_id for record in records} == {receipt_id}
+
+
+def test_service_feedback_batch_input_wrapper(populated_instance):
+    query_result = service_query(
+        populated_instance,
+        "parts_for_vehicle",
+        {"vehicle_id": "V-2024-CIVIC-EX"},
+    )
+    receipt_id = query_result.receipt_id
+    assert receipt_id is not None
+
+    result = service_feedback_batch_inputs(
+        populated_instance,
+        [
+            FeedbackItemInput(
+                receipt_id=receipt_id,
+                action="approve",
+                target=RelationshipTargetInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
+                ),
+            )
+        ],
+        source="human",
+    )
+
+    assert result.total == 1
+    assert result.applied_count == 1
 
 
 def test_service_feedback_batch_invalid_receipt_rolls_back(populated_instance):
