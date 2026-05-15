@@ -12,18 +12,22 @@ no errors — preserving batch atomicity). CLI validates and applies one at a ti
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.provenance import (
+    dump_provenance,
+    load_provenance,
+    make_provenance,
+    stamp_provenance_modified,
+)
 from cruxible_core.graph.types import (
     SYSTEM_OWNED_PROPERTIES,
     EntityInstance,
     RelationshipInstance,
-    make_provenance,
 )
 
 
@@ -196,10 +200,11 @@ def apply_relationship(
                 if old_value is None:
                     continue
                 if key == "_provenance":
-                    prov = dict(old_value)
-                    prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
-                    prov["last_modified_by"] = source
-                    replace_props[key] = prov
+                    provenance = load_provenance(old_value)
+                    if provenance is not None:
+                        replace_props[key] = dump_provenance(
+                            stamp_provenance_modified(provenance, source)
+                        )
                 else:
                     replace_props[key] = old_value
         graph.replace_edge_properties(
@@ -211,5 +216,5 @@ def apply_relationship(
             replace_props,
         )
     else:
-        rel.properties["_provenance"] = make_provenance(source, source_ref)
+        rel.properties["_provenance"] = dump_provenance(make_provenance(source, source_ref))
         graph.add_relationship(rel)

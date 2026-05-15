@@ -1,0 +1,71 @@
+"""Typed helpers for system-owned relationship provenance."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, ValidationError, field_serializer
+
+
+class RelationshipProvenance(BaseModel):
+    """System-owned provenance stored under relationship ``_provenance``."""
+
+    model_config = ConfigDict(extra="allow", validate_assignment=True)
+
+    source: str | None = None
+    source_ref: str | None = None
+    created_at: datetime | None = None
+    last_modified_at: datetime | None = None
+    last_modified_by: str | None = None
+
+    @field_serializer("created_at", "last_modified_at", when_used="json")
+    def _serialize_timestamp(self, value: datetime | None) -> str | None:
+        return value.isoformat() if value is not None else None
+
+
+def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
+    """Create complete provenance for a newly written relationship."""
+    return RelationshipProvenance(
+        source=source,
+        source_ref=source_ref,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def load_provenance(value: Any) -> RelationshipProvenance | None:
+    """Parse a stored ``_provenance`` value, returning None when unusable."""
+    if isinstance(value, RelationshipProvenance):
+        return value
+    if not isinstance(value, dict):
+        return None
+    try:
+        return RelationshipProvenance.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def dump_provenance(provenance: RelationshipProvenance) -> dict[str, Any]:
+    """Return the JSON-ready dict shape stored in graph properties."""
+    return provenance.model_dump(mode="json", exclude_none=True)
+
+
+def stamp_provenance_modified(
+    provenance: RelationshipProvenance,
+    actor: str,
+) -> RelationshipProvenance:
+    """Return provenance with modification actor and timestamp updated."""
+    return provenance.model_copy(
+        update={
+            "last_modified_at": datetime.now(timezone.utc),
+            "last_modified_by": actor,
+        }
+    )
+
+
+def provenance_group_id(provenance: RelationshipProvenance) -> str | None:
+    """Extract the candidate group id from group-backed provenance."""
+    source_ref = provenance.source_ref
+    if source_ref is None or not source_ref.startswith("group:"):
+        return None
+    return source_ref.removeprefix("group:")

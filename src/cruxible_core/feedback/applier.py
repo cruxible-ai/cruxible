@@ -9,11 +9,16 @@ Actions:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.graph.provenance import (
+    RelationshipProvenance,
+    dump_provenance,
+    load_provenance,
+    stamp_provenance_modified,
+)
 from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES
 
 if TYPE_CHECKING:
@@ -25,8 +30,8 @@ def _read_provenance(
     t: Any,
     relationship: str,
     edge_key: int | None,
-) -> dict[str, Any]:
-    """Read existing _provenance from an edge, returning a mutable copy or empty dict."""
+) -> RelationshipProvenance | None:
+    """Read existing _provenance from an edge when it is usable."""
     existing = graph.get_relationship(
         t.from_type,
         t.from_id,
@@ -37,16 +42,13 @@ def _read_provenance(
     )
     if existing:
         old_prov = existing.properties.get("_provenance")
-        if old_prov:
-            return dict(old_prov)
-    return {}
+        return load_provenance(old_prov)
+    return None
 
 
-def _stamp_provenance(prov: dict[str, Any], action: str) -> dict[str, Any]:
-    """Add modification timestamp and actor to a provenance dict."""
-    prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
-    prov["last_modified_by"] = f"feedback:{action}"
-    return prov
+def _stamp_provenance(prov: RelationshipProvenance, action: str) -> dict[str, Any]:
+    """Return JSON-ready provenance stamped for a feedback action."""
+    return dump_provenance(stamp_provenance_modified(prov, f"feedback:{action}"))
 
 
 _SOURCE_PREFIX = {

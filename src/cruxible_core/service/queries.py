@@ -12,6 +12,11 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
     TraceNotFoundError,
 )
+from cruxible_core.graph.provenance import (
+    dump_provenance,
+    load_provenance,
+    provenance_group_id,
+)
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
@@ -313,25 +318,25 @@ def service_get_relationship_lineage(
         )
 
     warnings: list[str] = []
-    provenance = relationship.properties.get("_provenance")
-    if not isinstance(provenance, dict):
+    raw_provenance = relationship.properties.get("_provenance")
+    provenance = load_provenance(raw_provenance)
+    if not isinstance(raw_provenance, dict) or provenance is None:
         return RelationshipLineageResult(
             found=True,
             relationship=relationship,
             warnings=["missing_provenance"],
         )
 
-    source_ref = provenance.get("source_ref")
-    if not isinstance(source_ref, str) or not source_ref.startswith("group:"):
+    group_id = provenance_group_id(provenance)
+    if group_id is None:
         warnings.append("non_group_provenance")
         return RelationshipLineageResult(
             found=True,
             relationship=relationship,
-            provenance=dict(provenance),
+            provenance=dump_provenance(provenance),
             warnings=warnings,
         )
 
-    group_id = source_ref.removeprefix("group:")
     group_store = instance.get_group_store()
     try:
         group = group_store.get_group(group_id)
@@ -340,7 +345,7 @@ def service_get_relationship_lineage(
             return RelationshipLineageResult(
                 found=True,
                 relationship=relationship,
-                provenance=dict(provenance),
+                provenance=dump_provenance(provenance),
                 warnings=warnings,
             )
         resolution = (
@@ -351,7 +356,7 @@ def service_get_relationship_lineage(
         return RelationshipLineageResult(
             found=True,
             relationship=relationship,
-            provenance=dict(provenance),
+            provenance=dump_provenance(provenance),
             group=group,
             resolution=resolution,
             source_workflow_receipt_id=group.source_workflow_receipt_id,

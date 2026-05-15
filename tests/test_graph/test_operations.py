@@ -13,7 +13,8 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, make_provenance
+from cruxible_core.graph.provenance import dump_provenance, make_provenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 
 CONFIG_YAML = """\
 version: "1.0"
@@ -244,7 +245,7 @@ relationships:
                 to_id="V1",
                 properties={
                     "confidence": 0.5,
-                    "_provenance": make_provenance("ingest", "fitments"),
+                    "_provenance": dump_provenance(make_provenance("ingest", "fitments")),
                     "review_status": "human_approved",
                 },
             )
@@ -365,7 +366,7 @@ class TestApplyRelationship:
                 to_id="V1",
                 properties={
                     "confidence": 0.5,
-                    "_provenance": make_provenance("ingest", "fitments"),
+                    "_provenance": dump_provenance(make_provenance("ingest", "fitments")),
                 },
             )
         )

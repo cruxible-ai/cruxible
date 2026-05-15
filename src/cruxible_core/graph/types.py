@@ -7,10 +7,18 @@ the config structure.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
+from cruxible_core.graph.provenance import (
+    RelationshipProvenance,
+    dump_provenance,
+    load_provenance,
+    make_provenance,
+    provenance_group_id,
+    stamp_provenance_modified,
+)
 
 
 def make_node_id(entity_type: str, entity_id: str) -> str:
@@ -80,10 +88,18 @@ USER_STRIPPED_PROPERTIES: frozenset[str] = SYSTEM_OWNED_PROPERTIES
 """System-owned keys stripped from user/domain write payloads."""
 
 
-def make_provenance(source: str, source_ref: str) -> dict[str, str]:
-    """Create a provenance metadata dict for edge creation."""
-    return {
-        "source": source,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "source_ref": source_ref,
-    }
+__all__ = [
+    "EntityInstance",
+    "RelationshipInstance",
+    "RelationshipProvenance",
+    "REJECTED_STATUSES",
+    "SYSTEM_OWNED_PROPERTIES",
+    "USER_STRIPPED_PROPERTIES",
+    "dump_provenance",
+    "load_provenance",
+    "make_node_id",
+    "make_provenance",
+    "provenance_group_id",
+    "split_node_id",
+    "stamp_provenance_modified",
+]
