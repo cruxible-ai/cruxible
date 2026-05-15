@@ -38,6 +38,7 @@ from cruxible_core.service.execution import (
 from cruxible_core.service.feedback import (
     service_feedback,
     service_feedback_batch,
+    service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
 )
@@ -73,6 +74,7 @@ from cruxible_core.service.queries import (
     service_list_queries,
     service_list_traces,
     service_query,
+    service_query_surface,
     service_sample,
     service_schema,
     service_stats,
@@ -130,6 +132,7 @@ from cruxible_core.service.types import (
     QueryParamHints,
     QueryPolicySuggestion,
     QueryServiceResult,
+    QuerySurfaceServiceResult,
     ReceiptExplanationResult,
     RelationshipLineageResult,
     ReloadConfigResult,
@@ -223,6 +226,7 @@ __all__ = [
     "QueryDefinitionServiceResult",
     "QueryParamHints",
     "QueryServiceResult",
+    "QuerySurfaceServiceResult",
     "ReceiptExplanationResult",
     "RelationshipLineageResult",
     "ReloadConfigResult",
@@ -279,6 +283,7 @@ __all__ = [
     "service_abandon_decision_record",
     "service_feedback",
     "service_feedback_batch",
+    "service_get_feedback_profile",
     "service_get_outcome_profile",
     "service_outcome",
     # Groups
@@ -309,6 +314,7 @@ __all__ = [
     "service_list_traces",
     "service_describe_query",
     "service_query",
+    "service_query_surface",
     "service_reload_config",
     "service_sample",
     "service_schema",

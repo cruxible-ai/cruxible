@@ -115,6 +115,18 @@ class QueryServiceResult:
 
 
 @dataclass
+class QuerySurfaceServiceResult:
+    results: list[EntityInstance]
+    receipt_id: str | None
+    receipt: Receipt | None
+    total_results: int
+    truncated: bool
+    steps_executed: int
+    param_hints: QueryParamHints | None = None
+    policy_summary: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class StatsServiceResult:
     entity_count: int
     edge_count: int

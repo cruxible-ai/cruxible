@@ -22,9 +22,11 @@ from cruxible_core.errors import (
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_feedback,
+    service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
     service_query,
+    service_query_surface,
 )
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,34 @@ class TestQuery:
         )
         assert result.total_results >= 1
         assert result.policy_summary == {}
+
+    def test_surface_query_applies_limit_and_truncation(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_query_surface(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+            limit=1,
+        )
+
+        assert len(result.results) == 1
+        assert result.total_results >= 1
+        assert result.truncated is (result.total_results > 1)
+        assert result.receipt_id is not None
+
+    def test_surface_query_rejects_invalid_limit(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(ConfigError, match="limit must be a positive integer"):
+            service_query_surface(
+                populated_instance,
+                "parts_for_vehicle",
+                {"vehicle_id": "V-2024-CIVIC-EX"},
+                limit=0,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +322,25 @@ class TestFeedback:
                 source="agent",
                 target=_edge_target(),
             )
+
+    def test_get_feedback_profile(self, populated_instance: CruxibleInstance) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "vendor_mismatch": FeedbackReasonCodeSchema(
+                    description="Vendor mismatch",
+                    remediation_hint="constraint",
+                )
+            },
+            scope_keys={},
+        )
+        populated_instance.save_config(config)
+
+        profile = service_get_feedback_profile(populated_instance, "fits")
+
+        assert profile is not None
+        assert "vendor_mismatch" in profile.reason_codes
 
 
 # ---------------------------------------------------------------------------

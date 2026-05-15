@@ -716,6 +716,14 @@ def service_get_outcome_profile(
     )
 
 
+def service_get_feedback_profile(
+    instance: InstanceProtocol,
+    relationship_type: str,
+) -> FeedbackProfileSchema | None:
+    """Return the configured feedback profile for one relationship type."""
+    return instance.load_config().get_feedback_profile(relationship_type)
+
+
 def _feedback_target_label(target: RelationshipInstance) -> str:
     """Return a compact edge label for feedback receipt details."""
     return (

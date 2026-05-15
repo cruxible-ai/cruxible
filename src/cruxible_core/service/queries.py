@@ -49,6 +49,7 @@ from cruxible_core.service.types import (
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
+    QuerySurfaceServiceResult,
     RelationshipLineageResult,
     StatsServiceResult,
     TraceListResult,
@@ -125,6 +126,33 @@ def service_query(
         started_at=started_at,
     )
     return result
+
+
+def service_query_surface(
+    instance: InstanceProtocol,
+    query_name: str,
+    params: dict[str, Any],
+    *,
+    limit: int | None = None,
+    context: OperationContext | None = None,
+) -> QuerySurfaceServiceResult:
+    """Execute a named query and apply caller-facing result truncation."""
+    if limit is not None and limit < 1:
+        raise ConfigError("limit must be a positive integer")
+
+    result = service_query(instance, query_name, params, context=context)
+    truncated = limit is not None and result.total_results > limit
+    visible = result.results[:limit] if truncated else result.results
+    return QuerySurfaceServiceResult(
+        results=visible,
+        receipt_id=result.receipt_id,
+        receipt=result.receipt,
+        total_results=result.total_results,
+        truncated=truncated,
+        steps_executed=result.steps_executed,
+        param_hints=result.param_hints,
+        policy_summary=result.policy_summary,
+    )
 
 
 # ---------------------------------------------------------------------------

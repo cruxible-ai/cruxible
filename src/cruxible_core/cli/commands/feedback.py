@@ -22,6 +22,7 @@ from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     service_feedback,
     service_feedback_batch,
+    service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
 )
@@ -270,7 +271,7 @@ def feedback_profile_cmd(relationship_type: str) -> None:
         return
 
     instance = CruxibleInstance.load()
-    profile = instance.load_config().get_feedback_profile(relationship_type)
+    profile = service_get_feedback_profile(instance, relationship_type)
     if profile is None:
         click.echo("Not found.")
         return

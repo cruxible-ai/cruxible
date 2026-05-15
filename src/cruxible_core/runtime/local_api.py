@@ -42,6 +42,7 @@ from cruxible_core.service import (
     service_finalize_decision_record,
     service_get_decision_record,
     service_get_entity,
+    service_get_feedback_profile,
     service_get_group,
     service_get_outcome_profile,
     service_get_receipt,
@@ -70,7 +71,7 @@ from cruxible_core.service import (
     service_publish_world,
     service_pull_world_apply,
     service_pull_world_preview,
-    service_query,
+    service_query_surface,
     service_reload_config,
     service_render_wiki,
     service_resolve_group,
@@ -650,30 +651,25 @@ def query(
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
     check_permission("cruxible_query")
-    if limit is not None and limit < 1:
-        raise ConfigError("limit must be a positive integer")
-
     instance = get_manager().get(instance_id)
-    result = service_query(
+    result = service_query_surface(
         instance,
         query_name,
         params or {},
+        limit=limit,
         context=_operation_context(decision_record_id, surface=surface),
     )
 
-    total = result.total_results
-    truncated = limit is not None and total > limit
-    visible = result.results[:limit] if truncated else result.results
     include_receipt = limit is None
 
     return contracts.QueryToolResult(
-        results=[entity.model_dump(mode="json") for entity in visible],
+        results=[entity.model_dump(mode="json") for entity in result.results],
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None
         ),
-        total_results=total,
-        truncated=truncated,
+        total_results=result.total_results,
+        truncated=result.truncated,
         steps_executed=result.steps_executed,
         policy_summary=result.policy_summary,
         param_hints=(
@@ -1058,7 +1054,7 @@ def get_feedback_profile(
         required_mode=PermissionMode.READ_ONLY,
     )
     instance = get_manager().get(instance_id)
-    profile = instance.load_config().get_feedback_profile(relationship_type)
+    profile = service_get_feedback_profile(instance, relationship_type)
     if profile is None:
         return contracts.FeedbackProfileResult(
             found=False,

@@ -82,7 +82,7 @@ from cruxible_core.service import (
     service_inspect_view,
     service_lint,
     service_list_queries,
-    service_query,
+    service_query_surface,
     service_sample,
     service_schema,
     service_stats,
@@ -265,11 +265,13 @@ def _run_query_command(
         return
 
     instance = CruxibleInstance.load()
+    effective_limit = 1 if count_only and limit is None else limit
     try:
-        result = service_query(
+        result = service_query_surface(
             instance,
             query_name,
             params,
+            limit=effective_limit,
             context=_operation_context(resolved_decision_record_id),
         )
     except CoreError:
@@ -291,8 +293,6 @@ def _run_query_command(
                 for e in results
             ]
         )
-        if limit is not None and not count_only:
-            items = items[:limit]
         _emit_json({
             "results": items,
             "total_results": total,
@@ -313,10 +313,9 @@ def _run_query_command(
                 example_ids=result.param_hints.example_ids,
             )
         _print_query_param_hints(hints)
-    elif limit is not None and len(results) > limit:
-        results = results[:limit]
+    elif limit is not None and result.truncated:
         console.print(entities_table(results, query_name))
-        click.echo(f"Showing {limit} of {total} results (use --limit to adjust).")
+        click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
     else:
         console.print(entities_table(results, query_name))
     if total == 0 and not count_only and result.param_hints is not None:
