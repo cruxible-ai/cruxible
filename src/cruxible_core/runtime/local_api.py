@@ -626,7 +626,7 @@ def query(
     surface: str = "local",
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
-    check_permission("cruxible_query")
+    check_permission("cruxible_query", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_query_surface(
         instance,
@@ -692,7 +692,7 @@ def render_wiki(
 
 def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     """Retrieve a stored receipt by ID."""
-    check_permission("cruxible_receipt")
+    check_permission("cruxible_receipt", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     receipt = service_get_receipt(instance, receipt_id)
     return receipt.model_dump(mode="json")
@@ -860,7 +860,7 @@ def list_resources(
     operation_type: str | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
-    check_permission("cruxible_list")
+    check_permission("cruxible_list", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
     result = service_list(
@@ -957,7 +957,7 @@ def lint(
 
 def schema(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
-    check_permission("cruxible_schema")
+    check_permission("cruxible_schema", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     config = service_schema(instance)
     return config.model_dump(mode="json")
@@ -1414,7 +1414,7 @@ def sample(
     limit: int = 5,
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
-    check_permission("cruxible_sample")
+    check_permission("cruxible_sample", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     sampled = service_sample(instance, entity_type, limit=limit)
     return contracts.SampleResult(
@@ -1565,7 +1565,7 @@ def get_entity(
     entity_id: str,
 ) -> contracts.GetEntityResult:
     """Look up a specific entity by type and ID."""
-    check_permission("cruxible_get_entity")
+    check_permission("cruxible_get_entity", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     entity = service_get_entity(instance, entity_type, entity_id)
     if entity is None:
@@ -1588,7 +1588,7 @@ def get_relationship(
     edge_key: int | None = None,
 ) -> contracts.GetRelationshipResult:
     """Look up a specific relationship by its endpoints and type."""
-    check_permission("cruxible_get_relationship")
+    check_permission("cruxible_get_relationship", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     relationship = service_get_relationship(
         instance,
@@ -1782,7 +1782,7 @@ def get_group(
     group_id: str,
 ) -> contracts.GetGroupToolResult:
     """Get a candidate group with its members."""
-    check_permission("cruxible_get_group")
+    check_permission("cruxible_get_group", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
     result = service_get_group(instance, group_id)
@@ -1806,7 +1806,7 @@ def list_groups(
     limit: int = 50,
 ) -> contracts.ListGroupsToolResult:
     """List candidate groups with optional filters."""
-    check_permission("cruxible_list_groups")
+    check_permission("cruxible_list_groups", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
     result = service_list_groups(
@@ -1828,7 +1828,7 @@ def get_group_status(
     signature: str | None = None,
 ) -> contracts.GroupBucketStatusToolResult:
     """Return bucket lifecycle status for a group signature."""
-    check_permission("cruxible_get_group")
+    check_permission("cruxible_get_group", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
     result = service_group_status(instance, group_id=group_id, signature=signature)
@@ -1864,7 +1864,7 @@ def list_resolutions(
     limit: int = 50,
 ) -> contracts.ListResolutionsToolResult:
     """List group resolutions with optional filters."""
-    check_permission("cruxible_list_resolutions")
+    check_permission("cruxible_list_resolutions", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
     result = service_list_resolutions(

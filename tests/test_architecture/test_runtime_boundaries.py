@@ -117,6 +117,30 @@ def test_runtime_local_api_does_not_override_permission_tiers():
     assert "PermissionMode" not in source
 
 
+def test_runtime_local_api_scoped_permission_checks_include_instance_id():
+    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    missing: list[str] = []
+
+    for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
+        has_instance_arg = any(arg.arg == "instance_id" for arg in function.args.args)
+        if not has_instance_arg:
+            continue
+
+        for node in ast.walk(function):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "check_permission"
+            ):
+                continue
+            has_instance_keyword = any(keyword.arg == "instance_id" for keyword in node.keywords)
+            if not has_instance_keyword:
+                missing.append(f"{function.name}:{node.lineno}")
+
+    assert missing == []
+
+
 def test_mcp_permission_exports_point_at_runtime_policy():
     assert mcp_permissions.PermissionMode is runtime_permissions.PermissionMode
     assert mcp_permissions.check_permission is runtime_permissions.check_permission
