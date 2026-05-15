@@ -163,6 +163,7 @@ from cruxible_core.service.types import (
     UncodedOutcomeExample,
     UpdateTrustStatusResult,
     ValidateServiceResult,
+    WorkflowTestCaseServiceResult,
     WorldOverlayResult,
     WorldPublishResult,
     WorldPullApplyResult,
@@ -263,6 +264,7 @@ __all__ = [
     "UncodedOutcomeExample",
     "UpdateTrustStatusResult",
     "ValidateServiceResult",
+    "WorkflowTestCaseServiceResult",
     # Execution
     "service_lock",
     "service_world_status",

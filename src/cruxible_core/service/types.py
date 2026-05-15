@@ -36,7 +36,7 @@ from cruxible_core.snapshot.types import (
     WorldCompatibility,
     WorldSnapshot,
 )
-from cruxible_core.workflow.types import CompiledPlan, WorkflowTestCaseResult
+from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
@@ -575,11 +575,21 @@ class ApplyWorkflowResult(WorkflowExecutionServiceResult):
 
 
 @dataclass
+class WorkflowTestCaseServiceResult:
+    name: str
+    workflow: str
+    passed: bool
+    output: Any | None = None
+    receipt_id: str | None = None
+    error: str | None = None
+
+
+@dataclass
 class TestServiceResult:
     total: int
     passed: int
     failed: int
-    cases: list[WorkflowTestCaseResult] = field(default_factory=list)
+    cases: list[WorkflowTestCaseServiceResult] = field(default_factory=list)
 
 
 @dataclass

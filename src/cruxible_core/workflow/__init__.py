@@ -20,7 +20,6 @@ from cruxible_core.workflow.types import (
     LockedProvider,
     WorkflowExecutionResult,
     WorkflowLock,
-    WorkflowTestCaseResult,
 )
 
 __all__ = [
@@ -31,7 +30,6 @@ __all__ = [
     "LockedProvider",
     "WorkflowExecutionResult",
     "WorkflowLock",
-    "WorkflowTestCaseResult",
     "build_lock",
     "compile_workflow",
     "compute_lock_config_digest",

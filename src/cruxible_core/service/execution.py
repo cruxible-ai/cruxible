@@ -26,6 +26,7 @@ from cruxible_core.service.types import (
     ProposeWorkflowResult,
     RunServiceResult,
     TestServiceResult,
+    WorkflowTestCaseServiceResult,
 )
 from cruxible_core.workflow import (
     build_lock,
@@ -39,7 +40,6 @@ from cruxible_core.workflow import (
 )
 from cruxible_core.workflow.types import (
     RelationshipGroupProposalArtifact,
-    WorkflowTestCaseResult,
 )
 
 WorkflowExecutionResultT = TypeVar(
@@ -558,7 +558,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
                 f"Test '{test.name}' references unknown workflow '{test.workflow}'"
             )
 
-    cases: list[WorkflowTestCaseResult] = []
+    cases: list[WorkflowTestCaseServiceResult] = []
     passed = 0
 
     for test in tests:
@@ -607,7 +607,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
             if expected_error is not None and expected_error in error_text:
                 passed += 1
                 cases.append(
-                    WorkflowTestCaseResult(
+                    WorkflowTestCaseServiceResult(
                         name=test.name,
                         workflow=test.workflow,
                         passed=True,
@@ -616,7 +616,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
                 )
                 continue
             cases.append(
-                WorkflowTestCaseResult(
+                WorkflowTestCaseServiceResult(
                     name=test.name,
                     workflow=test.workflow,
                     passed=False,
@@ -627,7 +627,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
 
         passed += 1
         cases.append(
-            WorkflowTestCaseResult(
+            WorkflowTestCaseServiceResult(
                 name=test.name,
                 workflow=test.workflow,
                 passed=True,

@@ -158,17 +158,6 @@ class WorkflowExecutionResult(BaseModel):
         return self.workflow_type == "canonical"
 
 
-class WorkflowTestCaseResult(BaseModel):
-    """Single workflow test case result."""
-
-    name: str
-    workflow: str
-    passed: bool
-    output: Any | None = None
-    receipt_id: str | None = None
-    error: str | None = None
-
-
 class CandidateSet(_DuplicateTrackedCollection):
     """Internal workflow artifact containing candidate relationship pairs.
 
