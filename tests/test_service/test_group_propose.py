@@ -21,9 +21,12 @@ from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateMember, CandidateSignal, GroupResolution
 from cruxible_core.service import (
+    GroupMemberInput,
+    GroupSignalInput,
     ProposeGroupResult,
     derive_review_priority,
     service_propose_group,
+    service_propose_group_inputs,
     service_resolve_group,
 )
 
@@ -373,6 +376,60 @@ class TestBasicProposal:
             assert len(stored) == 1
             assert len(stored[0].signals) == 3
             assert stored[0].signals[0].signal_source == "bolt_pattern_check"
+        finally:
+            store.close()
+
+    def test_input_wrapper_normalizes_members_and_signals(
+        self,
+        matching_instance: CruxibleInstance,
+    ) -> None:
+        result = service_propose_group_inputs(
+            matching_instance,
+            "fits",
+            [
+                GroupMemberInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC",
+                    relationship_type="fits",
+                    signals=[
+                        GroupSignalInput(
+                            signal_source="bolt_pattern_check",
+                            signal="support",
+                            evidence="match",
+                            basis={
+                                "mode": "enum",
+                                "path": "verdict",
+                                "value": "match",
+                                "matched": "support",
+                            },
+                        ),
+                        GroupSignalInput(
+                            signal_source="year_range_check",
+                            signal="support",
+                            evidence="in range",
+                        ),
+                        GroupSignalInput(
+                            signal_source="description_fit_v1",
+                            signal="support",
+                            evidence="fits",
+                        ),
+                    ],
+                    properties={"verified": True},
+                )
+            ],
+            thesis_facts={"k": "v"},
+        )
+
+        store = matching_instance.get_group_store()
+        try:
+            assert result.group_id is not None
+            stored = store.get_members(result.group_id)
+            assert len(stored) == 1
+            assert stored[0].properties == {"verified": True}
+            assert stored[0].signals[0].basis is not None
+            assert stored[0].signals[0].basis.mode == "enum"
         finally:
             store.close()
 

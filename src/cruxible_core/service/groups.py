@@ -25,9 +25,11 @@ from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
+    CandidateSignal,
     GroupResolution,
     GroupStatus,
     ReviewPriority,
+    SignalBucketBasis,
     TrustStatus,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
@@ -38,7 +40,9 @@ from cruxible_core.service.mutation_receipts import MutationReceiptContext, muta
 from cruxible_core.service.mutations import service_add_relationships
 from cruxible_core.service.types import (
     GetGroupResult,
+    GroupMemberInput,
     GroupMemberReviewResult,
+    GroupSignalInput,
     GroupStatusHistoryItem,
     GroupStatusResult,
     ListGroupsResult,
@@ -855,6 +859,66 @@ def _create_group_or_rewrite_concurrent(
     result = ctx.result
     assert result is not None
     return result
+
+
+def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
+    return CandidateSignal(
+        signal_source=signal.signal_source,
+        signal=signal.signal,
+        evidence=signal.evidence,
+        basis=(
+            SignalBucketBasis.model_validate(signal.basis)
+            if signal.basis is not None
+            else None
+        ),
+    )
+
+
+def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
+    return CandidateMember(
+        from_type=member.from_type,
+        from_id=member.from_id,
+        to_type=member.to_type,
+        to_id=member.to_id,
+        relationship_type=member.relationship_type,
+        signals=[_candidate_signal_from_input(signal) for signal in member.signals],
+        properties=member.properties,
+    )
+
+
+def service_propose_group_inputs(
+    instance: InstanceProtocol,
+    relationship_type: str,
+    members: list[GroupMemberInput],
+    thesis_text: str = "",
+    thesis_facts: dict[str, Any] | None = None,
+    pending_refresh_mode: Literal["replace", "retain_missing"] = "replace",
+    analysis_state: dict[str, Any] | None = None,
+    signal_sources_used: list[str] | None = None,
+    proposed_by: Literal["human", "agent"] = "agent",
+    suggested_priority: str | None = None,
+    source_workflow_name: str | None = None,
+    source_workflow_receipt_id: str | None = None,
+    source_trace_ids: list[str] | None = None,
+    source_step_ids: list[str] | None = None,
+) -> ProposeGroupResult:
+    """Normalize proposal input payloads, then propose a candidate group."""
+    return service_propose_group(
+        instance,
+        relationship_type,
+        [_candidate_member_from_input(member) for member in members],
+        thesis_text=thesis_text,
+        thesis_facts=thesis_facts,
+        pending_refresh_mode=pending_refresh_mode,
+        analysis_state=analysis_state,
+        signal_sources_used=signal_sources_used,
+        proposed_by=proposed_by,
+        suggested_priority=suggested_priority,
+        source_workflow_name=source_workflow_name,
+        source_workflow_receipt_id=source_workflow_receipt_id,
+        source_trace_ids=source_trace_ids,
+        source_step_ids=source_step_ids,
+    )
 
 
 def service_propose_group(

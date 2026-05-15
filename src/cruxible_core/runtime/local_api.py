@@ -10,7 +10,6 @@ from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackBatchItem
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember, CandidateSignal, SignalBucketBasis
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
@@ -66,7 +65,7 @@ from cruxible_core.service import (
     service_lock,
     service_outcome,
     service_plan,
-    service_propose_group,
+    service_propose_group_inputs,
     service_propose_workflow,
     service_publish_world,
     service_pull_world_apply,
@@ -85,7 +84,7 @@ from cruxible_core.service import (
     service_validate,
     service_world_status,
 )
-from cruxible_core.service.types import OperationContext
+from cruxible_core.service.types import GroupMemberInput, GroupSignalInput, OperationContext
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -1754,23 +1753,19 @@ def propose_group(
     check_permission("cruxible_propose_group", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
-    domain_members = [
-        CandidateMember(
+    service_members = [
+        GroupMemberInput(
             from_type=member.from_type,
             from_id=member.from_id,
             to_type=member.to_type,
             to_id=member.to_id,
             relationship_type=member.relationship_type,
             signals=[
-                CandidateSignal(
+                GroupSignalInput(
                     signal_source=signal.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
-                    basis=(
-                        SignalBucketBasis.model_validate(signal.basis.model_dump(mode="python"))
-                        if signal.basis is not None
-                        else None
-                    ),
+                    basis=signal.basis.model_dump(mode="python") if signal.basis else None,
                 )
                 for signal in member.signals
             ],
@@ -1779,10 +1774,10 @@ def propose_group(
         for member in members
     ]
 
-    result = service_propose_group(
+    result = service_propose_group_inputs(
         instance,
         relationship_type,
-        domain_members,
+        service_members,
         thesis_text=thesis_text,
         thesis_facts=thesis_facts,
         analysis_state=analysis_state,

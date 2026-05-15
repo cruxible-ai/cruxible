@@ -654,6 +654,25 @@ class ProposeGroupResult:
 
 
 @dataclass
+class GroupSignalInput:
+    signal_source: str
+    signal: Literal["support", "contradict", "unsure"]
+    evidence: str = ""
+    basis: dict[str, Any] | None = None
+
+
+@dataclass
+class GroupMemberInput:
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    relationship_type: str
+    signals: list[GroupSignalInput] = field(default_factory=list)
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ResolveGroupResult:
     group_id: str
     action: ResolutionAction

@@ -22,16 +22,16 @@ from cruxible_core.cli.formatting import group_detail_table, groups_table, resol
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.group.types import (
     CandidateGroup,
-    CandidateMember,
-    CandidateSignal,
     GroupResolution,
 )
 from cruxible_core.service import (
+    GroupMemberInput,
+    GroupSignalInput,
     service_get_group,
     service_group_status,
     service_list_groups,
     service_list_resolutions,
-    service_propose_group,
+    service_propose_group_inputs,
     service_resolve_group,
     service_update_trust_status,
 )
@@ -108,6 +108,11 @@ def group_propose(
                     signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
+                    basis=(
+                        contracts.SignalBucketBasis.model_validate(s["basis"])
+                        if s.get("basis") is not None
+                        else None
+                    ),
                 )
                 for s in m.get("signals", [])
             ],
@@ -115,18 +120,19 @@ def group_propose(
         )
         for m in raw_members
     ]
-    domain_members = [
-        CandidateMember(
+    service_members = [
+        GroupMemberInput(
             from_type=m["from_type"],
             from_id=m["from_id"],
             to_type=m["to_type"],
             to_id=m["to_id"],
             relationship_type=m["relationship_type"],
             signals=[
-                CandidateSignal(
+                GroupSignalInput(
                     signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
+                    basis=s.get("basis"),
                 )
                 for s in m.get("signals", [])
             ],
@@ -144,10 +150,10 @@ def group_propose(
             analysis_state=state,
             signal_sources_used=list(signal_source) if signal_source else None,
         ),
-        lambda instance: service_propose_group(
+        lambda instance: service_propose_group_inputs(
             instance,
             relationship,
-            domain_members,
+            service_members,
             thesis_text=thesis,
             thesis_facts=facts,
             analysis_state=state,
