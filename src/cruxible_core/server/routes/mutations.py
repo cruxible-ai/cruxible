@@ -5,9 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.runtime import local_api
-from cruxible_core.server.config import is_agent_mode
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
     AddDecisionPolicyRequest,
@@ -18,16 +16,6 @@ from cruxible_core.server.request_models import (
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["mutations"])
-
-
-def _reject_in_agent_mode(operation: str) -> None:
-    """Raise if the operation is blocked under CRUXIBLE_AGENT_MODE."""
-    if is_agent_mode():
-        raise PermissionDeniedError(
-            tool_name=operation,
-            current_mode="agent",
-            required_mode="operator",
-        )
 
 
 @router.post("/{instance_id}/entities", response_model=contracts.AddEntityResult)
@@ -46,7 +34,6 @@ async def add_relationships(
     instance_id: str,
     req: AddRelationshipsRequest,
 ) -> contracts.AddRelationshipResult:
-    _reject_in_agent_mode("add-relationship")
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return local_api.add_relationships_with_provenance(
         instance_id=resolved_instance_id,

@@ -189,16 +189,12 @@ class TestCheckPermission:
             check_permission("cruxible_add_entity")
         assert "READ_ONLY" in str(exc_info.value)
 
-    def test_required_mode_override(self):
-        """required_mode overrides TOOL_PERMISSIONS lookup."""
-        # cruxible_init is READ_ONLY in TOOL_PERMISSIONS
-        # But with required_mode=ADMIN, it should check against ADMIN
+    def test_internal_operation_permission(self):
+        """Runtime-owned internal operation gates can be stricter than public tools."""
         init_permissions(PermissionMode.READ_ONLY)
+        check_permission("cruxible_init")
         with pytest.raises(PermissionDeniedError, match="ADMIN"):
-            check_permission(
-                "cruxible_init",
-                required_mode=PermissionMode.ADMIN,
-            )
+            check_permission("cruxible_init_with_config")
 
     def test_unknown_tool_raises_config_error(self):
         """Misspelled tool name raises ConfigError, not KeyError."""

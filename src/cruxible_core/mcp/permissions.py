@@ -6,6 +6,8 @@ module directly.
 """
 
 from cruxible_core.runtime.permissions import (
+    PERMISSION_REQUIREMENTS,
+    RUNTIME_OPERATION_PERMISSIONS,
     TOOL_PERMISSIONS,
     PermissionMode,
     check_permission,
@@ -21,6 +23,8 @@ from cruxible_core.runtime.permissions import (
 __all__ = [
     "PermissionMode",
     "TOOL_PERMISSIONS",
+    "RUNTIME_OPERATION_PERMISSIONS",
+    "PERMISSION_REQUIREMENTS",
     "check_permission",
     "get_current_mode",
     "init_permissions",

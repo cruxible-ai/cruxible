@@ -11,7 +11,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
-    PermissionMode,
     check_permission,
     validate_root_dir,
 )
@@ -146,9 +145,8 @@ def init_local(
 
     if has_config:
         check_permission(
-            "cruxible_init",
+            "cruxible_init_with_config",
             instance_id=root_dir,
-            required_mode=PermissionMode.ADMIN,
         )
 
     validate_root_dir(root_dir)
@@ -194,9 +192,8 @@ def init_governed(
     has_config = config_path is not None or config_yaml is not None or kit is not None
     if has_config:
         check_permission(
-            "cruxible_init",
+            "cruxible_init_with_config",
             instance_id=root_dir,
-            required_mode=PermissionMode.ADMIN,
         )
 
     validate_root_dir(root_dir)
@@ -276,11 +273,7 @@ def workflow_lock(
     force: bool = False,
 ) -> contracts.WorkflowLockResult:
     """Generate a workflow lock through the governed service layer."""
-    check_permission(
-        "workflow_lock",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_lock_workflow", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_lock(instance, force=force)
     return contracts.WorkflowLockResult(
@@ -297,11 +290,7 @@ def workflow_plan(
     input_payload: dict[str, Any] | None = None,
 ) -> contracts.WorkflowPlanResult:
     """Compile a workflow plan through the governed service layer."""
-    check_permission(
-        "workflow_plan",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_plan_workflow", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_plan(instance, workflow_name, input_payload or {})
     return contracts.WorkflowPlanResult(plan=result.plan.model_dump(mode="json"))
@@ -316,11 +305,7 @@ def workflow_run(
     surface: str = "local",
 ) -> contracts.WorkflowRunResult:
     """Execute a workflow through the governed service layer."""
-    check_permission(
-        "workflow_run",
-        instance_id=instance_id,
-        required_mode=PermissionMode.GOVERNED_WRITE,
-    )
+    check_permission("cruxible_run_workflow", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_run(
         instance,
@@ -342,11 +327,7 @@ def workflow_apply(
     surface: str = "local",
 ) -> contracts.WorkflowApplyResult:
     """Apply a canonical workflow through the governed service layer."""
-    check_permission(
-        "workflow_apply",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_apply_workflow", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_apply_workflow(
         instance,
@@ -364,11 +345,7 @@ def workflow_test(
     name: str | None = None,
 ) -> contracts.WorkflowTestResult:
     """Execute config-defined workflow tests through the governed service layer."""
-    check_permission(
-        "cruxible_test_workflow",
-        instance_id=instance_id,
-        required_mode=PermissionMode.GOVERNED_WRITE,
-    )
+    check_permission("cruxible_test_workflow", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_test(instance, test_name=name)
     return contracts.WorkflowTestResult(
@@ -442,11 +419,7 @@ def create_snapshot(
     label: str | None = None,
 ) -> contracts.SnapshotCreateResult:
     """Create an immutable full snapshot for an instance."""
-    check_permission(
-        "snapshot_create",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_create_snapshot", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_create_snapshot(instance, label=label)
     return contracts.SnapshotCreateResult(
@@ -581,11 +554,7 @@ def abandon_decision_record(
 
 def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
     """List immutable snapshots for an instance."""
-    check_permission(
-        "snapshot_list",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_list_snapshots", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_list_snapshots(instance)
     return contracts.SnapshotListResult(
@@ -602,11 +571,7 @@ def clone_snapshot_local(
     root_dir: str,
 ) -> contracts.CloneSnapshotResult:
     """Create a new local instance from a selected snapshot."""
-    check_permission(
-        "snapshot_clone",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_clone_snapshot", instance_id=instance_id)
     validate_root_dir(root_dir)
     instance = get_manager().get(instance_id)
     result = service_clone_snapshot(instance, snapshot_id, root_dir)
@@ -624,11 +589,7 @@ def clone_snapshot_governed(
     root_dir: str,
 ) -> contracts.CloneSnapshotResult:
     """Create a new daemon-owned governed instance from a selected snapshot."""
-    check_permission(
-        "snapshot_clone",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_clone_snapshot", instance_id=instance_id)
     validate_root_dir(root_dir)
     instance = get_manager().get(instance_id)
     registered = get_registry().create_governed_instance(workspace_root=root_dir)
@@ -700,11 +661,7 @@ def render_wiki(
     all_subjects: bool = False,
 ) -> contracts.WikiRenderResult:
     """Build wiki pages for a governed instance and return them as payloads."""
-    check_permission(
-        "cruxible_render_wiki",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_render_wiki", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_render_wiki(
         instance,
@@ -733,11 +690,7 @@ def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
 
 def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
     """Retrieve a stored provider execution trace by ID."""
-    check_permission(
-        "cruxible_get_trace",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_get_trace", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     trace = service_get_trace(instance, trace_id)
     return trace.model_dump(mode="json")
@@ -752,11 +705,7 @@ def list_traces(
     offset: int = 0,
 ) -> contracts.TraceListResult:
     """List provider execution trace summaries."""
-    check_permission(
-        "cruxible_list_traces",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_list_traces", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_list_traces(
         instance,
@@ -933,11 +882,7 @@ def evaluate(
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.EvaluateResult:
     """Evaluate graph quality."""
-    check_permission(
-        "cruxible_evaluate",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_evaluate", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     report = service_evaluate(
         instance,
@@ -963,11 +908,7 @@ def lint(
     exclude_orphan_types: list[str] | None = None,
 ) -> contracts.LintResult:
     """Run the aggregate read-only lint pass."""
-    check_permission(
-        "cruxible_lint",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_lint", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_lint(
         instance,
@@ -1055,11 +996,7 @@ def get_feedback_profile(
     relationship_type: str,
 ) -> contracts.FeedbackProfileResult:
     """Return one configured feedback profile, if present."""
-    check_permission(
-        "cruxible_get_feedback_profile",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_get_feedback_profile", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     profile = service_get_feedback_profile(instance, relationship_type)
     if profile is None:
@@ -1084,11 +1021,7 @@ def get_outcome_profile(
     surface_name: str | None = None,
 ) -> contracts.OutcomeProfileResult:
     """Return one configured outcome profile for an anchor context, if present."""
-    check_permission(
-        "cruxible_get_outcome_profile",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_get_outcome_profile", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     profile_key, profile = service_get_outcome_profile(
         instance,
@@ -1123,11 +1056,7 @@ def analyze_feedback(
     property_pairs: list[contracts.PropertyPairInput] | None = None,
 ) -> contracts.AnalyzeFeedbackResult:
     """Analyze structured feedback into deterministic remediation suggestions."""
-    check_permission(
-        "cruxible_analyze_feedback",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_analyze_feedback", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_analyze_feedback(
         instance,
@@ -1244,11 +1173,7 @@ def analyze_outcomes(
     min_support: int = 5,
 ) -> contracts.AnalyzeOutcomesResult:
     """Analyze structured outcomes into trust and debugging suggestions."""
-    check_permission(
-        "cruxible_analyze_outcomes",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_analyze_outcomes", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_analyze_outcomes(
         instance,
@@ -1379,11 +1304,7 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
 
 def stats(instance_id: str) -> contracts.StatsResult:
     """Return grouped entity and relationship counts."""
-    check_permission(
-        "cruxible_stats",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_stats", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_stats(instance)
     return contracts.StatsResult(
@@ -1405,11 +1326,7 @@ def inspect_entity(
     limit: int | None = None,
 ) -> contracts.InspectEntityResult:
     """Inspect an entity and its immediate neighbors."""
-    check_permission(
-        "cruxible_inspect_entity",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_inspect_entity", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_inspect_entity(
         instance,
@@ -1445,11 +1362,7 @@ def inspect_view(
     limit: int = 200,
 ) -> contracts.CanonicalViewResult:
     """Build a canonical structured inspect view."""
-    check_permission(
-        f"cruxible_inspect_{view}",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission(f"cruxible_inspect_{view}", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_inspect_view(instance, view, limit=limit)  # type: ignore[arg-type]
     return contracts.CanonicalViewResult(view=result.view, payload=result.payload)
@@ -1461,11 +1374,7 @@ def reload_config(
     config_yaml: str | None = None,
 ) -> contracts.ReloadConfigResult:
     """Validate the current config or repoint the instance to a new config path."""
-    check_permission(
-        "cruxible_reload_config",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_reload_config", instance_id=instance_id)
     config_base_dir: Path | None = None
     if config_yaml is not None:
         record = get_registry().get(instance_id)
@@ -1711,11 +1620,7 @@ def get_relationship_lineage(
     edge_key: int | None = None,
 ) -> contracts.RelationshipLineageResult:
     """Look up a relationship and follow group provenance when available."""
-    check_permission(
-        "cruxible_relationship_lineage",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_relationship_lineage", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_get_relationship_lineage(
         instance,
@@ -1972,11 +1877,7 @@ def world_publish(
     compatibility: contracts.WorldCompatibility,
 ) -> contracts.WorldPublishResult:
     """Publish a root world-model instance as an immutable release bundle."""
-    check_permission(
-        "cruxible_world_publish",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_world_publish", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_publish_world(
         instance,
@@ -2000,11 +1901,7 @@ def create_world_overlay_local(
     root_dir: str,
 ) -> contracts.WorldOverlayResult:
     """Create a new local overlay from a published world release."""
-    check_permission(
-        "cruxible_world_create_overlay",
-        instance_id=root_dir,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_world_create_overlay", instance_id=root_dir)
     validate_root_dir(root_dir)
     result = service_create_world_overlay(
         transport_ref=transport_ref,
@@ -2031,11 +1928,7 @@ def create_world_overlay_governed(
     root_dir: str,
 ) -> contracts.WorldOverlayResult:
     """Create a daemon-owned governed overlay from a published world release."""
-    check_permission(
-        "cruxible_world_create_overlay",
-        instance_id=root_dir,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_world_create_overlay", instance_id=root_dir)
     validate_root_dir(root_dir)
     registered = get_registry().create_governed_instance(workspace_root=root_dir)
     result = service_create_world_overlay(
@@ -2057,11 +1950,7 @@ def create_world_overlay_governed(
 
 def world_status(instance_id: str) -> contracts.WorldStatusResult:
     """Return upstream tracking metadata for a release-backed overlay."""
-    check_permission(
-        "cruxible_world_status",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_world_status", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_world_status(instance)
     upstream = (
@@ -2074,11 +1963,7 @@ def world_status(instance_id: str) -> contracts.WorldStatusResult:
 
 def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
     """Preview pulling a newer upstream release into an overlay."""
-    check_permission(
-        "cruxible_world_pull_preview",
-        instance_id=instance_id,
-        required_mode=PermissionMode.READ_ONLY,
-    )
+    check_permission("cruxible_world_pull_preview", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_pull_world_preview(instance)
     return contracts.WorldPullPreviewResult(
@@ -2099,11 +1984,7 @@ def world_pull_apply(
     expected_apply_digest: str,
 ) -> contracts.WorldPullApplyResult:
     """Apply a previewed upstream pull to a tracked overlay."""
-    check_permission(
-        "cruxible_world_pull_apply",
-        instance_id=instance_id,
-        required_mode=PermissionMode.ADMIN,
-    )
+    check_permission("cruxible_world_pull_apply", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_pull_world_apply(instance, expected_apply_digest=expected_apply_digest)
     return contracts.WorldPullApplyResult(

@@ -110,6 +110,13 @@ def test_runtime_local_api_does_not_construct_graph_or_feedback_domain_models():
         assert import_path not in source, import_path
 
 
+def test_runtime_local_api_does_not_override_permission_tiers():
+    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+    source = path.read_text()
+    assert "required_mode=" not in source
+    assert "PermissionMode" not in source
+
+
 def test_mcp_permission_exports_point_at_runtime_policy():
     assert mcp_permissions.PermissionMode is runtime_permissions.PermissionMode
     assert mcp_permissions.check_permission is runtime_permissions.check_permission

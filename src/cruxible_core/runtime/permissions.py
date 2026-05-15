@@ -83,7 +83,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # decision-event audit metadata when an explicit decision_record_id is supplied.
     "cruxible_version": PermissionMode.READ_ONLY,
     "cruxible_server_info": PermissionMode.READ_ONLY,
-    "cruxible_init": PermissionMode.READ_ONLY,  # admin gate for create inside handler
+    "cruxible_init": PermissionMode.READ_ONLY,
     "cruxible_validate": PermissionMode.READ_ONLY,
     "cruxible_schema": PermissionMode.READ_ONLY,
     "cruxible_query": PermissionMode.READ_ONLY,
@@ -149,6 +149,17 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_world_publish": PermissionMode.ADMIN,
     "cruxible_world_create_overlay": PermissionMode.ADMIN,
     "cruxible_world_pull_apply": PermissionMode.ADMIN,
+}
+
+# Internal runtime operations that are not registered MCP tools but still need
+# permission gates owned by this module.
+RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    "cruxible_init_with_config": PermissionMode.ADMIN,
+}
+
+PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
+    **TOOL_PERMISSIONS,
+    **RUNTIME_OPERATION_PERMISSIONS,
 }
 
 # ---------------------------------------------------------------------------
@@ -275,25 +286,20 @@ def check_permission(
     tool_name: str,
     *,
     instance_id: str | None = None,
-    required_mode: PermissionMode | None = None,
 ) -> None:
     """Check whether the current mode permits calling *tool_name*.
 
     Args:
         tool_name: The operation or tool being called.
         instance_id: Optional instance ID for audit logging.
-        required_mode: Override the tier from :data:`TOOL_PERMISSIONS`.
 
     Raises:
         PermissionDeniedError: If the current mode is insufficient.
     """
     current = get_current_mode()
-    if required_mode is not None:
-        effective = required_mode
-    else:
-        if tool_name not in TOOL_PERMISSIONS:
-            raise ConfigError(f"Tool '{tool_name}' has no entry in TOOL_PERMISSIONS")
-        effective = TOOL_PERMISSIONS[tool_name]
+    if tool_name not in PERMISSION_REQUIREMENTS:
+        raise ConfigError(f"Tool '{tool_name}' has no entry in permission requirements")
+    effective = PERMISSION_REQUIREMENTS[tool_name]
 
     if current < effective:
         _log.warning(
