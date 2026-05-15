@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar
@@ -131,6 +132,48 @@ def _operation_context(
     return OperationContext(decision_record_id=decision_record_id, surface=surface)  # type: ignore[arg-type]
 
 
+def _has_init_config(
+    config_path: str | None,
+    config_yaml: str | None,
+    kit: str | None,
+) -> bool:
+    return config_path is not None or config_yaml is not None or kit is not None
+
+
+def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
+    check_permission("cruxible_init")
+    if has_config:
+        check_permission("cruxible_init_with_config", instance_id=root_dir)
+    validate_root_dir(root_dir)
+
+
+def _load_or_initialize_instance(
+    *,
+    instance_root: Path,
+    instance_id: str,
+    has_config: bool,
+    existing_with_config_error: str,
+    initialize: Callable[[], Any],
+    include_initialized_warnings: bool,
+) -> contracts.InitResult:
+    instance_json = instance_root / CruxibleInstance.INSTANCE_DIR / "instance.json"
+
+    if instance_json.exists():
+        if has_config:
+            raise ConfigError(existing_with_config_error)
+        instance = CruxibleInstance.load(instance_root)
+        warnings = service_config_compatibility_warnings(instance)
+        status = "loaded"
+    else:
+        result = initialize()
+        instance = result.instance
+        warnings = result.warnings if include_initialized_warnings else []
+        status = "initialized"
+
+    get_manager().register(instance_id, instance)
+    return contracts.InitResult(instance_id=instance_id, status=status, warnings=warnings)
+
+
 def init_local(
     root_dir: str,
     config_path: str | None = None,
@@ -139,44 +182,28 @@ def init_local(
     kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize a new cruxible instance, or reload an existing one."""
-    check_permission("cruxible_init")
-
-    has_config = config_path is not None or config_yaml is not None or kit is not None
-
-    if has_config:
-        check_permission(
-            "cruxible_init_with_config",
-            instance_id=root_dir,
-        )
-
-    validate_root_dir(root_dir)
+    has_config = _has_init_config(config_path, config_yaml, kit)
+    _check_init_permissions(root_dir, has_config=has_config)
     root = Path(root_dir)
-    instance_json = root / CruxibleInstance.INSTANCE_DIR / "instance.json"
-
-    if instance_json.exists():
-        if has_config:
-            raise ConfigError(
-                f"Instance already exists at {root}. "
-                "To update the config, edit the YAML file on disk, then call "
-                "cruxible_init(root_dir=...) without config_path/config_yaml to reload. "
-                "The updated config takes effect immediately."
-            )
-        instance = CruxibleInstance.load(root)
-        instance_id = str(root)
-        get_manager().register(instance_id, instance)
-        warnings = service_config_compatibility_warnings(instance)
-        return contracts.InitResult(instance_id=instance_id, status="loaded", warnings=warnings)
-
-    result = service_init(
-        root_dir,
-        config_path=config_path,
-        config_yaml=config_yaml,
-        data_dir=data_dir,
-        kit=kit,
+    return _load_or_initialize_instance(
+        instance_root=root,
+        instance_id=str(root),
+        has_config=has_config,
+        existing_with_config_error=(
+            f"Instance already exists at {root}. "
+            "To update the config, edit the YAML file on disk, then call "
+            "cruxible_init(root_dir=...) without config_path/config_yaml to reload. "
+            "The updated config takes effect immediately."
+        ),
+        initialize=lambda: service_init(
+            root_dir,
+            config_path=config_path,
+            config_yaml=config_yaml,
+            data_dir=data_dir,
+            kit=kit,
+        ),
+        include_initialized_warnings=False,
     )
-    instance_id = str(root)
-    get_manager().register(instance_id, result.instance)
-    return contracts.InitResult(instance_id=instance_id, status="initialized")
 
 
 def init_governed(
@@ -187,53 +214,36 @@ def init_governed(
     kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
-    check_permission("cruxible_init")
-
-    has_config = config_path is not None or config_yaml is not None or kit is not None
-    if has_config:
-        check_permission(
-            "cruxible_init_with_config",
-            instance_id=root_dir,
-        )
-
-    validate_root_dir(root_dir)
+    has_config = _has_init_config(config_path, config_yaml, kit)
+    _check_init_permissions(root_dir, has_config=has_config)
     registered = get_registry().get_or_create_governed_instance(root_dir)
     governed_root = Path(registered.record.location)
-    instance_json = governed_root / CruxibleInstance.INSTANCE_DIR / "instance.json"
 
-    if instance_json.exists():
-        if has_config:
+    def initialize_governed() -> Any:
+        if config_path is not None and config_yaml is None:
             raise ConfigError(
-                "Governed instance already exists for this workspace root. "
-                "Edit the config locally, then use reload-config in server mode to sync it."
+                "Direct server init requires uploaded config content. "
+                "CLI and MCP callers should read the config locally and send config_yaml "
+                "instead of passing config_path."
             )
-        instance = CruxibleInstance.load(governed_root)
-        get_manager().register(registered.record.instance_id, instance)
-        warnings = service_config_compatibility_warnings(instance)
-        return contracts.InitResult(
-            instance_id=registered.record.instance_id,
-            status="loaded",
-            warnings=warnings,
+        return service_init_governed_upload(
+            governed_root,
+            workspace_root=root_dir,
+            config_yaml=config_yaml,
+            data_dir=data_dir,
+            kit=kit,
         )
 
-    if config_path is not None and config_yaml is None:
-        raise ConfigError(
-            "Direct server init requires uploaded config content. "
-            "CLI and MCP callers should read the config locally and send config_yaml "
-            "instead of passing config_path."
-        )
-    result = service_init_governed_upload(
-        governed_root,
-        workspace_root=root_dir,
-        config_yaml=config_yaml,
-        data_dir=data_dir,
-        kit=kit,
-    )
-    get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.InitResult(
+    return _load_or_initialize_instance(
+        instance_root=governed_root,
         instance_id=registered.record.instance_id,
-        status="initialized",
-        warnings=result.warnings,
+        has_config=has_config,
+        existing_with_config_error=(
+            "Governed instance already exists for this workspace root. "
+            "Edit the config locally, then use reload-config in server mode to sync it."
+        ),
+        initialize=initialize_governed,
+        include_initialized_warnings=True,
     )
 
 
