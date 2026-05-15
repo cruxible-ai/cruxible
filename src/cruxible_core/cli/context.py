@@ -14,7 +14,7 @@ from cruxible_core.errors import ConfigError
 
 @dataclass(frozen=True)
 class CliContextState:
-    """Remembered server transport and selected governed instance."""
+    """Remembered server transport and active governed instance."""
 
     server_url: str | None = None
     server_socket: str | None = None

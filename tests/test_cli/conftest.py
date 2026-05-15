@@ -98,8 +98,6 @@ def reset_server_mode_env(monkeypatch):
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
-    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
-    monkeypatch.delenv("CRUXIBLE_DECISION_RECORD_ID", raising=False)
     reset_client_cache()
     reset_registry()
     yield

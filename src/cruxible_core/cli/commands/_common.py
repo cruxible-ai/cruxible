@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json as _json
-import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -41,7 +41,7 @@ decision_record_option = click.option(
     "--decision-record",
     "decision_record_id",
     default=None,
-    help="Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID.",
+    help="Decision record ID for audit logging.",
 )
 
 
@@ -51,9 +51,15 @@ def _emit_json(data: Any) -> None:
 
 
 def _resolve_decision_record_id(decision_record_id: str | None) -> str | None:
-    if decision_record_id is not None:
-        return decision_record_id
-    return os.environ.get("CRUXIBLE_DECISION_RECORD_ID")
+    return decision_record_id
+
+
+@dataclass(frozen=True)
+class ActiveInstanceChange:
+    """Result of updating the remembered active instance."""
+
+    previous: str | None
+    current: str
 
 
 def _operation_context(decision_record_id: str | None) -> OperationContext | None:
@@ -99,18 +105,38 @@ def _current_cli_context() -> CliContextState:
     )
 
 
-def _remember_server_context(*, instance_id: str | None = None) -> None:
-    """Persist the current governed transport and selected instance."""
+def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
+    """Persist *instance_id* as the active server-mode CLI instance."""
     state = _current_cli_context()
     if not state.server_url and not state.server_socket:
-        return
+        return None
     save_cli_context(
         CliContextState(
             server_url=state.server_url,
             server_socket=state.server_socket,
-            instance_id=instance_id if instance_id is not None else state.instance_id,
+            instance_id=instance_id,
         )
     )
+    _root_ctx_obj()["instance_id"] = instance_id
+    return ActiveInstanceChange(previous=state.instance_id, current=instance_id)
+
+
+def _print_active_instance_change(change: ActiveInstanceChange | None) -> None:
+    """Print the active-instance update for a server-created instance."""
+    if change is None:
+        return
+    click.echo(f"Active instance: {change.current}")
+    if change.previous and change.previous != change.current:
+        click.echo(f"Previous active instance: {change.previous}")
+
+
+def _print_active_instance_unchanged() -> None:
+    """Print the active instance when a server-created instance is not activated."""
+    current = _current_cli_context().instance_id
+    if current:
+        click.echo(f"Active instance unchanged: {current}")
+    else:
+        click.echo("No active instance selected.")
 
 
 def _persist_cli_context(

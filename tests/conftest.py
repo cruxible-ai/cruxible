@@ -290,7 +290,6 @@ def isolate_cli_context(
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_dir / "client-context.json"))
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
-    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
 
 
 @pytest.fixture

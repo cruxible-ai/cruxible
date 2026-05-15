@@ -8,10 +8,12 @@ import click
 
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
+    _activate_server_instance,
     _dispatch_cli,
     _dispatch_cli_instance,
     _get_client,
-    _remember_server_context,
+    _print_active_instance_change,
+    _print_active_instance_unchanged,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.service import (
@@ -90,6 +92,11 @@ def world_publish_cmd(
     default=None,
     help="Workspace root for the new overlay (defaults to current directory in server mode).",
 )
+@click.option(
+    "--activate/--no-activate",
+    default=True,
+    help="Make the new server overlay the active CLI context instance.",
+)
 @handle_errors
 def create_world_overlay_cmd(
     transport_ref: str | None,
@@ -97,6 +104,7 @@ def create_world_overlay_cmd(
     kit: str | None,
     no_kit: bool,
     root_dir: str | None,
+    activate: bool,
 ) -> None:
     """Create a new local overlay instance from a published world release."""
     effective_root_dir = root_dir
@@ -123,10 +131,13 @@ def create_world_overlay_cmd(
     instance_id = result.instance_id if isinstance(result, contracts.WorldOverlayResult) else str(
         result.instance.get_root_path()
     )
-    if isinstance(result, contracts.WorldOverlayResult):
-        _remember_server_context(instance_id=result.instance_id)
     click.echo(f"Created overlay for {result.manifest.world_id}:{result.manifest.release_id}")
     click.echo(f"Instance ID: {instance_id}")
+    if isinstance(result, contracts.WorldOverlayResult):
+        if activate:
+            _print_active_instance_change(_activate_server_instance(result.instance_id))
+        else:
+            _print_active_instance_unchanged()
 
 
 @world_group.command("status")

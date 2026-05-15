@@ -4,8 +4,10 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 ## Runtime Model
 
-- Use `--server-url`, `--server-socket`, and `--instance-id` for daemon-backed instances.
-- The CLI context commands remember those selectors for shell users; MCP does not use CLI context.
+- Use `--server-url` or `--server-socket` for daemon transport, and
+  `--instance-id` or CLI context for daemon-backed instances.
+- The CLI context commands remember transport and the active instance for shell
+  users; MCP does not use CLI context.
 - Commands that mutate governed state are blocked locally when the command requires a daemon surface.
 - `init --kit` accepts standalone kits. Overlay kits are created with `world create-overlay --kit`.
 - `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
@@ -178,7 +180,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--apply-digest` | no | `` | text | Preview apply digest from workflow run. |
 | `--head-snapshot` | no | `` | text | Expected head snapshot ID from workflow preview. |
 | `--preview-file` | no | `` | file | Read preview state from a file saved by run --save-preview. |
-| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -201,6 +203,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | --- | --- | --- | --- | --- |
 | `--snapshot` | yes | `Sentinel.UNSET` | text | Snapshot ID to clone from. |
 | `--root-dir` | yes | `Sentinel.UNSET` | text | Root directory for the new cloned instance. |
+| `--activate / --no-activate` | no | `True` | boolean | Make the cloned server instance the active CLI context instance. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -245,7 +248,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `cruxible context clear` - Clear remembered governed CLI context.
 - `cruxible context connect` - Persist the current governed transport and optional instance.
 - `cruxible context show` - Show the remembered CLI context.
-- `cruxible context use` - Remember the current governed instance ID.
+- `cruxible context use` - Set the active governed instance ID.
 
 **Output And Side Effects:**
 - Mutates only the remembered CLI context file, not graph state.
@@ -281,7 +284,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | --- | --- | --- | --- | --- |
 | `--server-url` | no | `` | text | Remote Cruxible server base URL. |
 | `--server-socket` | no | `` | text | Local Cruxible server Unix socket path. |
-| `--instance-id` | no | `` | text | Optional opaque server-mode instance ID. |
+| `--instance-id` | no | `` | text | Opaque server-mode instance ID. Defaults to remembered CLI context. |
 
 **Output And Side Effects:**
 - Mutates only the remembered CLI context file, not graph state.
@@ -315,7 +318,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible context use [OPTIONS]`
 
-**Purpose:** Remember the current governed instance ID.
+**Purpose:** Set the active governed instance ID.
 
 **Options And Arguments:**
 
@@ -899,6 +902,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--kit` | no | `` | text | Standalone kit alias or ref to materialize. |
 | `--root-dir` | no | `` | text | Workspace root for config/artifact provenance (defaults to current directory). |
 | `--data-dir` | no | `` | text | Directory for data files. |
+| `--activate / --no-activate` | no | `True` | boolean | Make a new server instance the active CLI context instance. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -1390,7 +1394,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--workflow` | yes | `Sentinel.UNSET` | text | Workflow name from config. |
 | `--input` | no | `` | text | Inline JSON or YAML workflow input. |
 | `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
-| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1420,7 +1424,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
-| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1531,7 +1535,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--input` | no | `` | text | Inline JSON or YAML workflow input. |
 | `--input-file` | no | `` | path | JSON or YAML file providing workflow input. |
 | `--save-preview` | no | `` | file | Save preview state to a JSON file for use with apply --preview-file. |
-| `--decision-record` | no | `` | text | Decision record ID for audit logging. Defaults to CRUXIBLE_DECISION_RECORD_ID. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1772,6 +1776,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--kit` | no | `Sentinel.UNSET` | text | Apply a checked-in local overlay kit, e.g. kev-triage. |
 | `--no-kit` | no | `False` | boolean | Skip automatic kit application and create a bare overlay. |
 | `--root-dir` | no | `` | text | Workspace root for the new overlay (defaults to current directory in server mode). |
+| `--activate / --no-activate` | no | `True` | boolean | Make the new server overlay the active CLI context instance. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

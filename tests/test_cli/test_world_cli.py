@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -77,3 +78,67 @@ def test_server_mode_create_world_overlay_defaults_root_dir_to_cwd(
     assert captured["world_ref"] == "kev-reference"
     assert captured["kit"] == "kev-triage"
     assert "Instance ID: inst_cloned" in result.output
+    assert "Active instance: inst_cloned" in result.output
+
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_cloned"
+
+
+def test_server_mode_create_world_overlay_no_activate_leaves_context(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+
+    class StubClient:
+        def create_world_overlay(
+            self,
+            *,
+            root_dir,
+            transport_ref=None,
+            world_ref=None,
+            kit=None,
+            no_kit=False,
+        ):
+            return contracts.WorldOverlayResult(
+                instance_id="inst_new",
+                manifest=contracts.PublishedWorldManifest(
+                    format_version=1,
+                    world_id="kev-reference",
+                    release_id="2026-04-21",
+                    snapshot_id="snap_1",
+                    compatibility="data_only",
+                    owned_entity_types=["Vendor", "Product", "Vulnerability"],
+                    owned_relationship_types=["vulnerability_affects_product"],
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "world",
+            "create-overlay",
+            "--world-ref",
+            "kev-reference",
+            "--no-activate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Instance ID: inst_new" in result.output
+    assert "Active instance unchanged: inst_old" in result.output
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_old"

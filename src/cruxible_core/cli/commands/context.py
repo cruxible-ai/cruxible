@@ -92,7 +92,7 @@ def context_connect(
 @click.argument("instance_id")
 @handle_errors
 def context_use(instance_id: str) -> None:
-    """Remember the current governed instance ID."""
+    """Set the active governed instance ID."""
     existing = _load_persisted_cli_context()
     if not existing.server_url and not existing.server_socket:
         raise click.UsageError("Set a remembered server first with 'cruxible context connect'")
@@ -101,7 +101,7 @@ def context_use(instance_id: str) -> None:
         server_socket=existing.server_socket,
         instance_id=instance_id,
     )
-    click.echo(f"Remembered instance: {instance_id}")
+    click.echo(f"Active instance: {instance_id}")
 
 
 @connect_group.command("clear")

@@ -32,12 +32,9 @@ def _resolve_cli_transport(
 
 
 def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
-    """Resolve the selected governed instance ID."""
+    """Resolve the active governed instance ID."""
     if instance_id is not None:
         return instance_id
-    env_instance_id = os.environ.get("CRUXIBLE_INSTANCE_ID")
-    if env_instance_id is not None:
-        return env_instance_id
     return load_cli_context().instance_id
 
 
@@ -66,8 +63,7 @@ def handle_errors(f: Any) -> Any:
 @click.option(
     "--instance-id",
     default=None,
-    envvar="CRUXIBLE_INSTANCE_ID",
-    help="Opaque server-mode instance ID.",
+    help="Opaque server-mode instance ID. Defaults to remembered CLI context.",
 )
 @click.pass_context
 def cli(

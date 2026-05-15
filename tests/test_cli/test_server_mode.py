@@ -69,6 +69,7 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
     assert captured["config_path"] is None
     assert isinstance(captured["config_yaml"], str)
     assert "Instance ID: inst_abc123" in result.output
+    assert "Active instance: inst_abc123" in result.output
 
     shown = runner.invoke(cli, ["context", "show", "--json"])
     assert shown.exit_code == 0
@@ -76,6 +77,72 @@ def test_server_mode_init_reads_local_config_and_prints_instance_id(
         "instance_id": "inst_abc123",
         "server_url": "http://server",
     }
+
+
+def test_server_mode_init_reports_previous_active_instance(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+
+    class StubClient:
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+            return contracts.InitResult(instance_id="inst_new", status="initialized")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(cli, ["init", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "Active instance: inst_new" in result.output
+    assert "Previous active instance: inst_old" in result.output
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_new"
+
+
+def test_server_mode_init_no_activate_leaves_active_instance(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CAR_PARTS_YAML)
+
+    class StubClient:
+        def init(self, *, root_dir, config_path=None, config_yaml=None, data_dir=None):
+            return contracts.InitResult(instance_id="inst_new", status="initialized")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(cli, ["init", "--config", str(config_path), "--no-activate"])
+
+    assert result.exit_code == 0
+    assert "Instance ID: inst_new" in result.output
+    assert "Active instance unchanged: inst_old" in result.output
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_old"
 
 
 def test_server_mode_init_defaults_root_dir_to_cwd(
@@ -173,7 +240,7 @@ def test_context_commands_persist_and_show_governed_context(
 
     used = runner.invoke(cli, ["context", "use", "inst_456"])
     assert used.exit_code == 0
-    assert "Remembered instance: inst_456" in used.output
+    assert "Active instance: inst_456" in used.output
 
     cleared = runner.invoke(cli, ["context", "clear"])
     assert cleared.exit_code == 0
@@ -312,7 +379,7 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     assert describe_payload["returns"] == "Part"
 
 
-def test_query_decision_record_flag_beats_env(
+def test_query_decision_record_requires_explicit_flag(
     monkeypatch,
     runner: CliRunner,
 ):
@@ -348,8 +415,6 @@ def test_query_decision_record_flag_beats_env(
             "parts_for_vehicle",
             "--param",
             "vehicle_id=V-1",
-            "--decision-record",
-            "DR-flag",
             "--json",
         ],
     )
@@ -360,8 +425,49 @@ def test_query_decision_record_flag_beats_env(
         "query_name": "parts_for_vehicle",
         "params": {"vehicle_id": "V-1"},
         "limit": None,
-        "decision_record_id": "DR-flag",
+        "decision_record_id": None,
     }
+
+
+def test_query_uses_explicit_decision_record_flag(
+    monkeypatch,
+    runner: CliRunner,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def query(self, instance_id, query_name, params, limit=None, decision_record_id=None):
+            captured["decision_record_id"] = decision_record_id
+            return contracts.QueryToolResult(
+                results=[],
+                receipt_id="RCP-1",
+                receipt=None,
+                total_results=0,
+                truncated=False,
+                steps_executed=1,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "--query",
+            "parts_for_vehicle",
+            "--param",
+            "vehicle_id=V-1",
+            "--decision-record",
+            "DR-flag",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["decision_record_id"] == "DR-flag"
 
 
 def test_decision_record_commands_delegate_to_client_in_server_mode(
@@ -801,6 +907,42 @@ def test_explicit_transport_overrides_remembered_opposite_transport(
     assert captured["base_url"] == "http://server"
     assert captured["socket_path"] is None
     assert captured["instance_id"] == "inst_http"
+
+
+def test_instance_id_env_is_ignored_in_favor_of_cli_context(
+    monkeypatch,
+    runner: CliRunner,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_context",
+        ],
+    )
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_env")
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def stats(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.StatsResult(
+                entity_count=1,
+                edge_count=0,
+                entity_counts={},
+                relationship_counts={},
+                head_snapshot_id=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(cli, ["stats", "--json"])
+
+    assert result.exit_code == 0
+    assert captured["instance_id"] == "inst_context"
 
 
 def test_context_connect_clears_instance_when_transport_changes(
@@ -1831,6 +1973,64 @@ def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(
     )
     assert clone.exit_code == 0
     assert "instance inst_clone" in clone.output
+    assert "Active instance: inst_clone" in clone.output
+    assert "Previous active instance: inst_123" in clone.output
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_clone"
+
+
+def test_clone_snapshot_no_activate_leaves_active_instance(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+
+    class StubClient:
+        def clone_snapshot(self, instance_id, *, snapshot_id, root_dir):
+            assert instance_id == "inst_old"
+            return contracts.CloneSnapshotResult(
+                instance_id="inst_clone",
+                snapshot=contracts.SnapshotMetadata(
+                    snapshot_id=snapshot_id,
+                    created_at="2026-03-21T00:00:00Z",
+                    label=None,
+                    config_digest="sha256:abc",
+                    lock_digest=None,
+                    graph_digest="sha256:def",
+                    parent_snapshot_id=None,
+                    origin_snapshot_id=None,
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "clone",
+            "--snapshot",
+            "snap_1",
+            "--root-dir",
+            str(tmp_path / "clone"),
+            "--no-activate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "instance inst_clone" in result.output
+    assert "Active instance unchanged: inst_old" in result.output
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_old"
 
 
 def test_governed_write_commands_delegate_to_client_in_server_mode(

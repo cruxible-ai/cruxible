@@ -12,13 +12,15 @@ from pydantic import ValidationError
 from cruxible_client import contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
+    _activate_server_instance,
     _dispatch_cli,
     _dispatch_cli_instance,
     _emit_json,
     _get_client,
     _operation_context,
+    _print_active_instance_change,
+    _print_active_instance_unchanged,
     _print_apply_previews,
-    _remember_server_context,
     _resolve_decision_record_id,
     _resolve_workflow_input,
     decision_record_option,
@@ -168,12 +170,18 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
     help="Workspace root for config/artifact provenance (defaults to current directory).",
 )
 @click.option("--data-dir", default=None, help="Directory for data files.")
+@click.option(
+    "--activate/--no-activate",
+    default=True,
+    help="Make a new server instance the active CLI context instance.",
+)
 @handle_errors
 def init(
     config_path: str | None,
     kit: str | None,
     root_dir: str | None,
     data_dir: str | None,
+    activate: bool,
 ) -> None:
     """Initialize a new instance or governed server-backed workspace."""
     client = _common._get_client()
@@ -207,9 +215,12 @@ def init(
         command_name="init",
     )
     if isinstance(result, contracts.InitResult):
-        _remember_server_context(instance_id=result.instance_id)
         click.echo(f"Instance {result.status}.")
         click.echo(f"Instance ID: {result.instance_id}")
+        if activate:
+            _print_active_instance_change(_activate_server_instance(result.instance_id))
+        else:
+            _print_active_instance_unchanged()
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
@@ -742,8 +753,13 @@ def snapshot_list_cmd() -> None:
 @click.command("clone")
 @click.option("--snapshot", "snapshot_id", required=True, help="Snapshot ID to clone from.")
 @click.option("--root-dir", required=True, help="Root directory for the new cloned instance.")
+@click.option(
+    "--activate/--no-activate",
+    default=True,
+    help="Make the cloned server instance the active CLI context instance.",
+)
 @handle_errors
-def clone_cmd(snapshot_id: str, root_dir: str) -> None:
+def clone_cmd(snapshot_id: str, root_dir: str, activate: bool) -> None:
     """Create a new local instance from a chosen snapshot."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.clone_snapshot(
@@ -756,10 +772,13 @@ def clone_cmd(snapshot_id: str, root_dir: str) -> None:
         command_name="clone",
     )
     if isinstance(result, contracts.CloneSnapshotResult):
-        _remember_server_context(instance_id=result.instance_id)
         click.echo(
             f"Cloned snapshot {result.snapshot.snapshot_id} into instance {result.instance_id}"
         )
+        if activate:
+            _print_active_instance_change(_activate_server_instance(result.instance_id))
+        else:
+            _print_active_instance_unchanged()
         return
     click.echo(
         f"Cloned snapshot {result.snapshot.snapshot_id} into {result.instance.get_root_path()}"
