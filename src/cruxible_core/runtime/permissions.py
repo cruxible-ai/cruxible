@@ -4,10 +4,12 @@ Controls which operations a runtime session can invoke, enforced via the
 ``CRUXIBLE_MODE`` environment variable. Four cumulative tiers:
 
 - ``READ_ONLY``: query, inspect, validate, and plan workflows
-- ``GOVERNED_WRITE``: execute workflows that persist receipts and
-  propose or review via governed surfaces
-- ``GRAPH_WRITE``: raw graph mutation and proposal resolution
-- ``ADMIN``: apply canonical workflows, add constraints, create new instances
+- ``GOVERNED_WRITE``: execute governed operator actions such as feedback,
+  proposals, snapshots, policy additions, and subscribed world pulls
+- ``GRAPH_WRITE``: commit local governed state through direct graph writes,
+  group resolution, trust updates, or canonical workflow apply
+- ``ADMIN``: manage instance lifecycle, active config replacement, locks,
+  clones, overlays, and published world trust boundaries
 
 Default is ``ADMIN`` (backward compatible), except when ``CRUXIBLE_AGENT_MODE=1``
 is active and ``CRUXIBLE_MODE`` is unset. In agent mode, the default is
@@ -133,22 +135,22 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_create_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
     "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
+    "cruxible_add_constraint": PermissionMode.GOVERNED_WRITE,
+    "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
+    "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
+    "cruxible_world_pull_apply": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
+    "cruxible_apply_workflow": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
     "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,
     # ADMIN tools
-    "cruxible_add_constraint": PermissionMode.ADMIN,
-    "cruxible_add_decision_policy": PermissionMode.ADMIN,
     "cruxible_lock_workflow": PermissionMode.ADMIN,
-    "cruxible_apply_workflow": PermissionMode.ADMIN,
     "cruxible_reload_config": PermissionMode.ADMIN,
-    "cruxible_create_snapshot": PermissionMode.ADMIN,
     "cruxible_clone_snapshot": PermissionMode.ADMIN,
     "cruxible_world_publish": PermissionMode.ADMIN,
     "cruxible_world_create_overlay": PermissionMode.ADMIN,
-    "cruxible_world_pull_apply": PermissionMode.ADMIN,
 }
 
 # Internal runtime operations that are not registered MCP tools but still need
