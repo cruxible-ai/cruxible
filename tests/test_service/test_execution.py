@@ -504,9 +504,7 @@ class TestWorkflowExecutionServices:
 
         assert overlay_result.snapshot.snapshot_id == created.snapshot.snapshot_id
         assert overlay_result.instance.get_root_path() == overlay_root
-        assert (
-            overlay_result.instance.metadata["origin_snapshot_id"] == created.snapshot.snapshot_id
-        )
+        assert overlay_result.instance.metadata.origin_snapshot_id == created.snapshot.snapshot_id
         assert (overlay_root / ".cruxible" / "cruxible.lock.yaml").exists()
         overlay_graph = overlay_result.instance.load_graph()
         assert overlay_graph.edge_count("recommended_for") == 2

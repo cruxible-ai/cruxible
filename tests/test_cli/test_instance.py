@@ -13,6 +13,7 @@ from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
+from cruxible_core.snapshot.types import UpstreamMetadata
 
 
 class TestInit:
@@ -27,6 +28,7 @@ class TestInit:
         meta = json.loads((tmp_project / ".cruxible" / "instance.json").read_text())
         assert meta["config_path"] == "config.yaml"
         assert meta["data_dir"] == "data"
+        assert meta["instance_mode"] == CruxibleInstance.DEV_MODE
         assert "created_at" in meta
         assert "version" in meta
 
@@ -45,7 +47,7 @@ class TestLoad:
     def test_loads_from_root(self, initialized_project: CruxibleInstance) -> None:
         loaded = CruxibleInstance.load(initialized_project.root)
         assert loaded.root == initialized_project.root
-        assert loaded.metadata["config_path"] == "config.yaml"
+        assert loaded.metadata.config_path == "config.yaml"
 
     def test_walks_up_to_find_instance(self, initialized_project: CruxibleInstance) -> None:
         subdir = initialized_project.root / "subdir" / "nested"
@@ -56,6 +58,91 @@ class TestLoad:
     def test_raises_when_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(InstanceNotFoundError):
             CruxibleInstance.load(tmp_path)
+
+
+class TestMetadata:
+    def test_missing_instance_mode_defaults_to_dev(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        metadata_path = initialized_project.instance_dir / "instance.json"
+        meta = json.loads(metadata_path.read_text())
+        del meta["instance_mode"]
+        metadata_path.write_text(json.dumps(meta))
+
+        loaded = CruxibleInstance.load(initialized_project.root)
+
+        assert loaded.get_instance_mode() == CruxibleInstance.DEV_MODE
+        assert loaded.is_dev_mode()
+
+    def test_invalid_instance_mode_raises(self, initialized_project: CruxibleInstance) -> None:
+        metadata_path = initialized_project.instance_dir / "instance.json"
+        meta = json.loads(metadata_path.read_text())
+        meta["instance_mode"] = "other"
+        metadata_path.write_text(json.dumps(meta))
+
+        with pytest.raises(ConfigError, match="Invalid instance metadata"):
+            CruxibleInstance.load(initialized_project.root)
+
+    def test_set_config_path_persists_through_metadata_model(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        alt_config = initialized_project.root / "alt.yaml"
+        alt_config.write_text((initialized_project.root / "config.yaml").read_text())
+
+        initialized_project.set_config_path("alt.yaml")
+
+        meta = json.loads((initialized_project.instance_dir / "instance.json").read_text())
+        assert meta["config_path"] == "alt.yaml"
+        assert CruxibleInstance.load(initialized_project.root).metadata.config_path == "alt.yaml"
+
+    def test_unknown_metadata_fields_survive_rewrite(
+        self, initialized_project: CruxibleInstance
+    ) -> None:
+        metadata_path = initialized_project.instance_dir / "instance.json"
+        meta = json.loads(metadata_path.read_text())
+        meta["future_field"] = {"kept": True}
+        metadata_path.write_text(json.dumps(meta))
+
+        loaded = CruxibleInstance.load(initialized_project.root)
+        loaded.set_config_path("config.yaml")
+
+        rewritten = json.loads(metadata_path.read_text())
+        assert rewritten["future_field"] == {"kept": True}
+
+    def test_upstream_metadata_round_trips(self, initialized_project: CruxibleInstance) -> None:
+        upstream = UpstreamMetadata(
+            world_id="world",
+            release_id="v1",
+            snapshot_id="snap_1",
+            compatibility="data_only",
+            transport_ref="file:///tmp/world",
+            owned_entity_types=["Vehicle"],
+            owned_relationship_types=["fits"],
+        )
+
+        initialized_project.set_upstream_metadata(upstream)
+        loaded = CruxibleInstance.load(initialized_project.root)
+
+        assert loaded.get_upstream_metadata() == upstream
+        raw = json.loads((initialized_project.instance_dir / "instance.json").read_text())
+        assert raw["upstream"]["world_id"] == "world"
+        assert raw["upstream"]["transport_ref"] == "file:///tmp/world"
+
+    def test_snapshot_metadata_round_trips(
+        self, initialized_project: CruxibleInstance, tmp_path: Path
+    ) -> None:
+        snapshot = initialized_project.create_snapshot(label="baseline")
+        assert initialized_project.get_head_snapshot_id() == snapshot.snapshot_id
+
+        clone, _ = CruxibleInstance.clone_from_snapshot(
+            initialized_project,
+            snapshot.snapshot_id,
+            tmp_path / "clone",
+        )
+
+        reloaded = CruxibleInstance.load(clone.root)
+        assert reloaded.metadata.head_snapshot_id == snapshot.snapshot_id
+        assert reloaded.metadata.origin_snapshot_id == snapshot.snapshot_id
 
 
 class TestGraphPersistence:

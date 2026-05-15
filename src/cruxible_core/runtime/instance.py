@@ -20,7 +20,9 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
 from cruxible_core.config.loader import load_config, save_config
@@ -41,6 +43,23 @@ from cruxible_core.workflow.compiler import (
 
 logger = logging.getLogger(__name__)
 
+InstanceMode = Literal["dev", "governed"]
+
+
+class InstanceMetadata(BaseModel):
+    """Typed contents of ``.cruxible/instance.json``."""
+
+    model_config = ConfigDict(extra="allow", validate_assignment=True)
+
+    config_path: str
+    data_dir: str = "."
+    instance_mode: InstanceMode = "dev"
+    created_at: str | None = None
+    version: str | None = None
+    head_snapshot_id: str | None = None
+    origin_snapshot_id: str | None = None
+    upstream: UpstreamMetadata | None = None
+
 
 class CruxibleInstance(InstanceProtocol):
     """Manages a .cruxible/ project instance."""
@@ -49,10 +68,10 @@ class CruxibleInstance(InstanceProtocol):
     DEV_MODE = "dev"
     GOVERNED_MODE = "governed"
 
-    def __init__(self, root: Path, metadata: dict[str, Any]) -> None:
+    def __init__(self, root: Path, metadata: InstanceMetadata | dict[str, Any]) -> None:
         self.root = root
         self.instance_dir = root / self.INSTANCE_DIR
-        self.metadata = metadata
+        self.metadata = self._parse_metadata(metadata)
         self._graph_cache: EntityGraph | None = None
 
     @classmethod
@@ -79,19 +98,20 @@ class CruxibleInstance(InstanceProtocol):
         instance_dir = root / cls.INSTANCE_DIR
         instance_dir.mkdir(parents=True, exist_ok=True)
 
-        metadata: dict[str, Any] = {
-            "config_path": str(config_path),
-            "data_dir": data_dir or ".",
-            "instance_mode": instance_mode,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "version": __version__,
-        }
-        (instance_dir / "instance.json").write_text(json.dumps(metadata, indent=2))
+        metadata = InstanceMetadata(
+            config_path=str(config_path),
+            data_dir=data_dir or ".",
+            instance_mode=instance_mode,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            version=__version__,
+        )
+        instance = cls(root, metadata)
+        instance._write_metadata()
 
         graph_data = EntityGraph().to_dict()
         (instance_dir / "graph.json").write_text(json.dumps(graph_data, indent=2))
 
-        return cls(root, metadata)
+        return instance
 
     @classmethod
     def load(cls, root: Path | None = None) -> CruxibleInstance:
@@ -130,10 +150,7 @@ class CruxibleInstance(InstanceProtocol):
 
     def get_instance_mode(self) -> str:
         """Return the persisted instance mode, defaulting legacy instances to dev."""
-        mode = self.metadata.get("instance_mode")
-        if not isinstance(mode, str):
-            return self.DEV_MODE
-        return mode
+        return self.metadata.instance_mode
 
     def is_dev_mode(self) -> bool:
         """Return whether the instance is a workspace-rooted dev instance."""
@@ -145,12 +162,12 @@ class CruxibleInstance(InstanceProtocol):
 
     def set_config_path(self, config_path: str) -> None:
         """Update the config path recorded in instance metadata."""
-        self.metadata["config_path"] = config_path
+        self.metadata.config_path = config_path
         self._write_metadata()
 
     def get_config_path(self) -> Path:
         """Return the resolved config path for the instance."""
-        config_path = Path(self.metadata["config_path"])
+        config_path = Path(self.metadata.config_path)
         if not config_path.is_absolute():
             config_path = self.root / config_path
         return config_path
@@ -206,29 +223,28 @@ class CruxibleInstance(InstanceProtocol):
 
     def get_head_snapshot_id(self) -> str | None:
         """Return the current head snapshot identifier, if any."""
-        value = self.metadata.get("head_snapshot_id")
-        return str(value) if value is not None else None
+        return self.metadata.head_snapshot_id
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
         """Return typed upstream metadata for release-backed overlay instances."""
-        raw = self.metadata.get("upstream")
-        if raw is None:
-            return None
-        return UpstreamMetadata.model_validate(raw)
+        return self.metadata.upstream
 
     def set_upstream_metadata(self, metadata: UpstreamMetadata | None) -> None:
         """Persist upstream metadata for release-backed overlay instances."""
-        if metadata is None:
-            self.metadata.pop("upstream", None)
-        else:
-            self.metadata["upstream"] = metadata.model_dump(mode="json")
+        self.metadata.upstream = metadata
         self._write_metadata()
 
     def _metadata_path(self) -> Path:
         return self.instance_dir / "instance.json"
 
     def _write_metadata(self) -> None:
-        self._metadata_path().write_text(json.dumps(self.metadata, indent=2, sort_keys=True))
+        self._metadata_path().write_text(
+            json.dumps(
+                self.metadata.model_dump(mode="json", exclude_none=True),
+                indent=2,
+                sort_keys=True,
+            )
+        )
 
     def _snapshots_dir(self) -> Path:
         path = self.instance_dir / "snapshots"
@@ -280,8 +296,8 @@ class CruxibleInstance(InstanceProtocol):
             config_digest=compute_lock_config_digest(config),
             lock_digest=lock_digest,
             graph_digest=graph_digest,
-            parent_snapshot_id=self.metadata.get("head_snapshot_id"),
-            origin_snapshot_id=self.metadata.get("origin_snapshot_id"),
+            parent_snapshot_id=self.metadata.head_snapshot_id,
+            origin_snapshot_id=self.metadata.origin_snapshot_id,
         )
         (snapshot_dir / "snapshot.json").write_text(
             json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True)
@@ -289,9 +305,9 @@ class CruxibleInstance(InstanceProtocol):
 
         if persist_live_graph:
             self.save_graph(graph)
-        self.metadata["head_snapshot_id"] = snapshot_id
+        self.metadata.head_snapshot_id = snapshot_id
         if snapshot.origin_snapshot_id is not None:
-            self.metadata["origin_snapshot_id"] = snapshot.origin_snapshot_id
+            self.metadata.origin_snapshot_id = snapshot.origin_snapshot_id
         self._write_metadata()
         return snapshot
 
@@ -351,10 +367,8 @@ class CruxibleInstance(InstanceProtocol):
         if snapshot_lock.exists():
             shutil.copy2(snapshot_lock, instance.get_instance_dir() / LOCK_FILE_NAME)
 
-        instance.metadata["head_snapshot_id"] = snapshot.snapshot_id
-        instance.metadata["origin_snapshot_id"] = (
-            snapshot.origin_snapshot_id or snapshot.snapshot_id
-        )
+        instance.metadata.head_snapshot_id = snapshot.snapshot_id
+        instance.metadata.origin_snapshot_id = snapshot.origin_snapshot_id or snapshot.snapshot_id
         instance._write_metadata()
         return instance, snapshot
 
@@ -386,3 +400,16 @@ class CruxibleInstance(InstanceProtocol):
                 f"Unsupported instance_mode '{instance_mode}'. "
                 f"Expected one of: {cls.DEV_MODE}, {cls.GOVERNED_MODE}"
             )
+
+    @staticmethod
+    def _parse_metadata(metadata: InstanceMetadata | dict[str, Any]) -> InstanceMetadata:
+        if isinstance(metadata, InstanceMetadata):
+            return metadata
+        try:
+            return InstanceMetadata.model_validate(metadata)
+        except ValidationError as exc:
+            errors = [
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors()
+            ]
+            raise ConfigError("Invalid instance metadata", errors=errors) from exc
