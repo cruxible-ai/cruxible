@@ -137,7 +137,7 @@ def test_runtime_digest_ignores_unrelated_files_and_tracks_kit_files(tmp_path: P
     assert compute_kit_runtime_digest(tmp_path) != baseline
 
 
-def test_dev_tree_resolution_requires_env_and_rejects_agent_mode(
+def test_dev_tree_resolution_requires_explicit_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -152,10 +152,6 @@ def test_dev_tree_resolution_requires_env_and_rejects_agent_mode(
     monkeypatch.setenv("CRUXIBLE_KIT_DEV_RESOLVE", "1")
     path, _attr, _root = resolve_kit_provider_ref("kit://providers/main.py::run", tmp_path)
     assert path.name == "main.py"
-
-    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
-    with pytest.raises(ConfigError, match="dev-tree kit root"):
-        resolve_kit_provider_ref("kit://providers/main.py::run", tmp_path)
 
 
 def test_materialized_metadata_ignores_unrelated_files_but_detects_provider_drift(

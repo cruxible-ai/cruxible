@@ -32,11 +32,11 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return live daemon metadata such as agent mode, state dir, and instance count.
+**Purpose:** Return live daemon metadata such as server-required status, state dir, and instance count.
 
 **Arguments:** none.
 
-**Returns:** Top-level fields: `agent_mode`, `state_dir`, `version`, `instance_count`
+**Returns:** Top-level fields: `server_required`, `state_dir`, `version`, `instance_count`
 
 **Side Effects:** Read-only.
 

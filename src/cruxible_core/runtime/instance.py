@@ -70,7 +70,6 @@ class CruxibleInstance(InstanceProtocol):
         the instance directory.
         """
         cls._validate_instance_mode(instance_mode)
-        cls._enforce_agent_mode(root)
         resolved_config = Path(config_path)
         if not resolved_config.is_absolute():
             resolved_config = root / resolved_config
@@ -104,7 +103,6 @@ class CruxibleInstance(InstanceProtocol):
         while True:
             candidate = search / cls.INSTANCE_DIR / "instance.json"
             if candidate.exists():
-                cls._enforce_agent_mode(search)
                 metadata = json.loads(candidate.read_text())
                 return cls(search, metadata)
             parent = search.parent
@@ -388,19 +386,3 @@ class CruxibleInstance(InstanceProtocol):
                 f"Unsupported instance_mode '{instance_mode}'. "
                 f"Expected one of: {cls.DEV_MODE}, {cls.GOVERNED_MODE}"
             )
-
-    @classmethod
-    def _enforce_agent_mode(cls, root: Path) -> None:
-        """Block init/load outside the daemon directory when CRUXIBLE_AGENT_MODE is set."""
-        from cruxible_core.server.config import get_server_state_dir, is_agent_mode
-
-        if not is_agent_mode():
-            return
-        allowed_dir = get_server_state_dir() / "instances"
-        try:
-            root.resolve().relative_to(allowed_dir.resolve())
-        except ValueError:
-            raise ConfigError(
-                "CRUXIBLE_AGENT_MODE is set — instances can only be created or loaded "
-                "under the daemon directory. Use server mode."
-            ) from None

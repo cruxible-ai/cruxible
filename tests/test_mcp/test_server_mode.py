@@ -16,12 +16,6 @@ def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: 
         create_server()
 
 
-def test_create_server_fails_when_agent_mode_without_endpoint(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-    with pytest.raises(ConfigError, match="Server mode is required"):
-        create_server()
-
-
 def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def query(self, instance_id, query_name, params, limit=None):
@@ -52,7 +46,7 @@ def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch
     class StubClient:
         def server_info(self):
             return contracts.ServerInfoResult(
-                agent_mode=True,
+                server_required=True,
                 state_dir="/srv/cruxible-state",
                 version="0.2.0",
                 instance_count=2,
@@ -60,7 +54,7 @@ def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     result = handlers.handle_server_info()
-    assert result.agent_mode is True
+    assert result.server_required is True
     assert result.instance_count == 2
 
 

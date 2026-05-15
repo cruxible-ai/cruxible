@@ -26,7 +26,6 @@ from cruxible_core.cli.commands._common import (
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.server.config import is_agent_mode
 from cruxible_core.service import (
     apply_preview_reference_from_receipt,
     service_apply_workflow,
@@ -146,7 +145,7 @@ def _load_latest_preview_from_client(
 
 
 def _is_interactive_apply() -> bool:
-    return click.get_text_stream("stdin").isatty() and not is_agent_mode()
+    return click.get_text_stream("stdin").isatty()
 
 
 def _print_preview_reference(reference: dict[str, Any]) -> None:

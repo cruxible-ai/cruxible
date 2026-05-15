@@ -308,49 +308,14 @@ class TestAtomicSaveGraph:
         assert reloaded.entity_count() == 0  # Back to empty
 
 
-class TestAgentMode:
-    """CRUXIBLE_AGENT_MODE blocks init/load outside the daemon directory."""
+class TestTransportRequirement:
+    """Server transport policy does not change direct instance filesystem behavior."""
 
-    def test_init_blocked_outside_daemon_dir(self, monkeypatch, tmp_project: Path) -> None:
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-        with pytest.raises(ConfigError, match="CRUXIBLE_AGENT_MODE"):
-            CruxibleInstance.init(tmp_project, "config.yaml")
-
-    def test_init_allowed_under_daemon_dir(self, monkeypatch, tmp_path: Path) -> None:
-        server_state = tmp_path / "state"
-        daemon_dir = server_state / "instances" / "inst_abc"
-        daemon_dir.mkdir(parents=True)
-        from tests.test_cli.conftest import CAR_PARTS_YAML
-
-        (daemon_dir / "config.yaml").write_text(CAR_PARTS_YAML)
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(server_state))
-        instance = CruxibleInstance.init(daemon_dir, "config.yaml")
-        assert instance.root == daemon_dir
-
-    def test_load_blocked_outside_daemon_dir(
-        self, monkeypatch, initialized_project: CruxibleInstance
+    def test_require_server_does_not_block_direct_instance_load(
+        self, monkeypatch, tmp_project: Path
     ) -> None:
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-        with pytest.raises(ConfigError, match="CRUXIBLE_AGENT_MODE"):
-            CruxibleInstance.load(initialized_project.root)
+        monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
 
-    def test_load_allowed_under_daemon_dir(self, monkeypatch, tmp_path: Path) -> None:
-        server_state = tmp_path / "state"
-        daemon_dir = server_state / "instances" / "inst_abc"
-        daemon_dir.mkdir(parents=True)
-        from tests.test_cli.conftest import CAR_PARTS_YAML
-
-        (daemon_dir / "config.yaml").write_text(CAR_PARTS_YAML)
-        # Init without agent mode, then load with it
-        instance = CruxibleInstance.init(daemon_dir, "config.yaml")
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(server_state))
-        loaded = CruxibleInstance.load(instance.root)
-        assert loaded.root == daemon_dir
-
-    def test_not_set_allows_local(self, tmp_project: Path) -> None:
-        # No CRUXIBLE_AGENT_MODE — local init works as before
         instance = CruxibleInstance.init(tmp_project, "config.yaml")
         assert (tmp_project / ".cruxible").is_dir()
         loaded = CruxibleInstance.load(instance.root)

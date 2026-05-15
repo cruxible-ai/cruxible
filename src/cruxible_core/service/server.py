@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from cruxible_core import __version__
-from cruxible_core.server.config import get_server_state_dir, is_agent_mode
+from cruxible_core.server.config import get_server_state_dir, is_server_required
 from cruxible_core.server.registry import get_registry
 from cruxible_core.service.types import ServerInfoServiceResult
 
@@ -11,7 +11,7 @@ from cruxible_core.service.types import ServerInfoServiceResult
 def service_server_info() -> ServerInfoServiceResult:
     """Return live daemon metadata for local hardening and diagnostics."""
     return ServerInfoServiceResult(
-        agent_mode=is_agent_mode(),
+        server_required=is_server_required(),
         state_dir=str(get_server_state_dir()),
         version=__version__,
         instance_count=get_registry().count_instances(),

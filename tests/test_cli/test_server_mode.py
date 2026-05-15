@@ -32,13 +32,6 @@ def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: Cl
     assert "Server mode is required" in result.output
 
 
-def test_agent_mode_implies_require_server(monkeypatch, runner: CliRunner):
-    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "true")
-    result = runner.invoke(cli, ["query", "--query", "parts_for_vehicle"])
-    assert result.exit_code == 2
-    assert "Server mode is required" in result.output
-
-
 def test_server_mode_init_reads_local_config_and_prints_instance_id(
     monkeypatch,
     runner: CliRunner,
@@ -197,7 +190,7 @@ def test_server_info_uses_live_server_surface(
         def server_info(self):
             captured["called"] = True
             return contracts.ServerInfoResult(
-                agent_mode=True,
+                server_required=True,
                 state_dir="/srv/cruxible-state",
                 version="0.2.0",
                 instance_count=3,
@@ -209,7 +202,7 @@ def test_server_info_uses_live_server_surface(
     assert result.exit_code == 0
     assert captured["called"] is True
     payload = json.loads(result.output)
-    assert payload["agent_mode"] is True
+    assert payload["server_required"] is True
     assert payload["state_dir"] == "/srv/cruxible-state"
     assert payload["instance_count"] == 3
 

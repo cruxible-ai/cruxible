@@ -29,19 +29,6 @@ from cruxible_core.mcp.server import create_server, validate_runtime_tools
 class TestPermissionMode:
     def test_default_mode_is_admin(self, monkeypatch):
         monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
-        monkeypatch.delenv("CRUXIBLE_AGENT_MODE", raising=False)
-        reset_permissions()
-        assert init_permissions() == PermissionMode.ADMIN
-
-    def test_agent_mode_default_is_governed_write(self, monkeypatch):
-        monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
-        reset_permissions()
-        assert init_permissions() == PermissionMode.GOVERNED_WRITE
-
-    def test_explicit_mode_overrides_agent_mode_default(self, monkeypatch):
-        monkeypatch.setenv("CRUXIBLE_MODE", "admin")
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
         reset_permissions()
         assert init_permissions() == PermissionMode.ADMIN
 
@@ -72,7 +59,6 @@ class TestPermissionMode:
 
     def test_invalid_mode_raises(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "bogus")
-        monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
         reset_permissions()
         with pytest.raises(ConfigError, match="bogus"):
             init_permissions()

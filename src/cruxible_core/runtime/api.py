@@ -271,7 +271,7 @@ def server_info() -> contracts.ServerInfoResult:
     check_permission("cruxible_server_info")
     result = service_server_info()
     return contracts.ServerInfoResult(
-        agent_mode=result.agent_mode,
+        server_required=result.server_required,
         state_dir=result.state_dir,
         version=result.version,
         instance_count=result.instance_count,

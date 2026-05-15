@@ -244,7 +244,7 @@ def test_server_info_endpoint_returns_live_metadata(
     server_project: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_AGENT_MODE", "1")
+    monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "1")
     monkeypatch.setenv("CRUXIBLE_MODE", "admin")
     reset_permissions()
     _init_instance(app_client, server_project)
@@ -253,7 +253,7 @@ def test_server_info_endpoint_returns_live_metadata(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["agent_mode"] is True
+    assert payload["server_required"] is True
     assert payload["version"]
     assert payload["state_dir"] == str(get_server_state_dir())
     assert payload["instance_count"] == 1

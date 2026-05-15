@@ -176,7 +176,7 @@ class StatsServiceResult:
 
 @dataclass
 class ServerInfoServiceResult:
-    agent_mode: bool
+    server_required: bool
     state_dir: str
     version: str
     instance_count: int

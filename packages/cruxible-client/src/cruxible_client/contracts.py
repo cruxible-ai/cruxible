@@ -289,7 +289,7 @@ class StatsResult(BaseModel):
 
 
 class ServerInfoResult(BaseModel):
-    agent_mode: bool
+    server_required: bool
     state_dir: str
     version: str
     instance_count: int

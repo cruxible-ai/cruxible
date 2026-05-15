@@ -474,10 +474,7 @@ def _write_materialized_metadata(root: Path, bundle: KitBundle) -> None:
 def _validate_dev_tree_metadata(root: Path) -> None:
     metadata_path = root / ".cruxible" / KIT_METADATA_FILE
     if not metadata_path.exists():
-        if (
-            os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE") == "1"
-            and os.environ.get("CRUXIBLE_AGENT_MODE") != "1"
-        ):
+        if os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE") == "1":
             return
         raise ConfigError(
             "kit:// provider refs found a dev-tree kit root without .cruxible/kit.json. "
@@ -495,10 +492,7 @@ def _validate_dev_tree_metadata(root: Path) -> None:
     if recorded_digest:
         current_digest = compute_kit_runtime_digest(root, manifest)
         if recorded_digest != current_digest:
-            if (
-                os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE") != "1"
-                or os.environ.get("CRUXIBLE_AGENT_MODE") == "1"
-            ):
+            if os.environ.get("CRUXIBLE_KIT_DEV_RESOLVE") != "1":
                 raise ConfigError(
                     "Materialized kit contents changed since installation. "
                     "Re-materialize the kit or set CRUXIBLE_KIT_DEV_RESOLVE=1 "
