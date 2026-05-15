@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     WorldOverlayRequest,
     WorldPublishRequest,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1", tags=["world"])
 @router.post("/worlds/overlays", response_model=contracts.WorldOverlayResult)
 async def create_world_overlay(req: WorldOverlayRequest) -> contracts.WorldOverlayResult:
     """Create a new governed overlay from a published world release."""
-    return local_api.create_world_overlay_governed(
+    return api.create_world_overlay_governed(
         transport_ref=req.transport_ref,
         world_ref=req.world_ref,
         kit=req.kit,
@@ -35,7 +35,7 @@ async def world_publish(
 ) -> contracts.WorldPublishResult:
     """Publish a root world-model instance to a release transport."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.world_publish(
+    return api.world_publish(
         resolved_instance_id,
         transport_ref=req.transport_ref,
         world_id=req.world_id,
@@ -48,7 +48,7 @@ async def world_publish(
 async def world_status(instance_id: str) -> contracts.WorldStatusResult:
     """Read upstream tracking metadata for a release-backed overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.world_status(resolved_instance_id)
+    return api.world_status(resolved_instance_id)
 
 
 @router.post(
@@ -58,7 +58,7 @@ async def world_status(instance_id: str) -> contracts.WorldStatusResult:
 async def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
     """Preview pulling a new upstream release into an overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.world_pull_preview(resolved_instance_id)
+    return api.world_pull_preview(resolved_instance_id)
 
 
 @router.post(
@@ -71,7 +71,7 @@ async def world_pull_apply(
 ) -> contracts.WorldPullApplyResult:
     """Apply a previewed upstream release into an overlay."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.world_pull_apply(
+    return api.world_pull_apply(
         resolved_instance_id,
         expected_apply_digest=req.expected_apply_digest,
     )

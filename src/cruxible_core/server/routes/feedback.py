@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     AnalyzeFeedbackRequest,
     AnalyzeOutcomesRequest,
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1", tags=["feedback"])
 @router.post("/{instance_id}/feedback", response_model=contracts.FeedbackResult)
 async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.FeedbackResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.feedback(
+    return api.feedback(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         action=req.action,
@@ -46,7 +46,7 @@ async def feedback_batch(
     req: FeedbackBatchRequest,
 ) -> contracts.FeedbackBatchResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.feedback_batch(
+    return api.feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
         source=req.source,
@@ -61,7 +61,7 @@ async def analyze_feedback(
     instance_id: str,
     req: AnalyzeFeedbackRequest,
 ) -> contracts.AnalyzeFeedbackResult:
-    return local_api.analyze_feedback(
+    return api.analyze_feedback(
         instance_id=resolve_server_instance_id(instance_id),
         relationship_type=req.relationship_type,
         limit=req.limit,
@@ -80,7 +80,7 @@ async def get_feedback_profile(
     instance_id: str,
     relationship_type: str,
 ) -> contracts.FeedbackProfileResult:
-    return local_api.get_feedback_profile(
+    return api.get_feedback_profile(
         instance_id=resolve_server_instance_id(instance_id),
         relationship_type=relationship_type,
     )
@@ -89,7 +89,7 @@ async def get_feedback_profile(
 @router.post("/{instance_id}/outcome", response_model=contracts.OutcomeResult)
 async def outcome(instance_id: str, req: OutcomeRequest) -> contracts.OutcomeResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.outcome(
+    return api.outcome(
         instance_id=resolved_instance_id,
         receipt_id=req.receipt_id,
         anchor_type=req.anchor_type,
@@ -115,7 +115,7 @@ async def get_outcome_profile(
     surface_type: str | None = None,
     surface_name: str | None = None,
 ) -> contracts.OutcomeProfileResult:
-    return local_api.get_outcome_profile(
+    return api.get_outcome_profile(
         instance_id=resolve_server_instance_id(instance_id),
         anchor_type=anchor_type,
         relationship_type=relationship_type,
@@ -133,7 +133,7 @@ async def analyze_outcomes(
     instance_id: str,
     req: AnalyzeOutcomesRequest,
 ) -> contracts.AnalyzeOutcomesResult:
-    return local_api.analyze_outcomes(
+    return api.analyze_outcomes(
         instance_id=resolve_server_instance_id(instance_id),
         anchor_type=req.anchor_type,
         relationship_type=req.relationship_type,

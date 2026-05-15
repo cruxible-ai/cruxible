@@ -858,7 +858,7 @@ def test_constraint_violation_returns_422_with_context(
         raise ConstraintViolationError("constraint failed", violations=["mismatch"])
 
     monkeypatch.setattr(
-        "cruxible_core.runtime.local_api.evaluate",
+        "cruxible_core.runtime.api.evaluate",
         raise_constraint,
     )
     response = app_client.post(f"/api/v1/{instance_id}/evaluate", json={})

@@ -1,7 +1,7 @@
 """Handler implementations for MCP tools.
 
 Public MCP handlers can delegate to a governed server when server mode is
-configured. In local mode, they forward to the shared runtime local facade.
+configured. In local mode, they forward to the shared runtime API.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
 from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.runtime.instance import CruxibleInstance  # noqa: F401
 from cruxible_core.runtime.instance_manager import (
     InstanceManager,
@@ -121,7 +121,7 @@ def handle_init(
 
     return _dispatch_remote_or_local(
         _remote_init,
-        lambda: local_api.init_local(root_dir, config_path, config_yaml, data_dir, kit),
+        lambda: api.init_local(root_dir, config_path, config_yaml, data_dir, kit),
         allow_local=False,
         operation_name="cruxible_init",
     )
@@ -137,7 +137,7 @@ def handle_validate(
         uploaded_yaml = _config_yaml_for_upload(config_path)
     return _dispatch_remote_or_local(
         lambda client: client.validate(config_path=None, config_yaml=uploaded_yaml),
-        lambda: local_api.validate(config_path, config_yaml),
+        lambda: api.validate(config_path, config_yaml),
     )
 
 
@@ -145,7 +145,7 @@ def handle_server_info() -> contracts.ServerInfoResult:
     """Return live daemon metadata such as agent mode and state dir."""
     return _dispatch_remote_or_local(
         lambda client: client.server_info(),
-        local_api.server_info,
+        api.server_info,
     )
 
 
@@ -165,7 +165,7 @@ def handle_create_world_overlay(
             kit=kit,
             no_kit=no_kit,
         ),
-        lambda: local_api.create_world_overlay_local(
+        lambda: api.create_world_overlay_local(
             transport_ref,
             world_ref,
             kit,
@@ -181,7 +181,7 @@ def handle_workflow_lock(instance_id: str, force: bool = False) -> contracts.Wor
     """Generate a workflow lock file for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.workflow_lock(instance_id, force=force),
-        lambda: local_api.workflow_lock(instance_id, force=force),
+        lambda: api.workflow_lock(instance_id, force=force),
     )
 
 
@@ -197,7 +197,7 @@ def handle_workflow_plan(
             workflow_name=workflow_name,
             input_payload=input_payload or {},
         ),
-        lambda: local_api.workflow_plan(
+        lambda: api.workflow_plan(
             instance_id,
             workflow_name,
             input_payload,
@@ -224,7 +224,7 @@ def handle_workflow_run(
             input_payload=input_payload or {},
             **decision_kwargs,
         ),
-        lambda: local_api.workflow_run(
+        lambda: api.workflow_run(
             instance_id,
             workflow_name,
             input_payload,
@@ -260,7 +260,7 @@ def handle_workflow_apply(
             input_payload=input_payload or {},
             **decision_kwargs,
         ),
-        lambda: local_api.workflow_apply(
+        lambda: api.workflow_apply(
             instance_id,
             workflow_name,
             expected_apply_digest,
@@ -281,7 +281,7 @@ def handle_workflow_test(
     """Run configured workflow tests for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.workflow_test(instance_id, name=name),
-        lambda: local_api.workflow_test(instance_id, name),
+        lambda: api.workflow_test(instance_id, name),
         allow_local=False,
         operation_name="cruxible_test_workflow",
     )
@@ -306,7 +306,7 @@ def handle_propose_workflow(
             input_payload=input_payload or {},
             **decision_kwargs,
         ),
-        lambda: local_api.propose_workflow(
+        lambda: api.propose_workflow(
             instance_id,
             workflow_name,
             input_payload,
@@ -339,7 +339,7 @@ def handle_query(
             limit=limit,
             **decision_kwargs,
         ),
-        lambda: local_api.query(
+        lambda: api.query(
             instance_id,
             query_name,
             params,
@@ -354,7 +354,7 @@ def handle_list_queries(instance_id: str) -> contracts.QueryListResult:
     """List named-query definitions for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.list_queries(instance_id),
-        lambda: local_api.list_queries(instance_id),
+        lambda: api.list_queries(instance_id),
     )
 
 
@@ -373,7 +373,7 @@ def handle_create_decision_record(
             subject_id=subject_id,
             opened_by=opened_by,
         ),
-        lambda: local_api.create_decision_record(
+        lambda: api.create_decision_record(
             instance_id,
             question=question,
             subject_type=subject_type,
@@ -396,7 +396,7 @@ def handle_get_decision_record(
             decision_record_id,
             include_events=include_events,
         ),
-        lambda: local_api.get_decision_record(
+        lambda: api.get_decision_record(
             instance_id,
             decision_record_id,
             include_events=include_events,
@@ -421,7 +421,7 @@ def handle_list_decision_records(
             decision_class=decision_class,
             limit=limit,
         ),
-        lambda: local_api.list_decision_records(
+        lambda: api.list_decision_records(
             instance_id,
             status=status,
             subject_type=subject_type,
@@ -449,7 +449,7 @@ def handle_list_decision_events(
             status=status,
             limit=limit,
         ),
-        lambda: local_api.list_decision_events(
+        lambda: api.list_decision_events(
             instance_id,
             decision_record_id=decision_record_id,
             receipt_id=receipt_id,
@@ -475,7 +475,7 @@ def handle_finalize_decision_record(
             decision_class=decision_class,
             rationale=rationale,
         ),
-        lambda: local_api.finalize_decision_record(
+        lambda: api.finalize_decision_record(
             instance_id,
             decision_record_id,
             final_decision=final_decision,
@@ -498,7 +498,7 @@ def handle_abandon_decision_record(
             decision_record_id,
             reason=reason,
         ),
-        lambda: local_api.abandon_decision_record(
+        lambda: api.abandon_decision_record(
             instance_id,
             decision_record_id,
             reason=reason,
@@ -515,7 +515,7 @@ def handle_describe_query(
     """Describe one named-query surface for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.describe_query(instance_id, query_name),
-        lambda: local_api.describe_query(instance_id, query_name),
+        lambda: api.describe_query(instance_id, query_name),
     )
 
 
@@ -523,7 +523,7 @@ def handle_receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     """Retrieve a stored receipt by ID."""
     return _dispatch_remote_or_local(
         lambda client: client.receipt(instance_id, receipt_id),
-        lambda: local_api.receipt(instance_id, receipt_id),
+        lambda: api.receipt(instance_id, receipt_id),
     )
 
 
@@ -531,7 +531,7 @@ def handle_get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
     """Retrieve a stored provider execution trace by ID."""
     return _dispatch_remote_or_local(
         lambda client: client.get_trace(instance_id, trace_id),
-        lambda: local_api.get_trace(instance_id, trace_id),
+        lambda: api.get_trace(instance_id, trace_id),
     )
 
 
@@ -551,7 +551,7 @@ def handle_list_traces(
             limit=limit,
             offset=offset,
         ),
-        lambda: local_api.list_traces(
+        lambda: api.list_traces(
             instance_id,
             workflow_name=workflow_name,
             provider_name=provider_name,
@@ -597,7 +597,7 @@ def handle_feedback(
             corrections=corrections,
             group_override=group_override,
         ),
-        lambda: local_api.feedback(
+        lambda: api.feedback(
             instance_id,
             receipt_id,
             action,
@@ -626,7 +626,7 @@ def handle_get_feedback_profile(
     """Get a focused feedback profile for one relationship type."""
     return _dispatch_remote_or_local(
         lambda client: client.get_feedback_profile(instance_id, relationship_type),
-        lambda: local_api.get_feedback_profile(instance_id, relationship_type),
+        lambda: api.get_feedback_profile(instance_id, relationship_type),
     )
 
 
@@ -650,7 +650,7 @@ def handle_analyze_feedback(
             decision_surface_name=decision_surface_name,
             property_pairs=property_pairs,
         ),
-        lambda: local_api.analyze_feedback(
+        lambda: api.analyze_feedback(
             instance_id,
             relationship_type,
             limit=limit,
@@ -681,7 +681,7 @@ def handle_get_outcome_profile(
             surface_type=surface_type,
             surface_name=surface_name,
         ),
-        lambda: local_api.get_outcome_profile(
+        lambda: api.get_outcome_profile(
             instance_id,
             anchor_type=anchor_type,
             relationship_type=relationship_type,
@@ -717,7 +717,7 @@ def handle_analyze_outcomes(
             limit=limit,
             min_support=min_support,
         ),
-        lambda: local_api.analyze_outcomes(
+        lambda: api.analyze_outcomes(
             instance_id,
             anchor_type=anchor_type,
             relationship_type=relationship_type,
@@ -740,7 +740,7 @@ def handle_feedback_batch(
     """Record batch edge feedback tied to prior receipts."""
     return _dispatch_remote_or_local(
         lambda client: client.feedback_batch(instance_id, items=items, source=source),
-        lambda: local_api.feedback_batch(instance_id, items, source=source),
+        lambda: api.feedback_batch(instance_id, items, source=source),
         allow_local=False,
         operation_name="cruxible_feedback_batch",
     )
@@ -772,7 +772,7 @@ def handle_outcome(
             outcome_profile_key=outcome_profile_key,
             detail=detail,
         ),
-        lambda: local_api.outcome(
+        lambda: api.outcome(
             instance_id,
             receipt_id,
             outcome,
@@ -813,7 +813,7 @@ def handle_list(
             property_filter=property_filter,
             operation_type=operation_type,
         ),
-        lambda: local_api.list_resources(
+        lambda: api.list_resources(
             instance_id,
             resource_type,
             entity_type=entity_type,
@@ -839,7 +839,7 @@ def handle_evaluate(
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
         ),
-        lambda: local_api.evaluate(
+        lambda: api.evaluate(
             instance_id,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
@@ -851,7 +851,7 @@ def handle_stats(instance_id: str) -> contracts.StatsResult:
     """Return graph counts and head snapshot metadata."""
     return _dispatch_remote_or_local(
         lambda client: client.stats(instance_id),
-        lambda: local_api.stats(instance_id),
+        lambda: api.stats(instance_id),
     )
 
 
@@ -871,7 +871,7 @@ def handle_lint(
             min_support=min_support,
             exclude_orphan_types=exclude_orphan_types,
         ),
-        lambda: local_api.lint(
+        lambda: api.lint(
             instance_id,
             max_findings=max_findings,
             analysis_limit=analysis_limit,
@@ -885,7 +885,7 @@ def handle_schema(instance_id: str) -> dict[str, Any]:
     """Get config schema details."""
     return _dispatch_remote_or_local(
         lambda client: client.schema(instance_id),
-        lambda: local_api.schema(instance_id),
+        lambda: api.schema(instance_id),
     )
 
 
@@ -897,7 +897,7 @@ def handle_sample(
     """Sample entities of a given type."""
     return _dispatch_remote_or_local(
         lambda client: client.sample(instance_id, entity_type, limit=limit),
-        lambda: local_api.sample(instance_id, entity_type, limit=limit),
+        lambda: api.sample(instance_id, entity_type, limit=limit),
     )
 
 
@@ -920,7 +920,7 @@ def handle_inspect_entity(
             relationship_type=relationship_type,
             limit=limit,
         ),
-        lambda: local_api.inspect_entity(
+        lambda: api.inspect_entity(
             instance_id,
             entity_type,
             entity_id,
@@ -940,7 +940,7 @@ def handle_inspect_view(
     """Build a canonical structured inspect view."""
     return _dispatch_remote_or_local(
         lambda client: client.inspect_view(instance_id, view, limit=limit),
-        lambda: local_api.inspect_view(instance_id, view, limit=limit),
+        lambda: api.inspect_view(instance_id, view, limit=limit),
     )
 
 
@@ -963,7 +963,7 @@ def handle_render_wiki(
             max_per_type=max_per_type,
             all_subjects=all_subjects,
         ),
-        lambda: local_api.render_wiki(
+        lambda: api.render_wiki(
             instance_id,
             focus=focus,
             include_types=include_types,
@@ -990,7 +990,7 @@ def handle_reload_config(
             config_path=None,
             config_yaml=uploaded_yaml,
         ),
-        lambda: local_api.reload_config(
+        lambda: api.reload_config(
             instance_id,
             config_path=config_path,
             config_yaml=config_yaml,
@@ -1007,7 +1007,7 @@ def handle_add_relationship(
     """Add or update one or more relationships in the graph (upsert)."""
     return _dispatch_remote_or_local(
         lambda client: client.add_relationships(instance_id, relationships),
-        lambda: local_api.add_relationships(instance_id, relationships),
+        lambda: api.add_relationships(instance_id, relationships),
         allow_local=False,
         operation_name="cruxible_add_relationship",
     )
@@ -1020,7 +1020,7 @@ def handle_add_entity(
     """Add or update one or more entities in the graph (upsert)."""
     return _dispatch_remote_or_local(
         lambda client: client.add_entities(instance_id, entities),
-        lambda: local_api.add_entities(instance_id, entities),
+        lambda: api.add_entities(instance_id, entities),
         allow_local=False,
         operation_name="cruxible_add_entity",
     )
@@ -1042,7 +1042,7 @@ def handle_add_constraint(
             severity=severity,
             description=description,
         ),
-        lambda: local_api.add_constraint(
+        lambda: api.add_constraint(
             instance_id,
             name,
             rule,
@@ -1082,7 +1082,7 @@ def handle_add_decision_policy(
             workflow_name=workflow_name,
             expires_at=expires_at,
         ),
-        lambda: local_api.add_decision_policy(
+        lambda: api.add_decision_policy(
             instance_id,
             name=name,
             applies_to=applies_to,
@@ -1108,7 +1108,7 @@ def handle_get_entity(
     """Look up a specific entity by type and ID."""
     return _dispatch_remote_or_local(
         lambda client: client.get_entity(instance_id, entity_type, entity_id),
-        lambda: local_api.get_entity(instance_id, entity_type, entity_id),
+        lambda: api.get_entity(instance_id, entity_type, entity_id),
     )
 
 
@@ -1132,7 +1132,7 @@ def handle_get_relationship(
             to_id=to_id,
             edge_key=edge_key,
         ),
-        lambda: local_api.get_relationship(
+        lambda: api.get_relationship(
             instance_id,
             from_type,
             from_id,
@@ -1164,7 +1164,7 @@ def handle_relationship_lineage(
             to_id=to_id,
             edge_key=edge_key,
         ),
-        lambda: local_api.get_relationship_lineage(
+        lambda: api.get_relationship_lineage(
             instance_id,
             from_type,
             from_id,
@@ -1200,7 +1200,7 @@ def handle_propose_group(
             proposed_by=proposed_by,
             suggested_priority=suggested_priority,
         ),
-        lambda: local_api.propose_group(
+        lambda: api.propose_group(
             instance_id,
             relationship_type,
             members,
@@ -1234,7 +1234,7 @@ def handle_resolve_group(
             resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
         ),
-        lambda: local_api.resolve_group(
+        lambda: api.resolve_group(
             instance_id,
             group_id,
             action,
@@ -1261,7 +1261,7 @@ def handle_update_trust_status(
             trust_status=trust_status,
             reason=reason,
         ),
-        lambda: local_api.update_trust_status(
+        lambda: api.update_trust_status(
             instance_id,
             resolution_id,
             trust_status,
@@ -1279,7 +1279,7 @@ def handle_get_group(
     """Get a candidate group with its members."""
     return _dispatch_remote_or_local(
         lambda client: client.get_group(instance_id, group_id),
-        lambda: local_api.get_group(instance_id, group_id),
+        lambda: api.get_group(instance_id, group_id),
     )
 
 
@@ -1296,7 +1296,7 @@ def handle_group_status(
             group_id=group_id,
             signature=signature,
         ),
-        lambda: local_api.get_group_status(
+        lambda: api.get_group_status(
             instance_id,
             group_id=group_id,
             signature=signature,
@@ -1318,7 +1318,7 @@ def handle_list_groups(
             status=status,
             limit=limit,
         ),
-        lambda: local_api.list_groups(
+        lambda: api.list_groups(
             instance_id,
             relationship_type,
             status,
@@ -1341,7 +1341,7 @@ def handle_list_resolutions(
             action=action,
             limit=limit,
         ),
-        lambda: local_api.list_resolutions(
+        lambda: api.list_resolutions(
             instance_id,
             relationship_type,
             action,
@@ -1366,7 +1366,7 @@ def handle_world_publish(
             release_id=release_id,
             compatibility=compatibility,
         ),
-        lambda: local_api.world_publish(
+        lambda: api.world_publish(
             instance_id,
             transport_ref,
             world_id,
@@ -1385,7 +1385,7 @@ def handle_create_snapshot(
     """Create an immutable snapshot for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.create_snapshot(instance_id, label=label),
-        lambda: local_api.create_snapshot(instance_id, label),
+        lambda: api.create_snapshot(instance_id, label),
         allow_local=False,
         operation_name="cruxible_create_snapshot",
     )
@@ -1395,7 +1395,7 @@ def handle_list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
     """List snapshots for an instance."""
     return _dispatch_remote_or_local(
         lambda client: client.list_snapshots(instance_id),
-        lambda: local_api.list_snapshots(instance_id),
+        lambda: api.list_snapshots(instance_id),
     )
 
 
@@ -1411,7 +1411,7 @@ def handle_clone_snapshot(
             snapshot_id=snapshot_id,
             root_dir=root_dir,
         ),
-        lambda: local_api.clone_snapshot_governed(instance_id, snapshot_id, root_dir),
+        lambda: api.clone_snapshot_governed(instance_id, snapshot_id, root_dir),
         allow_local=False,
         operation_name="cruxible_clone_snapshot",
     )
@@ -1421,7 +1421,7 @@ def handle_world_status(instance_id: str) -> contracts.WorldStatusResult:
     """Read upstream tracking metadata for a release-backed overlay."""
     return _dispatch_remote_or_local(
         lambda client: client.world_status(instance_id),
-        lambda: local_api.world_status(instance_id),
+        lambda: api.world_status(instance_id),
     )
 
 
@@ -1429,7 +1429,7 @@ def handle_world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewRes
     """Preview pulling a new upstream release into a local overlay."""
     return _dispatch_remote_or_local(
         lambda client: client.world_pull_preview(instance_id),
-        lambda: local_api.world_pull_preview(instance_id),
+        lambda: api.world_pull_preview(instance_id),
     )
 
 
@@ -1443,7 +1443,7 @@ def handle_world_pull_apply(
             instance_id,
             expected_apply_digest=expected_apply_digest,
         ),
-        lambda: local_api.world_pull_apply(
+        lambda: api.world_pull_apply(
             instance_id,
             expected_apply_digest,
         ),

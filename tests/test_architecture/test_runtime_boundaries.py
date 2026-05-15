@@ -14,7 +14,7 @@ from cruxible_core.mcp import contracts as core_contracts
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp import permissions as mcp_permissions
 from cruxible_core.mcp.handlers import get_manager as handler_get_manager
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.runtime import permissions as runtime_permissions
 from cruxible_core.runtime.instance import CruxibleInstance as RuntimeCruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager as runtime_get_manager
@@ -32,7 +32,7 @@ def test_cli_instance_re_exports_runtime_class_object():
     assert CliCruxibleInstance is RuntimeCruxibleInstance
 
 
-def test_mcp_local_wrappers_delegate_to_runtime_local_api(monkeypatch):
+def test_mcp_local_wrappers_delegate_to_runtime_api(monkeypatch):
     sentinel = client_contracts.EvaluateResult(
         entity_count=1,
         edge_count=2,
@@ -42,7 +42,7 @@ def test_mcp_local_wrappers_delegate_to_runtime_local_api(monkeypatch):
     )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(local_api, "evaluate", lambda *args, **kwargs: sentinel)
+    monkeypatch.setattr(api, "evaluate", lambda *args, **kwargs: sentinel)
 
     assert handlers.handle_evaluate("instance-id") is sentinel
 
@@ -63,15 +63,15 @@ def test_runtime_and_server_do_not_import_mcp_permissions():
             assert "cruxible_core.mcp.permissions" not in source, str(path)
 
 
-def test_src_does_not_call_runtime_private_local_api_handlers():
+def test_src_does_not_call_runtime_private_api_handlers():
     src_root = _repo_root() / "src/cruxible_core"
     for path in src_root.rglob("*.py"):
         source = path.read_text()
-        assert "local_api._handle_" not in source, str(path)
+        assert "api._handle_" not in source, str(path)
 
 
-def test_runtime_local_api_defines_no_private_handle_functions():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_defines_no_private_handle_functions():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     tree = ast.parse(path.read_text(), filename=str(path))
     names = [
         node.name
@@ -81,8 +81,8 @@ def test_runtime_local_api_defines_no_private_handle_functions():
     assert names == []
 
 
-def test_runtime_local_api_does_not_own_config_materialization():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_does_not_own_config_materialization():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     source = path.read_text()
     forbidden = [
         "cruxible_core.config.composer",
@@ -93,14 +93,14 @@ def test_runtime_local_api_does_not_own_config_materialization():
         assert import_path not in source, import_path
 
 
-def test_runtime_local_api_does_not_construct_group_domain_models():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_does_not_construct_group_domain_models():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     source = path.read_text()
     assert "cruxible_core.group.types" not in source
 
 
-def test_runtime_local_api_does_not_construct_graph_or_feedback_domain_models():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_does_not_construct_graph_or_feedback_domain_models():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     source = path.read_text()
     forbidden = [
         "cruxible_core.feedback.types",
@@ -110,15 +110,15 @@ def test_runtime_local_api_does_not_construct_graph_or_feedback_domain_models():
         assert import_path not in source, import_path
 
 
-def test_runtime_local_api_does_not_override_permission_tiers():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_does_not_override_permission_tiers():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     source = path.read_text()
     assert "required_mode=" not in source
     assert "PermissionMode" not in source
 
 
-def test_runtime_local_api_scoped_permission_checks_include_instance_id():
-    path = _repo_root() / "src/cruxible_core/runtime/local_api.py"
+def test_runtime_api_scoped_permission_checks_include_instance_id():
+    path = _repo_root() / "src/cruxible_core/runtime/api.py"
     tree = ast.parse(path.read_text(), filename=str(path))
     missing: list[str] = []
 

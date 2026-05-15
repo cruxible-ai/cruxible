@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
     AddDecisionPolicyRequest,
@@ -23,7 +23,7 @@ async def add_entities(
     instance_id: str,
     req: AddEntitiesRequest,
 ) -> contracts.AddEntityResult:
-    return local_api.add_entities(
+    return api.add_entities(
         instance_id=resolve_server_instance_id(instance_id),
         entities=req.entities,
     )
@@ -35,7 +35,7 @@ async def add_relationships(
     req: AddRelationshipsRequest,
 ) -> contracts.AddRelationshipResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.add_relationships_with_provenance(
+    return api.add_relationships_with_provenance(
         instance_id=resolved_instance_id,
         relationships=req.relationships,
         provenance_source="http_api",
@@ -49,7 +49,7 @@ async def add_constraint(
     req: AddConstraintRequest,
 ) -> contracts.AddConstraintResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.add_constraint(
+    return api.add_constraint(
         instance_id=resolved_instance_id,
         name=req.name,
         rule=req.rule,
@@ -67,7 +67,7 @@ async def add_decision_policy(
     req: AddDecisionPolicyRequest,
 ) -> contracts.AddDecisionPolicyResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.add_decision_policy(
+    return api.add_decision_policy(
         instance_id=resolved_instance_id,
         name=req.name,
         applies_to=req.applies_to,
@@ -87,7 +87,7 @@ async def reload_config(
     instance_id: str,
     req: ReloadConfigRequest,
 ) -> contracts.ReloadConfigResult:
-    return local_api.reload_config(
+    return api.reload_config(
         instance_id=resolve_server_instance_id(instance_id),
         config_path=req.config_path,
         config_yaml=req.config_yaml,

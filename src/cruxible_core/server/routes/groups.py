@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime import local_api
+from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     ProposeGroupRequest,
     ResolveGroupRequest,
@@ -22,7 +22,7 @@ async def propose_group(
     req: ProposeGroupRequest,
 ) -> contracts.ProposeGroupToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.propose_group(
+    return api.propose_group(
         instance_id=resolved_instance_id,
         relationship_type=req.relationship_type,
         members=req.members,
@@ -45,7 +45,7 @@ async def resolve_group(
     req: ResolveGroupRequest,
 ) -> contracts.ResolveGroupToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.resolve_group(
+    return api.resolve_group(
         instance_id=resolved_instance_id,
         group_id=group_id,
         action=req.action,
@@ -65,7 +65,7 @@ async def update_trust_status(
     req: UpdateTrustStatusRequest,
 ) -> contracts.UpdateTrustStatusToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return local_api.update_trust_status(
+    return api.update_trust_status(
         instance_id=resolved_instance_id,
         resolution_id=resolution_id,
         trust_status=req.trust_status,
