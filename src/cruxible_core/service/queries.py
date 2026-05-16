@@ -79,29 +79,14 @@ def service_query(
     started_at = datetime.now(timezone.utc)
     input_event = {"query_name": query_name, "params": params}
     try:
-        config = instance.load_config()
-        graph = instance.load_graph()
-        query_result = read_run_query(config, graph, query_name, params)
-        head_snapshot_id = instance.get_head_snapshot_id()
+        result = _evaluate_query_result(instance, query_name, params)
 
-        if query_result.receipt:
-            query_result.receipt.head_snapshot_id = head_snapshot_id
+        if result.receipt:
             store = instance.get_receipt_store()
             try:
-                store.save_receipt(query_result.receipt)
+                store.save_receipt(result.receipt)
             finally:
                 store.close()
-
-        total = query_result.total_results or len(query_result.results)
-        result = QueryServiceResult(
-            results=query_result.results,
-            receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
-            receipt=query_result.receipt,
-            total_results=total,
-            steps_executed=query_result.steps_executed,
-            param_hints=_query_param_hints(config, graph, query_name),
-            policy_summary=query_result.policy_summary,
-        )
     except Exception as exc:
         record_decision_event_for_context(
             instance,
@@ -133,6 +118,15 @@ def service_query(
     return result
 
 
+def service_evaluate_query(
+    instance: InstanceProtocol,
+    query_name: str,
+    params: dict[str, Any],
+) -> QueryServiceResult:
+    """Evaluate a named query without persisting receipts or decision events."""
+    return _evaluate_query_result(instance, query_name, params)
+
+
 def service_query_surface(
     instance: InstanceProtocol,
     query_name: str,
@@ -157,6 +151,54 @@ def service_query_surface(
         steps_executed=result.steps_executed,
         param_hints=result.param_hints,
         policy_summary=result.policy_summary,
+    )
+
+
+def service_evaluate_query_surface(
+    instance: InstanceProtocol,
+    query_name: str,
+    params: dict[str, Any],
+    *,
+    limit: int | None = None,
+) -> QuerySurfaceServiceResult:
+    """Evaluate a named query with caller-facing truncation and no persisted receipt."""
+    if limit is not None and limit < 1:
+        raise ConfigError("limit must be a positive integer")
+
+    result = service_evaluate_query(instance, query_name, params)
+    truncated = limit is not None and result.total_results > limit
+    visible = result.results[:limit] if truncated else result.results
+    return QuerySurfaceServiceResult(
+        results=visible,
+        receipt_id=result.receipt_id,
+        receipt=result.receipt,
+        total_results=result.total_results,
+        truncated=truncated,
+        steps_executed=result.steps_executed,
+        param_hints=result.param_hints,
+        policy_summary=result.policy_summary,
+    )
+
+
+def _evaluate_query_result(
+    instance: InstanceProtocol,
+    query_name: str,
+    params: dict[str, Any],
+) -> QueryServiceResult:
+    config = instance.load_config()
+    graph = instance.load_graph()
+    query_result = read_run_query(config, graph, query_name, params)
+    if query_result.receipt:
+        query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
+    total = query_result.total_results or len(query_result.results)
+    return QueryServiceResult(
+        results=query_result.results,
+        receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
+        receipt=query_result.receipt,
+        total_results=total,
+        steps_executed=query_result.steps_executed,
+        param_hints=_query_param_hints(config, graph, query_name),
+        policy_summary=query_result.policy_summary,
     )
 
 

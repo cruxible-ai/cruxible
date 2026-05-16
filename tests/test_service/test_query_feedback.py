@@ -31,6 +31,7 @@ from cruxible_core.service import (
     service_query,
     service_query_surface,
 )
+from cruxible_core.service.queries import service_evaluate_query, service_evaluate_query_surface
 
 # ---------------------------------------------------------------------------
 # service_query
@@ -61,6 +62,45 @@ class TestQuery:
         finally:
             store.close()
         assert receipt is not None
+
+    def test_evaluate_query_does_not_persist_receipt(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_evaluate_query(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+
+        assert result.total_results >= 1
+        assert result.receipt_id is not None
+        store = populated_instance.get_receipt_store()
+        try:
+            assert store.get_receipt(result.receipt_id) is None
+        finally:
+            store.close()
+
+    def test_evaluate_query_surface_applies_limit_without_persisting_receipt(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_evaluate_query_surface(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+            limit=1,
+        )
+
+        assert len(result.results) == 1
+        assert result.total_results >= 1
+        assert result.truncated is (result.total_results > 1)
+        assert result.receipt_id is not None
+        store = populated_instance.get_receipt_store()
+        try:
+            assert store.get_receipt(result.receipt_id) is None
+        finally:
+            store.close()
 
     def test_stamps_receipt_with_head_snapshot_id(
         self, populated_instance: CruxibleInstance

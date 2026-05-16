@@ -1,0 +1,37 @@
+{
+  "graph": {
+    "count_changes": [
+      "relationships_by_type",
+      "relationships_total"
+    ],
+    "relationships": {
+      "added": [
+        {
+          "from_id": "BP-1234",
+          "from_type": "Part",
+          "properties": {
+            "_provenance": {
+              "created_at": "<TIMESTAMP>",
+              "source": "fixture",
+              "source_ref": "seed"
+            },
+            "source": "fixture",
+            "verified": true
+          },
+          "relationship_type": "fits",
+          "to_id": "V-CIVIC",
+          "to_type": "Vehicle"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "entities_added": 0,
+    "entities_changed": 0,
+    "entities_removed": 0,
+    "relationships_added": 1,
+    "relationships_changed": 0,
+    "relationships_removed": 0
+  },
+  "version": 1
+}
