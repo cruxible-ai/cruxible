@@ -117,8 +117,17 @@ _TIMESTAMP_KEYS = {
     "published_at",
 }
 _DURATION_KEYS = {"duration_ms", "duration_s", "elapsed_ms", "elapsed_s"}
+_DIGEST_KEYS = {
+    "apply_digest",
+    "config_digest",
+    "graph_digest",
+    "input_digest",
+    "lock_digest",
+    "manifest_digest",
+    "output_digest",
+}
 _PATH_KEY_RE = re.compile(r"(^path$|_path$|_dir$|^root$|^root_dir$)")
-_VOLATILE_PATH_MARKERS = ("/tmp/", "/private/tmp/", "/private/var/")
+_VOLATILE_PATH_MARKERS = ("/tmp/", "/private/tmp/", "/private/var/", "/var/folders/")
 _GENERATED_ID_RE = re.compile(
     r"^(?:[A-Z]{2,6}-[0-9a-f]{12}|snap_[0-9a-f]{16}|"
     r"[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
@@ -272,6 +281,16 @@ def assert_matches_golden(actual: Mapping[str, Any], golden_path: str | Path) ->
         raise AssertionError(f"Golden mismatch for {path}\n{diff}")
 
 
+def normalize_cross_section_value(
+    value: Any,
+    *,
+    token_registry: CrossSectionTokenRegistry | None = None,
+) -> Any:
+    """Normalize arbitrary JSON-like state using the cross-section token rules."""
+    registry = token_registry or CrossSectionTokenRegistry()
+    return _normalize_value(value, registry=registry)
+
+
 def _build_graph_section(instance: InstanceProtocol, spec: StateCrossSectionSpec) -> JsonObject:
     graph = instance.load_graph()
     selected_entity_types = tuple(dict.fromkeys(spec.entity_types))
@@ -420,7 +439,11 @@ def _build_decisions_section(
 def _build_receipts_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
     store = instance.get_receipt_store()
     try:
-        return sorted(store.list_receipts(limit=limit), key=_receipt_sort_key)
+        group_sort_keys = _receipt_group_sort_keys(instance)
+        return sorted(
+            store.list_receipts(limit=limit),
+            key=lambda receipt: _receipt_sort_key(receipt, group_sort_keys),
+        )
     finally:
         store.close()
 
@@ -503,6 +526,12 @@ def _normalize_value(
         return "<TIMESTAMP>"
     if key in _DURATION_KEYS and value is not None:
         return "<DURATION>"
+    if key in _DIGEST_KEYS and value is not None:
+        return "<DIGEST>"
+    if isinstance(value, str) and key not in _SEMANTIC_VALUE_KEYS:
+        embedded = _normalize_embedded_generated_id(value, registry)
+        if embedded is not None:
+            return embedded
     if (
         isinstance(value, str)
         and key is not None
@@ -510,6 +539,10 @@ def _normalize_value(
         and _is_volatile_path(value)
     ):
         return registry.token("PATH", value)
+    if isinstance(value, str) and key not in _SEMANTIC_VALUE_KEYS:
+        file_uri = _normalize_volatile_file_uri(value, registry)
+        if file_uri is not None:
+            return file_uri
     return value
 
 
@@ -754,12 +787,16 @@ def _annotate_ownership(
 
 
 def _group_sort_key(group: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    stable = _group_stable_sort_key(group)
+    return (*stable, str(group.get("group_id")))
+
+
+def _group_stable_sort_key(group: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (
         str(group.get("relationship_type")),
         str(group.get("signature")),
         str(group.get("group_kind")),
         str(group.get("status")),
-        str(group.get("group_id")),
     )
 
 
@@ -798,12 +835,21 @@ def _decision_sort_key(record: Mapping[str, Any]) -> tuple[str, str, str, str, s
     )
 
 
-def _receipt_sort_key(receipt: Mapping[str, Any]) -> tuple[str, str, str, str]:
+def _receipt_sort_key(
+    receipt: Mapping[str, Any],
+    group_sort_keys: Mapping[str, tuple[str, str, str, str]],
+) -> tuple[str, str, str, str, str]:
+    parameters = receipt.get("parameters")
+    parameters = parameters if isinstance(parameters, Mapping) else {}
+    stable_parameters = dict(parameters)
+    group_id = stable_parameters.pop("group_id", None)
+    group_sort_key = group_sort_keys.get(str(group_id), ("", "", "", ""))
     return (
         str(receipt.get("operation_type")),
+        _canonical_json({"group": group_sort_key}).strip(),
         str(receipt.get("query_name")),
-        _canonical_json(receipt.get("parameters") or {}).strip(),
-        str(receipt.get("receipt_id")),
+        str(receipt.get("workflow_name")),
+        _canonical_json(stable_parameters).strip(),
     )
 
 
@@ -833,6 +879,20 @@ def _query_sort_key(query: Mapping[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _receipt_group_sort_keys(
+    instance: InstanceProtocol,
+) -> dict[str, tuple[str, str, str, str]]:
+    store = instance.get_group_store()
+    try:
+        groups = store.list_groups(limit=1000)
+    finally:
+        store.close()
+    return {
+        group.group_id: _group_stable_sort_key(_model_dump(group))
+        for group in groups
+    }
+
+
 def _upstream_metadata(cross_section: Mapping[str, Any]) -> Mapping[str, Any]:
     world = cross_section.get("world")
     if not isinstance(world, Mapping):
@@ -853,6 +913,31 @@ def _is_volatile_path(value: str) -> bool:
     return value.startswith(_VOLATILE_PATH_MARKERS) or any(
         marker in value for marker in _VOLATILE_PATH_MARKERS
     )
+
+
+def _normalize_volatile_file_uri(
+    value: str,
+    registry: CrossSectionTokenRegistry,
+) -> str | None:
+    if not value.startswith("file://"):
+        return None
+    path = value.removeprefix("file://")
+    if not _is_volatile_path(path):
+        return None
+    return f"file://{registry.token('PATH', path)}"
+
+
+def _normalize_embedded_generated_id(
+    value: str,
+    registry: CrossSectionTokenRegistry,
+) -> str | None:
+    if ":" not in value:
+        return None
+    prefix, suffix = value.split(":", 1)
+    kind = _generated_id_kind(suffix)
+    if kind is None:
+        return None
+    return f"{prefix}:{registry.token(kind, suffix)}"
 
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
