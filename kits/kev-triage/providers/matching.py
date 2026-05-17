@@ -35,6 +35,7 @@ def match_software_to_products(
         for raw_product in _require_items(input_payload, "reference_products")
         if (product := _normalize_reference_product(raw_product)) is not None
     ]
+    reference_products = sorted(reference_products, key=_reference_product_sort_key)
 
     best_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
     for item in inventory_items:
@@ -42,7 +43,12 @@ def match_software_to_products(
         best_score = 0.0
         for product in reference_products:
             score = _score_product_match(item, product)
-            if score > best_score:
+            if score > best_score or (
+                score == best_score
+                and best_product is not None
+                and _reference_product_sort_key(product)
+                < _reference_product_sort_key(best_product)
+            ):
                 best_product = product
                 best_score = score
 
@@ -202,6 +208,15 @@ def _score_to_verdict(score: float) -> str:
     if score >= 0.5:
         return "unsure"
     return "contradict"
+
+
+def _reference_product_sort_key(product: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(product.get("product_id", "")),
+        str(product.get("vendor_id", "")),
+        str(product.get("product_name", "")),
+        str(product.get("cpe_product", "")),
+    )
 
 
 def _match_row_sort_key(row: dict[str, Any]) -> tuple[float, str, str]:
