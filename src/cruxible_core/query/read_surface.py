@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -85,6 +86,7 @@ def list_entities(
                     for key, value in property_filter.items()
                 )
             ]
+    entities = sorted(entities, key=lambda entity: (entity.entity_type, entity.entity_id))
     items = entities[:limit] if limit is not None else entities
     return ReadListResult(items=items, total=len(entities))
 
@@ -104,8 +106,21 @@ def list_relationships(
             for edge in relationships
             if all(edge["properties"].get(key) == value for key, value in property_filter.items())
         ]
+    relationships = sorted(relationships, key=_relationship_sort_key)
     items = relationships[:limit] if limit is not None else relationships
     return ReadListResult(items=items, total=len(relationships))
+
+
+def _relationship_sort_key(edge: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+    return (
+        str(edge.get("relationship_type")),
+        str(edge.get("from_type")),
+        str(edge.get("from_id")),
+        str(edge.get("to_type")),
+        str(edge.get("to_id")),
+        str(edge.get("edge_key")),
+        json.dumps(edge.get("properties") or {}, sort_keys=True, default=str),
+    )
 
 
 def get_entity(
