@@ -17,9 +17,10 @@ from cruxible_core.errors import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.graph.types import (
-    REJECTED_STATUSES,
     SYSTEM_OWNED_PROPERTIES,
     RelationshipInstance,
+    load_assertion_state,
+    review_state_to_legacy_review_status,
 )
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
@@ -391,12 +392,12 @@ def _has_active_override(graph: EntityGraph, member: CandidateMember) -> bool:
     relationship = graph.get_relationship(**_relationship_key(member).payload())
     if relationship is None:
         return False
-    review_status = relationship.properties.get("review_status")
     if relationship.properties.get("group_override") is True:
         return True
-    if review_status == "pending_review":
+    review = load_assertion_state(relationship.properties).review
+    if review.status == "pending":
         return True
-    return review_status in REJECTED_STATUSES
+    return review.status == "rejected"
 
 
 def _members_have_active_override(graph: EntityGraph, members: list[CandidateMember]) -> bool:
@@ -1723,6 +1724,10 @@ def _member_review_state(
         current_review_status = (
             raw_review_status if isinstance(raw_review_status, str) else None
         )
+        if current_review_status is None:
+            current_review_status = review_state_to_legacy_review_status(
+                load_assertion_state(current_properties).review
+            )
         property_delta = _property_delta(proposed_properties, current_properties)
     elif not current_edges:
         property_delta = _property_delta(proposed_properties, {})

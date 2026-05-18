@@ -28,7 +28,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     RelationshipNotFoundError,
 )
-from cruxible_core.graph.types import REJECTED_STATUSES, EntityInstance
+from cruxible_core.graph.types import EntityInstance, relationship_is_live
 from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN, evaluate_comparison
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -232,7 +232,7 @@ def _execute_step(
             )
 
             for neighbor, edge_props, edge_key in neighbors:
-                if edge_props.get("review_status") in REJECTED_STATUSES:
+                if not relationship_is_live(edge_props):
                     continue
 
                 nid = neighbor.node_id()

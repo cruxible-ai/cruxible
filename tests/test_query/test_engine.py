@@ -350,6 +350,22 @@ class TestExecuteQuery:
         # BP-1234 fits ACCORD but is unverified
         assert len(part_ids) == 0
 
+    def test_pending_review_relationship_is_not_traversed(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.update_edge_properties(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            {"review_status": "pending_review"},
+        )
+
+        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
+
+        assert {item.entity_id for item in result.results} == {"BP-1234"}
+
     def test_parts_for_vehicle_via_reverse_name(
         self, config: CoreConfig, graph: EntityGraph
     ):

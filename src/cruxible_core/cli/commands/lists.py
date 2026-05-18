@@ -263,7 +263,7 @@ def export_group() -> None:
     "--exclude-rejected",
     is_flag=True,
     default=False,
-    help="Exclude edges with rejected review_status.",
+    help="Exclude edges with rejected assertion review state.",
 )
 @handle_errors
 def export_edges(output: str, relationship: str | None, exclude_rejected: bool) -> None:

@@ -1,18 +1,21 @@
-"""Apply feedback to the entity graph.
-
-Actions:
-- approve: set review_status based on source (human_approved or agent_approved)
-- reject: set review_status based on source (human_rejected or agent_rejected)
-- correct: merge corrections into edge properties, set approved status
-- flag: set review_status to pending_review
-"""
+"""Apply feedback to the entity graph."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.graph.assertion_state import (
+    ASSERTION_PROPERTY,
+    RelationshipAssertionState,
+    RelationshipReviewSource,
+    RelationshipReviewStatus,
+    dump_assertion_state,
+    load_assertion_state,
+    review_state_to_legacy_review_status,
+)
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
     dump_provenance,
@@ -25,14 +28,14 @@ if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
 
 
-def _read_provenance(
+def _read_relationship(
     graph: EntityGraph,
     t: Any,
     relationship: str,
     edge_key: int | None,
-) -> RelationshipProvenance | None:
-    """Read existing _provenance from an edge when it is usable."""
-    existing = graph.get_relationship(
+) -> Any | None:
+    """Read an edge when it exists."""
+    return graph.get_relationship(
         t.from_type,
         t.from_id,
         t.to_type,
@@ -40,6 +43,16 @@ def _read_provenance(
         relationship,
         edge_key=edge_key,
     )
+
+
+def _read_provenance(
+    graph: EntityGraph,
+    t: Any,
+    relationship: str,
+    edge_key: int | None,
+) -> RelationshipProvenance | None:
+    """Read existing _provenance from an edge when it is usable."""
+    existing = _read_relationship(graph, t, relationship, edge_key)
     if existing:
         old_prov = existing.properties.get("_provenance")
         return load_provenance(old_prov)
@@ -51,22 +64,54 @@ def _stamp_provenance(prov: RelationshipProvenance, action: str) -> dict[str, An
     return dump_provenance(stamp_provenance_modified(prov, f"feedback:{action}"))
 
 
-_SOURCE_PREFIX = {
+_SOURCE_PREFIX: dict[str, RelationshipReviewSource] = {
     "human": "human",
     "agent": "agent",
 }
 
-_ACTION_PAST = {"approve": "approved", "reject": "rejected"}
+_ACTION_PAST: dict[str, RelationshipReviewStatus] = {
+    "approve": "approved",
+    "reject": "rejected",
+}
+
+
+def _review_updates(
+    graph: EntityGraph,
+    t: Any,
+    relationship: str,
+    edge_key: int | None,
+    *,
+    status: RelationshipReviewStatus,
+    source: RelationshipReviewSource,
+    actor: str,
+) -> dict[str, Any]:
+    existing = _read_relationship(graph, t, relationship, edge_key)
+    current_state = (
+        load_assertion_state(existing.properties)
+        if existing is not None
+        else RelationshipAssertionState()
+    )
+    review = current_state.review.model_copy(
+        update={
+            "status": status,
+            "source": source,
+            "updated_at": datetime.now(timezone.utc),
+            "updated_by": actor,
+        }
+    )
+    state = current_state.model_copy(update={"review": review})
+    updates: dict[str, Any] = {ASSERTION_PROPERTY: dump_assertion_state(state)}
+    legacy_review_status = review_state_to_legacy_review_status(review)
+    if legacy_review_status is not None:
+        updates["review_status"] = legacy_review_status
+    return updates
 
 
 def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
     """Apply a feedback record to the graph. Returns True if the edge was found.
 
-    review_status is determined by (source, action):
-    - human approve/reject → human_approved/human_rejected
-    - agent approve/reject → agent_approved/agent_rejected
-    - flag → pending_review (any source)
-    - correct → merges corrections, sets approved status per source
+    Review state is determined by (source, action) and written through the
+    typed assertion protocol while preserving legacy review_status.
     """
     t = feedback.target
     edge_key = t.edge_key
@@ -89,10 +134,19 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             )
 
     prefix = _SOURCE_PREFIX[feedback.source]
+    actor = f"feedback:{feedback.action}"
 
     if feedback.action in _ACTION_PAST:
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
-        updates: dict[str, Any] = {"review_status": f"{prefix}_{_ACTION_PAST[feedback.action]}"}
+        updates = _review_updates(
+            graph,
+            t,
+            t.relationship_type,
+            edge_key,
+            status=_ACTION_PAST[feedback.action],
+            source=prefix,
+            actor=actor,
+        )
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
@@ -107,7 +161,15 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
 
     if feedback.action == "flag":
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
-        updates = {"review_status": "pending_review"}
+        updates = _review_updates(
+            graph,
+            t,
+            t.relationship_type,
+            edge_key,
+            status="pending",
+            source=prefix,
+            actor=actor,
+        )
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
@@ -125,7 +187,17 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
         updates = {
             k: v for k, v in feedback.corrections.items() if k not in USER_STRIPPED_PROPERTIES
         }
-        updates["review_status"] = f"{prefix}_approved"
+        updates.update(
+            _review_updates(
+                graph,
+                t,
+                t.relationship_type,
+                edge_key,
+                status="approved",
+                source=prefix,
+                actor=actor,
+            )
+        )
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         if prov:
             updates["_provenance"] = _stamp_provenance(prov, feedback.action)

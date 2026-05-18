@@ -341,6 +341,38 @@ class TestReplaceEdgeProperties:
         assert rel.properties["confidence"] == 0.95
         assert rel.properties["_provenance"] == prov
 
+    def test_replace_preserves_assertion(self, graph: EntityGraph):
+        """replace_edge_properties preserves _assertion when not explicitly provided."""
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+        assertion = {
+            "review": {"status": "approved", "source": "human"},
+            "lifecycle": {"status": "active"},
+        }
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"confidence": 0.9, "_assertion": assertion},
+            )
+        )
+
+        graph.replace_edge_properties(
+            "Part",
+            "P-1",
+            "Vehicle",
+            "V-1",
+            "fits",
+            {"confidence": 0.95},
+        )
+
+        rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
+        assert rel.properties["confidence"] == 0.95
+        assert rel.properties["_assertion"] == assertion
+
     def test_replace_allows_explicit_provenance_override(self, graph: EntityGraph):
         """When caller explicitly provides _provenance, it is used."""
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))

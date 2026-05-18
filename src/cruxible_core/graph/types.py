@@ -11,6 +11,17 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from cruxible_core.graph.assertion_state import (
+    ASSERTION_PROPERTY,
+    LEGACY_REVIEW_STATUS_PROPERTY,
+    RelationshipAssertionState,
+    RelationshipLifecycleState,
+    RelationshipReviewState,
+    dump_assertion_state,
+    load_assertion_state,
+    relationship_is_live,
+    review_state_to_legacy_review_status,
+)
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
     dump_provenance,
@@ -81,7 +92,9 @@ class RelationshipInstance(BaseModel):
 REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "agent_rejected"})
 """Edge review_status values that indicate rejection."""
 
-SYSTEM_OWNED_PROPERTIES: frozenset[str] = frozenset({"_provenance", "review_status"})
+SYSTEM_OWNED_PROPERTIES: frozenset[str] = frozenset(
+    {"_provenance", ASSERTION_PROPERTY, LEGACY_REVIEW_STATUS_PROPERTY}
+)
 """Graph property keys written by Cruxible system paths, not user/domain writes."""
 
 USER_STRIPPED_PROPERTIES: frozenset[str] = SYSTEM_OWNED_PROPERTIES
@@ -89,17 +102,26 @@ USER_STRIPPED_PROPERTIES: frozenset[str] = SYSTEM_OWNED_PROPERTIES
 
 
 __all__ = [
+    "ASSERTION_PROPERTY",
     "EntityInstance",
+    "LEGACY_REVIEW_STATUS_PROPERTY",
     "RelationshipInstance",
+    "RelationshipAssertionState",
+    "RelationshipLifecycleState",
     "RelationshipProvenance",
+    "RelationshipReviewState",
     "REJECTED_STATUSES",
     "SYSTEM_OWNED_PROPERTIES",
     "USER_STRIPPED_PROPERTIES",
+    "dump_assertion_state",
     "dump_provenance",
+    "load_assertion_state",
     "load_provenance",
     "make_node_id",
     "make_provenance",
     "provenance_group_id",
+    "relationship_is_live",
+    "review_state_to_legacy_review_status",
     "split_node_id",
     "stamp_provenance_modified",
 ]

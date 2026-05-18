@@ -17,6 +17,15 @@ from typing import Any
 from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
+from cruxible_core.graph.assertion_state import (
+    ASSERTION_PROPERTY,
+    LEGACY_REVIEW_STATUS_PROPERTY,
+    RelationshipAssertionState,
+    RelationshipReviewState,
+    dump_assertion_state,
+    load_assertion_state,
+    review_state_to_legacy_review_status,
+)
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
     dump_provenance,
@@ -25,7 +34,6 @@ from cruxible_core.graph.provenance import (
     stamp_provenance_modified,
 )
 from cruxible_core.graph.types import (
-    SYSTEM_OWNED_PROPERTIES,
     EntityInstance,
     RelationshipInstance,
 )
@@ -173,6 +181,24 @@ def apply_entity(graph: EntityGraph, validated: ValidatedEntity) -> None:
         graph.add_entity(validated.entity)
 
 
+def _initial_assertion_state(source: str) -> RelationshipAssertionState:
+    if source == "group_resolve":
+        return RelationshipAssertionState(
+            review=RelationshipReviewState(status="approved", source="group")
+        )
+    return RelationshipAssertionState()
+
+
+def _set_assertion_properties(
+    properties: dict[str, Any],
+    state: RelationshipAssertionState,
+) -> None:
+    properties[ASSERTION_PROPERTY] = dump_assertion_state(state)
+    legacy_review_status = review_state_to_legacy_review_status(state.review)
+    if legacy_review_status is not None:
+        properties[LEGACY_REVIEW_STATUS_PROPERTY] = legacy_review_status
+
+
 def apply_relationship(
     graph: EntityGraph,
     validated: ValidatedRelationship,
@@ -181,8 +207,9 @@ def apply_relationship(
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
-    New edges get provenance stamped via make_provenance(source, source_ref).
-    Updated edges preserve existing provenance with last_modified_at/last_modified_by.
+    New edges get provenance stamped via make_provenance(source, source_ref)
+    and a default assertion state. Updated edges preserve existing assertion
+    state and provenance with last_modified_at/last_modified_by.
     """
     rel = validated.relationship
     if validated.is_update:
@@ -195,18 +222,15 @@ def apply_relationship(
         )
         replace_props = dict(rel.properties)
         if existing_rel:
-            for key in SYSTEM_OWNED_PROPERTIES:
-                old_value = existing_rel.properties.get(key)
-                if old_value is None:
-                    continue
-                if key == "_provenance":
-                    provenance = load_provenance(old_value)
-                    if provenance is not None:
-                        replace_props[key] = dump_provenance(
-                            stamp_provenance_modified(provenance, source)
-                        )
-                else:
-                    replace_props[key] = old_value
+            old_provenance = existing_rel.properties.get("_provenance")
+            provenance = load_provenance(old_provenance)
+            if provenance is not None:
+                replace_props["_provenance"] = dump_provenance(
+                    stamp_provenance_modified(provenance, source)
+                )
+
+            assertion = load_assertion_state(existing_rel.properties)
+            _set_assertion_properties(replace_props, assertion)
         graph.replace_edge_properties(
             rel.from_type,
             rel.from_id,
@@ -217,4 +241,5 @@ def apply_relationship(
         )
     else:
         rel.properties["_provenance"] = dump_provenance(make_provenance(source, source_ref))
+        _set_assertion_properties(rel.properties, _initial_assertion_state(source))
         graph.add_relationship(rel)

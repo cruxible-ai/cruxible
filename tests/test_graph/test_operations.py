@@ -6,6 +6,7 @@ import pytest
 
 from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import DataValidationError
+from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import (
     apply_entity,
@@ -165,9 +166,16 @@ class TestValidateRelationship:
             "fits",
             "Vehicle",
             "V1",
-            {"confidence": 0.9, "_provenance": {"source": "evil"}},
+            {
+                "confidence": 0.9,
+                "_provenance": {"source": "evil"},
+                "_assertion": {"review": {"status": "approved", "source": "human"}},
+                "review_status": "human_approved",
+            },
         )
         assert "_provenance" not in result.relationship.properties
+        assert "_assertion" not in result.relationship.properties
+        assert "review_status" not in result.relationship.properties
 
     def test_unknown_relationship(self, config, graph):
         with pytest.raises(DataValidationError, match="not found in config"):
@@ -273,6 +281,9 @@ relationships:
         assert rel.properties["confidence"] == 0.5
         assert rel.properties["note"] == "verified manually"
         assert rel.properties["review_status"] == "human_approved"
+        state = load_assertion_state(rel.properties)
+        assert state.review.status == "approved"
+        assert state.review.source == "human"
 
     def test_invalid_relationship_update_leaves_existing_edge_unchanged(self, config, graph):
         graph.add_relationship(
@@ -353,6 +364,9 @@ class TestApplyRelationship:
         assert prov["source"] == "mcp_add"
         assert prov["source_ref"] == "cruxible_add_relationship"
         assert "created_at" in prov
+        state = load_assertion_state(rel.properties)
+        assert state.review.status == "unreviewed"
+        assert state.lifecycle.status == "active"
 
     def test_update_provenance(self, config, graph):
         """Existing provenance preserved with last_modified_at/last_modified_by."""

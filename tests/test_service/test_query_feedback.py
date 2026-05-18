@@ -19,6 +19,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     ReceiptNotFoundError,
 )
+from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     FeedbackItemInput,
@@ -251,6 +252,9 @@ class TestFeedback:
         rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
         assert rel is not None
         assert rel.properties.get("review_status") == "human_approved"
+        state = load_assertion_state(rel.properties)
+        assert state.review.status == "approved"
+        assert state.review.source == "human"
 
     def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
         receipt_id = self._run_query(populated_instance)

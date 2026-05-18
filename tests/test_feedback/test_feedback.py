@@ -16,6 +16,7 @@ from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import execute_query
@@ -81,6 +82,18 @@ def graph() -> EntityGraph:
         )
     )
     return g
+
+
+def assert_review_state(
+    rel: RelationshipInstance,
+    *,
+    status: str,
+    source: str,
+) -> None:
+    state = load_assertion_state(rel.properties)
+    assert state.review.status == status
+    assert state.review.source == source
+    assert state.lifecycle.status == "active"
 
 
 @pytest.fixture
@@ -185,6 +198,7 @@ class TestApplier:
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_reject(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
@@ -197,6 +211,7 @@ class TestApplier:
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "human_rejected"
+        assert_review_state(rel, status="rejected", source="human")
 
     def test_flag(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
@@ -208,6 +223,7 @@ class TestApplier:
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "pending_review"
+        assert_review_state(rel, status="pending", source="human")
 
     def test_correct(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
@@ -222,6 +238,7 @@ class TestApplier:
         assert rel.properties["confidence"] == 0.95
         assert rel.properties["fitment_notes"] == "confirmed"
         assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_missing_edge(self, graph: EntityGraph):
         fb = FeedbackRecord(
@@ -253,6 +270,7 @@ class TestApplier:
         assert rel.properties["verified"] is True
         assert rel.properties["confidence"] == 0.9
         assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_agent_with_model_id(
         self,
@@ -269,6 +287,7 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "agent_approved"
+        assert_review_state(rel, status="approved", source="agent")
 
     def test_agent_reject(
         self,
@@ -285,6 +304,7 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "agent_rejected"
+        assert_review_state(rel, status="rejected", source="agent")
 
     def test_correct_user_review_status_stripped(
         self, graph: EntityGraph, target: RelationshipInstance
@@ -299,6 +319,7 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
         assert rel.properties["fitment_notes"] == "checked"
 
     def test_approve_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
@@ -367,7 +388,7 @@ class TestApplier:
     def test_correct_strips_provenance_from_corrections(
         self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """_provenance in corrections is stripped — system-owned field."""
+        """System-owned relationship metadata in corrections is stripped."""
         graph.update_edge_properties(
             "Part",
             "P-1",
@@ -380,7 +401,12 @@ class TestApplier:
             receipt_id="RCP-test",
             action="correct",
             target=target,
-            corrections={"confidence": 0.99, "_provenance": {"source": "spoofed"}},
+            corrections={
+                "confidence": 0.99,
+                "_provenance": {"source": "spoofed"},
+                "_assertion": {"review": {"status": "rejected", "source": "human"}},
+                "review_status": "human_rejected",
+            },
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -388,6 +414,8 @@ class TestApplier:
         # Should NOT be spoofed — should be original provenance with modification
         assert prov["source"] == "ingest"
         assert prov["last_modified_by"] == "feedback:correct"
+        assert_review_state(rel, status="approved", source="human")
+        assert rel.properties["review_status"] == "human_approved"
 
     def test_no_provenance_no_crash(self, graph: EntityGraph, target: RelationshipInstance):
         """Feedback on edges without _provenance works fine (no crash)."""
@@ -399,6 +427,7 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
         # No _provenance added when there was none to begin with
         assert "_provenance" not in rel.properties
 

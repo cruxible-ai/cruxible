@@ -16,7 +16,12 @@ from cruxible_core.config.property_validation import entity_properties_with_iden
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import load_provenance, provenance_group_id
-from cruxible_core.graph.types import REJECTED_STATUSES, make_node_id, split_node_id
+from cruxible_core.graph.types import (
+    load_assertion_state,
+    make_node_id,
+    relationship_is_live,
+    split_node_id,
+)
 from cruxible_core.predicate import evaluate_comparison
 
 if TYPE_CHECKING:
@@ -252,9 +257,9 @@ def _check_governed_support_relationships(
         to_type = edge["to_type"]
         to_id = edge["to_id"]
         props = edge["properties"]
-        review_status = props.get("review_status")
+        assertion = load_assertion_state(props)
 
-        if review_status == "pending_review":
+        if assertion.review.status == "pending":
             findings.append(
                 EvaluationFinding(
                     category="governed_support_relationship",
@@ -273,6 +278,9 @@ def _check_governed_support_relationships(
                     },
                 )
             )
+            continue
+
+        if not relationship_is_live(props):
             continue
 
         if group_store is None:
@@ -455,12 +463,12 @@ def _check_unreviewed_co_members(
         if not s_rels:
             continue
 
-        # Build matched_set: non-rejected R targets
+        # Build matched_set from live R targets.
         matched_set: set[str] = set()
         for _, _, to_type, to_id, props in graph.iter_edge_data(r_rel.name):
             if to_type != r_rel.to_entity:
                 continue
-            if props.get("review_status") in REJECTED_STATUSES:
+            if not relationship_is_live(props):
                 continue
             matched_set.add(make_node_id(to_type, to_id))
 
@@ -480,8 +488,8 @@ def _check_unreviewed_co_members(
                 )
 
                 for intermediary, out_edge_props, _ in outgoing:
-                    # Skip rejected outgoing S edges
-                    if out_edge_props.get("review_status") in REJECTED_STATUSES:
+                    # Skip non-live outgoing S edges.
+                    if not relationship_is_live(out_edge_props):
                         continue
 
                     intermediary_node_id = make_node_id(
@@ -513,8 +521,8 @@ def _check_unreviewed_co_members(
                         continue
 
                     for co_member, in_edge_props, _ in cached:
-                        # Skip rejected incoming S edges
-                        if in_edge_props.get("review_status") in REJECTED_STATUSES:
+                        # Skip non-live incoming S edges.
+                        if not relationship_is_live(in_edge_props):
                             continue
 
                         # Defensive: skip malformed edges

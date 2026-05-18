@@ -18,10 +18,11 @@ from typing import Any
 import networkx as nx
 
 from cruxible_core.graph.types import (
-    REJECTED_STATUSES,
+    SYSTEM_OWNED_PROPERTIES,
     EntityInstance,
     RelationshipInstance,
     make_node_id,
+    relationship_is_live,
     split_node_id,
 )
 
@@ -238,7 +239,7 @@ class EntityGraph:
         to_id: str,
         relationship_type: str,
     ) -> bool:
-        """Check whether a non-rejected, non-pending relationship exists."""
+        """Check whether a live relationship exists."""
         from_node = make_node_id(from_type, from_id)
         to_node = make_node_id(to_type, to_id)
         edge_dict = self._graph.get_edge_data(from_node, to_node)
@@ -247,12 +248,8 @@ class EntityGraph:
         for edge_data in edge_dict.values():
             if edge_data.get("relationship_type") != relationship_type:
                 continue
-            review_status = edge_data.get("properties", {}).get("review_status")
-            if review_status == "pending_review":
-                continue
-            if review_status in REJECTED_STATUSES:
-                continue
-            return True
+            if relationship_is_live(edge_data.get("properties", {})):
+                return True
         return False
 
     def update_edge_properties(
@@ -318,10 +315,16 @@ class EntityGraph:
             if edge_key is not None and key != edge_key:
                 continue
             if edge_data.get("relationship_type") == relationship_type:
-                old_prov = edge_data.get("properties", {}).get("_provenance")
+                old_properties = edge_data.get("properties", {})
+                old_system_values = {
+                    system_key: old_properties[system_key]
+                    for system_key in SYSTEM_OWNED_PROPERTIES
+                    if old_properties.get(system_key) is not None
+                }
                 edge_data["properties"] = dict(new_properties)
-                if old_prov and "_provenance" not in new_properties:
-                    edge_data["properties"]["_provenance"] = old_prov
+                for system_key, old_value in old_system_values.items():
+                    if system_key not in new_properties:
+                        edge_data["properties"][system_key] = old_value
                 return True
 
         return False

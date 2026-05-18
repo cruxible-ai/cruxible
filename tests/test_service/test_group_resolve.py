@@ -9,6 +9,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, GroupNotFoundError
+from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -178,6 +179,11 @@ class TestApproveBasic:
         assert rel is not None
         assert rel.properties.get("_provenance", {}).get("source") == "group_resolve"
         assert rel.properties.get("_provenance", {}).get("source_ref") == f"group:{group_id}"
+        state = load_assertion_state(rel.properties)
+        assert state.review.status == "approved"
+        assert state.review.source == "group"
+        assert state.lifecycle.status == "active"
+        assert rel.properties.get("review_status") == "agent_approved"
 
     def test_relationship_lineage_links_to_group_resolution_and_traces(
         self,
