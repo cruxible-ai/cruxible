@@ -17,6 +17,7 @@ from cruxible_core.graph.assertion_state import (
     review_state_to_legacy_review_status,
 )
 from cruxible_core.graph.provenance import (
+    PROVENANCE_PROPERTY,
     RelationshipProvenance,
     dump_provenance,
     load_provenance,
@@ -54,7 +55,7 @@ def _read_provenance(
     """Read existing _provenance from an edge when it is usable."""
     existing = _read_relationship(graph, t, relationship, edge_key)
     if existing:
-        old_prov = existing.properties.get("_provenance")
+        old_prov = existing.properties.get(PROVENANCE_PROPERTY)
         return load_provenance(old_prov)
     return None
 
@@ -148,7 +149,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             actor=actor,
         )
         if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+            updates[PROVENANCE_PROPERTY] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
             from_type=t.from_type,
             from_id=t.from_id,
@@ -171,7 +172,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             actor=actor,
         )
         if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+            updates[PROVENANCE_PROPERTY] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
             from_type=t.from_type,
             from_id=t.from_id,
@@ -200,7 +201,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
         )
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
         if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
+            updates[PROVENANCE_PROPERTY] = _stamp_provenance(prov, feedback.action)
         return graph.update_edge_properties(
             from_type=t.from_type,
             from_id=t.from_id,

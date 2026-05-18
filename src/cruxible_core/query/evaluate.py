@@ -15,7 +15,11 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.property_validation import entity_properties_with_identity
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.provenance import load_provenance, provenance_group_id
+from cruxible_core.graph.provenance import (
+    PROVENANCE_PROPERTY,
+    load_provenance,
+    provenance_group_id,
+)
 from cruxible_core.graph.types import (
     load_assertion_state,
     make_node_id,
@@ -371,7 +375,7 @@ def resolve_edge_signal_history(
     properties: dict[str, Any],
 ) -> CandidateMember | None:
     """Resolve a graph edge back to its approved group candidate member."""
-    provenance = load_provenance(properties.get("_provenance"))
+    provenance = load_provenance(properties.get(PROVENANCE_PROPERTY))
     if provenance is None:
         return None
     group_id = provenance_group_id(provenance)

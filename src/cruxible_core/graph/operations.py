@@ -28,6 +28,7 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
+    PROVENANCE_PROPERTY,
     dump_provenance,
     load_provenance,
     make_provenance,
@@ -222,10 +223,10 @@ def apply_relationship(
         )
         replace_props = dict(rel.properties)
         if existing_rel:
-            old_provenance = existing_rel.properties.get("_provenance")
+            old_provenance = existing_rel.properties.get(PROVENANCE_PROPERTY)
             provenance = load_provenance(old_provenance)
             if provenance is not None:
-                replace_props["_provenance"] = dump_provenance(
+                replace_props[PROVENANCE_PROPERTY] = dump_provenance(
                     stamp_provenance_modified(provenance, source)
                 )
 
@@ -240,6 +241,8 @@ def apply_relationship(
             replace_props,
         )
     else:
-        rel.properties["_provenance"] = dump_provenance(make_provenance(source, source_ref))
+        rel.properties[PROVENANCE_PROPERTY] = dump_provenance(
+            make_provenance(source, source_ref)
+        )
         _set_assertion_properties(rel.properties, _initial_assertion_state(source))
         graph.add_relationship(rel)

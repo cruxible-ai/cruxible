@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_serializer
 
+PROVENANCE_PROPERTY = "_provenance"
+
 
 class RelationshipProvenance(BaseModel):
     """System-owned provenance stored under relationship ``_provenance``."""
@@ -69,3 +71,14 @@ def provenance_group_id(provenance: RelationshipProvenance) -> str | None:
     if source_ref is None or not source_ref.startswith("group:"):
         return None
     return source_ref.removeprefix("group:")
+
+
+__all__ = [
+    "PROVENANCE_PROPERTY",
+    "RelationshipProvenance",
+    "dump_provenance",
+    "load_provenance",
+    "make_provenance",
+    "provenance_group_id",
+    "stamp_provenance_modified",
+]

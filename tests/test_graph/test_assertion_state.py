@@ -18,7 +18,11 @@ from cruxible_core.graph.assertion_state import (
     load_assertion_state,
     relationship_is_live,
 )
-from cruxible_core.graph.types import SYSTEM_OWNED_PROPERTIES
+from cruxible_core.graph.provenance import PROVENANCE_PROPERTY
+from cruxible_core.graph.types import (
+    SYSTEM_OWNED_PROPERTIES,
+    load_relationship_system_metadata,
+)
 
 
 @pytest.mark.parametrize(
@@ -54,9 +58,9 @@ def test_missing_assertion_defaults_to_unreviewed_active() -> None:
 def test_system_owned_properties_include_relationship_system_constants() -> None:
     assert SYSTEM_OWNED_PROPERTIES == frozenset(
         {
+            PROVENANCE_PROPERTY,
             ASSERTION_PROPERTY,
             LEGACY_REVIEW_STATUS_PROPERTY,
-            "_provenance",
         }
     )
 
@@ -111,6 +115,29 @@ def test_assertion_wins_over_legacy_review_status() -> None:
             "review_status": "human_rejected",
         }
     )
+
+
+def test_relationship_system_metadata_loads_sibling_properties() -> None:
+    properties = {
+        PROVENANCE_PROPERTY: {"source": "ingest", "source_ref": "feed-1"},
+        ASSERTION_PROPERTY: {
+            "review": {"status": "approved", "source": "human"},
+            "lifecycle": {"status": "active"},
+        },
+        LEGACY_REVIEW_STATUS_PROPERTY: "human_rejected",
+    }
+    original = dict(properties)
+
+    metadata = load_relationship_system_metadata(properties)
+
+    assert metadata.provenance is not None
+    assert metadata.provenance.source == "ingest"
+    assert metadata.provenance.source_ref == "feed-1"
+    assert metadata.assertion.review.status == "approved"
+    assert metadata.assertion.review.source == "human"
+    assert metadata.assertion.lifecycle.status == "active"
+    assert properties == original
+    assert PROVENANCE_PROPERTY not in dump_assertion_state(metadata.assertion)
 
 
 @pytest.mark.parametrize(

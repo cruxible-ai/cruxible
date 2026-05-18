@@ -10,12 +10,13 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import (
     ASSERTION_PROPERTY,
+    PROVENANCE_PROPERTY,
     EntityInstance,
     RelationshipInstance,
 )
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 
-_HIDDEN_RELATIONSHIP_PROPERTIES = {"_provenance", ASSERTION_PROPERTY}
+_HIDDEN_RELATIONSHIP_PROPERTIES = {PROVENANCE_PROPERTY, ASSERTION_PROPERTY}
 
 
 def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:

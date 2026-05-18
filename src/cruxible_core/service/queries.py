@@ -13,6 +13,7 @@ from cruxible_core.errors import (
     TraceNotFoundError,
 )
 from cruxible_core.graph.provenance import (
+    PROVENANCE_PROPERTY,
     dump_provenance,
     load_provenance,
     provenance_group_id,
@@ -360,7 +361,7 @@ def service_get_relationship_lineage(
         )
 
     warnings: list[str] = []
-    raw_provenance = relationship.properties.get("_provenance")
+    raw_provenance = relationship.properties.get(PROVENANCE_PROPERTY)
     provenance = load_provenance(raw_provenance)
     if not isinstance(raw_provenance, dict) or provenance is None:
         return RelationshipLineageResult(

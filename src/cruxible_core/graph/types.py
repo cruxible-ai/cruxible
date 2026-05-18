@@ -23,12 +23,17 @@ from cruxible_core.graph.assertion_state import (
     review_state_to_legacy_review_status,
 )
 from cruxible_core.graph.provenance import (
+    PROVENANCE_PROPERTY,
     RelationshipProvenance,
     dump_provenance,
     load_provenance,
     make_provenance,
     provenance_group_id,
     stamp_provenance_modified,
+)
+from cruxible_core.graph.system_metadata import (
+    RelationshipSystemMetadata,
+    load_relationship_system_metadata,
 )
 
 
@@ -93,7 +98,7 @@ REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "agent_rejected
 """Edge review_status values that indicate rejection."""
 
 SYSTEM_OWNED_PROPERTIES: frozenset[str] = frozenset(
-    {"_provenance", ASSERTION_PROPERTY, LEGACY_REVIEW_STATUS_PROPERTY}
+    {PROVENANCE_PROPERTY, ASSERTION_PROPERTY, LEGACY_REVIEW_STATUS_PROPERTY}
 )
 """Graph property keys written by Cruxible system paths, not user/domain writes."""
 
@@ -105,17 +110,20 @@ __all__ = [
     "ASSERTION_PROPERTY",
     "EntityInstance",
     "LEGACY_REVIEW_STATUS_PROPERTY",
+    "PROVENANCE_PROPERTY",
     "RelationshipInstance",
     "RelationshipAssertionState",
     "RelationshipLifecycleState",
     "RelationshipProvenance",
     "RelationshipReviewState",
+    "RelationshipSystemMetadata",
     "REJECTED_STATUSES",
     "SYSTEM_OWNED_PROPERTIES",
     "USER_STRIPPED_PROPERTIES",
     "dump_assertion_state",
     "dump_provenance",
     "load_assertion_state",
+    "load_relationship_system_metadata",
     "load_provenance",
     "make_node_id",
     "make_provenance",
