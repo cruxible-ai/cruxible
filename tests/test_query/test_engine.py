@@ -3,6 +3,7 @@
 import pytest
 
 from cruxible_core.config.schema import (
+    ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
     NamedQuerySchema,
@@ -19,6 +20,7 @@ from cruxible_core.query.engine import (
     _matches_filter,
     execute_query,
 )
+from cruxible_core.query.evaluate import evaluate_graph
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -365,6 +367,78 @@ class TestExecuteQuery:
         result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
 
         assert {item.entity_id for item in result.results} == {"BP-1234"}
+
+    def test_typed_datetime_constraint_uses_explicit_value_type(
+        self, config: CoreConfig, graph: EntityGraph
+    ) -> None:
+        config.named_queries["published_parts_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    constraint="target.published_at on_or_before $as_of",
+                    constraint_value_type="datetime",
+                )
+            ],
+            returns="list[Part]",
+        )
+        graph.update_entity_properties(
+            "Part",
+            "BP-1234",
+            {"published_at": "2026-05-17T13:00:00+01:00"},
+        )
+        graph.update_entity_properties(
+            "Part",
+            "BP-5678",
+            {"published_at": "2026-05-17T13:00:01+00:00"},
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "published_parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC", "as_of": "2026-05-17T12:00:00Z"},
+        )
+
+        assert [entity.entity_id for entity in result.results] == ["BP-1234"]
+
+    def test_top_level_temporal_constraint_alias_is_evaluated(
+        self, config: CoreConfig, graph: EntityGraph
+    ) -> None:
+        config.constraints.append(
+            ConstraintSchema(
+                name="published_before_until",
+                rule="fits.FROM.published_at before fits.TO.available_until",
+                value_type="datetime",
+                severity="error",
+            )
+        )
+        graph.update_entity_properties(
+            "Part",
+            "BP-1234",
+            {"published_at": "2026-05-17T13:00:00Z"},
+        )
+        graph.update_entity_properties(
+            "Part",
+            "BP-5678",
+            {"published_at": "2026-05-17T11:00:00Z"},
+        )
+        graph.update_entity_properties(
+            "Vehicle",
+            "V-CIVIC",
+            {"available_until": "2026-05-17T12:00:00+00:00"},
+        )
+
+        report = evaluate_graph(config, graph)
+
+        assert report.constraint_summary["published_before_until"] == 1
+        assert any(
+            finding.category == "constraint_violation"
+            and finding.detail["constraint"] == "published_before_until"
+            for finding in report.findings
+        )
 
     def test_parts_for_vehicle_via_reverse_name(
         self, config: CoreConfig, graph: EntityGraph
@@ -856,6 +930,21 @@ class TestEvaluateConstraint:
             "target.year > $min_year",
             entity,
             {"min_year": 2023},
+        )
+
+    def test_date_constraint_uses_explicit_value_type(self, config: CoreConfig) -> None:
+        entity = EntityInstance(
+            entity_type="Part",
+            entity_id="P-1",
+            properties={"available_on": "2026-05-17T23:00:00-02:00"},
+        )
+
+        assert _evaluate_constraint(
+            config,
+            "target.available_on == $as_of",
+            entity,
+            {"as_of": "2026-05-18"},
+            value_type="date",
         )
 
     def test_missing_property_returns_false(self, config: CoreConfig):

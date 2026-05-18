@@ -310,6 +310,79 @@ class TestWorkflowDataflowSteps:
         assert result.output["input_count"] == 1
         assert result.output["items"] == [{"id": "A", "severity": "high", "score": 0.9}]
 
+    def test_execute_filter_items_honors_typed_temporal_comparisons(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: filtered
+              filter_items:
+                items:
+                  - id: A
+                    published_at: "2026-05-17T08:00:00-04:00"
+                    business_date: "2026-05-17"
+                  - id: B
+                    published_at: "2026-05-18T00:00:00Z"
+                    business_date: "2026-05-18"
+                  - id: C
+                    published_at: "not-a-datetime"
+                    business_date: "2026-05-17"
+                comparisons:
+                  - left: $item.published_at
+                    op: on_or_before
+                    right: "2026-05-17T12:00:00+00:00"
+                    value_type: datetime
+                  - left: $item.business_date
+                    op: before
+                    right: "2026-05-18"
+                    value_type: date
+              as: filtered
+            """,
+            returns="filtered",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["items"] == [
+            {
+                "id": "A",
+                "published_at": "2026-05-17T08:00:00-04:00",
+                "business_date": "2026-05-17",
+            }
+        ]
+
+    def test_execute_assert_honors_typed_datetime_comparison(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: rows
+              filter_items:
+                items:
+                  - id: A
+              as: rows
+            - id: date_guard
+              assert:
+                left: "2026-05-17T08:00:00-04:00"
+                op: on_or_before
+                right: "2026-05-17T12:00:00+00:00"
+                value_type: datetime
+                message: published timestamp must be in range
+            """,
+            returns="rows",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["items"] == [{"id": "A"}]
+        assert any(
+            node.node_type == "plan_step"
+            and node.detail.get("value_type") == "datetime"
+            for node in result.receipt.nodes
+        )
+
     def test_execute_filter_items_where_accepts_input_refs(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,

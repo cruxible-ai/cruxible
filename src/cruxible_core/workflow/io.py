@@ -10,7 +10,7 @@ from cruxible_core.config.schema import CoreConfig, ListEntitiesSpec, ListRelati
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.predicate import evaluate_comparison
+from cruxible_core.predicate import PredicateValueType, evaluate_typed_comparison
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import (
     ExecutionTrace,
@@ -41,9 +41,15 @@ from cruxible_core.workflow.tracing import (
 from cruxible_core.workflow.types import CompiledPlan, CompiledPlanStep, WorkflowLock
 
 
-def _evaluate_assert(left: Any, op: str, right: Any) -> bool:
+def _evaluate_assert(
+    left: Any,
+    op: str,
+    right: Any,
+    *,
+    value_type: PredicateValueType | None = None,
+) -> bool:
     try:
-        return evaluate_comparison(left, op, right)
+        return evaluate_typed_comparison(left, op, right, value_type=value_type)
     except ValueError as exc:
         raise ConfigError(f"Unsupported assert op '{op}'") from exc
 
@@ -327,16 +333,24 @@ def execute_assert_step(
     assert compiled_step.assert_spec is not None
     left = resolve_value(compiled_step.assert_spec.left, input_payload, step_outputs)
     right = resolve_value(compiled_step.assert_spec.right, input_payload, step_outputs)
-    passed = _evaluate_assert(left, compiled_step.assert_spec.op, right)
+    passed = _evaluate_assert(
+        left,
+        compiled_step.assert_spec.op,
+        right,
+        value_type=compiled_step.assert_spec.value_type,
+    )
+    detail = {
+        "op": compiled_step.assert_spec.op,
+        "left": left,
+        "right": right,
+        "message": compiled_step.assert_spec.message,
+    }
+    if compiled_step.assert_spec.value_type is not None:
+        detail["value_type"] = compiled_step.assert_spec.value_type
     step_node = receipt_builder.record_plan_step(
         compiled_step.step_id,
         "assert",
-        detail={
-            "op": compiled_step.assert_spec.op,
-            "left": left,
-            "right": right,
-            "message": compiled_step.assert_spec.message,
-        },
+        detail=detail,
     )
     receipt_builder.record_validation(
         passed=passed,

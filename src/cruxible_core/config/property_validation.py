@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from cruxible_core.config.schema import CoreConfig, PropertySchema
 from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, EntityInstance
 from cruxible_core.primitives import canonical_json
+from cruxible_core.temporal import format_datetime, parse_datetime
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,15 @@ def normalize_value(value: Any, schema: PropertySchema, config: CoreConfig) -> A
                 raise ValueError("must be an ISO date string (YYYY-MM-DD)") from exc
             return value
         raise ValueError("must be an ISO date string")
+
+    if type_name == "datetime":
+        try:
+            normalized = parse_datetime(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("must be an ISO datetime string") from exc
+        if normalized is None:
+            raise ValueError("must be an ISO datetime string")
+        return format_datetime(normalized)
 
     if type_name == "json":
         try:

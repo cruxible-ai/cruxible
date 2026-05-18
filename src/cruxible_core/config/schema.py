@@ -32,6 +32,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
 
 _PATH_TOKEN = r"[\w-]+"
@@ -75,7 +76,7 @@ class PropertySchema(BaseModel):
     ``ContractSchema`` validation.
     """
 
-    type: str = "string"  # string, int, float, bool, date
+    type: str = "string"  # string, int, float, bool, date, datetime
     primary_key: bool = False
     indexed: bool = False
     optional: bool = False
@@ -264,6 +265,7 @@ class TraversalStep(BaseModel):
     filter: dict[str, Any] | None = None
     target_filter: dict[str, Any] | None = None
     constraint: str | None = None
+    constraint_value_type: PredicateValueType | None = None
     exclude_if_related: list[RelatedExclusionSpec] = Field(default_factory=list)
     max_depth: int = Field(default=1, ge=1)
 
@@ -279,6 +281,13 @@ class TraversalStep(BaseModel):
                     msg = "relationship list items must be non-empty strings"
                     raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def validate_constraint_type(self) -> TraversalStep:
+        if self.constraint is None and self.constraint_value_type is not None:
+            msg = "constraint_value_type requires constraint"
+            raise ValueError(msg)
+        return self
 
     @property
     def relationship_types(self) -> list[str]:
@@ -315,6 +324,7 @@ class ConstraintSchema(BaseModel):
 
     name: str
     rule: str
+    value_type: PredicateValueType | None = None
     severity: Literal["warning", "error"] = "warning"
     description: str | None = None
 
@@ -747,15 +757,6 @@ class ProviderSchema(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
-class AssertSpec(BaseModel):
-    """Structured workflow guard condition."""
-
-    left: Any
-    op: Literal["eq", "ne", "gt", "gte", "lt", "lte"]
-    right: Any
-    message: str
-
-
 ShapeCastType = Literal["str", "int", "float", "bool", "json"]
 MissingRequiredAction = Literal["error", "drop"]
 FilterComparisonOp = Literal[
@@ -771,8 +772,22 @@ FilterComparisonOp = Literal[
     ">=",
     "<",
     "<=",
+    "before",
+    "on_or_before",
+    "after",
+    "on_or_after",
 ]
 DeduplicationStrategy = Literal["first", "last", "max", "min"]
+
+
+class AssertSpec(BaseModel):
+    """Structured workflow guard condition."""
+
+    left: Any
+    op: FilterComparisonOp
+    right: Any
+    message: str
+    value_type: PredicateValueType | None = None
 
 
 class ShapeItemsSpec(BaseModel):
@@ -826,6 +841,7 @@ class FilterComparisonSpec(BaseModel):
     left: Any
     op: FilterComparisonOp
     right: Any
+    value_type: PredicateValueType | None = None
 
     model_config = {"extra": "forbid"}
 

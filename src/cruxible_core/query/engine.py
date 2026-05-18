@@ -28,7 +28,11 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
 )
 from cruxible_core.graph.types import EntityInstance, relationship_is_live
-from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN, evaluate_comparison
+from cruxible_core.predicate import (
+    COMPARISON_SYMBOL_PATTERN,
+    PredicateValueType,
+    evaluate_typed_comparison,
+)
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
@@ -290,6 +294,7 @@ def _execute_step(
                         step.constraint,
                         neighbor,
                         params,
+                        value_type=step.constraint_value_type,
                     )
                     if builder is not None and traversal_id is not None:
                         builder.record_constraint(
@@ -487,6 +492,8 @@ def _evaluate_constraint(
     constraint: str,
     target_entity: EntityInstance,
     params: dict[str, Any],
+    *,
+    value_type: PredicateValueType | None = None,
 ) -> bool:
     """Evaluate a simple constraint expression.
 
@@ -521,7 +528,12 @@ def _evaluate_constraint(
     else:
         rhs_value = _parse_literal(rhs)
 
-    return evaluate_comparison(lhs_value, operator, rhs_value)
+    return evaluate_typed_comparison(
+        lhs_value,
+        operator,
+        rhs_value,
+        value_type=value_type,
+    )
 
 
 def _parse_literal(value: str) -> Any:

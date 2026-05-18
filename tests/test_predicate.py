@@ -1,10 +1,13 @@
 """Tests for the shared predicate core."""
 
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
 
 from cruxible_core.predicate import (
     comparison_symbol,
     evaluate_comparison,
+    evaluate_typed_comparison,
     normalize_comparison_op,
 )
 
@@ -25,6 +28,10 @@ class TestNormalizeComparisonOp:
         assert normalize_comparison_op("gte") == "gte"
         assert normalize_comparison_op("lt") == "lt"
         assert normalize_comparison_op("lte") == "lte"
+        assert normalize_comparison_op("before") == "lt"
+        assert normalize_comparison_op("on_or_before") == "lte"
+        assert normalize_comparison_op("after") == "gt"
+        assert normalize_comparison_op("on_or_after") == "gte"
 
     def test_unsupported_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported comparison operator"):
@@ -43,6 +50,8 @@ class TestComparisonSymbol:
         assert comparison_symbol("gte") == ">="
         assert comparison_symbol("lt") == "<"
         assert comparison_symbol("lte") == "<="
+        assert comparison_symbol("before") == "<"
+        assert comparison_symbol("on_or_after") == ">="
 
     def test_symbolic_input(self) -> None:
         assert comparison_symbol("==") == "=="
@@ -127,3 +136,121 @@ class TestEvaluateComparison:
     def test_unsupported_op_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported comparison operator"):
             evaluate_comparison(1, "like", 1)
+
+
+class TestEvaluateTypedComparison:
+    def test_none_value_type_preserves_untyped_semantics(self) -> None:
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-17T12:00:00Z",
+                "eq",
+                "2026-05-17T12:00:00+00:00",
+            )
+            is False
+        )
+        assert evaluate_typed_comparison("apple", "<", "banana") is True
+
+    def test_scalar_value_types_coerce_before_comparison(self) -> None:
+        assert evaluate_typed_comparison("5", "eq", 5, value_type="int") is True
+        assert evaluate_typed_comparison("5.5", "gt", 5, value_type="number") is True
+        assert evaluate_typed_comparison("true", "eq", True, value_type="bool") is True
+        assert evaluate_typed_comparison(123, "eq", "123", value_type="string") is True
+
+    def test_datetime_comparisons_normalize_utc_inputs(self) -> None:
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-17T12:00:00Z",
+                "eq",
+                "2026-05-17T12:00:00+00:00",
+                value_type="datetime",
+            )
+            is True
+        )
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-17T08:00:00-04:00",
+                "eq",
+                datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                value_type="datetime",
+            )
+            is True
+        )
+        assert (
+            evaluate_typed_comparison(
+                datetime(2026, 5, 17, 12, 0),
+                "eq",
+                datetime(2026, 5, 17, 8, 0, tzinfo=timezone(timedelta(hours=-4))),
+                value_type="datetime",
+            )
+            is True
+        )
+
+    def test_date_comparisons(self) -> None:
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-17",
+                "before",
+                "2026-05-18",
+                value_type="date",
+            )
+            is True
+        )
+        assert (
+            evaluate_typed_comparison(
+                date(2026, 5, 17),
+                "on_or_before",
+                "2026-05-17T23:59:59Z",
+                value_type="date",
+            )
+            is True
+        )
+
+    def test_temporal_operator_aliases(self) -> None:
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-18T00:00:00Z",
+                "after",
+                "2026-05-17T23:59:59Z",
+                value_type="datetime",
+            )
+            is True
+        )
+        assert (
+            evaluate_typed_comparison(
+                "2026-05-18T00:00:00Z",
+                "on_or_after",
+                "2026-05-18T00:00:00+00:00",
+                value_type="datetime",
+            )
+            is True
+        )
+
+    def test_invalid_typed_values_return_false(self) -> None:
+        assert (
+            evaluate_typed_comparison(
+                "not-a-datetime",
+                "before",
+                "2026-05-17T12:00:00Z",
+                value_type="datetime",
+            )
+            is False
+        )
+        assert (
+            evaluate_typed_comparison(
+                "not-a-date",
+                "before",
+                "2026-05-17",
+                value_type="date",
+            )
+            is False
+        )
+        assert evaluate_typed_comparison("nope", "eq", True, value_type="bool") is False
+
+    def test_invalid_operator_still_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported comparison operator"):
+            evaluate_typed_comparison(
+                "not-a-datetime",
+                "during",
+                "also-not-a-datetime",
+                value_type="datetime",
+            )

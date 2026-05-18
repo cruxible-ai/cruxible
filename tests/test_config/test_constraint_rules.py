@@ -28,6 +28,15 @@ class TestParseConstraintRule:
         result = parse_constraint_rule("fits.FROM.priority >= fits.TO.priority")
         assert result == ParsedConstraintRule("fits", "priority", ">=", "priority")
 
+    def test_valid_rule_temporal_alias(self):
+        result = parse_constraint_rule("fits.FROM.published_at before fits.TO.expires_at")
+        assert result == ParsedConstraintRule(
+            "fits",
+            "published_at",
+            "before",
+            "expires_at",
+        )
+
     def test_invalid_garbage(self):
         assert parse_constraint_rule("not a valid rule") is None
 

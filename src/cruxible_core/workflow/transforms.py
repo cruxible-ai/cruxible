@@ -13,7 +13,7 @@ from cruxible_core.config.schema import (
     ShapeItemsSpec,
 )
 from cruxible_core.errors import QueryExecutionError
-from cruxible_core.predicate import evaluate_comparison, normalize_comparison_op
+from cruxible_core.predicate import evaluate_typed_comparison
 from cruxible_core.primitives import canonical_json
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
@@ -265,8 +265,12 @@ def filter_items(
                 allow_item=True,
             )
             try:
-                op = normalize_comparison_op(comparison.op)
-                if not evaluate_comparison(left, op, right):
+                if not evaluate_typed_comparison(
+                    left,
+                    comparison.op,
+                    right,
+                    value_type=comparison.value_type,
+                ):
                     matched = False
                     break
             except ValueError as exc:

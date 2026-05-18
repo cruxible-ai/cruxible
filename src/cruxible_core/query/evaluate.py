@@ -26,7 +26,7 @@ from cruxible_core.graph.types import (
     relationship_is_live,
     split_node_id,
 )
-from cruxible_core.predicate import evaluate_comparison
+from cruxible_core.predicate import evaluate_typed_comparison
 
 if TYPE_CHECKING:
     from cruxible_core.group.types import CandidateMember
@@ -208,7 +208,12 @@ def _check_constraint_violations(
             if (
                 from_val is not None
                 and to_val is not None
-                and not evaluate_comparison(from_val, parsed.operator, to_val)
+                and not evaluate_typed_comparison(
+                    from_val,
+                    parsed.operator,
+                    to_val,
+                    value_type=constraint.value_type,
+                )
             ):
                 constraint_summary[constraint.name] = (
                     constraint_summary.get(constraint.name, 0) + 1
