@@ -18,7 +18,6 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -35,6 +34,7 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
     compute_lock_config_digest,
@@ -102,7 +102,7 @@ class CruxibleInstance(InstanceProtocol):
             config_path=str(config_path),
             data_dir=data_dir or ".",
             instance_mode=instance_mode,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=format_datetime(utc_now()),
             version=__version__,
         )
         instance = cls(root, metadata)
@@ -291,7 +291,7 @@ class CruxibleInstance(InstanceProtocol):
 
         snapshot = WorldSnapshot(
             snapshot_id=snapshot_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
             label=label,
             config_digest=compute_lock_config_digest(config),
             lock_digest=lock_digest,

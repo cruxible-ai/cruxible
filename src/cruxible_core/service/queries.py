@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from cruxible_core.config.schema import CoreConfig
@@ -60,6 +59,7 @@ from cruxible_core.service.types import (
     StatsServiceResult,
     TraceListResult,
 )
+from cruxible_core.temporal import utc_now
 
 # ---------------------------------------------------------------------------
 # Query
@@ -77,7 +77,7 @@ def service_query(
 
     Returns results, receipt, and execution metadata.
     """
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     input_event = {"query_name": query_name, "params": params}
     try:
         result = _evaluate_query_result(instance, query_name, params)

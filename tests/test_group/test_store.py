@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -18,10 +18,11 @@ from cruxible_core.group.types import (
     CandidateSignal,
     SignalBucketBasis,
 )
+from cruxible_core.temporal import format_datetime, utc_now
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return utc_now()
 
 
 def _create_legacy_group_db(db_path: Path) -> None:
@@ -494,7 +495,7 @@ class TestMigration:
         db_path = tmp_path / "legacy-feedback.db"
         _create_legacy_group_db(db_path)
         facts = {"rule_id": "fit_rule", "rule_version": 1}
-        created_at = _now().isoformat()
+        created_at = format_datetime(_now())
         conn = sqlite3.connect(str(db_path))
         conn.execute(
             "INSERT INTO group_resolutions "
@@ -561,7 +562,7 @@ class TestMigration:
     ) -> None:
         db_path = tmp_path / "legacy-feedback.db"
         _create_legacy_group_db(db_path)
-        created_at = _now().isoformat()
+        created_at = format_datetime(_now())
         conn = sqlite3.connect(str(db_path))
         conn.execute(
             "INSERT INTO candidate_groups "

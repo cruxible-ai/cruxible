@@ -10,6 +10,7 @@ from typing import Any
 from cruxible_core.instance_protocol import ReceiptStoreProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS receipts (
@@ -88,7 +89,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 receipt.query_name,
                 json.dumps(receipt.parameters),
                 receipt.model_dump_json(),
-                receipt.created_at.isoformat(),
+                format_datetime(receipt.created_at),
                 receipt.duration_ms,
                 receipt.operation_type,
             ),
@@ -143,7 +144,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 trace.artifact_name,
                 trace.artifact_sha256,
                 trace.model_dump_json(),
-                trace.started_at.isoformat(),
+                format_datetime(trace.started_at),
             ),
         )
         self._conn.commit()

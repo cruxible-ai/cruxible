@@ -11,7 +11,6 @@ import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.primitives import new_id
+from cruxible_core.temporal import format_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +171,7 @@ class GroupStore(GroupStoreProtocol):
         backfilled, preserved = self._backfill_resolved_signatures()
         self._conn.execute(
             "INSERT OR REPLACE INTO group_store_meta(key, value) VALUES (?, ?)",
-            ("signature_bucket_v1", datetime.now(timezone.utc).isoformat()),
+            ("signature_bucket_v1", format_datetime(utc_now())),
         )
         logger.info("Group store migration: dropped %s legacy pending/transient groups", dropped)
         logger.info("Group store migration: backfilled %s resolved signatures to sigv1", backfilled)
@@ -296,7 +296,7 @@ class GroupStore(GroupStoreProtocol):
                 json.dumps(group.source_trace_ids),
                 json.dumps(group.source_step_ids),
                 group.resolution_id,
-                group.created_at.isoformat(),
+                format_datetime(group.created_at),
             ),
         )
         return group.group_id
@@ -633,7 +633,7 @@ class GroupStore(GroupStoreProtocol):
                 trust_status,
                 1 if confirmed else 0,
                 resolved_by,
-                datetime.now(timezone.utc).isoformat(),
+                format_datetime(utc_now()),
             ),
         )
         return resolution_id

@@ -7,12 +7,13 @@ passed or failed, and what produced the final result.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from cruxible_core.primitives import new_id
+from cruxible_core.temporal import utc_now
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 OperationType = Literal[
@@ -72,7 +73,7 @@ class ReceiptNode(BaseModel):
     entity_id: str | None = None
     relationship: str | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class EvidenceEdge(BaseModel):
@@ -92,7 +93,7 @@ class Receipt(BaseModel):
     nodes: list[ReceiptNode]
     edges: list[EvidenceEdge]
     results: list[dict[str, Any]] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
     duration_ms: float = 0.0
     operation_type: OperationType = "query"
     head_snapshot_id: str | None = Field(

@@ -15,6 +15,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
 )
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
+from cruxible_core.temporal import format_datetime
 
 _HIDDEN_RELATIONSHIP_PROPERTIES = {PROVENANCE_PROPERTY, ASSERTION_PROPERTY}
 
@@ -286,7 +287,7 @@ def resolutions_table(resolutions: list[GroupResolution]) -> Table:
             r.action,
             r.trust_status,
             r.resolved_by,
-            r.resolved_at.isoformat() if r.resolved_at else "",
+            format_datetime(r.resolved_at) or "",
         )
 
     return table

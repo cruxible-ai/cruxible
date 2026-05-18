@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 from cruxible_core.config.property_validation import entity_properties_with_identity
@@ -54,6 +53,7 @@ from cruxible_core.service.types import (
     SuppressedProposalMember,
     UpdateTrustStatusResult,
 )
+from cruxible_core.temporal import is_expired, utc_now
 
 
 @dataclass(frozen=True)
@@ -481,7 +481,7 @@ def _new_candidate_group(
         source_workflow_receipt_id=metadata.source_workflow_receipt_id,
         source_trace_ids=metadata.source_trace_ids,
         source_step_ids=metadata.source_step_ids,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
     )
 
 
@@ -1165,7 +1165,7 @@ def _apply_workflow_policies(
         if policy.applies_to == "workflow"
         and policy.workflow_name == workflow_name
         and policy.relationship_type == relationship_type
-        and not _policy_expired(policy.expires_at)
+        and not is_expired(policy.expires_at)
     ]
     if not policies:
         return members, False
@@ -1210,20 +1210,6 @@ def _apply_workflow_policies(
             force_review = True
         kept.append(member)
     return kept, force_review
-
-
-def _policy_expired(expires_at: str | None) -> bool:
-    """Return True when a workflow policy should no longer apply."""
-    if not expires_at:
-        return False
-    try:
-        normalized = expires_at.replace("Z", "+00:00")
-        expiry = datetime.fromisoformat(normalized)
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        return expiry < datetime.now(timezone.utc)
-    except ValueError:
-        return False
 
 
 def _check_auto_resolve_signals(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -15,6 +15,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.primitives import new_id
+from cruxible_core.temporal import utc_now
 
 
 class FeedbackRecord(BaseModel):
@@ -35,7 +36,7 @@ class FeedbackRecord(BaseModel):
     source: Literal["human", "agent"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class FeedbackBatchItem(BaseModel):
@@ -69,7 +70,7 @@ class OutcomeRecord(BaseModel):
     relationship_type: str | None = None
     source: Literal["human", "agent"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
     def default_anchor_id(self) -> OutcomeRecord:

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, StrictFloat, StrictInt, StrictStr, model_validator
 
 from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.temporal import utc_now
 
 SignalValue = Literal["support", "contradict", "unsure"]
 """Tri-state signal value produced by a signal source about a candidate."""
@@ -110,4 +111,4 @@ class CandidateGroup(BaseModel):
     source_trace_ids: list[str] = Field(default_factory=list)
     source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)

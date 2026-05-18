@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.temporal import utc_now
 
 
 def persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
@@ -63,6 +64,6 @@ def build_trace(
         status=status,
         error=error,
         started_at=started_at,
-        finished_at=datetime.now(timezone.utc),
+        finished_at=utc_now(),
         duration_ms=round(duration_ms, 3),
     )

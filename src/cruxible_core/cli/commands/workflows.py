@@ -42,6 +42,7 @@ from cruxible_core.service import (
     service_test,
     service_validate,
 )
+from cruxible_core.temporal import format_datetime
 
 
 def _write_preview_file(
@@ -137,7 +138,7 @@ def _load_latest_preview_from_client(
                 "apply_digest": reference.apply_digest,
                 "head_snapshot_id": reference.head_snapshot_id,
                 "receipt_id": reference.receipt_id,
-                "created_at": reference.created_at.isoformat(),
+                "created_at": format_datetime(reference.created_at),
                 "apply_previews": reference.apply_previews,
             }
     raise click.UsageError(

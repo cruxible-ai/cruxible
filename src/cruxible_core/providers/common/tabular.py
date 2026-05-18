@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import polars as pl
 
 from cruxible_core.primitives import canonical_json
 from cruxible_core.provider.types import ProviderContext
+from cruxible_core.temporal import format_datetime
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xls"}
 _METADATA_FIELDS = {
@@ -497,8 +499,12 @@ def _row_hash(row: dict[str, Any]) -> str:
 def _json_safe_value(value: Any) -> Any:
     if value is None or isinstance(value, str | int | float | bool):
         return value
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, date):
+        return str(value)
     if hasattr(value, "isoformat"):
-        return value.isoformat()
+        return str(value)
     return str(value)
 
 

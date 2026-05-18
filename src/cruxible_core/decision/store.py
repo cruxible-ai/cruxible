@@ -6,13 +6,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import DecisionStoreProtocol
+from cruxible_core.temporal import format_datetime, utc_now
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS decision_records (
@@ -117,8 +117,8 @@ class DecisionStore(DecisionStoreProtocol):
                 record.subject_id,
                 record.status,
                 record.opened_by,
-                record.opened_at.isoformat(),
-                record.finalized_at.isoformat() if record.finalized_at else None,
+                format_datetime(record.opened_at),
+                format_datetime(record.finalized_at),
                 record.final_decision,
                 record.decision_class,
                 record.rationale,
@@ -209,8 +209,8 @@ class DecisionStore(DecisionStoreProtocol):
                 event.error_message,
                 event.surface,
                 event.request_id,
-                event.started_at.isoformat(),
-                event.finished_at.isoformat(),
+                format_datetime(event.started_at),
+                format_datetime(event.finished_at),
                 event.model_dump_json(),
             ),
         )
@@ -282,7 +282,7 @@ class DecisionStore(DecisionStoreProtocol):
                 "final_decision": final_decision,
                 "decision_class": decision_class,
                 "rationale": rationale,
-                "finalized_at": datetime.now(timezone.utc),
+                "finalized_at": utc_now(),
             }
         )
         self.update_record(updated)
@@ -298,7 +298,7 @@ class DecisionStore(DecisionStoreProtocol):
             update={
                 "status": "abandoned",
                 "abandoned_reason": reason,
-                "finalized_at": datetime.now(timezone.utc),
+                "finalized_at": utc_now(),
             }
         )
         self.update_record(updated)

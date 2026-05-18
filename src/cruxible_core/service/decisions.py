@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from cruxible_core.decision.types import DecisionClass, DecisionEvent, DecisionRecord
@@ -17,6 +17,7 @@ from cruxible_core.service.types import (
     DecisionRecordServiceResult,
     OperationContext,
 )
+from cruxible_core.temporal import utc_now
 
 logger = logging.getLogger(__name__)
 _SUMMARY_CHARS = 200
@@ -216,7 +217,7 @@ def record_decision_event_for_context(
         surface=context.surface,
         request_id=context.request_id,
         started_at=started_at,
-        finished_at=datetime.now(timezone.utc),
+        finished_at=utc_now(),
     )
     store = None
     try:

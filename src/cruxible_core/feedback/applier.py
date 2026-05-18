@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.errors import RelationshipAmbiguityError
@@ -24,6 +23,7 @@ from cruxible_core.graph.provenance import (
     stamp_provenance_modified,
 )
 from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES
+from cruxible_core.temporal import utc_now
 
 if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
@@ -96,7 +96,7 @@ def _review_updates(
         update={
             "status": status,
             "source": source,
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": utc_now(),
             "updated_by": actor,
         }
     )

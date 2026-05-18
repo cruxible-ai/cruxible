@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from cruxible_core.temporal import utc_now
 
 _RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
 
@@ -33,7 +35,7 @@ class WorldSnapshot(BaseModel):
     """Immutable local snapshot of graph state and build lineage."""
 
     snapshot_id: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
     label: str | None = None
     config_digest: str
     lock_digest: str | None = None

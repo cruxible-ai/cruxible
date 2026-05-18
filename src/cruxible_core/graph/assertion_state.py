@@ -7,10 +7,19 @@ Cruxible should treat the edge in live graph semantics.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
+
+from cruxible_core.temporal import ensure_utc, format_datetime, is_effective
 
 RelationshipReviewStatus = Literal[
     "unreviewed",
@@ -42,9 +51,14 @@ class RelationshipReviewState(BaseModel):
     updated_at: datetime | None = None
     updated_by: str | None = None
 
+    @field_validator("updated_at")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value) if value is not None else None
+
     @field_serializer("updated_at", when_used="json")
     def _serialize_timestamp(self, value: datetime | None) -> str | None:
-        return value.isoformat() if value is not None else None
+        return format_datetime(value)
 
 
 class RelationshipLifecycleState(BaseModel):
@@ -61,6 +75,11 @@ class RelationshipLifecycleState(BaseModel):
     supersedes: dict[str, Any] | None = None
     superseded_by: dict[str, Any] | None = None
 
+    @field_validator("effective_from", "effective_until", "closed_at")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value) if value is not None else None
+
     @field_serializer(
         "effective_from",
         "effective_until",
@@ -68,7 +87,7 @@ class RelationshipLifecycleState(BaseModel):
         when_used="json",
     )
     def _serialize_timestamp(self, value: datetime | None) -> str | None:
-        return value.isoformat() if value is not None else None
+        return format_datetime(value)
 
 
 class RelationshipAssertionState(BaseModel):
@@ -127,7 +146,15 @@ def _load_stored_assertion(value: Any) -> RelationshipAssertionState | None:
         return None
     try:
         return RelationshipAssertionState.model_validate(value)
-    except ValidationError:
+    except ValidationError as exc:
+        timestamp_fields = {
+            ("review", "updated_at"),
+            ("lifecycle", "effective_from"),
+            ("lifecycle", "effective_until"),
+            ("lifecycle", "closed_at"),
+        }
+        if any(tuple(error["loc"]) in timestamp_fields for error in exc.errors()):
+            raise
         return None
 
 
@@ -152,12 +179,6 @@ def dump_assertion_state(state: RelationshipAssertionState) -> dict[str, Any]:
     return state.model_dump(mode="json", exclude_none=True)
 
 
-def _to_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
 def relationship_is_live(
     properties: Mapping[str, Any],
     *,
@@ -168,15 +189,9 @@ def relationship_is_live(
     if state.lifecycle.status != "active":
         return False
 
-    now = datetime.now(timezone.utc)
-    if (
-        state.lifecycle.effective_from is not None
-        and _to_utc(state.lifecycle.effective_from) > now
-    ):
-        return False
-    if (
-        state.lifecycle.effective_until is not None
-        and _to_utc(state.lifecycle.effective_until) <= now
+    if not is_effective(
+        effective_from=state.lifecycle.effective_from,
+        effective_until=state.lifecycle.effective_until,
     ):
         return False
 

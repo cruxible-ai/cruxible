@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -33,6 +32,7 @@ from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN, evaluate_comparis
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.temporal import is_expired
 
 if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig, TraversalStep
@@ -430,22 +430,8 @@ def _active_query_policies(
         if policy.applies_to == "query"
         and policy.query_name == query_name
         and policy.relationship_type == relationship_type
-        and not _policy_expired(policy.expires_at)
+        and not is_expired(policy.expires_at)
     ]
-
-
-def _policy_expired(expires_at: str | None) -> bool:
-    """Return True when a policy should no longer apply."""
-    if not expires_at:
-        return False
-    try:
-        normalized = expires_at.replace("Z", "+00:00")
-        expiry = datetime.fromisoformat(normalized)
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        return expiry < datetime.now(timezone.utc)
-    except ValueError:
-        return False
 
 
 def _policy_should_suppress(

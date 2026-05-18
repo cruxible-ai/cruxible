@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
 
 import pytest
 
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
+from cruxible_core.temporal import format_datetime, utc_now
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def store() -> DecisionStore:
 
 
 def _event(record_id: str) -> DecisionEvent:
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     return DecisionEvent(
         decision_record_id=record_id,
         command="query:parts_for_vehicle",
@@ -47,8 +47,8 @@ class TestDecisionStoreConstraints:
                     "success",
                     "sha256:input",
                     "{}",
-                    datetime.now(timezone.utc).isoformat(),
-                    datetime.now(timezone.utc).isoformat(),
+                    format_datetime(utc_now()),
+                    format_datetime(utc_now()),
                     "{}",
                 ),
             )

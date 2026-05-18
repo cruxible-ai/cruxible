@@ -11,6 +11,7 @@ from pathlib import Path
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.instance_protocol import FeedbackStoreProtocol
+from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS feedback (
@@ -147,7 +148,7 @@ class FeedbackStore(FeedbackStoreProtocol):
                 record.source,
                 record.model_id,
                 json.dumps(record.corrections),
-                record.created_at.isoformat(),
+                format_datetime(record.created_at),
             ),
         )
         self._index_feedback_entities(record)
@@ -380,7 +381,7 @@ class FeedbackStore(FeedbackStoreProtocol):
                 decision_surface_name,
                 record.source,
                 json.dumps(record.detail),
-                record.created_at.isoformat(),
+                format_datetime(record.created_at),
             ),
         )
         self._conn.commit()

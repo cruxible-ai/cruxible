@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
+
+from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
 PROVENANCE_PROPERTY = "_provenance"
 
@@ -21,9 +29,14 @@ class RelationshipProvenance(BaseModel):
     last_modified_at: datetime | None = None
     last_modified_by: str | None = None
 
+    @field_validator("created_at", "last_modified_at")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value) if value is not None else None
+
     @field_serializer("created_at", "last_modified_at", when_used="json")
     def _serialize_timestamp(self, value: datetime | None) -> str | None:
-        return value.isoformat() if value is not None else None
+        return format_datetime(value)
 
 
 def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
@@ -31,7 +44,7 @@ def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
     return RelationshipProvenance(
         source=source,
         source_ref=source_ref,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
     )
 
 
@@ -59,7 +72,7 @@ def stamp_provenance_modified(
     """Return provenance with modification actor and timestamp updated."""
     return provenance.model_copy(
         update={
-            "last_modified_at": datetime.now(timezone.utc),
+            "last_modified_at": utc_now(),
             "last_modified_by": actor,
         }
     )

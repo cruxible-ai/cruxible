@@ -5,10 +5,10 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from cruxible_core.server.config import get_server_state_dir
+from cruxible_core.temporal import format_datetime, utc_now
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
@@ -143,7 +143,7 @@ class InstanceRegistry:
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
     ) -> RegisteredInstance:
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = format_datetime(utc_now())
         instance_id = preferred_instance_id or f"inst_{uuid.uuid4().hex[:16]}"
         with self._connect() as conn:
             conn.execute(

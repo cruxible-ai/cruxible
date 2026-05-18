@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -29,6 +29,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, SignalBucketBasis, SignalValue
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.temporal import utc_now
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
@@ -72,7 +73,7 @@ class WorkflowLock(BaseModel):
     version: str = "1"
     config_digest: str
     lock_digest: str | None = None
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    generated_at: datetime = Field(default_factory=utc_now)
     artifacts: dict[str, LockedArtifact] = Field(default_factory=dict)
     providers: dict[str, LockedProvider] = Field(default_factory=dict)
 

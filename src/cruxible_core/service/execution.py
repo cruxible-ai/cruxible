@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Literal, TypeVar
 
 from pydantic import ValidationError
@@ -28,6 +27,7 @@ from cruxible_core.service.types import (
     TestServiceResult,
     WorkflowTestCaseServiceResult,
 )
+from cruxible_core.temporal import utc_now
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
@@ -260,7 +260,7 @@ def service_run(
     context: OperationContext | None = None,
 ) -> RunServiceResult:
     """Execute a workflow and return output plus receipt/trace identifiers."""
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     input_event = {"workflow_name": workflow_name, "input": input_payload, "mode": "run"}
     try:
         config = instance.load_config()
@@ -329,7 +329,7 @@ def service_apply_workflow(
     context: OperationContext | None = None,
 ) -> ApplyWorkflowResult:
     """Apply a canonical workflow after verifying preview identity."""
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     input_event = {
         "workflow_name": workflow_name,
         "input": input_payload,
@@ -418,7 +418,7 @@ def service_propose_workflow(
     context: OperationContext | None = None,
 ) -> ProposeWorkflowResult:
     """Execute a workflow and bridge its returned proposal artifact into a candidate group."""
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     input_event = {
         "workflow_name": workflow_name,
         "input": input_payload,

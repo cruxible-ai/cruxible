@@ -35,6 +35,7 @@ from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupReso
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.temporal import format_datetime
 from cruxible_core.workflow.contracts import contract_reference_label, resolve_contract
 
 MAX_STORE_SCAN = 10_000
@@ -1442,7 +1443,7 @@ class _WikiGenerator:
             operation_ref = operation_name
         lines = [f"# Receipt {receipt.receipt_id}", "", "## Summary"]
         lines.append(f"- {operation_label}: {operation_ref}")
-        lines.append(f"- Created at: {receipt.created_at.isoformat()}")
+        lines.append(f"- Created at: {format_datetime(receipt.created_at)}")
         lines.append(f"- Duration: {receipt.duration_ms}ms")
         lines.append(
             f"- Parameters: `{json.dumps(receipt.parameters, sort_keys=True, default=str)}`"
@@ -1908,7 +1909,7 @@ class _WikiGenerator:
             receipt_link = _relpath(current_path, self._receipt_path(receipt.receipt_id))
             lines.append(
                 f"- [{receipt.receipt_id}]({receipt_link}) "
-                f"({receipt.created_at.isoformat()}, {receipt.duration_ms}ms)"
+                f"({format_datetime(receipt.created_at)}, {receipt.duration_ms}ms)"
             )
         omitted_count = len(receipts) - len(rendered_receipts)
         if omitted_count:

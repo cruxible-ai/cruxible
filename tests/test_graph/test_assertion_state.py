@@ -215,6 +215,22 @@ def test_relationship_is_live_honors_effective_window() -> None:
     assert relationship_is_live({"_assertion": dump_assertion_state(expired)}) is False
 
 
+def test_invalid_assertion_timestamp_is_not_silently_downgraded() -> None:
+    with pytest.raises(ValueError):
+        load_assertion_state(
+            {
+                "_assertion": {
+                    "review": {"status": "approved", "source": "human"},
+                    "lifecycle": {
+                        "status": "active",
+                        "effective_from": "not-a-datetime",
+                    },
+                },
+                "review_status": "human_rejected",
+            }
+        )
+
+
 def test_dumped_assertion_json_is_deterministic_and_round_trips() -> None:
     state = RelationshipAssertionState(
         review=RelationshipReviewState(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,6 +27,7 @@ from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
@@ -228,7 +228,7 @@ def execute_provider_step(
         config_base_path=config_base_path,
     )
     started = time.monotonic_ns()
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     status: Literal["success", "error"] = "success"
     error_message: str | None = None
     try:
