@@ -571,7 +571,8 @@ def test_get_relationship_lineage_uses_expected_route():
             json={
                 "found": True,
                 "relationship": {"relationship_type": "fits"},
-                "_provenance": {"source_ref": "group:GRP-1"},
+                "provenance": {"source_ref": "group:GRP-1"},
+                "assertion": {"review": {"status": "approved", "source": "group"}},
                 "group": {"group_id": "GRP-1"},
                 "resolution": {"resolution_id": "RES-1"},
                 "source_workflow_receipt_id": "RCP-1",
@@ -592,6 +593,7 @@ def test_get_relationship_lineage_uses_expected_route():
     )
 
     assert result.provenance == {"source_ref": "group:GRP-1"}
+    assert result.assertion == {"review": {"status": "approved", "source": "group"}}
     assert result.group == {"group_id": "GRP-1"}
     assert "relationships/lineage" in captured["path"]
     assert "edge_key=7" in captured["path"]

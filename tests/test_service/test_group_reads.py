@@ -9,7 +9,8 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import GroupNotFoundError
-from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.service import (
@@ -168,8 +169,12 @@ class TestGetGroup:
                 properties={
                     "verified": False,
                     "source": "catalog",
-                    "review_status": "pending_review",
                 },
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(status="pending")
+                    )
+                ),
             )
         )
         instance.save_graph(graph)
@@ -186,7 +191,7 @@ class TestGetGroup:
         assert review.proposed_tuple["from_id"] == "BP-1"
         assert review.current_edge_count == 1
         assert review.current_edge_key is not None
-        assert review.current_review_status == "pending_review"
+        assert review.current_review_status == "pending"
         assert review.current_properties is not None
         assert review.current_properties["source"] == "catalog"
         assert review.property_delta.changed == ["source", "verified"]

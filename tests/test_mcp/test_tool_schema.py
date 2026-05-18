@@ -216,6 +216,7 @@ class TestOutputSchema:
                     "entity_type",
                     "entity_id",
                     "properties",
+                    "metadata",
                     "neighbors",
                     "total_neighbors",
                 },
@@ -338,7 +339,10 @@ class TestOutputSchema:
             ("cruxible_create_snapshot", {"snapshot"}),
             ("cruxible_list_snapshots", {"snapshots"}),
             ("cruxible_clone_snapshot", {"instance_id", "snapshot"}),
-            ("cruxible_get_entity", {"found", "entity_type", "entity_id", "properties"}),
+            (
+                "cruxible_get_entity",
+                {"found", "entity_type", "entity_id", "properties", "metadata"},
+            ),
             (
                 "cruxible_get_relationship",
                 {
@@ -350,6 +354,7 @@ class TestOutputSchema:
                     "to_id",
                     "edge_key",
                     "properties",
+                    "metadata",
                 },
             ),
         ],

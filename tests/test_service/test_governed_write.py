@@ -6,7 +6,6 @@ import pytest
 
 from cruxible_core.errors import ReceiptNotFoundError, RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackBatchItem
-from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     FeedbackItemInput,
@@ -66,15 +65,11 @@ def test_service_feedback_batch_applies_atomically(populated_instance):
     approved = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
     rejected = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-CIVIC-EX", "fits")
     assert approved is not None
-    assert approved.properties["review_status"] == "human_approved"
-    approved_state = load_assertion_state(approved.properties)
-    assert approved_state.review.status == "approved"
-    assert approved_state.review.source == "human"
+    assert approved.metadata.assertion.review.status == "approved"
+    assert approved.metadata.assertion.review.source == "human"
     assert rejected is not None
-    assert rejected.properties["review_status"] == "human_rejected"
-    rejected_state = load_assertion_state(rejected.properties)
-    assert rejected_state.review.status == "rejected"
-    assert rejected_state.review.source == "human"
+    assert rejected.metadata.assertion.review.status == "rejected"
+    assert rejected.metadata.assertion.review.source == "human"
 
     feedback_store = populated_instance.get_feedback_store()
     try:

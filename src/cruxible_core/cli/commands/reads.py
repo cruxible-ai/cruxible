@@ -898,6 +898,7 @@ def inspect_entity_cmd(
             entity_type=result.entity_type,
             entity_id=result.entity_id,
             properties=result.properties,
+            metadata=result.metadata,
             neighbors=[],
             total_neighbors=result.total_neighbors,
         )
@@ -907,6 +908,7 @@ def inspect_entity_cmd(
                 "relationship_type": neighbor.relationship_type,
                 "edge_key": neighbor.edge_key,
                 "properties": neighbor.properties,
+                "metadata": neighbor.metadata,
                 "entity": neighbor.entity,
             }
             for neighbor in result.neighbors
@@ -930,6 +932,7 @@ def inspect_entity_cmd(
                 "relationship_type": neighbor.relationship_type,
                 "edge_key": neighbor.edge_key,
                 "properties": neighbor.properties,
+                "metadata": neighbor.metadata,
                 "entity": neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
             }
             for neighbor in inspect_result.neighbors
@@ -946,6 +949,7 @@ def inspect_entity_cmd(
             "entity_type": inspect_result.entity_type,
             "entity_id": inspect_result.entity_id,
             "properties": inspect_result.properties,
+            "metadata": inspect_result.metadata,
             "neighbors": neighbor_rows,
             "total_neighbors": inspect_result.total_neighbors,
         })
@@ -960,6 +964,7 @@ def inspect_entity_cmd(
                     entity_type=inspect_result.entity_type,
                     entity_id=inspect_result.entity_id,
                     properties=inspect_result.properties,
+                    metadata=inspect_result.metadata,
                 )
             ],
             inspect_result.entity_type,
@@ -1035,7 +1040,8 @@ def inspect_relationship_lineage_cmd(
                 if result.relationship is not None
                 else None
             ),
-            "_provenance": result.provenance,
+            "provenance": result.provenance,
+            "assertion": result.assertion,
             "group": result.group.model_dump(mode="python") if result.group is not None else None,
             "resolution": (
                 result.resolution.model_dump(mode="python")
@@ -1074,6 +1080,7 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
             entity_type=result.entity_type,
             entity_id=result.entity_id,
             properties=result.properties,
+            metadata=result.metadata,
         )
     else:
         if result is None:
@@ -1088,6 +1095,7 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
             "entity_type": entity.entity_type,
             "entity_id": entity.entity_id,
             "properties": dict(entity.properties),
+            "metadata": dict(entity.metadata),
         })
         return
     console.print(entities_table([entity], entity_type))

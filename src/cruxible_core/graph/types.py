@@ -12,28 +12,19 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from cruxible_core.graph.assertion_state import (
-    ASSERTION_PROPERTY,
-    LEGACY_REVIEW_STATUS_PROPERTY,
-    RelationshipAssertionState,
+    RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
-    dump_assertion_state,
-    load_assertion_state,
+    dump_assertion,
     relationship_is_live,
-    review_state_to_legacy_review_status,
 )
 from cruxible_core.graph.provenance import (
-    PROVENANCE_PROPERTY,
     RelationshipProvenance,
     dump_provenance,
     load_provenance,
     make_provenance,
     provenance_group_id,
     stamp_provenance_modified,
-)
-from cruxible_core.graph.system_metadata import (
-    RelationshipSystemMetadata,
-    load_relationship_system_metadata,
 )
 
 
@@ -59,10 +50,18 @@ class EntityInstance(BaseModel):
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def node_id(self) -> str:
         """Return the unique node ID for this entity."""
         return make_node_id(self.entity_type, self.entity_id)
+
+
+class RelationshipMetadata(BaseModel):
+    """Cruxible-owned metadata for a relationship instance."""
+
+    provenance: RelationshipProvenance | None = None
+    assertion: RelationshipAssertion = Field(default_factory=RelationshipAssertion)
 
 
 class RelationshipInstance(BaseModel):
@@ -84,6 +83,7 @@ class RelationshipInstance(BaseModel):
     to_id: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: RelationshipMetadata = Field(default_factory=RelationshipMetadata)
 
     def from_node_id(self) -> str:
         """Return the source node ID."""
@@ -94,42 +94,21 @@ class RelationshipInstance(BaseModel):
         return make_node_id(self.to_type, self.to_id)
 
 
-REJECTED_STATUSES: frozenset[str] = frozenset({"human_rejected", "agent_rejected"})
-"""Edge review_status values that indicate rejection."""
-
-SYSTEM_OWNED_PROPERTIES: frozenset[str] = frozenset(
-    {PROVENANCE_PROPERTY, ASSERTION_PROPERTY, LEGACY_REVIEW_STATUS_PROPERTY}
-)
-"""Graph property keys written by Cruxible system paths, not user/domain writes."""
-
-USER_STRIPPED_PROPERTIES: frozenset[str] = SYSTEM_OWNED_PROPERTIES
-"""System-owned keys stripped from user/domain write payloads."""
-
-
 __all__ = [
-    "ASSERTION_PROPERTY",
     "EntityInstance",
-    "LEGACY_REVIEW_STATUS_PROPERTY",
-    "PROVENANCE_PROPERTY",
     "RelationshipInstance",
-    "RelationshipAssertionState",
+    "RelationshipAssertion",
     "RelationshipLifecycleState",
+    "RelationshipMetadata",
     "RelationshipProvenance",
     "RelationshipReviewState",
-    "RelationshipSystemMetadata",
-    "REJECTED_STATUSES",
-    "SYSTEM_OWNED_PROPERTIES",
-    "USER_STRIPPED_PROPERTIES",
-    "dump_assertion_state",
+    "dump_assertion",
     "dump_provenance",
-    "load_assertion_state",
-    "load_relationship_system_metadata",
     "load_provenance",
     "make_node_id",
     "make_provenance",
     "provenance_group_id",
     "relationship_is_live",
-    "review_state_to_legacy_review_status",
     "split_node_id",
     "stamp_provenance_modified",
 ]

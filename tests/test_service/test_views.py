@@ -76,6 +76,8 @@ def test_service_export_edges_builds_csv_ready_rows(
         "relationship_type",
         "edge_key",
         "properties_json",
+        "metadata_json",
     ]
     assert all(row["relationship_type"] == "fits" for row in result.rows)
     assert all("properties_json" in row for row in result.rows)
+    assert all("metadata_json" in row for row in result.rows)

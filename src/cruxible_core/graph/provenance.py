@@ -15,11 +15,9 @@ from pydantic import (
 
 from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
-PROVENANCE_PROPERTY = "_provenance"
-
 
 class RelationshipProvenance(BaseModel):
-    """System-owned provenance stored under relationship ``_provenance``."""
+    """System-owned provenance for a relationship."""
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
 
@@ -49,7 +47,7 @@ def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
 
 
 def load_provenance(value: Any) -> RelationshipProvenance | None:
-    """Parse a stored ``_provenance`` value, returning None when unusable."""
+    """Parse stored relationship provenance, returning None when unusable."""
     if isinstance(value, RelationshipProvenance):
         return value
     if not isinstance(value, dict):
@@ -61,7 +59,7 @@ def load_provenance(value: Any) -> RelationshipProvenance | None:
 
 
 def dump_provenance(provenance: RelationshipProvenance) -> dict[str, Any]:
-    """Return the JSON-ready dict shape stored in graph properties."""
+    """Return the JSON-ready relationship provenance shape."""
     return provenance.model_dump(mode="json", exclude_none=True)
 
 
@@ -87,7 +85,6 @@ def provenance_group_id(provenance: RelationshipProvenance) -> str | None:
 
 
 __all__ = [
-    "PROVENANCE_PROPERTY",
     "RelationshipProvenance",
     "dump_provenance",
     "load_provenance",

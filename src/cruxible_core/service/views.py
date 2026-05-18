@@ -16,7 +16,6 @@ from cruxible_core.canonical_views import (
     canonical_view_payload,
 )
 from cruxible_core.errors import ConfigError
-from cruxible_core.graph.types import load_assertion_state
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt import serializer
 from cruxible_core.service.groups import service_list_groups, service_list_resolutions
@@ -185,12 +184,19 @@ def service_export_edges(
         "relationship_type",
         "edge_key",
         "properties_json",
+        "metadata_json",
     ]
     graph = instance.load_graph()
     rows: list[dict[str, object]] = []
     for edge in graph.iter_edges(relationship_type=relationship):
         if exclude_rejected:
-            if load_assertion_state(edge["properties"]).review.status == "rejected":
+            if (
+                edge.get("metadata", {})
+                .get("assertion", {})
+                .get("review", {})
+                .get("status")
+                == "rejected"
+            ):
                 continue
         rows.append({
             "from_type": edge["from_type"],
@@ -200,5 +206,6 @@ def service_export_edges(
             "relationship_type": edge["relationship_type"],
             "edge_key": edge["edge_key"],
             "properties_json": json.dumps(edge["properties"], sort_keys=True),
+            "metadata_json": json.dumps(edge.get("metadata", {}), sort_keys=True),
         })
     return ExportEdgesResult(fieldnames=fieldnames, rows=rows, count=len(rows))

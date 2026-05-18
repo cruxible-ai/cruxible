@@ -9,7 +9,6 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, GroupNotFoundError
-from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -177,13 +176,13 @@ class TestApproveBasic:
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None
-        assert rel.properties.get("_provenance", {}).get("source") == "group_resolve"
-        assert rel.properties.get("_provenance", {}).get("source_ref") == f"group:{group_id}"
-        state = load_assertion_state(rel.properties)
-        assert state.review.status == "approved"
-        assert state.review.source == "group"
-        assert state.lifecycle.status == "active"
-        assert rel.properties.get("review_status") == "agent_approved"
+        assert rel.properties == {"verified": False}
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.source == "group_resolve"
+        assert rel.metadata.provenance.source_ref == f"group:{group_id}"
+        assert rel.metadata.assertion.review.status == "approved"
+        assert rel.metadata.assertion.review.source == "group"
+        assert rel.metadata.assertion.lifecycle.status == "active"
 
     def test_relationship_lineage_links_to_group_resolution_and_traces(
         self,
@@ -217,6 +216,10 @@ class TestApproveBasic:
         assert lineage.found is True
         assert lineage.provenance is not None
         assert lineage.provenance["source_ref"] == f"group:{proposed.group_id}"
+        assert lineage.assertion is not None
+        assert lineage.assertion["review"]["status"] == "approved"
+        assert lineage.assertion["review"]["source"] == "group"
+        assert lineage.assertion["lifecycle"]["status"] == "active"
         assert lineage.group is not None
         assert lineage.group.group_id == proposed.group_id
         assert lineage.resolution is not None

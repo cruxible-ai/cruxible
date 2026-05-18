@@ -370,6 +370,50 @@ class TestStatsInspectReload:
         assert "Part:BP-1001" in result.output
         assert "fits" in result.output
 
+    def test_inspect_entity_json_includes_metadata(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        from cruxible_core.graph.provenance import RelationshipProvenance
+        from cruxible_core.graph.types import RelationshipMetadata
+
+        graph = populated_instance.load_graph()
+        graph.update_entity_metadata("Vehicle", "V-2024-CIVIC-EX", {"source": "fixture"})
+        graph.update_relationship_state(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            metadata=RelationshipMetadata(
+                provenance=RelationshipProvenance(source="ingest", source_ref="fixture")
+            ),
+        )
+        populated_instance.save_graph(graph)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "inspect",
+                "entity",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["metadata"] == {"source": "fixture"}
+        assert any(
+            neighbor["metadata"].get("provenance", {}).get("source") == "ingest"
+            for neighbor in payload["neighbors"]
+        )
+
     def test_inspect_trace_outputs_payload(
         self,
         runner: CliRunner,
@@ -1554,6 +1598,7 @@ class TestExportEdges:
             "relationship_type",
             "edge_key",
             "properties_json",
+            "metadata_json",
         }
         assert set(reader.fieldnames) == expected_fields
 
@@ -1666,11 +1711,11 @@ class TestExportEdges:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """_provenance in edge properties survives in properties_json."""
-        from cruxible_core.graph.types import RelationshipInstance
+        """Relationship metadata provenance survives in metadata_json."""
+        from cruxible_core.graph.provenance import RelationshipProvenance
+        from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 
         graph = populated_instance.load_graph()
-        prov = {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
@@ -1678,7 +1723,13 @@ class TestExportEdges:
                 from_id="BP-1002",
                 to_type="Vehicle",
                 to_id="V-2024-ACCORD-SPORT",
-                properties={"verified": True, "_provenance": prov},
+                properties={"verified": True},
+                metadata=RelationshipMetadata(
+                    provenance=RelationshipProvenance(
+                        source="ingest",
+                        created_at="2026-01-01T00:00:00+00:00",
+                    )
+                ),
             )
         )
         populated_instance.save_graph(graph)
@@ -1696,27 +1747,40 @@ class TestExportEdges:
 
         with out.open() as f:
             for row in csv_mod.DictReader(f):
-                props = json.loads(row["properties_json"])
-                if props.get("_provenance"):
-                    assert props["_provenance"] == prov
+                metadata = json.loads(row["metadata_json"])
+                if metadata.get("provenance"):
+                    assert metadata["provenance"]["source"] == "ingest"
+                    assert (
+                        metadata["provenance"]["created_at"]
+                        == "2026-01-01T00:00:00+00:00"
+                    )
                     return
-        pytest.fail("No edge with _provenance found in exported CSV")
+        pytest.fail("No edge with provenance metadata found in exported CSV")
 
     def test_exclude_rejected(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """--exclude-rejected omits edges with rejected review_status."""
+        """--exclude-rejected omits edges with rejected assertion metadata."""
+        from cruxible_core.graph.assertion_state import (
+            RelationshipAssertion,
+            RelationshipReviewState,
+        )
+        from cruxible_core.graph.types import RelationshipMetadata
+
         graph = populated_instance.load_graph()
-        # Mark one edge as rejected
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC-EX",
             "fits",
-            {"review_status": "human_rejected"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="rejected", source="human")
+                )
+            ),
         )
         populated_instance.save_graph(graph)
         populated_instance.invalidate_graph_cache()
@@ -1745,23 +1809,33 @@ class TestExportEdges:
 
         with out_filtered.open() as f:
             for row in csv_mod.DictReader(f):
-                props = json.loads(row["properties_json"])
-                assert props.get("review_status") != "human_rejected"
+                metadata = json.loads(row["metadata_json"])
+                assert metadata["assertion"]["review"]["status"] != "rejected"
 
     def test_exclude_rejected_ai(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """--exclude-rejected also omits agent_rejected edges."""
+        """--exclude-rejected also omits agent-rejected edges."""
+        from cruxible_core.graph.assertion_state import (
+            RelationshipAssertion,
+            RelationshipReviewState,
+        )
+        from cruxible_core.graph.types import RelationshipMetadata
+
         graph = populated_instance.load_graph()
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC-EX",
             "fits",
-            {"review_status": "agent_rejected"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="rejected", source="agent")
+                )
+            ),
         )
         populated_instance.save_graph(graph)
         populated_instance.invalidate_graph_cache()
@@ -1956,7 +2030,7 @@ class TestFeedbackValidation:
             "feedback",
         )
 
-    def test_feedback_strips_provenance(
+    def test_feedback_rejects_metadata_key(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -2260,7 +2334,9 @@ class TestGroupGetCLI:
         payload = json.loads(result.output)
         assert payload["found"] is True
         assert payload["group"]["group_id"] == group_id
-        assert payload["_provenance"]["source_ref"] == f"group:{group_id}"
+        assert payload["provenance"]["source_ref"] == f"group:{group_id}"
+        assert payload["assertion"]["review"]["status"] == "approved"
+        assert payload["assertion"]["review"]["source"] == "group"
 
 
 class TestGroupListCLI:

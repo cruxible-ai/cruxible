@@ -32,6 +32,7 @@ def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
         entity_type=value.entity_type,
         entity_id=value.entity_id,
         properties=value.properties,
+        metadata=value.metadata,
     )
 
 
@@ -108,6 +109,7 @@ def service_add_entities(
                     ent.entity_type,
                     ent.entity_id,
                     ent.properties,
+                    metadata=ent.metadata,
                 )
             except DataValidationError as exc:
                 errors.append(f"Entity {i}: {exc}")
@@ -182,7 +184,7 @@ def service_add_relationships(
 
     Validates all relationships first, then applies atomically.
     New edges get provenance stamped. Updated edges merge domain properties and
-    preserve existing system review metadata.
+    preserve existing relationship metadata.
     Raises DataValidationError on duplicates within the batch or schema violations.
     """
     check_upstream_type_ownership(

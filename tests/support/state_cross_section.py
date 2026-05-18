@@ -705,6 +705,7 @@ def _relationship_report(
         "to_type": relationship.get("to_type"),
         "to_id": relationship.get("to_id"),
         "properties": relationship.get("properties", {}),
+        "metadata": relationship.get("metadata", {}),
     }
     if include_edge_key:
         report["edge_key"] = relationship.get("edge_key")

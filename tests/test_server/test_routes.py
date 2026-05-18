@@ -424,8 +424,10 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert inspect.status_code == 200
     inspect_payload = inspect.json()
     assert inspect_payload["found"] is True
+    assert inspect_payload["metadata"] == {}
     assert inspect_payload["total_neighbors"] == 2
     assert inspect_payload["neighbors"][0]["relationship_type"] == "fits"
+    assert inspect_payload["neighbors"][0]["metadata"]["provenance"]["source"] == "http_api"
 
     ontology = app_client.get(
         f"/api/v1/{instance_id}/inspect/ontology",
@@ -623,12 +625,16 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
                         "make": "Honda",
                         "model": "Civic",
                     },
+                    "metadata": {"source": "route-test"},
                 }
             ]
         },
     )
     assert response.status_code == 200
     assert response.json()["entities_added"] == 1
+    lookup = app_client.get(f"/api/v1/{instance_id}/entities/Vehicle/V-1")
+    assert lookup.status_code == 200
+    assert lookup.json()["metadata"] == {"source": "route-test"}
 
 
 def test_world_publish_overlay_and_status_routes(
@@ -946,9 +952,9 @@ def test_add_relationship_stamps_http_api_provenance(
         },
     )
     assert lookup.status_code == 200
-    props = lookup.json()["properties"]
-    assert props["_provenance"]["source"] == "http_api"
-    assert props["_provenance"]["source_ref"] == "cruxible_add_relationship"
+    metadata = lookup.json()["metadata"]
+    assert metadata["provenance"]["source"] == "http_api"
+    assert metadata["provenance"]["source_ref"] == "cruxible_add_relationship"
 
 
 def test_feedback_batch_route(
@@ -1124,9 +1130,9 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert list_edges.status_code == 200
     edges = list_edges.json()["items"]
     assert len(edges) == 2
-    assert all(edge["properties"]["_provenance"]["source"] == "group_resolve" for edge in edges)
+    assert all(edge["metadata"]["provenance"]["source"] == "group_resolve" for edge in edges)
     assert all(
-        edge["properties"]["_provenance"]["source_ref"] == f"group:{group_id}" for edge in edges
+        edge["metadata"]["provenance"]["source_ref"] == f"group:{group_id}" for edge in edges
     )
     lineage = app_client.get(
         f"/api/v1/{instance_id}/relationships/lineage",
@@ -1141,6 +1147,7 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert lineage.status_code == 200
     lineage_payload = lineage.json()
     assert lineage_payload["group"]["group_id"] == group_id
+    assert lineage_payload["assertion"]["review"]["status"] == "approved"
     assert lineage_payload["source_trace_ids"]
 
     snapshot = app_client.post(f"/api/v1/{instance_id}/snapshots", json={"label": "baseline"})

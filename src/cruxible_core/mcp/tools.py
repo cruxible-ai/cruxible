@@ -574,7 +574,7 @@ def register_tools(server: FastMCP) -> list[str]:
         Each relationship needs: from_type, from_id, relationship, to_type, to_id.
         Optional properties must be declared by the relationship schema.
         Entities must already exist. Re-submitting an existing edge merges
-        declared domain properties while preserving system review metadata.
+        declared domain properties while preserving relationship metadata.
 
         For governed judgment relationships, prefer candidate group proposal
         flows so Cruxible can preserve tri-state signal-source evidence
@@ -593,8 +593,8 @@ def register_tools(server: FastMCP) -> list[str]:
         """Add or update entities in the graph (upsert).
 
         Each entity needs: entity_type, entity_id.
-        Optional properties dict. Re-submitting an existing entity replaces
-        all its properties (full overwrite, not merge).
+        Optional properties and metadata dicts. Re-submitting an existing
+        entity merges properties and metadata.
         Use for entities from free text or external sources when CSV ingestion
         is not available.
         """
@@ -994,7 +994,7 @@ def register_tools(server: FastMCP) -> list[str]:
         entity_type: str,
         entity_id: str,
     ) -> contracts.GetEntityResult:
-        """Look up a specific entity by type and ID. Returns its properties."""
+        """Look up a specific entity by type and ID. Returns properties and metadata."""
         return handlers.handle_get_entity(instance_id, entity_type, entity_id)
 
     @_tool

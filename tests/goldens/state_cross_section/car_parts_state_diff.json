@@ -9,8 +9,8 @@
         {
           "from_id": "BP-1234",
           "from_type": "Part",
-          "properties": {
-            "_assertion": {
+          "metadata": {
+            "assertion": {
               "lifecycle": {
                 "status": "active"
               },
@@ -19,11 +19,13 @@
                 "status": "unreviewed"
               }
             },
-            "_provenance": {
+            "provenance": {
               "created_at": "<TIMESTAMP>",
               "source": "fixture",
               "source_ref": "seed"
-            },
+            }
+          },
+          "properties": {
             "source": "fixture",
             "verified": true
           },

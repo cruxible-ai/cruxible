@@ -18,25 +18,18 @@ from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.assertion_state import (
-    ASSERTION_PROPERTY,
-    LEGACY_REVIEW_STATUS_PROPERTY,
-    RelationshipAssertionState,
+    RelationshipAssertion,
     RelationshipReviewState,
-    dump_assertion_state,
-    load_assertion_state,
-    review_state_to_legacy_review_status,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
-    PROVENANCE_PROPERTY,
-    dump_provenance,
-    load_provenance,
     make_provenance,
     stamp_provenance_modified,
 )
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
+    RelationshipMetadata,
 )
 
 
@@ -62,6 +55,8 @@ def validate_entity(
     entity_type: str,
     entity_id: str,
     properties: dict[str, Any] | None = None,
+    *,
+    metadata: dict[str, Any] | None = None,
 ) -> ValidatedEntity:
     """Validate an entity against config and graph state.
 
@@ -81,7 +76,6 @@ def validate_entity(
         require_required=not is_update,
         primary_key_name=entity_schema.get_primary_key(),
         entity_id=entity_id,
-        strip_system_properties=True,
     )
     if validation.errors:
         raise DataValidationError(
@@ -92,6 +86,7 @@ def validate_entity(
         entity_type=entity_type,
         entity_id=entity_id,
         properties=validation.properties,
+        metadata=dict(metadata or {}),
     )
     return ValidatedEntity(entity=entity, is_update=is_update)
 
@@ -108,8 +103,7 @@ def validate_relationship(
 ) -> ValidatedRelationship:
     """Validate a relationship against config and graph state.
 
-    Handles property schema checks, system metadata stripping, direction
-    checks, and endpoint existence checks.
+    Handles property schema checks, direction checks, and endpoint existence checks.
 
     Raises DataValidationError on failure.
     """
@@ -151,7 +145,6 @@ def validate_relationship(
         rel_schema.properties,
         validation_source,
         require_required=True,
-        strip_system_properties=True,
     )
     if validation.errors:
         raise DataValidationError(
@@ -178,26 +171,22 @@ def apply_entity(graph: EntityGraph, validated: ValidatedEntity) -> None:
             validated.entity.entity_id,
             dict(validated.entity.properties),
         )
+        if validated.entity.metadata:
+            graph.update_entity_metadata(
+                validated.entity.entity_type,
+                validated.entity.entity_id,
+                dict(validated.entity.metadata),
+            )
     else:
         graph.add_entity(validated.entity)
 
 
-def _initial_assertion_state(source: str) -> RelationshipAssertionState:
+def _initial_assertion(source: str) -> RelationshipAssertion:
     if source == "group_resolve":
-        return RelationshipAssertionState(
+        return RelationshipAssertion(
             review=RelationshipReviewState(status="approved", source="group")
         )
-    return RelationshipAssertionState()
-
-
-def _set_assertion_properties(
-    properties: dict[str, Any],
-    state: RelationshipAssertionState,
-) -> None:
-    properties[ASSERTION_PROPERTY] = dump_assertion_state(state)
-    legacy_review_status = review_state_to_legacy_review_status(state.review)
-    if legacy_review_status is not None:
-        properties[LEGACY_REVIEW_STATUS_PROPERTY] = legacy_review_status
+    return RelationshipAssertion()
 
 
 def apply_relationship(
@@ -208,9 +197,9 @@ def apply_relationship(
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
-    New edges get provenance stamped via make_provenance(source, source_ref)
-    and a default assertion state. Updated edges preserve existing assertion
-    state and provenance with last_modified_at/last_modified_by.
+    New edges get metadata provenance stamped via make_provenance(source, source_ref)
+    and a default assertion. Updated edges preserve existing metadata while stamping
+    provenance modification fields when provenance exists.
     """
     rel = validated.relationship
     if validated.is_update:
@@ -223,26 +212,27 @@ def apply_relationship(
         )
         replace_props = dict(rel.properties)
         if existing_rel:
-            old_provenance = existing_rel.properties.get(PROVENANCE_PROPERTY)
-            provenance = load_provenance(old_provenance)
+            metadata = existing_rel.metadata
+            provenance = metadata.provenance
             if provenance is not None:
-                replace_props[PROVENANCE_PROPERTY] = dump_provenance(
-                    stamp_provenance_modified(provenance, source)
+                metadata = metadata.model_copy(
+                    update={
+                        "provenance": stamp_provenance_modified(provenance, source),
+                    }
                 )
-
-            assertion = load_assertion_state(existing_rel.properties)
-            _set_assertion_properties(replace_props, assertion)
-        graph.replace_edge_properties(
+            rel.metadata = metadata
+        graph.replace_relationship_state(
             rel.from_type,
             rel.from_id,
             rel.to_type,
             rel.to_id,
             rel.relationship_type,
-            replace_props,
+            properties=replace_props,
+            metadata=rel.metadata,
         )
     else:
-        rel.properties[PROVENANCE_PROPERTY] = dump_provenance(
-            make_provenance(source, source_ref)
+        rel.metadata = RelationshipMetadata(
+            provenance=make_provenance(source, source_ref),
+            assertion=_initial_assertion(source),
         )
-        _set_assertion_properties(rel.properties, _initial_assertion_state(source))
         graph.add_relationship(rel)

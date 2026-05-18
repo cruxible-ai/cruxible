@@ -22,7 +22,7 @@ def test_make_provenance_returns_model_and_dump_returns_dict() -> None:
     assert isinstance(dumped["created_at"], str)
 
 
-def test_load_provenance_accepts_partial_legacy_dict() -> None:
+def test_load_provenance_accepts_partial_dict() -> None:
     provenance = load_provenance({"source_ref": "group:GRP-test"})
 
     assert provenance is not None

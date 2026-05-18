@@ -9,7 +9,8 @@ from pathlib import Path
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_config_files
 from cruxible_core.config.loader import save_config
-from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.kits import load_kit_provider_module, write_materialized_kit_metadata
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
@@ -600,7 +601,11 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
             from_id=asset_id,
             to_type="Vulnerability",
             to_id=cve_id,
-            properties={"review_status": "human_approved"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="approved", source="human")
+                )
+            ),
         )
     )
     instance.save_graph(graph)

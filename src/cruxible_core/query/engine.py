@@ -228,15 +228,15 @@ def _execute_step(
 
         for rel_type, direction in resolved_refs:
             rel_policies = step_policies.get(rel_type, [])
-            neighbors = graph.get_neighbors_with_edge_refs(
+            neighbors = graph.get_neighbors_with_relationship_refs(
                 entity.entity_type,
                 entity.entity_id,
                 relationship_type=rel_type,
                 direction=direction,
             )
 
-            for neighbor, edge_props, edge_key in neighbors:
-                if not relationship_is_live(edge_props):
+            for neighbor, edge_props, edge_metadata, edge_key in neighbors:
+                if not relationship_is_live(edge_metadata):
                     continue
 
                 nid = neighbor.node_id()

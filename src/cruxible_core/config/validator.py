@@ -13,7 +13,6 @@ from typing import Any
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import BUILTIN_CONTRACTS, ContractSchema, CoreConfig
 from cruxible_core.errors import ConfigError
-from cruxible_core.graph.types import SYSTEM_OWNED_PROPERTIES
 from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN
 
 _TRAVERSAL_CONSTRAINT_RE = re.compile(
@@ -125,9 +124,8 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
                     _flip_direction(step.direction) if is_reverse else step.direction
                 )
                 if step.filter:
-                    allowed_edge_props = set(rel.properties) | SYSTEM_OWNED_PROPERTIES
                     for prop_name in step.filter:
-                        if prop_name not in allowed_edge_props:
+                        if prop_name not in rel.properties:
                             errors.append(
                                 f"Named query '{query_name}' step {i}: filter references "
                                 f"unknown property '{prop_name}' on relationship '{rel.name}'"

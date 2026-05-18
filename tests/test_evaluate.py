@@ -16,11 +16,27 @@ from cruxible_core.config.schema import (
     SignalPolicySchema,
     UniquenessQualityCheck,
 )
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.provenance import RelationshipProvenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.query.evaluate import evaluate_graph
+
+
+def _review_metadata(status: str, source: str = "human") -> RelationshipMetadata:
+    return RelationshipMetadata(
+        assertion=RelationshipAssertion(
+            review=RelationshipReviewState(status=status, source=source)
+        )
+    )
+
+
+def _group_metadata(group_id: str = "GRP-test") -> RelationshipMetadata:
+    return RelationshipMetadata(
+        provenance=RelationshipProvenance(source_ref=f"group:{group_id}")
+    )
 
 
 def _minimal_config(**overrides) -> CoreConfig:
@@ -421,7 +437,7 @@ class TestGovernedSupportRelationships:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"review_status": "pending_review"},
+                metadata=_review_metadata("pending", source="system"),
             )
         )
         report = evaluate_graph(config, graph)
@@ -442,7 +458,7 @@ class TestGovernedSupportRelationships:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"_provenance": {"source_ref": "group:GRP-test"}},
+                metadata=_group_metadata(),
             )
         )
         store = _store_with_member(
@@ -466,7 +482,7 @@ class TestGovernedSupportRelationships:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"_provenance": {"source_ref": "group:GRP-test"}},
+                metadata=_group_metadata(),
             )
         )
         store = _store_with_member(
@@ -492,7 +508,7 @@ class TestGovernedSupportRelationships:
                 from_id="P1",
                 to_type="Part",
                 to_id="P2",
-                properties={"_provenance": {"source_ref": "group:GRP-test"}},
+                metadata=_group_metadata(),
             )
         )
         store = _store_with_member(
@@ -1015,7 +1031,7 @@ class TestQualityChecks:
                 from_id="S1",
                 to_type="Officer",
                 to_id="O1",
-                properties={"review_status": "human_rejected"},
+                metadata=_review_metadata("rejected"),
             )
         )
         graph.add_relationship(
@@ -1069,7 +1085,7 @@ class TestQualityChecks:
                 from_id="O1",
                 to_type="Company",
                 to_id="C1",
-                properties={"review_status": "human_rejected"},
+                metadata=_review_metadata("rejected"),
             )
         )
         graph.add_relationship(
@@ -1123,7 +1139,7 @@ class TestQualityChecks:
                 from_id="O2",
                 to_type="Company",
                 to_id="C1",
-                properties={"review_status": "human_rejected"},
+                metadata=_review_metadata("rejected"),
             )
         )
 

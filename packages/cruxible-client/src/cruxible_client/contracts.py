@@ -48,6 +48,7 @@ class EntityInput(BaseModel):
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SignalBucketBasis(BaseModel):
@@ -247,6 +248,7 @@ class GetEntityResult(BaseModel):
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class GetRelationshipResult(BaseModel):
@@ -258,12 +260,14 @@ class GetRelationshipResult(BaseModel):
     to_id: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RelationshipLineageResult(BaseModel):
     found: bool
     relationship: dict[str, Any] | None = None
-    provenance: dict[str, Any] | None = Field(default=None, alias="_provenance")
+    provenance: dict[str, Any] | None = None
+    assertion: dict[str, Any] | None = None
     group: dict[str, Any] | None = None
     resolution: dict[str, Any] | None = None
     source_workflow_receipt_id: str | None = None
@@ -323,6 +327,7 @@ class InspectNeighborResult(BaseModel):
     relationship_type: str
     edge_key: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     entity: dict[str, Any]
 
 
@@ -331,6 +336,7 @@ class InspectEntityResult(BaseModel):
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     neighbors: list[InspectNeighborResult] = Field(default_factory=list)
     total_neighbors: int = 0
 

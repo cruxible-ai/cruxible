@@ -18,13 +18,21 @@ from typing import Any
 import networkx as nx
 
 from cruxible_core.graph.types import (
-    SYSTEM_OWNED_PROPERTIES,
     EntityInstance,
     RelationshipInstance,
+    RelationshipMetadata,
     make_node_id,
     relationship_is_live,
     split_node_id,
 )
+
+
+def _metadata_dict(metadata: RelationshipMetadata) -> dict[str, Any]:
+    return metadata.model_dump(mode="json", exclude_none=True)
+
+
+def _relationship_metadata(edge_data: dict[str, Any]) -> RelationshipMetadata:
+    return RelationshipMetadata.model_validate(edge_data.get("metadata") or {})
 
 
 class EntityGraph:
@@ -53,6 +61,7 @@ class EntityGraph:
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
+            metadata=dict(entity.metadata),
         )
         self._entities_by_type[entity.entity_type].add(node_id)
 
@@ -67,6 +76,7 @@ class EntityGraph:
             entity_type=node_data["entity_type"],
             entity_id=node_data["entity_id"],
             properties=node_data.get("properties", {}),
+            metadata=node_data.get("metadata", {}),
         )
 
     def has_entity(self, entity_type: str, entity_id: str) -> bool:
@@ -98,6 +108,7 @@ class EntityGraph:
                         entity_type=node_data["entity_type"],
                         entity_id=node_data["entity_id"],
                         properties=node_data.get("properties", {}),
+                        metadata=node_data.get("metadata", {}),
                     )
                 )
         return entities
@@ -120,6 +131,7 @@ class EntityGraph:
                     entity_type=data["entity_type"],
                     entity_id=data["entity_id"],
                     properties=data.get("properties", {}),
+                    metadata=data.get("metadata", {}),
                 )
 
     def is_isolated(self, entity_type: str, entity_id: str) -> bool:
@@ -151,6 +163,29 @@ class EntityGraph:
     # Relationship Operations
     # -------------------------------------------------------------------------
 
+    def _find_relationship_edge(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        edge_key: int | None = None,
+    ) -> tuple[Any, dict[str, Any]] | None:
+        """Return the matching graph edge key and data dict, if present."""
+        from_node = make_node_id(from_type, from_id)
+        to_node = make_node_id(to_type, to_id)
+        edge_dict = self._graph.get_edge_data(from_node, to_node)
+        if not edge_dict:
+            return None
+
+        for key, edge_data in edge_dict.items():
+            if edge_key is not None and key != edge_key:
+                continue
+            if edge_data.get("relationship_type") == relationship_type:
+                return key, edge_data
+        return None
+
     def add_relationship(self, rel: RelationshipInstance) -> None:
         """Add a relationship to the graph. Creates stub entities if needed."""
         from_node = rel.from_node_id()
@@ -162,6 +197,7 @@ class EntityGraph:
                 entity_type=rel.from_type,
                 entity_id=rel.from_id,
                 properties={},
+                metadata={},
             )
             self._entities_by_type[rel.from_type].add(from_node)
 
@@ -171,6 +207,7 @@ class EntityGraph:
                 entity_type=rel.to_type,
                 entity_id=rel.to_id,
                 properties={},
+                metadata={},
             )
             self._entities_by_type[rel.to_type].add(to_node)
 
@@ -181,6 +218,7 @@ class EntityGraph:
             key=edge_key,
             relationship_type=rel.relationship_type,
             properties=rel.properties,
+            metadata=_metadata_dict(rel.metadata),
         )
 
     def get_relationship(
@@ -193,27 +231,27 @@ class EntityGraph:
         edge_key: int | None = None,
     ) -> RelationshipInstance | None:
         """Get a specific relationship between two entities. Returns first match."""
-        from_node = make_node_id(from_type, from_id)
-        to_node = make_node_id(to_type, to_id)
-
-        edge_dict = self._graph.get_edge_data(from_node, to_node)
-        if not edge_dict:
+        found = self._find_relationship_edge(
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            relationship_type,
+            edge_key=edge_key,
+        )
+        if found is None:
             return None
-
-        for key, edge_data in edge_dict.items():
-            if edge_key is not None and key != edge_key:
-                continue
-            if edge_data.get("relationship_type") == relationship_type:
-                return RelationshipInstance(
-                    relationship_type=relationship_type,
-                    from_type=from_type,
-                    from_id=from_id,
-                    to_type=to_type,
-                    to_id=to_id,
-                    edge_key=key if isinstance(key, int) else None,
-                    properties=edge_data.get("properties", {}),
-                )
-        return None
+        key, edge_data = found
+        return RelationshipInstance(
+            relationship_type=relationship_type,
+            from_type=from_type,
+            from_id=from_id,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=key if isinstance(key, int) else None,
+            properties=edge_data.get("properties", {}),
+            metadata=_relationship_metadata(edge_data),
+        )
 
     def has_relationship(
         self,
@@ -248,36 +286,69 @@ class EntityGraph:
         for edge_data in edge_dict.values():
             if edge_data.get("relationship_type") != relationship_type:
                 continue
-            if relationship_is_live(edge_data.get("properties", {})):
+            if relationship_is_live(_relationship_metadata(edge_data)):
                 return True
         return False
 
-    def update_edge_properties(
+    def update_relationship_state(
         self,
         from_type: str,
         from_id: str,
         to_type: str,
         to_id: str,
         relationship_type: str,
-        updates: dict[str, Any],
+        *,
+        property_updates: dict[str, Any] | None = None,
+        metadata: RelationshipMetadata | None = None,
         edge_key: int | None = None,
     ) -> bool:
-        """Merge updates into an edge's properties. Returns True if found."""
-        from_node = make_node_id(from_type, from_id)
-        to_node = make_node_id(to_type, to_id)
-
-        edge_dict = self._graph.get_edge_data(from_node, to_node)
-        if not edge_dict:
+        """Merge domain property updates and/or replace metadata on a relationship."""
+        found = self._find_relationship_edge(
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            relationship_type,
+            edge_key=edge_key,
+        )
+        if found is None:
             return False
 
-        for key, edge_data in edge_dict.items():
-            if edge_key is not None and key != edge_key:
-                continue
-            if edge_data.get("relationship_type") == relationship_type:
-                edge_data.setdefault("properties", {}).update(updates)
-                return True
+        _key, edge_data = found
+        if property_updates is not None:
+            edge_data.setdefault("properties", {}).update(property_updates)
+        if metadata is not None:
+            edge_data["metadata"] = _metadata_dict(metadata)
+        return True
 
-        return False
+    def replace_relationship_state(
+        self,
+        from_type: str,
+        from_id: str,
+        to_type: str,
+        to_id: str,
+        relationship_type: str,
+        *,
+        properties: dict[str, Any],
+        metadata: RelationshipMetadata,
+        edge_key: int | None = None,
+    ) -> bool:
+        """Replace domain properties and metadata on a relationship."""
+        found = self._find_relationship_edge(
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            relationship_type,
+            edge_key=edge_key,
+        )
+        if found is None:
+            return False
+
+        _key, edge_data = found
+        edge_data["properties"] = dict(properties)
+        edge_data["metadata"] = _metadata_dict(metadata)
+        return True
 
     def update_entity_properties(
         self,
@@ -293,41 +364,19 @@ class EntityGraph:
         self._graph.nodes[node_id].setdefault("properties", {}).update(updates)
         return True
 
-    def replace_edge_properties(
+    def update_entity_metadata(
         self,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        relationship_type: str,
-        new_properties: dict[str, Any],
-        edge_key: int | None = None,
+        entity_type: str,
+        entity_id: str,
+        updates: dict[str, Any],
     ) -> bool:
-        """Replace all properties on an edge (full overwrite, not merge). Returns True if found."""
-        from_node = make_node_id(from_type, from_id)
-        to_node = make_node_id(to_type, to_id)
-
-        edge_dict = self._graph.get_edge_data(from_node, to_node)
-        if not edge_dict:
+        """Merge updates into an entity's metadata. Returns True if found."""
+        node_id = make_node_id(entity_type, entity_id)
+        if node_id not in self._graph:
             return False
 
-        for key, edge_data in edge_dict.items():
-            if edge_key is not None and key != edge_key:
-                continue
-            if edge_data.get("relationship_type") == relationship_type:
-                old_properties = edge_data.get("properties", {})
-                old_system_values = {
-                    system_key: old_properties[system_key]
-                    for system_key in SYSTEM_OWNED_PROPERTIES
-                    if old_properties.get(system_key) is not None
-                }
-                edge_data["properties"] = dict(new_properties)
-                for system_key, old_value in old_system_values.items():
-                    if system_key not in new_properties:
-                        edge_data["properties"][system_key] = old_value
-                return True
-
-        return False
+        self._graph.nodes[node_id].setdefault("metadata", {}).update(updates)
+        return True
 
     def remove_relationship(
         self,
@@ -341,19 +390,20 @@ class EntityGraph:
         """Remove a specific relationship. Returns True if found and removed."""
         from_node = make_node_id(from_type, from_id)
         to_node = make_node_id(to_type, to_id)
-
-        edge_dict = self._graph.get_edge_data(from_node, to_node)
-        if not edge_dict:
+        found = self._find_relationship_edge(
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            relationship_type,
+            edge_key=edge_key,
+        )
+        if found is None:
             return False
 
-        for key, edge_data in edge_dict.items():
-            if edge_key is not None and key != edge_key:
-                continue
-            if edge_data.get("relationship_type") == relationship_type:
-                self._graph.remove_edge(from_node, to_node, key=key)
-                return True
-
-        return False
+        key, _edge_data = found
+        self._graph.remove_edge(from_node, to_node, key=key)
+        return True
 
     def relationship_count_between(
         self,
@@ -441,6 +491,7 @@ class EntityGraph:
                                 entity_type=node_data["entity_type"],
                                 entity_id=node_data["entity_id"],
                                 properties=node_data.get("properties", {}),
+                                metadata=node_data.get("metadata", {}),
                             ),
                             depth + 1,
                         )
@@ -490,6 +541,7 @@ class EntityGraph:
                                 entity_type=node_data["entity_type"],
                                 entity_id=node_data["entity_id"],
                                 properties=node_data.get("properties", {}),
+                                metadata=node_data.get("metadata", {}),
                             ),
                             depth + 1,
                         )
@@ -522,6 +574,7 @@ class EntityGraph:
                     entity_type=self._graph.nodes[nid]["entity_type"],
                     entity_id=self._graph.nodes[nid]["entity_id"],
                     properties=self._graph.nodes[nid].get("properties", {}),
+                    metadata=self._graph.nodes[nid].get("metadata", {}),
                 )
                 for nid in path
             ]
@@ -535,10 +588,10 @@ class EntityGraph:
     def _iter_edges_raw(
         self,
         relationship_type: str | None = None,
-    ) -> Iterator[tuple[str, str, str, str, str, Any, dict[str, Any]]]:
+    ) -> Iterator[tuple[str, str, str, str, str, Any, dict[str, Any], RelationshipMetadata]]:
         """Low-level iterator yielding 7-tuples.
 
-        Yields (from_type, from_id, to_type, to_id, rel_type, edge_key, properties).
+        Yields (from_type, from_id, to_type, to_id, rel_type, edge_key, properties, metadata).
         """
         for u, v, key, data in self._graph.edges(keys=True, data=True):
             rel_type = data.get("relationship_type")
@@ -551,15 +604,24 @@ class EntityGraph:
                 continue
             from_type, from_id = split_node_id(u)
             to_type, to_id = split_node_id(v)
-            yield from_type, from_id, to_type, to_id, rel_type, key, data.get("properties", {})
+            yield (
+                from_type,
+                from_id,
+                to_type,
+                to_id,
+                rel_type,
+                key,
+                data.get("properties", {}),
+                _relationship_metadata(data),
+            )
 
     def iter_edges(
         self,
         relationship_type: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Iterate edges as dicts including edge_key and relationship_type."""
-        for from_type, from_id, to_type, to_id, rel_type, key, props in self._iter_edges_raw(
-            relationship_type
+        for from_type, from_id, to_type, to_id, rel_type, key, props, metadata in (
+            self._iter_edges_raw(relationship_type)
         ):
             yield {
                 "from_type": from_type,
@@ -569,17 +631,27 @@ class EntityGraph:
                 "relationship_type": rel_type,
                 "edge_key": key,
                 "properties": props,
+                "metadata": _metadata_dict(metadata),
             }
 
-    def iter_edge_data(
+    def iter_relationships(
         self,
         relationship_type: str | None = None,
-    ) -> Iterator[tuple[str, str, str, str, dict[str, Any]]]:
-        """Iterate edges yielding (from_type, from_id, to_type, to_id, properties)."""
-        for from_type, from_id, to_type, to_id, _rel, _key, props in self._iter_edges_raw(
-            relationship_type
+    ) -> Iterator[RelationshipInstance]:
+        """Iterate relationships as typed instances."""
+        for from_type, from_id, to_type, to_id, rel_type, key, props, metadata in (
+            self._iter_edges_raw(relationship_type)
         ):
-            yield from_type, from_id, to_type, to_id, props
+            yield RelationshipInstance(
+                relationship_type=rel_type,
+                from_type=from_type,
+                from_id=from_id,
+                to_type=to_type,
+                to_id=to_id,
+                edge_key=key if isinstance(key, int) else None,
+                properties=dict(props),
+                metadata=metadata,
+            )
 
     def list_edges(
         self,
@@ -588,19 +660,19 @@ class EntityGraph:
         """List edges as dicts. Materializes iter_edges()."""
         return list(self.iter_edges(relationship_type=relationship_type))
 
-    def get_neighbors_with_edge_refs(
+    def get_neighbors_with_relationship_refs(
         self,
         entity_type: str,
         entity_id: str,
         relationship_type: str | None = None,
         direction: str = "both",
-    ) -> list[tuple[EntityInstance, dict[str, Any], int]]:
-        """Get neighbors, edge properties, and edge key for connecting edges."""
+    ) -> list[tuple[EntityInstance, dict[str, Any], RelationshipMetadata, int]]:
+        """Get neighbors, edge properties, metadata, and edge key."""
         node_id = make_node_id(entity_type, entity_id)
         if node_id not in self._graph:
             return []
 
-        results: list[tuple[EntityInstance, dict[str, Any], int]] = []
+        results: list[tuple[EntityInstance, dict[str, Any], RelationshipMetadata, int]] = []
         seen_edges: set[tuple[str, str, str]] = set()
 
         if direction in ("outgoing", "both"):
@@ -616,7 +688,9 @@ class EntityGraph:
                 seen_edges.add(edge_id)
                 entity = self.get_entity(*split_node_id(target))
                 if entity:
-                    results.append((entity, data.get("properties", {}), key))
+                    results.append(
+                        (entity, data.get("properties", {}), _relationship_metadata(data), key)
+                    )
 
         if direction in ("incoming", "both"):
             for source, target, key, data in self._graph.in_edges(node_id, keys=True, data=True):
@@ -631,7 +705,9 @@ class EntityGraph:
                 seen_edges.add(edge_id)
                 entity = self.get_entity(*split_node_id(source))
                 if entity:
-                    results.append((entity, data.get("properties", {}), key))
+                    results.append(
+                        (entity, data.get("properties", {}), _relationship_metadata(data), key)
+                    )
 
         return results
 
@@ -667,6 +743,7 @@ class EntityGraph:
                             "relationship_type": rel_type,
                             "edge_key": key,
                             "properties": data.get("properties", {}),
+                            "metadata": _metadata_dict(_relationship_metadata(data)),
                             "entity": entity,
                         }
                     )
@@ -688,6 +765,7 @@ class EntityGraph:
                             "relationship_type": rel_type,
                             "edge_key": key,
                             "properties": data.get("properties", {}),
+                            "metadata": _metadata_dict(_relationship_metadata(data)),
                             "entity": entity,
                         }
                     )
@@ -794,6 +872,7 @@ class EntityGraph:
                     to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
                     properties=dict(edge["properties"]),
+                    metadata=RelationshipMetadata.model_validate(edge.get("metadata") or {}),
                 )
             )
 
@@ -816,6 +895,12 @@ class EntityGraph:
             # entity so the stub does not clobber populated upstream data.
             # Revisit when the extract-stub behavior is redesigned post-0.2.
             if merged.has_entity(entity.entity_type, entity.entity_id) and not entity.properties:
+                if entity.metadata:
+                    merged.update_entity_metadata(
+                        entity.entity_type,
+                        entity.entity_id,
+                        dict(entity.metadata),
+                    )
                 continue
             merged.add_entity(entity)
 
@@ -839,6 +924,7 @@ class EntityGraph:
                     to_id=edge["to_id"],
                     edge_key=edge["edge_key"],
                     properties=dict(edge["properties"]),
+                    metadata=RelationshipMetadata.model_validate(edge.get("metadata") or {}),
                 )
             )
 
@@ -868,10 +954,12 @@ class EntityGraph:
             entity_type = node_data.get("entity_type")
             if entity_type:
                 graph._entities_by_type[entity_type].add(node_id)
+            node_data.setdefault("metadata", {})
         # rebuild _edge_counter
         max_key = -1
-        for _, _, key in graph._graph.edges(keys=True):
+        for _, _, key, edge_data in graph._graph.edges(keys=True, data=True):
             if isinstance(key, int) and key > max_key:
                 max_key = key
+            edge_data.setdefault("metadata", _metadata_dict(RelationshipMetadata()))
         graph._edge_counter = count(max_key + 1)
         return graph

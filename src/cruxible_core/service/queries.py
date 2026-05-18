@@ -11,10 +11,9 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
     TraceNotFoundError,
 )
+from cruxible_core.graph.assertion_state import dump_assertion
 from cruxible_core.graph.provenance import (
-    PROVENANCE_PROPERTY,
     dump_provenance,
-    load_provenance,
     provenance_group_id,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -296,12 +295,14 @@ def service_inspect_entity(
         entity_type=result.entity_type,
         entity_id=result.entity_id,
         properties=result.properties,
+        metadata=result.metadata,
         neighbors=[
             InspectNeighborResult(
                 direction=neighbor.direction,
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
                 properties=neighbor.properties,
+                metadata=neighbor.metadata,
                 entity=neighbor.entity,
             )
             for neighbor in result.neighbors
@@ -361,12 +362,13 @@ def service_get_relationship_lineage(
         )
 
     warnings: list[str] = []
-    raw_provenance = relationship.properties.get(PROVENANCE_PROPERTY)
-    provenance = load_provenance(raw_provenance)
-    if not isinstance(raw_provenance, dict) or provenance is None:
+    assertion = dump_assertion(relationship.metadata.assertion)
+    provenance = relationship.metadata.provenance
+    if provenance is None:
         return RelationshipLineageResult(
             found=True,
             relationship=relationship,
+            assertion=assertion,
             warnings=["missing_provenance"],
         )
 
@@ -377,6 +379,7 @@ def service_get_relationship_lineage(
             found=True,
             relationship=relationship,
             provenance=dump_provenance(provenance),
+            assertion=assertion,
             warnings=warnings,
         )
 
@@ -389,6 +392,7 @@ def service_get_relationship_lineage(
                 found=True,
                 relationship=relationship,
                 provenance=dump_provenance(provenance),
+                assertion=assertion,
                 warnings=warnings,
             )
         resolution = (
@@ -400,6 +404,7 @@ def service_get_relationship_lineage(
             found=True,
             relationship=relationship,
             provenance=dump_provenance(provenance),
+            assertion=assertion,
             group=group,
             resolution=resolution,
             source_workflow_receipt_id=group.source_workflow_receipt_id,

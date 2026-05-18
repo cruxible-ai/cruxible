@@ -656,7 +656,7 @@ class TestWorkflowSchema:
             id="links",
             list_relationships={
                 "relationship_type": "recommended_for",
-                "property_filter": {"review_status": "$input.status"},
+                "property_filter": {"status": "$input.status"},
             },
             **{"as": "links"},
         )

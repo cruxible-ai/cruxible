@@ -64,13 +64,16 @@ class TestAddEntities:
                         "make": "Honda",
                         "model": "Civic",
                     },
+                    metadata={"source": "input-wrapper"},
                 )
             ],
         )
 
         assert result.added == 1
         graph = initialized_instance.load_graph()
-        assert graph.get_entity("Vehicle", "V-1") is not None
+        entity = graph.get_entity("Vehicle", "V-1")
+        assert entity is not None
+        assert entity.metadata == {"source": "input-wrapper"}
 
     def test_batch(self, initialized_instance: CruxibleInstance) -> None:
         entities = [
@@ -107,6 +110,29 @@ class TestAddEntities:
         assert entity is not None
         assert entity.properties["year"] == 2025
 
+    def test_update_merges_entity_metadata(self, populated_instance: CruxibleInstance) -> None:
+        graph = populated_instance.load_graph()
+        graph.update_entity_metadata("Vehicle", "V-2024-CIVIC-EX", {"origin": "fixture"})
+        populated_instance.save_graph(graph)
+
+        result = service_add_entity_inputs(
+            populated_instance,
+            [
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-2024-CIVIC-EX",
+                    properties={"year": 2025},
+                    metadata={"last_seen": "service"},
+                )
+            ],
+        )
+
+        assert result.added == 0
+        assert result.updated == 1
+        entity = populated_instance.load_graph().get_entity("Vehicle", "V-2024-CIVIC-EX")
+        assert entity is not None
+        assert entity.metadata == {"origin": "fixture", "last_seen": "service"}
+
 
 # ---------------------------------------------------------------------------
 # service_add_relationships
@@ -136,7 +162,7 @@ class TestAddRelationships:
         graph = populated_instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-ACCORD-SPORT", "fits")
         assert rel is not None
-        assert rel.properties.get("_provenance") is not None
+        assert rel.metadata.provenance is not None
 
     def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
         result = service_add_relationship_inputs(
@@ -225,6 +251,7 @@ class TestAddRelationships:
         graph = populated_instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-ACCORD-SPORT", "fits")
         assert rel is not None
-        prov = rel.properties["_provenance"]
-        assert prov["source"] == "agent_review"
-        assert prov["source_ref"] == "review-123"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "agent_review"
+        assert prov.source_ref == "review-123"

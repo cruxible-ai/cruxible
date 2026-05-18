@@ -16,12 +16,11 @@ from cruxible_core.config.property_validation import entity_properties_with_iden
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
-    PROVENANCE_PROPERTY,
-    load_provenance,
+    RelationshipProvenance,
     provenance_group_id,
 )
 from cruxible_core.graph.types import (
-    load_assertion_state,
+    RelationshipMetadata,
     make_node_id,
     relationship_is_live,
     split_node_id,
@@ -185,7 +184,11 @@ def _check_constraint_violations(
         from_prop = parsed.from_property
         to_prop = parsed.to_property
 
-        for from_type, from_id, to_type, to_id, _props in graph.iter_edge_data(rel_name):
+        for relationship in graph.iter_relationships(rel_name):
+            from_type = relationship.from_type
+            from_id = relationship.from_id
+            to_type = relationship.to_type
+            to_id = relationship.to_id
             from_entity = graph.get_entity(from_type, from_id)
             to_entity = graph.get_entity(to_type, to_id)
 
@@ -265,8 +268,8 @@ def _check_governed_support_relationships(
         from_id = edge["from_id"]
         to_type = edge["to_type"]
         to_id = edge["to_id"]
-        props = edge["properties"]
-        assertion = load_assertion_state(props)
+        metadata = RelationshipMetadata.model_validate(edge.get("metadata") or {})
+        assertion = metadata.assertion
 
         if assertion.review.status == "pending":
             findings.append(
@@ -282,14 +285,14 @@ def _check_governed_support_relationships(
                         "from_entity": f"{from_type}:{from_id}",
                         "to_entity": f"{to_type}:{to_id}",
                         "relationship_type": relationship_type,
-                        "review_status": "pending_review",
+                        "review_state": "pending",
                         "reason": "pending_review",
                     },
                 )
             )
             continue
 
-        if not relationship_is_live(props):
+        if not relationship_is_live(metadata):
             continue
 
         if group_store is None:
@@ -302,7 +305,7 @@ def _check_governed_support_relationships(
             relationship_type=relationship_type,
             to_type=to_type,
             to_id=to_id,
-            properties=props,
+            provenance=metadata.provenance,
         )
         if member is None:
             findings.append(
@@ -377,10 +380,9 @@ def resolve_edge_signal_history(
     relationship_type: str,
     to_type: str,
     to_id: str,
-    properties: dict[str, Any],
+    provenance: RelationshipProvenance | None,
 ) -> CandidateMember | None:
     """Resolve a graph edge back to its approved group candidate member."""
-    provenance = load_provenance(properties.get(PROVENANCE_PROPERTY))
     if provenance is None:
         return None
     group_id = provenance_group_id(provenance)
@@ -474,31 +476,34 @@ def _check_unreviewed_co_members(
 
         # Build matched_set from live R targets.
         matched_set: set[str] = set()
-        for _, _, to_type, to_id, props in graph.iter_edge_data(r_rel.name):
-            if to_type != r_rel.to_entity:
+        for rel in graph.iter_relationships(r_rel.name):
+            if rel.to_type != r_rel.to_entity:
                 continue
-            if not relationship_is_live(props):
+            if not relationship_is_live(rel.metadata):
                 continue
-            matched_set.add(make_node_id(to_type, to_id))
+            matched_set.add(make_node_id(rel.to_type, rel.to_id))
 
         if not matched_set or len(matched_set) > _MAX_MATCHED_FOR_CO_MEMBERS:
             continue
 
         for s_rel in s_rels:
             seen: set[tuple[str, str, str, str]] = set()
-            intermediary_cache: dict[str, list[tuple[Any, dict[str, Any], int]] | None] = {}
+            intermediary_cache: dict[
+                str,
+                list[tuple[Any, dict[str, Any], RelationshipMetadata, int]] | None,
+            ] = {}
 
             for matched_node_id in matched_set:
                 matched_type, matched_id = split_node_id(matched_node_id)
 
                 # Follow S outgoing from matched entity to intermediaries
-                outgoing = graph.get_neighbors_with_edge_refs(
+                outgoing = graph.get_neighbors_with_relationship_refs(
                     matched_type, matched_id, s_rel.name, "outgoing"
                 )
 
-                for intermediary, out_edge_props, _ in outgoing:
+                for intermediary, _out_edge_props, out_edge_metadata, _ in outgoing:
                     # Skip non-live outgoing S edges.
-                    if not relationship_is_live(out_edge_props):
+                    if not relationship_is_live(out_edge_metadata):
                         continue
 
                     intermediary_node_id = make_node_id(
@@ -517,7 +522,7 @@ def _check_unreviewed_co_members(
                             intermediary_cache[intermediary_node_id] = None
                         else:
                             intermediary_cache[intermediary_node_id] = (
-                                graph.get_neighbors_with_edge_refs(
+                                graph.get_neighbors_with_relationship_refs(
                                     intermediary.entity_type,
                                     intermediary.entity_id,
                                     s_rel.name,
@@ -529,9 +534,9 @@ def _check_unreviewed_co_members(
                     if cached is None:
                         continue
 
-                    for co_member, in_edge_props, _ in cached:
+                    for co_member, _in_edge_props, in_edge_metadata, _ in cached:
                         # Skip non-live incoming S edges.
-                        if not relationship_is_live(in_edge_props):
+                        if not relationship_is_live(in_edge_metadata):
                             continue
 
                         # Defensive: skip malformed edges
@@ -875,17 +880,18 @@ def _iter_quality_targets(graph: EntityGraph, check: Any) -> list[dict[str, Any]
 
     return [
         {
-            "label": f"{from_type}:{from_id}->{to_type}:{to_id}",
-            "properties": properties,
+            "label": (
+                f"{relationship.from_type}:{relationship.from_id}->"
+                f"{relationship.to_type}:{relationship.to_id}"
+            ),
+            "properties": relationship.properties,
             "detail": {
                 "relationship_type": check.relationship_type,
-                "from_entity": f"{from_type}:{from_id}",
-                "to_entity": f"{to_type}:{to_id}",
+                "from_entity": f"{relationship.from_type}:{relationship.from_id}",
+                "to_entity": f"{relationship.to_type}:{relationship.to_id}",
             },
         }
-        for from_type, from_id, to_type, to_id, properties in graph.iter_edge_data(
-            check.relationship_type
-        )
+        for relationship in graph.iter_relationships(check.relationship_type)
     ]
 
 

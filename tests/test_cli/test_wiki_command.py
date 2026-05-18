@@ -351,7 +351,7 @@ def _build_test_graph() -> EntityGraph:
             from_id="prod-web-01",
             to_type="Vulnerability",
             to_id="CVE-2021-41773",
-            properties={"review_status": "accepted", "basis": "inventory_match"},
+            properties={"status": "accepted", "basis": "inventory_match"},
         )
     )
     graph.add_relationship(
@@ -361,7 +361,7 @@ def _build_test_graph() -> EntityGraph:
             from_id="prod-web-01",
             to_type="Vulnerability",
             to_id="CVE-2021-41773",
-            properties={"review_status": "accepted", "priority": "urgent"},
+            properties={"status": "accepted", "priority": "urgent"},
         )
     )
     graph.add_relationship(
@@ -371,7 +371,7 @@ def _build_test_graph() -> EntityGraph:
             from_id="svc-billing",
             to_type="Vulnerability",
             to_id="CVE-2021-41773",
-            properties={"review_status": "accepted", "basis": "dependency_chain"},
+            properties={"status": "accepted", "basis": "dependency_chain"},
         )
     )
     graph.add_relationship(
@@ -491,7 +491,7 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
         "Asset",
         "prod-web-01",
         "asset_affected_by_vulnerability",
-        {"review_status": "accepted"},
+        {"status": "accepted"},
         parent_id=vulnerability_lookup,
     )
     query_builder.record_filter({"environment": "production"}, True, asset_step)

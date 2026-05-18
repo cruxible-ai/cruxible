@@ -12,8 +12,9 @@ from cruxible_core.config.schema import (
     TraversalStep,
 )
 from cruxible_core.errors import EntityNotFoundError, QueryExecutionError, QueryNotFoundError
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.query.engine import (
     QueryResult,
     _evaluate_constraint,
@@ -355,13 +356,17 @@ class TestExecuteQuery:
     def test_pending_review_relationship_is_not_traversed(
         self, config: CoreConfig, graph: EntityGraph
     ):
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             "Part",
             "BP-5678",
             "Vehicle",
             "V-CIVIC",
             "fits",
-            {"review_status": "pending_review"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending")
+                )
+            ),
         )
 
         result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
@@ -668,7 +673,11 @@ class TestRelatedEdgeExclusions:
                 from_id="BP-1234",
                 to_type="Vehicle",
                 to_id="V-CIVIC",
-                properties={"review_status": "pending_review"},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(status="pending")
+                    )
+                ),
             )
         )
 
@@ -691,7 +700,11 @@ class TestRelatedEdgeExclusions:
                 from_id="BP-1234",
                 to_type="Vehicle",
                 to_id="V-CIVIC",
-                properties={"review_status": "human_rejected"},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(status="rejected", source="human")
+                    )
+                ),
             )
         )
 
@@ -704,7 +717,7 @@ class TestRelatedEdgeExclusions:
 
         assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
 
-    def test_related_edge_without_review_status_excludes(
+    def test_related_edge_with_default_assertion_excludes(
         self, config: CoreConfig, graph: EntityGraph
     ):
         graph.add_relationship(

@@ -80,6 +80,7 @@ class EntityWriteInput:
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -198,6 +199,7 @@ class InspectNeighborResult:
     relationship_type: str
     edge_key: int | None
     properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
 
 
@@ -207,6 +209,7 @@ class InspectEntityResult:
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     neighbors: list[InspectNeighborResult] = field(default_factory=list)
     total_neighbors: int = 0
 
@@ -764,6 +767,7 @@ class RelationshipLineageResult:
     found: bool
     relationship: RelationshipInstance | None = None
     provenance: dict[str, Any] | None = None
+    assertion: dict[str, Any] | None = None
     group: CandidateGroup | None = None
     resolution: GroupResolution | None = None
     source_workflow_receipt_id: str | None = None

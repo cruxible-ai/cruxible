@@ -22,7 +22,6 @@ from cruxible_core.graph.operations import (
     validate_relationship,
 )
 from cruxible_core.graph.types import (
-    SYSTEM_OWNED_PROPERTIES,
     EntityInstance,
     RelationshipInstance,
 )
@@ -343,8 +342,8 @@ def apply_relationship_set(
     executor passes a cloned graph for canonical previews and commits that graph
     to live state only in apply mode. ``persist_writes`` controls receipt
     write-node recording, not graph mutation. Relationship writes go through
-    ``apply_relationship`` so provenance and system-owned graph metadata are
-    handled by the shared graph operation.
+    ``apply_relationship`` so relationship metadata is handled by the shared
+    graph operation.
 
     All validation is completed before any relationship write is applied.
     """
@@ -411,12 +410,7 @@ def apply_relationship_set(
                     parent_id=parent_id,
                 )
             continue
-        existing_domain_properties = {
-            key: value
-            for key, value in existing.properties.items()
-            if key not in SYSTEM_OWNED_PROPERTIES
-        }
-        if existing_domain_properties != rel.properties:
+        if existing.properties != rel.properties:
             update_count += 1
             apply_relationship(graph, validated, "workflow_apply", source_ref)
             if persist_writes:

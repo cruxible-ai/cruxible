@@ -19,7 +19,6 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     ReceiptNotFoundError,
 )
-from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.service import (
     FeedbackItemInput,
@@ -251,10 +250,8 @@ class TestFeedback:
         graph = populated_instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
         assert rel is not None
-        assert rel.properties.get("review_status") == "human_approved"
-        state = load_assertion_state(rel.properties)
-        assert state.review.status == "approved"
-        assert state.review.source == "human"
+        assert rel.metadata.assertion.review.status == "approved"
+        assert rel.metadata.assertion.review.source == "human"
 
     def test_input_wrapper(self, populated_instance: CruxibleInstance) -> None:
         receipt_id = self._run_query(populated_instance)
@@ -291,24 +288,19 @@ class TestFeedback:
                 corrections={"verified": "yes"},
             )
 
-    def test_strips_provenance(self, populated_instance: CruxibleInstance) -> None:
+    def test_rejects_metadata_keys_in_corrections(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
         receipt_id = self._run_query(populated_instance)
-        result = service_feedback(
-            populated_instance,
-            receipt_id=receipt_id,
-            action="correct",
-            source="human",
-            target=_edge_target(),
-            corrections={"_provenance": {"spoofed": True}, "source": "catalog"},
-        )
-        assert result.applied is True
-
-        graph = populated_instance.load_graph()
-        rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
-        assert rel is not None
-        # _provenance should not contain the spoofed value
-        prov = rel.properties.get("_provenance", {})
-        assert prov.get("spoofed") is None
+        with pytest.raises(DataValidationError, match="unexpected property '_provenance'"):
+            service_feedback(
+                populated_instance,
+                receipt_id=receipt_id,
+                action="correct",
+                source="human",
+                target=_edge_target(),
+                corrections={"_provenance": {"spoofed": True}, "source": "catalog"},
+            )
 
     def test_missing_receipt(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ReceiptNotFoundError):

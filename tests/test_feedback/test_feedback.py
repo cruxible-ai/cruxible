@@ -16,9 +16,9 @@ from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.assertion_state import load_assertion_state
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.provenance import RelationshipProvenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.query.engine import execute_query
 
 # ---------------------------------------------------------------------------
@@ -90,10 +90,20 @@ def assert_review_state(
     status: str,
     source: str,
 ) -> None:
-    state = load_assertion_state(rel.properties)
-    assert state.review.status == status
-    assert state.review.source == source
-    assert state.lifecycle.status == "active"
+    assert rel.metadata.assertion.review.status == status
+    assert rel.metadata.assertion.review.source == source
+    assert rel.metadata.assertion.lifecycle.status == "active"
+
+
+def set_edge_provenance(graph: EntityGraph, *, part_id: str = "P-1") -> None:
+    graph.update_relationship_state(
+        "Part",
+        part_id,
+        "Vehicle",
+        "V-1",
+        "fits",
+        metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
+    )
 
 
 @pytest.fixture
@@ -123,7 +133,6 @@ def config() -> CoreConfig:
                 properties={
                     "verified": PropertySchema(type="bool"),
                     "confidence": PropertySchema(type="float", optional=True),
-                    "review_status": PropertySchema(type="string", optional=True),
                 },
             ),
         ],
@@ -148,7 +157,7 @@ def config() -> CoreConfig:
                         relationship="fits",
                         direction="incoming",
                         filter={
-                            "review_status": ["human_approved", "auto_approved"],
+                            "verified": True,
                         },
                     )
                 ],
@@ -197,7 +206,6 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_approved"
         assert_review_state(rel, status="approved", source="human")
 
     def test_reject(self, graph: EntityGraph, target: RelationshipInstance):
@@ -210,7 +218,6 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_rejected"
         assert_review_state(rel, status="rejected", source="human")
 
     def test_flag(self, graph: EntityGraph, target: RelationshipInstance):
@@ -222,7 +229,6 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "pending_review"
         assert_review_state(rel, status="pending", source="human")
 
     def test_correct(self, graph: EntityGraph, target: RelationshipInstance):
@@ -237,7 +243,6 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["confidence"] == 0.95
         assert rel.properties["fitment_notes"] == "confirmed"
-        assert rel.properties["review_status"] == "human_approved"
         assert_review_state(rel, status="approved", source="human")
 
     def test_missing_edge(self, graph: EntityGraph):
@@ -269,7 +274,6 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["verified"] is True
         assert rel.properties["confidence"] == 0.9
-        assert rel.properties["review_status"] == "human_approved"
         assert_review_state(rel, status="approved", source="human")
 
     def test_agent_with_model_id(
@@ -286,7 +290,6 @@ class TestApplier:
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "agent_approved"
         assert_review_state(rel, status="approved", source="agent")
 
     def test_agent_reject(
@@ -303,36 +306,27 @@ class TestApplier:
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "agent_rejected"
         assert_review_state(rel, status="rejected", source="agent")
 
-    def test_correct_user_review_status_stripped(
+    def test_correct_applies_domain_corrections(
         self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """System-owned review metadata is not accepted from user corrections."""
+        """Corrections are domain properties; assertion state still comes from feedback."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
             target=target,
-            corrections={"review_status": "human_rejected", "fitment_notes": "checked"},
+            corrections={"review_note": "checked by reviewer", "fitment_notes": "checked"},
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_approved"
+        assert rel.properties["review_note"] == "checked by reviewer"
         assert_review_state(rel, status="approved", source="human")
         assert rel.properties["fitment_notes"] == "checked"
 
     def test_approve_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
-        """Feedback actions update _provenance with modification fields."""
-        # First add provenance to the edge
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+        """Feedback actions update provenance metadata with modification fields."""
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -340,20 +334,14 @@ class TestApplier:
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["source"] == "ingest"
-        assert "last_modified_at" in prov
-        assert prov["last_modified_by"] == "feedback:approve"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "ingest"
+        assert prov.last_modified_at is not None
+        assert prov.last_modified_by == "feedback:approve"
 
     def test_reject_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
@@ -362,18 +350,12 @@ class TestApplier:
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["last_modified_by"] == "feedback:reject"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.last_modified_by == "feedback:reject"
 
     def test_correct_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
@@ -382,21 +364,15 @@ class TestApplier:
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["last_modified_by"] == "feedback:correct"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.last_modified_by == "feedback:correct"
 
-    def test_correct_strips_provenance_from_corrections(
+    def test_correct_metadata_looking_keys_do_not_mutate_metadata(
         self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """System-owned relationship metadata in corrections is stripped."""
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+        """Low-level corrections cannot spoof first-class metadata."""
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
@@ -405,20 +381,22 @@ class TestApplier:
                 "confidence": 0.99,
                 "_provenance": {"source": "spoofed"},
                 "_assertion": {"review": {"status": "rejected", "source": "human"}},
-                "review_status": "human_rejected",
             },
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        # Should NOT be spoofed — should be original provenance with modification
-        assert prov["source"] == "ingest"
-        assert prov["last_modified_by"] == "feedback:correct"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "ingest"
+        assert prov.last_modified_by == "feedback:correct"
         assert_review_state(rel, status="approved", source="human")
-        assert rel.properties["review_status"] == "human_approved"
+        assert rel.properties["_provenance"] == {"source": "spoofed"}
+        assert rel.properties["_assertion"] == {
+            "review": {"status": "rejected", "source": "human"}
+        }
 
     def test_no_provenance_no_crash(self, graph: EntityGraph, target: RelationshipInstance):
-        """Feedback on edges without _provenance works fine (no crash)."""
+        """Feedback on edges without provenance metadata works fine (no crash)."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -426,10 +404,8 @@ class TestApplier:
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_approved"
         assert_review_state(rel, status="approved", source="human")
-        # No _provenance added when there was none to begin with
-        assert "_provenance" not in rel.properties
+        assert rel.metadata.provenance is None
 
     def test_ambiguous_target_requires_edge_key(self, graph: EntityGraph):
         graph.add_relationship(
@@ -467,13 +443,15 @@ class TestApplier:
                 properties={"verified": True, "confidence": 0.8},
             )
         )
-        refs = graph.get_neighbors_with_edge_refs(
+        refs = graph.get_neighbors_with_relationship_refs(
             "Part",
             "P-1",
             relationship_type="fits",
             direction="outgoing",
         )
-        edge_key = next(edge_key for _, props, edge_key in refs if props.get("confidence") == 0.8)
+        edge_key = next(
+            edge_key for _, props, _metadata, edge_key in refs if props.get("confidence") == 0.8
+        )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -791,12 +769,12 @@ class TestOutcomeStore:
 
 
 class TestFeedbackQueryIntegration:
-    def test_reject_excludes_from_approved_query(
+    def test_reject_excludes_from_live_query(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """The gate test: reject an edge, re-query with review_status filter."""
+        """Rejecting an edge removes it from canonical live traversal."""
         # Both parts fit V-1 initially
         result = execute_query(
             config,
@@ -805,17 +783,6 @@ class TestFeedbackQueryIntegration:
             {"vehicle_id": "V-1"},
         )
         assert len(result.results) == 2
-
-        # Set both edges to auto_approved first
-        for part_id in ["P-1", "P-2"]:
-            graph.update_edge_properties(
-                "Part",
-                part_id,
-                "Vehicle",
-                "V-1",
-                "fits",
-                {"review_status": "auto_approved"},
-            )
 
         # Reject P-2's edge
         fb = FeedbackRecord(
@@ -832,23 +799,22 @@ class TestFeedbackQueryIntegration:
         )
         apply_feedback(graph, fb)
 
-        # Re-query with approved-only filter
         result2 = execute_query(
             config,
             graph,
-            "approved_parts_for_vehicle",
+            "parts_for_vehicle",
             {"vehicle_id": "V-1"},
         )
         result_ids = {r.entity_id for r in result2.results}
         assert "P-1" in result_ids
         assert "P-2" not in result_ids
 
-    def test_approve_includes_in_approved_query(
+    def test_approve_keeps_edge_live(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Approved edges pass the review_status filter."""
+        """Approved active edges pass canonical live traversal."""
         # Approve both edges
         for part_id in ["P-1", "P-2"]:
             fb = FeedbackRecord(
@@ -867,7 +833,7 @@ class TestFeedbackQueryIntegration:
         result = execute_query(
             config,
             graph,
-            "approved_parts_for_vehicle",
+            "parts_for_vehicle",
             {"vehicle_id": "V-1"},
         )
         assert len(result.results) == 2
@@ -877,7 +843,7 @@ class TestFeedbackQueryIntegration:
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Corrected edges get human_approved status and updated properties."""
+        """Corrected edges get approved assertion state and updated properties."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
@@ -894,15 +860,14 @@ class TestFeedbackQueryIntegration:
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["confidence"] == 0.99
-        assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_rejected_edge_excluded_without_filter(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Hard safety check: rejected edges are excluded even from queries
-        that have no review_status filter."""
+        """Hard safety check: rejected edges are excluded from live queries."""
         # Both parts returned initially
         result = execute_query(
             config,
@@ -927,8 +892,7 @@ class TestFeedbackQueryIntegration:
         )
         apply_feedback(graph, fb)
 
-        # parts_for_vehicle only filters on verified, not review_status —
-        # but the engine hard-skips human_rejected and agent_rejected edges
+        # parts_for_vehicle only filters on verified; relationship metadata controls liveness.
         result2 = execute_query(
             config,
             graph,

@@ -1,4 +1,4 @@
-"""Tests for relationship assertion-state helpers."""
+"""Tests for relationship assertion helpers."""
 
 from __future__ import annotations
 
@@ -8,127 +8,31 @@ from datetime import datetime, timezone
 import pytest
 
 from cruxible_core.graph.assertion_state import (
-    ASSERTION_PROPERTY,
-    LEGACY_REVIEW_STATUS_PROPERTY,
-    RelationshipAssertionState,
+    RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
-    dump_assertion_state,
-    legacy_review_status_to_review_state,
-    load_assertion_state,
+    dump_assertion,
     relationship_is_live,
 )
-from cruxible_core.graph.provenance import PROVENANCE_PROPERTY
-from cruxible_core.graph.types import (
-    SYSTEM_OWNED_PROPERTIES,
-    load_relationship_system_metadata,
-)
+from cruxible_core.graph.provenance import RelationshipProvenance
+from cruxible_core.graph.types import RelationshipMetadata
 
 
-@pytest.mark.parametrize(
-    ("legacy", "status", "source"),
-    [
-        ("human_approved", "approved", "human"),
-        ("agent_approved", "approved", "agent"),
-        ("human_rejected", "rejected", "human"),
-        ("agent_rejected", "rejected", "agent"),
-        ("pending_review", "pending", "system"),
-        (None, "unreviewed", "system"),
-    ],
-)
-def test_legacy_review_statuses_map_to_review_state(
-    legacy: str | None,
-    status: str,
-    source: str,
-) -> None:
-    review = legacy_review_status_to_review_state(legacy)
+def test_default_assertion_is_unreviewed_active() -> None:
+    assertion = RelationshipAssertion()
 
-    assert review.status == status
-    assert review.source == source
+    assert assertion.review.status == "unreviewed"
+    assert assertion.review.source == "system"
+    assert assertion.lifecycle.status == "active"
 
 
-def test_missing_assertion_defaults_to_unreviewed_active() -> None:
-    state = load_assertion_state({})
-
-    assert state.review.status == "unreviewed"
-    assert state.review.source == "system"
-    assert state.lifecycle.status == "active"
-
-
-def test_system_owned_properties_include_relationship_system_constants() -> None:
-    assert SYSTEM_OWNED_PROPERTIES == frozenset(
-        {
-            PROVENANCE_PROPERTY,
-            ASSERTION_PROPERTY,
-            LEGACY_REVIEW_STATUS_PROPERTY,
-        }
+def test_relationship_metadata_contains_typed_assertion_and_provenance() -> None:
+    metadata = RelationshipMetadata(
+        provenance=RelationshipProvenance(source="ingest", source_ref="feed-1"),
+        assertion=RelationshipAssertion(
+            review=RelationshipReviewState(status="approved", source="human")
+        ),
     )
-
-
-def test_unknown_legacy_review_status_does_not_enter_typed_state() -> None:
-    state = load_assertion_state({"review_status": "accepted"})
-
-    assert state.review.status == "unreviewed"
-    assert state.review.source == "system"
-    assert dump_assertion_state(state) == {
-        "review": {"status": "unreviewed", "source": "system"},
-        "lifecycle": {"status": "active"},
-    }
-
-
-def test_stale_assertion_legacy_status_is_ignored_on_dump() -> None:
-    state = load_assertion_state(
-        {
-            "_assertion": {
-                "review": {
-                    "status": "approved",
-                    "source": "human",
-                    "legacy_status": "human_approved",
-                },
-                "lifecycle": {"status": "active"},
-            }
-        }
-    )
-
-    assert dump_assertion_state(state) == {
-        "review": {"status": "approved", "source": "human"},
-        "lifecycle": {"status": "active"},
-    }
-
-
-def test_assertion_wins_over_legacy_review_status() -> None:
-    state = load_assertion_state(
-        {
-            "_assertion": {
-                "review": {"status": "approved", "source": "human"},
-                "lifecycle": {"status": "active"},
-            },
-            "review_status": "human_rejected",
-        }
-    )
-
-    assert state.review.status == "approved"
-    assert state.review.source == "human"
-    assert relationship_is_live(
-        {
-            "_assertion": dump_assertion_state(state),
-            "review_status": "human_rejected",
-        }
-    )
-
-
-def test_relationship_system_metadata_loads_sibling_properties() -> None:
-    properties = {
-        PROVENANCE_PROPERTY: {"source": "ingest", "source_ref": "feed-1"},
-        ASSERTION_PROPERTY: {
-            "review": {"status": "approved", "source": "human"},
-            "lifecycle": {"status": "active"},
-        },
-        LEGACY_REVIEW_STATUS_PROPERTY: "human_rejected",
-    }
-    original = dict(properties)
-
-    metadata = load_relationship_system_metadata(properties)
 
     assert metadata.provenance is not None
     assert metadata.provenance.source == "ingest"
@@ -136,61 +40,54 @@ def test_relationship_system_metadata_loads_sibling_properties() -> None:
     assert metadata.assertion.review.status == "approved"
     assert metadata.assertion.review.source == "human"
     assert metadata.assertion.lifecycle.status == "active"
-    assert properties == original
-    assert PROVENANCE_PROPERTY not in dump_assertion_state(metadata.assertion)
 
 
 @pytest.mark.parametrize(
-    ("state", "expected"),
+    ("assertion", "expected"),
     [
-        (RelationshipAssertionState(), True),
+        (RelationshipAssertion(), True),
         (
-            RelationshipAssertionState(
+            RelationshipAssertion(
                 review=RelationshipReviewState(status="approved", source="human")
             ),
             True,
         ),
         (
-            RelationshipAssertionState(
+            RelationshipAssertion(
                 review=RelationshipReviewState(status="pending", source="human")
             ),
             False,
         ),
         (
-            RelationshipAssertionState(
+            RelationshipAssertion(
                 review=RelationshipReviewState(status="rejected", source="agent")
             ),
             False,
         ),
         (
-            RelationshipAssertionState(
-                lifecycle=RelationshipLifecycleState(status="inactive")
-            ),
+            RelationshipAssertion(lifecycle=RelationshipLifecycleState(status="inactive")),
             False,
         ),
     ],
 )
 def test_relationship_is_live_handles_review_and_lifecycle(
-    state: RelationshipAssertionState,
+    assertion: RelationshipAssertion,
     expected: bool,
 ) -> None:
-    assert relationship_is_live({"_assertion": dump_assertion_state(state)}) is expected
+    assert relationship_is_live(assertion) is expected
+    assert relationship_is_live(RelationshipMetadata(assertion=assertion)) is expected
 
 
 def test_relationship_is_live_can_require_approved() -> None:
-    assert relationship_is_live({}, require_approved=True) is False
+    assert relationship_is_live(RelationshipAssertion(), require_approved=True) is False
     assert (
         relationship_is_live(
-            {
-                "_assertion": dump_assertion_state(
-                    RelationshipAssertionState(
-                        review=RelationshipReviewState(
-                            status="approved",
-                            source="human",
-                        )
-                    )
+            RelationshipAssertion(
+                review=RelationshipReviewState(
+                    status="approved",
+                    source="human",
                 )
-            },
+            ),
             require_approved=True,
         )
         is True
@@ -198,41 +95,38 @@ def test_relationship_is_live_can_require_approved() -> None:
 
 
 def test_relationship_is_live_honors_effective_window() -> None:
-    future = RelationshipAssertionState(
+    future = RelationshipAssertion(
         lifecycle=RelationshipLifecycleState(
             status="active",
             effective_from=datetime(2999, 1, 1, tzinfo=timezone.utc),
         )
     )
-    expired = RelationshipAssertionState(
+    expired = RelationshipAssertion(
         lifecycle=RelationshipLifecycleState(
             status="active",
             effective_until=datetime(2000, 1, 1, tzinfo=timezone.utc),
         )
     )
 
-    assert relationship_is_live({"_assertion": dump_assertion_state(future)}) is False
-    assert relationship_is_live({"_assertion": dump_assertion_state(expired)}) is False
+    assert relationship_is_live(future) is False
+    assert relationship_is_live(expired) is False
 
 
 def test_invalid_assertion_timestamp_is_not_silently_downgraded() -> None:
     with pytest.raises(ValueError):
-        load_assertion_state(
+        RelationshipAssertion.model_validate(
             {
-                "_assertion": {
-                    "review": {"status": "approved", "source": "human"},
-                    "lifecycle": {
-                        "status": "active",
-                        "effective_from": "not-a-datetime",
-                    },
+                "review": {"status": "approved", "source": "human"},
+                "lifecycle": {
+                    "status": "active",
+                    "effective_from": "not-a-datetime",
                 },
-                "review_status": "human_rejected",
             }
         )
 
 
 def test_dumped_assertion_json_is_deterministic_and_round_trips() -> None:
-    state = RelationshipAssertionState(
+    assertion = RelationshipAssertion(
         review=RelationshipReviewState(
             status="approved",
             source="human",
@@ -247,7 +141,7 @@ def test_dumped_assertion_json_is_deterministic_and_round_trips() -> None:
         ),
     )
 
-    dumped = dump_assertion_state(state)
+    dumped = dump_assertion(assertion)
     assert dumped == {
         "review": {
             "status": "approved",
@@ -263,6 +157,6 @@ def test_dumped_assertion_json_is_deterministic_and_round_trips() -> None:
         },
     }
     assert json.dumps(dumped, sort_keys=True) == json.dumps(
-        dump_assertion_state(load_assertion_state({"_assertion": dumped})),
+        dump_assertion(RelationshipAssertion.model_validate(dumped)),
         sort_keys=True,
     )

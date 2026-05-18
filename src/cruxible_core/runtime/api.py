@@ -1351,12 +1351,14 @@ def inspect_entity(
         entity_type=result.entity_type,
         entity_id=result.entity_id,
         properties=result.properties,
+        metadata=result.metadata,
         neighbors=[
             contracts.InspectNeighborResult(
                 direction=neighbor.direction,  # type: ignore[arg-type]
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
                 properties=neighbor.properties,
+                metadata=neighbor.metadata,
                 entity=neighbor.entity.model_dump(mode="json") if neighbor.entity else {},
             )
             for neighbor in result.neighbors
@@ -1485,6 +1487,7 @@ def add_entities(
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
+            metadata=entity.metadata,
         )
         for entity in entities
     ]
@@ -1575,6 +1578,7 @@ def get_entity(
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
         properties=entity.properties,
+        metadata=entity.metadata,
     )
 
 
@@ -1617,6 +1621,7 @@ def get_relationship(
         to_id=relationship.to_id,
         edge_key=relationship.edge_key,
         properties=relationship.properties,
+        metadata=relationship.metadata.model_dump(mode="json", exclude_none=True),
     )
 
 
@@ -1649,6 +1654,7 @@ def get_relationship_lineage(
             else None
         ),
         provenance=result.provenance,
+        assertion=result.assertion,
         group=result.group.model_dump(mode="json") if result.group is not None else None,
         resolution=(
             result.resolution.model_dump(mode="json")

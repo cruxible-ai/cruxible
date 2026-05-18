@@ -16,7 +16,8 @@ from cruxible_core.config.schema import (
     SignalPolicySchema,
 )
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateMember, CandidateSignal, GroupResolution
@@ -326,11 +327,26 @@ def _seed_fitment_entities(instance: CruxibleInstance) -> None:
     instance.save_graph(graph)
 
 
-def _approve_live_fit_edge(instance: CruxibleInstance, *, review_status: str | None = None) -> None:
+def _approve_live_fit_edge(
+    instance: CruxibleInstance,
+    *,
+    assertion_status: str | None = None,
+) -> None:
     graph = instance.load_graph()
     properties = {"verified": True}
-    if review_status is not None:
-        properties["review_status"] = review_status
+    metadata = RelationshipMetadata()
+    if assertion_status == "pending":
+        metadata = RelationshipMetadata(
+            assertion=RelationshipAssertion(
+                review=RelationshipReviewState(status="pending")
+            )
+        )
+    elif assertion_status == "rejected":
+        metadata = RelationshipMetadata(
+            assertion=RelationshipAssertion(
+                review=RelationshipReviewState(status="rejected", source="human")
+            )
+        )
     graph.add_relationship(
         RelationshipInstance(
             from_type="Part",
@@ -339,6 +355,7 @@ def _approve_live_fit_edge(instance: CruxibleInstance, *, review_status: str | N
             to_type="Vehicle",
             to_id="V-2024-CIVIC",
             properties=properties,
+            metadata=metadata,
         )
     )
     instance.save_graph(graph)
@@ -558,19 +575,19 @@ class TestRelationshipTupleProposalIdentity:
         assert len(result.suppressed_members) == 1
         assert result.suppressed_members[0].reason == "existing_edge"
 
-    @pytest.mark.parametrize("review_status", ["pending_review", "human_rejected"])
+    @pytest.mark.parametrize("assertion_status", ["pending", "rejected"])
     def test_non_live_existing_edge_does_not_suppress_tuple(
         self,
         tuple_identity_instance: CruxibleInstance,
-        review_status: str,
+        assertion_status: str,
     ) -> None:
-        _approve_live_fit_edge(tuple_identity_instance, review_status=review_status)
+        _approve_live_fit_edge(tuple_identity_instance, assertion_status=assertion_status)
 
         result = service_propose_group(
             tuple_identity_instance,
             "fits",
             [_member(signals=_all_support_signals())],
-            thesis_facts={"bucket": review_status},
+            thesis_facts={"bucket": assertion_status},
         )
 
         assert result.status == "pending_review"
@@ -1324,13 +1341,13 @@ class TestPendingBuckets:
         )
 
         graph = matching_instance.load_graph()
-        assert graph.update_edge_properties(
+        assert graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC",
             "fits",
-            {"group_override": True},
+            property_updates={"group_override": True},
         )
         matching_instance.save_graph(graph)
 

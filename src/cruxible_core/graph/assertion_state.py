@@ -6,7 +6,6 @@ Cruxible should treat the edge in live graph semantics.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
@@ -14,7 +13,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_serializer,
     field_validator,
 )
@@ -36,10 +34,6 @@ RelationshipLifecycleStatus = Literal[
     "superseded",
     "retracted",
 ]
-
-ASSERTION_PROPERTY = "_assertion"
-LEGACY_REVIEW_STATUS_PROPERTY = "review_status"
-
 
 class RelationshipReviewState(BaseModel):
     """Review/adjudication state for a relationship assertion."""
@@ -90,8 +84,8 @@ class RelationshipLifecycleState(BaseModel):
         return format_datetime(value)
 
 
-class RelationshipAssertionState(BaseModel):
-    """Coupled review and lifecycle state stored under relationship ``_assertion``."""
+class RelationshipAssertion(BaseModel):
+    """Coupled review and lifecycle state for a relationship."""
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
 
@@ -101,119 +95,59 @@ class RelationshipAssertionState(BaseModel):
     )
 
 
-def legacy_review_status_to_review_state(
-    value: str | None,
-) -> RelationshipReviewState:
-    """Map legacy ``review_status`` values into typed review state."""
-    if value == "human_approved":
-        return RelationshipReviewState(status="approved", source="human")
-    if value == "agent_approved":
-        return RelationshipReviewState(status="approved", source="agent")
-    if value == "human_rejected":
-        return RelationshipReviewState(status="rejected", source="human")
-    if value == "agent_rejected":
-        return RelationshipReviewState(status="rejected", source="agent")
-    if value == "pending_review":
-        return RelationshipReviewState(status="pending")
-    return RelationshipReviewState()
+def dump_assertion(assertion: RelationshipAssertion) -> dict[str, Any]:
+    """Return the JSON-ready relationship assertion shape."""
+    return assertion.model_dump(mode="json", exclude_none=True)
 
 
-def review_state_to_legacy_review_status(
-    review: RelationshipReviewState,
-) -> str | None:
-    """Map typed review state back to the legacy compatibility property."""
-    if review.status == "approved":
-        if review.source == "human":
-            return "human_approved"
-        if review.source in {"agent", "group"}:
-            return "agent_approved"
-        return None
-    if review.status == "rejected":
-        if review.source == "human":
-            return "human_rejected"
-        if review.source in {"agent", "group"}:
-            return "agent_rejected"
-        return None
-    if review.status == "pending":
-        return "pending_review"
-    return None
-
-
-def _load_stored_assertion(value: Any) -> RelationshipAssertionState | None:
-    if isinstance(value, RelationshipAssertionState):
+def _assertion_from_metadata_like(value: Any) -> RelationshipAssertion:
+    if value is None:
+        return RelationshipAssertion()
+    if isinstance(value, RelationshipAssertion):
         return value
-    if not isinstance(value, dict):
-        return None
-    try:
-        return RelationshipAssertionState.model_validate(value)
-    except ValidationError as exc:
-        timestamp_fields = {
-            ("review", "updated_at"),
-            ("lifecycle", "effective_from"),
-            ("lifecycle", "effective_until"),
-            ("lifecycle", "closed_at"),
-        }
-        if any(tuple(error["loc"]) in timestamp_fields for error in exc.errors()):
-            raise
-        return None
-
-
-def load_assertion_state(
-    properties: Mapping[str, Any] | None,
-) -> RelationshipAssertionState:
-    """Load relationship assertion state with legacy compatibility fallback."""
-    props = properties or {}
-    assertion = _load_stored_assertion(props.get(ASSERTION_PROPERTY))
-    if assertion is not None:
+    assertion = getattr(value, "assertion", None)
+    if isinstance(assertion, RelationshipAssertion):
         return assertion
-
-    legacy_value = props.get(LEGACY_REVIEW_STATUS_PROPERTY)
-    legacy_review_status = legacy_value if isinstance(legacy_value, str) else None
-    return RelationshipAssertionState(
-        review=legacy_review_status_to_review_state(legacy_review_status)
-    )
-
-
-def dump_assertion_state(state: RelationshipAssertionState) -> dict[str, Any]:
-    """Return the JSON-ready dict shape stored in graph properties."""
-    return state.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, dict):
+        if not value:
+            return RelationshipAssertion()
+        if "assertion" in value:
+            return RelationshipAssertion.model_validate(value.get("assertion") or {})
+        if "review" in value or "lifecycle" in value:
+            return RelationshipAssertion.model_validate(value)
+    raise TypeError("relationship liveness requires a RelationshipAssertion or metadata")
 
 
 def relationship_is_live(
-    properties: Mapping[str, Any],
+    assertion_or_metadata: Any = None,
     *,
     require_approved: bool = False,
 ) -> bool:
     """Return whether a relationship participates in live graph semantics."""
-    state = load_assertion_state(properties)
-    if state.lifecycle.status != "active":
+    assertion = _assertion_from_metadata_like(assertion_or_metadata)
+    if assertion.lifecycle.status != "active":
         return False
 
     if not is_effective(
-        effective_from=state.lifecycle.effective_from,
-        effective_until=state.lifecycle.effective_until,
+        effective_from=assertion.lifecycle.effective_from,
+        effective_until=assertion.lifecycle.effective_until,
     ):
         return False
 
-    if state.review.status in {"pending", "rejected"}:
+    if assertion.review.status in {"pending", "rejected"}:
         return False
-    if require_approved and state.review.status != "approved":
+    if require_approved and assertion.review.status != "approved":
         return False
     return True
 
 
 __all__ = [
-    "ASSERTION_PROPERTY",
-    "LEGACY_REVIEW_STATUS_PROPERTY",
-    "RelationshipAssertionState",
+    "RelationshipAssertion",
     "RelationshipLifecycleState",
     "RelationshipLifecycleStatus",
     "RelationshipReviewSource",
     "RelationshipReviewState",
     "RelationshipReviewStatus",
-    "dump_assertion_state",
-    "legacy_review_status_to_review_state",
-    "load_assertion_state",
+    "dump_assertion",
     "relationship_is_live",
-    "review_state_to_legacy_review_status",
 ]

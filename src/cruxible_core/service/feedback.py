@@ -27,7 +27,7 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
-from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, RelationshipInstance
+from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
@@ -100,7 +100,6 @@ def _normalize_feedback_record(
             rel_schema.properties,
             normalized_corrections,
             require_required=False,
-            strip_system_properties=True,
         )
         if validation.errors:
             raise DataValidationError(
@@ -109,11 +108,7 @@ def _normalize_feedback_record(
             )
         normalized_corrections = validation.properties
     else:
-        normalized_corrections = {
-            key: value
-            for key, value in normalized_corrections.items()
-            if key not in USER_STRIPPED_PROPERTIES
-        }
+        normalized_corrections = dict(normalized_corrections)
     normalized_scope_hints = dict(scope_hints or {})
 
     if group_override:
@@ -768,13 +763,13 @@ def _apply_feedback_record(
     applied = apply_feedback(graph, record)
     if group_override:
         target = record.target
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             target.from_type,
             target.from_id,
             target.to_type,
             target.to_id,
             target.relationship_type,
-            {"group_override": True},
+            property_updates={"group_override": True},
             edge_key=target.edge_key,
         )
     return applied

@@ -29,6 +29,7 @@ class ReadInspectNeighbor:
     relationship_type: str
     edge_key: int | None
     properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     entity: EntityInstance | None = None
 
 
@@ -38,6 +39,7 @@ class ReadInspectEntity:
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     neighbors: list[ReadInspectNeighbor] = field(default_factory=list)
     total_neighbors: int = 0
 
@@ -201,6 +203,7 @@ def inspect_entity(
             relationship_type=str(row["relationship_type"]),
             edge_key=row.get("edge_key"),
             properties=dict(row.get("properties", {})),
+            metadata=dict(row.get("metadata", {})),
             entity=(
                 entity_with_identity_properties(config, row["entity"])
                 if config is not None
@@ -224,6 +227,7 @@ def inspect_entity(
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
         properties=entity_props,
+        metadata=dict(entity.metadata),
         neighbors=neighbors,
         total_neighbors=total_neighbors,
     )

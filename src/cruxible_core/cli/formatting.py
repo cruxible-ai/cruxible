@@ -9,15 +9,11 @@ from rich.table import Table
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.graph.types import (
-    ASSERTION_PROPERTY,
-    PROVENANCE_PROPERTY,
     EntityInstance,
     RelationshipInstance,
 )
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.temporal import format_datetime
-
-_HIDDEN_RELATIONSHIP_PROPERTIES = {PROVENANCE_PROPERTY, ASSERTION_PROPERTY}
 
 
 def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
@@ -135,9 +131,7 @@ def edges_table(edges: list[dict[str, Any]]) -> Table:
         from_label = f"{e['from_type']}:{e['from_id']}"
         to_label = f"{e['to_type']}:{e['to_id']}"
         props = e.get("properties", {})
-        props_str = ", ".join(
-            f"{k}={v}" for k, v in props.items() if k not in _HIDDEN_RELATIONSHIP_PROPERTIES
-        )
+        props_str = ", ".join(f"{k}={v}" for k, v in props.items())
         table.add_row(
             from_label,
             to_label,
@@ -162,9 +156,7 @@ def inspect_neighbors_table(neighbors: list[dict[str, Any]]) -> Table:
         entity = neighbor.get("entity", {})
         label = f"{entity.get('entity_type', '')}:{entity.get('entity_id', '')}"
         props = neighbor.get("properties", {})
-        props_str = ", ".join(
-            f"{k}={v}" for k, v in props.items() if k not in _HIDDEN_RELATIONSHIP_PROPERTIES
-        )
+        props_str = ", ".join(f"{k}={v}" for k, v in props.items())
         table.add_row(
             str(neighbor.get("direction", "")),
             str(neighbor.get("relationship_type", "")),

@@ -6,7 +6,7 @@ import pytest
 
 from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import DataValidationError
-from cruxible_core.graph.assertion_state import load_assertion_state
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import (
     apply_entity,
@@ -14,8 +14,8 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
-from cruxible_core.graph.provenance import dump_provenance, make_provenance
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.provenance import make_provenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 
 CONFIG_YAML = """\
 version: "1.0"
@@ -72,10 +72,18 @@ def graph():
 
 class TestValidateEntity:
     def test_valid_new_entity(self, config, graph):
-        result = validate_entity(config, graph, "Vehicle", "V2", {"vehicle_id": "V2"})
+        result = validate_entity(
+            config,
+            graph,
+            "Vehicle",
+            "V2",
+            {"vehicle_id": "V2"},
+            metadata={"source": "test"},
+        )
         assert result.entity.entity_type == "Vehicle"
         assert result.entity.entity_id == "V2"
         assert "vehicle_id" not in result.entity.properties
+        assert result.entity.metadata == {"source": "test"}
         assert result.is_update is False
 
     def test_valid_update_entity(self, config, graph):
@@ -157,25 +165,25 @@ class TestValidateRelationship:
                 {"confidence": "high"},
             )
 
-    def test_provenance_stripped(self, config, graph):
-        result = validate_relationship(
-            config,
-            graph,
-            "Part",
-            "P1",
-            "fits",
-            "Vehicle",
-            "V1",
-            {
-                "confidence": 0.9,
-                "_provenance": {"source": "evil"},
-                "_assertion": {"review": {"status": "approved", "source": "human"}},
-                "review_status": "human_approved",
-            },
-        )
-        assert "_provenance" not in result.relationship.properties
-        assert "_assertion" not in result.relationship.properties
-        assert "review_status" not in result.relationship.properties
+    def test_relationship_metadata_keys_are_rejected_as_domain_properties(
+        self, config, graph
+    ):
+        with pytest.raises(DataValidationError, match="unexpected property '_assertion'"):
+            validate_relationship(
+                config,
+                graph,
+                "Part",
+                "P1",
+                "fits",
+                "Vehicle",
+                "V1",
+                {
+                    "confidence": 0.9,
+                    "_provenance": {"source": "evil"},
+                    "_assertion": {"review": {"status": "approved", "source": "human"}},
+                    "review_status": "human_approved",
+                },
+            )
 
     def test_unknown_relationship(self, config, graph):
         with pytest.raises(DataValidationError, match="not found in config"):
@@ -251,11 +259,16 @@ relationships:
                 from_id="P1",
                 to_type="Vehicle",
                 to_id="V1",
-                properties={
-                    "confidence": 0.5,
-                    "_provenance": dump_provenance(make_provenance("ingest", "fitments")),
-                    "review_status": "human_approved",
-                },
+                properties={"confidence": 0.5},
+                metadata=RelationshipMetadata(
+                    provenance=make_provenance("ingest", "fitments"),
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(
+                            status="approved",
+                            source="human",
+                        )
+                    ),
+                ),
             )
         )
 
@@ -280,10 +293,8 @@ relationships:
         assert rel is not None
         assert rel.properties["confidence"] == 0.5
         assert rel.properties["note"] == "verified manually"
-        assert rel.properties["review_status"] == "human_approved"
-        state = load_assertion_state(rel.properties)
-        assert state.review.status == "approved"
-        assert state.review.source == "human"
+        assert rel.metadata.assertion.review.status == "approved"
+        assert rel.metadata.assertion.review.source == "human"
 
     def test_invalid_relationship_update_leaves_existing_edge_unchanged(self, config, graph):
         graph.add_relationship(
@@ -327,11 +338,29 @@ class TestApplyEntity:
 
     def test_apply_update(self, config, graph):
         validated = validate_entity(
-            config, graph, "Vehicle", "V1", {"vehicle_id": "V1"}
+            config,
+            graph,
+            "Vehicle",
+            "V1",
+            {"vehicle_id": "V1"},
+            metadata={"last_seen": "service"},
         )
         apply_entity(graph, validated)
         entity = graph.get_entity("Vehicle", "V1")
         assert "vehicle_id" in entity.properties
+        assert entity.metadata["last_seen"] == "service"
+
+    def test_apply_update_preserves_existing_metadata_when_no_metadata_provided(
+        self, config, graph
+    ):
+        graph.update_entity_metadata("Vehicle", "V1", {"origin": "fixture"})
+
+        validated = validate_entity(config, graph, "Vehicle", "V1", {"vehicle_id": "V1"})
+        apply_entity(graph, validated)
+
+        entity = graph.get_entity("Vehicle", "V1")
+        assert entity is not None
+        assert entity.metadata == {"origin": "fixture"}
 
     def test_unknown_property_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="unexpected property 'extra'"):
@@ -359,14 +388,14 @@ class TestApplyRelationship:
         apply_relationship(graph, validated, "mcp_add", "cruxible_add_relationship")
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel is not None
-        prov = rel.properties.get("_provenance")
+        assert rel.properties == {"confidence": 0.9}
+        prov = rel.metadata.provenance
         assert prov is not None
-        assert prov["source"] == "mcp_add"
-        assert prov["source_ref"] == "cruxible_add_relationship"
-        assert "created_at" in prov
-        state = load_assertion_state(rel.properties)
-        assert state.review.status == "unreviewed"
-        assert state.lifecycle.status == "active"
+        assert prov.source == "mcp_add"
+        assert prov.source_ref == "cruxible_add_relationship"
+        assert prov.created_at is not None
+        assert rel.metadata.assertion.review.status == "unreviewed"
+        assert rel.metadata.assertion.lifecycle.status == "active"
 
     def test_update_provenance(self, config, graph):
         """Existing provenance preserved with last_modified_at/last_modified_by."""
@@ -378,15 +407,16 @@ class TestApplyRelationship:
                 from_id="P1",
                 to_type="Vehicle",
                 to_id="V1",
-                properties={
-                    "confidence": 0.5,
-                    "_provenance": dump_provenance(make_provenance("ingest", "fitments")),
-                },
+                properties={"confidence": 0.5},
+                metadata=RelationshipMetadata(
+                    provenance=make_provenance("ingest", "fitments")
+                ),
             )
         )
-        original_prov = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").properties[
-            "_provenance"
-        ]
+        original_prov = graph.get_relationship(
+            "Part", "P1", "Vehicle", "V1", "fits"
+        ).metadata.provenance
+        assert original_prov is not None
 
         # Now update via apply_relationship
         validated = validate_relationship(
@@ -404,13 +434,14 @@ class TestApplyRelationship:
 
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel.properties["confidence"] == 0.9
-        prov = rel.properties["_provenance"]
+        prov = rel.metadata.provenance
+        assert prov is not None
         # Original provenance fields preserved
-        assert prov["source"] == original_prov["source"]
-        assert prov["created_at"] == original_prov["created_at"]
+        assert prov.source == original_prov.source
+        assert prov.created_at == original_prov.created_at
         # Modification fields added
-        assert prov["last_modified_by"] == "cli_add"
-        assert "last_modified_at" in prov
+        assert prov.last_modified_by == "cli_add"
+        assert prov.last_modified_at is not None
 
     def test_cli_provenance(self, config, graph):
         """CLI source values are preserved."""
@@ -426,6 +457,7 @@ class TestApplyRelationship:
         )
         apply_relationship(graph, validated, "cli_add", "add-relationship")
         rel = graph.get_relationship("Part", "P2", "Vehicle", "V1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["source"] == "cli_add"
-        assert prov["source_ref"] == "add-relationship"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "cli_add"
+        assert prov.source_ref == "add-relationship"

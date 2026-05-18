@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Any, Mapping
 
 from cruxible_core.config.schema import CoreConfig, PropertySchema
-from cruxible_core.graph.types import USER_STRIPPED_PROPERTIES, EntityInstance
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.primitives import canonical_json
 from cruxible_core.temporal import format_datetime, parse_datetime
 
@@ -111,16 +111,12 @@ def validate_property_payload(
     require_required: bool,
     primary_key_name: str | None = None,
     entity_id: str | None = None,
-    strip_system_properties: bool = False,
 ) -> PropertyValidationResult:
     """Validate and normalize a property payload against schema definitions."""
     errors: list[str] = []
     normalized: dict[str, Any] = {}
 
     source = dict(payload)
-    if strip_system_properties:
-        for key in USER_STRIPPED_PROPERTIES:
-            source.pop(key, None)
 
     if primary_key_name is not None and primary_key_name in source:
         supplied = source.pop(primary_key_name)

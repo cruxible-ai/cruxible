@@ -14,7 +14,8 @@ from cruxible_core.errors import (
     RelationshipAmbiguityError,
     TraceNotFoundError,
 )
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.provenance import RelationshipProvenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import (
     service_add_constraint,
@@ -642,18 +643,66 @@ class TestGetEntity:
         assert entity is not None
         assert entity.properties["vehicle_id"] == "V-1"
 
+    def test_get_entity_preserves_metadata(
+        self, initialized_instance: CruxibleInstance
+    ) -> None:
+        service_add_entities(
+            initialized_instance,
+            [
+                EntityInstance(
+                    entity_type="Vehicle",
+                    entity_id="V-1",
+                    properties={
+                        "vehicle_id": "V-1",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                    metadata={"source": "fixture"},
+                )
+            ],
+        )
+
+        entity = service_get_entity(initialized_instance, "Vehicle", "V-1")
+
+        assert entity is not None
+        assert entity.metadata == {"source": "fixture"}
+
     def test_not_found(self, populated_instance: CruxibleInstance) -> None:
         entity = service_get_entity(populated_instance, "Vehicle", "NONEXISTENT")
         assert entity is None
 
     def test_inspect_entity_returns_neighbors(self, populated_instance: CruxibleInstance) -> None:
+        graph = populated_instance.load_graph()
+        graph.update_entity_metadata("Vehicle", "V-2024-CIVIC-EX", {"source": "fixture"})
+        graph.update_relationship_state(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            metadata=RelationshipMetadata(
+                provenance=RelationshipProvenance(
+                    source="ingest",
+                    source_ref="fixture",
+                )
+            ),
+        )
+        populated_instance.save_graph(graph)
+
         result = service_inspect_entity(populated_instance, "Vehicle", "V-2024-CIVIC-EX")
 
         assert result.found is True
         assert result.properties["vehicle_id"] == "V-2024-CIVIC-EX"
+        assert result.metadata == {"source": "fixture"}
         assert result.total_neighbors == 2
         assert {neighbor.relationship_type for neighbor in result.neighbors} == {"fits"}
         assert {neighbor.direction for neighbor in result.neighbors} == {"incoming"}
+        metadata_rows = [neighbor.metadata for neighbor in result.neighbors if neighbor.metadata]
+        assert any(
+            metadata.get("provenance", {}).get("source") == "ingest"
+            for metadata in metadata_rows
+        )
 
     def test_inspect_entity_not_found(self, populated_instance: CruxibleInstance) -> None:
         result = service_inspect_entity(populated_instance, "Vehicle", "MISSING")
@@ -721,6 +770,9 @@ class TestGetRelationship:
 
         assert lineage.found is True
         assert lineage.relationship is not None
+        assert lineage.assertion is not None
+        assert lineage.assertion["review"]["status"] == "unreviewed"
+        assert lineage.assertion["lifecycle"]["status"] == "active"
         assert lineage.warnings == ["missing_provenance"]
 
     def test_lineage_warns_when_relationship_not_found(
@@ -738,6 +790,7 @@ class TestGetRelationship:
 
         assert lineage.found is False
         assert lineage.relationship is None
+        assert lineage.assertion is None
         assert lineage.warnings == ["relationship_not_found"]
 
     def test_lineage_warns_on_non_group_provenance(
@@ -752,13 +805,13 @@ class TestGetRelationship:
                 from_id="BP-1002",
                 to_type="Vehicle",
                 to_id="V-2024-ACCORD-SPORT",
-                properties={
-                    "verified": True,
-                    "_provenance": {
-                        "source": "workflow_apply",
-                        "source_ref": "workflow:canonical-fitment",
-                    },
-                },
+                properties={"verified": True},
+                metadata=RelationshipMetadata(
+                    provenance=RelationshipProvenance(
+                        source="workflow_apply",
+                        source_ref="workflow:canonical-fitment",
+                    )
+                ),
             )
         )
         populated_instance.save_graph(graph)
@@ -778,6 +831,8 @@ class TestGetRelationship:
             "source": "workflow_apply",
             "source_ref": "workflow:canonical-fitment",
         }
+        assert lineage.assertion is not None
+        assert lineage.assertion["review"]["status"] == "unreviewed"
         assert lineage.group is None
         assert lineage.warnings == ["non_group_provenance"]
 
@@ -793,13 +848,13 @@ class TestGetRelationship:
                 from_id="BP-1002",
                 to_type="Vehicle",
                 to_id="V-2024-ACCORD-SPORT",
-                properties={
-                    "verified": True,
-                    "_provenance": {
-                        "source": "group_resolve",
-                        "source_ref": "group:GRP-missing",
-                    },
-                },
+                properties={"verified": True},
+                metadata=RelationshipMetadata(
+                    provenance=RelationshipProvenance(
+                        source="group_resolve",
+                        source_ref="group:GRP-missing",
+                    )
+                ),
             )
         )
         populated_instance.save_graph(graph)

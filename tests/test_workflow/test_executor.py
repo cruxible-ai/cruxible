@@ -260,7 +260,7 @@ class TestWorkflowExecutor:
                 id="existing_links",
                 list_relationships={
                     "relationship_type": "recommended_for",
-                    "property_filter": {"review_status": "$input.status"},
+                    "property_filter": {"status": "$input.status"},
                     "limit": 10,
                 },
                 **{"as": "existing_links"},
@@ -300,7 +300,7 @@ class TestWorkflowExecutor:
                 id="existing_links",
                 list_relationships={
                     "relationship_type": "recommended_for",
-                    "property_filter": {"review_status": "$input.status"},
+                    "property_filter": {"status": "$input.status"},
                     "limit": 10,
                 },
                 **{"as": "existing_links"},
@@ -319,7 +319,7 @@ class TestWorkflowExecutor:
             proposal_workflow_instance,
             "edges",
             relationship_type="recommended_for",
-            property_filter={"review_status": "human_approved"},
+            property_filter={"status": "human_approved"},
             limit=10,
         )
 

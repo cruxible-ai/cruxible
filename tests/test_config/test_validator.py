@@ -673,7 +673,7 @@ class TestValidateWorkflowExecution:
                             id="edges",
                             list_relationships={
                                 "relationship_type": "missing",
-                                "property_filter": {"review_status": "$input.id"},
+                                "property_filter": {"status": "$input.id"},
                             },
                             **{"as": "edges"},
                         )

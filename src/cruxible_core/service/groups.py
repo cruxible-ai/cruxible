@@ -16,10 +16,7 @@ from cruxible_core.errors import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.graph.types import (
-    SYSTEM_OWNED_PROPERTIES,
     RelationshipInstance,
-    load_assertion_state,
-    review_state_to_legacy_review_status,
 )
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
@@ -394,7 +391,7 @@ def _has_active_override(graph: EntityGraph, member: CandidateMember) -> bool:
         return False
     if relationship.properties.get("group_override") is True:
         return True
-    review = load_assertion_state(relationship.properties).review
+    review = relationship.metadata.assertion.review
     if review.status == "pending":
         return True
     return review.status == "rejected"
@@ -1663,12 +1660,6 @@ def _property_delta(
     proposed: dict[str, Any],
     current: dict[str, Any],
 ) -> PropertyDeltaResult:
-    proposed = {
-        key: value for key, value in proposed.items() if key not in SYSTEM_OWNED_PROPERTIES
-    }
-    current = {
-        key: value for key, value in current.items() if key not in SYSTEM_OWNED_PROPERTIES
-    }
     proposed_keys = set(proposed)
     current_keys = set(current)
     shared = proposed_keys & current_keys
@@ -1706,14 +1697,12 @@ def _member_review_state(
         current_properties = dict(current["properties"])
         raw_edge_key = current.get("edge_key")
         current_edge_key = raw_edge_key if isinstance(raw_edge_key, int) else None
-        raw_review_status = current_properties.get("review_status")
         current_review_status = (
-            raw_review_status if isinstance(raw_review_status, str) else None
+            current.get("metadata", {})
+            .get("assertion", {})
+            .get("review", {})
+            .get("status")
         )
-        if current_review_status is None:
-            current_review_status = review_state_to_legacy_review_status(
-                load_assertion_state(current_properties).review
-            )
         property_delta = _property_delta(proposed_properties, current_properties)
     elif not current_edges:
         property_delta = _property_delta(proposed_properties, {})
