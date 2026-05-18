@@ -176,6 +176,8 @@ def build_query_view(
                 entry_point=query.entry_point,
                 required_params=list(info.get("required_params", [])),
                 returns=info.get("returns", query.returns),
+                result_shape=info.get("result_shape", query.result_shape),
+                dedupe=info.get("dedupe", query.dedupe),
                 description=info.get("description", query.description),
                 example_ids=list(info.get("example_ids", [])),
                 traversal_summary=traversal_summary,

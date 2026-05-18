@@ -22,6 +22,7 @@ from cruxible_core.query.engine import (
     execute_query,
 )
 from cruxible_core.query.evaluate import evaluate_graph
+from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1478,3 +1479,497 @@ class TestMaxDepth:
         ids = {r.entity_id for r in result.results}
         # A->B passes (weight=1.0), B->C blocked (weight=0.0), so only B
         assert ids == {"B"}
+
+
+class TestPathResults:
+    def test_existing_entity_query_output_remains_entity_rows(self, config, graph):
+        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
+
+        assert result.result_shape == "entity"
+        assert result.dedupe == "entity"
+        assert [type(row) for row in result.results] == [EntityInstance, EntityInstance]
+        assert {row.entity_id for row in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_entity_query_rejects_path_retaining_dedupe_at_runtime(self, config, graph):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="list[Part]",
+        )
+        query.dedupe = "none"
+        config.named_queries["bad_entity_dedupe"] = query
+
+        with pytest.raises(QueryExecutionError, match="requires dedupe 'entity'"):
+            execute_query(config, graph, "bad_entity_dedupe", {"vehicle_id": "V-CIVIC"})
+
+    def test_path_shape_includes_entry_result_entities_segments_and_aliases(
+        self,
+        config,
+        graph,
+    ):
+        config.named_queries["parts_for_vehicle_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_for_vehicle_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        rows = sorted(result.results, key=lambda row: row.result.entity_id)
+        assert all(isinstance(row, QueryPathRow) for row in rows)
+        first = rows[0]
+        assert first.entry.entity_type == "Vehicle"
+        assert first.entry.entity_id == "V-CIVIC"
+        assert first.result.entity_type == "Part"
+        assert first.result.entity_id == "BP-1234"
+        assert [entity.entity_id for entity in first.entities] == ["V-CIVIC", "BP-1234"]
+        assert len(first.path) == 1
+        assert first.path[0].alias == "fit"
+        assert first.path[0].relationship_type == "fits"
+        assert first.path[0].from_type == "Part"
+        assert first.path[0].from_id == "BP-1234"
+        assert first.path[0].to_type == "Vehicle"
+        assert first.path[0].to_id == "V-CIVIC"
+        assert first.path[0].metadata.assertion.lifecycle.status == "active"
+
+    def test_path_dedupe_can_collapse_or_preserve_distinct_paths(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True, "confidence": 0.99},
+            )
+        )
+        config.named_queries["parts_path_entity_dedupe"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="entity",
+        )
+        config.named_queries["parts_path_path_dedupe"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        entity_deduped = execute_query(
+            config,
+            graph,
+            "parts_path_entity_dedupe",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        path_deduped = execute_query(
+            config,
+            graph,
+            "parts_path_path_dedupe",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert [
+            row.result.entity_id
+            for row in entity_deduped.results
+            if isinstance(row, QueryPathRow)
+        ].count("BP-1234") == 1
+        bp1234_rows = [
+            row
+            for row in path_deduped.results
+            if isinstance(row, QueryPathRow) and row.result.entity_id == "BP-1234"
+        ]
+        assert len(bp1234_rows) == 2
+        assert len({row.path[0].edge_key for row in bp1234_rows}) == 2
+
+    def test_multi_hop_path_query_includes_full_intermediate_entities(self):
+        config = _kev_path_config()
+        graph = _kev_path_graph()
+
+        result = execute_query(
+            config,
+            graph,
+            "business_services_for_vulnerability",
+            {"vuln_id": "VULN-1"},
+        )
+
+        assert len(result.results) == 1
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert row.entry.entity_type == "Vulnerability"
+        assert row.entry.properties["title"] == "Remote Code Execution"
+        assert row.result.entity_type == "BusinessService"
+        assert row.result.properties["name"] == "Checkout"
+        assert [
+            (entity.entity_type, entity.entity_id, entity.properties["name"])
+            for entity in row.entities
+        ] == [
+            ("Vulnerability", "VULN-1", "CVE-2026-0001"),
+            ("Product", "PROD-1", "Payments API"),
+            ("Asset", "ASSET-1", "payments-prod-1"),
+            ("BusinessService", "SVC-1", "Checkout"),
+        ]
+        assert [segment.alias for segment in row.path] == [
+            "affected_product",
+            "deployed_asset",
+            "supported_service",
+        ]
+        assert [segment.relationship_type for segment in row.path] == [
+            "affects",
+            "deployed_on",
+            "supports",
+        ]
+
+
+def _kev_path_config() -> CoreConfig:
+    return CoreConfig(
+        name="kev-path",
+        entity_types={
+            "Vulnerability": EntityTypeSchema(
+                properties={
+                    "vuln_id": PropertySchema(type="string", primary_key=True),
+                    "name": PropertySchema(type="string"),
+                    "title": PropertySchema(type="string"),
+                }
+            ),
+            "Product": EntityTypeSchema(
+                properties={
+                    "product_id": PropertySchema(type="string", primary_key=True),
+                    "name": PropertySchema(type="string"),
+                }
+            ),
+            "Asset": EntityTypeSchema(
+                properties={
+                    "asset_id": PropertySchema(type="string", primary_key=True),
+                    "name": PropertySchema(type="string"),
+                }
+            ),
+            "BusinessService": EntityTypeSchema(
+                properties={
+                    "service_id": PropertySchema(type="string", primary_key=True),
+                    "name": PropertySchema(type="string"),
+                }
+            ),
+        },
+        relationships=[
+            RelationshipSchema(name="affects", from_entity="Vulnerability", to_entity="Product"),
+            RelationshipSchema(name="deployed_on", from_entity="Product", to_entity="Asset"),
+            RelationshipSchema(name="supports", from_entity="Asset", to_entity="BusinessService"),
+        ],
+        named_queries={
+            "business_services_for_vulnerability": NamedQuerySchema(
+                entry_point="Vulnerability",
+                traversal=[
+                    TraversalStep(
+                        relationship="affects",
+                        direction="outgoing",
+                        alias="affected_product",
+                    ),
+                    TraversalStep(
+                        relationship="deployed_on",
+                        direction="outgoing",
+                        alias="deployed_asset",
+                    ),
+                    TraversalStep(
+                        relationship="supports",
+                        direction="outgoing",
+                        alias="supported_service",
+                    ),
+                ],
+                returns="list[BusinessService]",
+                result_shape="path",
+                dedupe="path",
+            )
+        },
+    )
+
+
+def _kev_path_graph() -> EntityGraph:
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Vulnerability",
+            entity_id="VULN-1",
+            properties={
+                "vuln_id": "VULN-1",
+                "name": "CVE-2026-0001",
+                "title": "Remote Code Execution",
+            },
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Product",
+            entity_id="PROD-1",
+            properties={"product_id": "PROD-1", "name": "Payments API"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Asset",
+            entity_id="ASSET-1",
+            properties={"asset_id": "ASSET-1", "name": "payments-prod-1"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="BusinessService",
+            entity_id="SVC-1",
+            properties={"service_id": "SVC-1", "name": "Checkout"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="affects",
+            from_type="Vulnerability",
+            from_id="VULN-1",
+            to_type="Product",
+            to_id="PROD-1",
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="deployed_on",
+            from_type="Product",
+            from_id="PROD-1",
+            to_type="Asset",
+            to_id="ASSET-1",
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="supports",
+            from_type="Asset",
+            from_id="ASSET-1",
+            to_type="BusinessService",
+            to_id="SVC-1",
+        )
+    )
+    return graph
+
+
+class TestRelationshipResults:
+    def test_outgoing_relationship_rows_include_metadata_and_endpoint_payloads(
+        self,
+        config,
+        graph,
+    ):
+        config.named_queries["fit_edges_for_part"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="outgoing",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_edges_for_part",
+            {"part_number": "BP-1234"},
+        )
+
+        assert result.result_shape == "relationship"
+        rows = sorted(result.results, key=lambda row: row.to_id)
+        assert all(isinstance(row, QueryRelationshipRow) for row in rows)
+        row = next(row for row in rows if row.to_id == "V-CIVIC")
+        assert row.relationship_type == "fits"
+        assert row.from_type == "Part"
+        assert row.from_id == "BP-1234"
+        assert row.to_type == "Vehicle"
+        assert row.to_id == "V-CIVIC"
+        assert row.edge_key is not None
+        assert row.properties["verified"] is True
+        assert row.metadata.assertion.review.status == "unreviewed"
+        assert row.entry.entity_type == "Part"
+        assert row.entry.properties["part_number"] == "BP-1234"
+        assert row.from_entity is not None
+        assert row.from_entity.properties["name"] == "Ceramic Brake Pad"
+        assert row.to_entity is not None
+        assert row.to_entity.properties["make"] == "Honda"
+
+    def test_incoming_relationship_rows(self, config, graph):
+        config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        rows = sorted(result.results, key=lambda row: row.from_id)
+        assert [row.from_id for row in rows] == ["BP-1234", "BP-5678"]
+        assert all(isinstance(row, QueryRelationshipRow) for row in rows)
+        assert all(row.to_id == "V-CIVIC" for row in rows)
+        assert all(row.entry.entity_id == "V-CIVIC" for row in rows)
+
+    def test_parallel_relationship_rows_are_distinguished_by_edge_key(
+        self,
+        config,
+        graph,
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True, "confidence": 0.99},
+            )
+        )
+        config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        bp1234_rows = [
+            row
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow) and row.from_id == "BP-1234"
+        ]
+        assert len(bp1234_rows) == 2
+        assert len({row.edge_key for row in bp1234_rows}) == 2
+
+    def test_relationship_query_defaults_to_path_dedupe(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True, "confidence": 0.99},
+            )
+        )
+        config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.dedupe == "path"
+        bp1234_rows = [
+            row
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow) and row.from_id == "BP-1234"
+        ]
+        assert len(bp1234_rows) == 2
+
+    def test_relationship_query_rejects_returns_mismatch_at_runtime(
+        self,
+        config,
+        graph,
+    ):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+        )
+        query.returns = "not_fits"
+        config.named_queries["bad_fit_edges"] = query
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="must set returns to its final relationship type",
+        ):
+            execute_query(
+                config,
+                graph,
+                "bad_fit_edges",
+                {"vehicle_id": "V-CIVIC"},
+            )

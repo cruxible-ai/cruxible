@@ -65,6 +65,8 @@ def service_inspect_view(
                 "entry_point": query.entry_point,
                 "required_params": list(query.required_params),
                 "returns": query.returns,
+                "result_shape": query.result_shape,
+                "dedupe": query.dedupe,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }
@@ -92,6 +94,8 @@ def service_inspect_view(
                 "entry_point": query.entry_point,
                 "required_params": list(query.required_params),
                 "returns": query.returns,
+                "result_shape": query.result_shape,
+                "dedupe": query.dedupe,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }

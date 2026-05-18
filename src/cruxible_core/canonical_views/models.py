@@ -88,8 +88,10 @@ class QuerySummaryView:
     entry_point: str
     required_params: list[str]
     returns: str
-    description: str | None
-    example_ids: list[str]
+    result_shape: str = "entity"
+    dedupe: str = "entity"
+    description: str | None = None
+    example_ids: list[str] = field(default_factory=list)
     traversal_summary: list[str] = field(default_factory=list)
 
 

@@ -28,6 +28,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
@@ -151,6 +152,8 @@ class QueryServiceResult:
     receipt: Receipt | None
     total_results: int
     steps_executed: int
+    result_shape: QueryResultShape = "entity"
+    dedupe: QueryDedupe = "entity"
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
 
@@ -163,6 +166,8 @@ class QuerySurfaceServiceResult:
     total_results: int
     truncated: bool
     steps_executed: int
+    result_shape: QueryResultShape = "entity"
+    dedupe: QueryDedupe = "entity"
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
 
@@ -190,6 +195,8 @@ class QueryDefinitionServiceResult:
     entry_point: str
     required_params: list[str] = field(default_factory=list)
     returns: str = ""
+    result_shape: QueryResultShape = "entity"
+    dedupe: QueryDedupe = "entity"
     description: str | None = None
     example_ids: list[str] = field(default_factory=list)
 

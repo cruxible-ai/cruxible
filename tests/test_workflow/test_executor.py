@@ -144,6 +144,124 @@ class TestWorkflowExecutor:
         assert result.output["total_results"] == 1
         assert [item["entity_id"] for item in result.output["results"]] == ["SKU-123"]
 
+    def test_query_step_passes_path_rows_through(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+        )
+        config.workflows["query_recommendation_paths"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                )
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-123",
+                properties={"reason": "catalog"},
+            )
+        )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_recommendation_paths",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.output["result_shape"] == "path"
+        row = result.output["results"][0]
+        assert row["entry"]["entity_type"] == "Campaign"
+        assert row["result"]["entity_type"] == "Product"
+        assert row["entities"][1]["entity_id"] == "SKU-123"
+        assert row["path"][0]["alias"] == "recommendation"
+        assert row["path"][0]["metadata"]["assertion"]["lifecycle"]["status"] == "active"
+
+    def test_query_step_passes_relationship_rows_through(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["recommendation_edges"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                )
+            ],
+            returns="recommended_for",
+            result_shape="relationship",
+            dedupe="path",
+        )
+        config.workflows["query_recommendation_edges"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="edges",
+                    query="recommendation_edges",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "edges"},
+                )
+            ],
+            returns="edges",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-123",
+                properties={"reason": "catalog"},
+            )
+        )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_recommendation_edges",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.output["result_shape"] == "relationship"
+        row = result.output["results"][0]
+        assert row["relationship_type"] == "recommended_for"
+        assert row["edge_key"] is not None
+        assert row["entry"]["entity_type"] == "Campaign"
+        assert row["to_entity"]["entity_id"] == "SKU-123"
+
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance
     ) -> None:

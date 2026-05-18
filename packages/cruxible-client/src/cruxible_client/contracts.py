@@ -148,6 +148,8 @@ class QueryToolResult(BaseModel):
     total_results: int
     truncated: bool = False
     steps_executed: int
+    result_shape: Literal["entity", "path", "relationship"] = "entity"
+    dedupe: Literal["entity", "path", "none"] = "entity"
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
 
@@ -304,6 +306,8 @@ class NamedQueryInfoResult(BaseModel):
     entry_point: str
     required_params: list[str] = Field(default_factory=list)
     returns: str
+    result_shape: Literal["entity", "path", "relationship"] = "entity"
+    dedupe: Literal["entity", "path", "none"] = "entity"
     description: str | None = None
     example_ids: list[str] = Field(default_factory=list)
 

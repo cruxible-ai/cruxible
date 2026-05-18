@@ -326,13 +326,25 @@ class NamedQuerySchema(BaseModel):
     dedupe: QueryDedupe = "entity"
 
     @model_validator(mode="after")
-    def validate_traversal_aliases(self) -> NamedQuerySchema:
+    def validate_result_shape(self) -> NamedQuerySchema:
         aliases = [step.alias for step in self.traversal if step.alias is not None]
         duplicate_aliases = sorted({alias for alias in aliases if aliases.count(alias) > 1})
         if duplicate_aliases:
             duplicate_str = ", ".join(duplicate_aliases)
             msg = f"duplicate traversal aliases: {duplicate_str}"
             raise ValueError(msg)
+        if self.result_shape == "entity" and self.dedupe != "entity":
+            msg = "result_shape 'entity' requires dedupe 'entity'"
+            raise ValueError(msg)
+        if self.result_shape == "relationship":
+            if not self.traversal:
+                msg = "result_shape 'relationship' requires at least one traversal step"
+                raise ValueError(msg)
+            if "dedupe" not in self.model_fields_set:
+                self.dedupe = "path"
+            elif self.dedupe == "entity":
+                msg = "result_shape 'relationship' requires dedupe 'path' or 'none'"
+                raise ValueError(msg)
         return self
 
 
@@ -1327,6 +1339,36 @@ class CoreConfig(BaseModel):
                             "in exclude_if_related"
                         )
                         raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_relationship_query_returns(self) -> CoreConfig:
+        """Check relationship-shaped queries return their final relationship type."""
+        for query_name, query in self.named_queries.items():
+            if query.result_shape != "relationship":
+                continue
+            if not query.traversal:
+                msg = (
+                    f"Named query '{query_name}' with result_shape 'relationship' "
+                    "requires traversal"
+                )
+                raise ValueError(msg)
+            final_step = query.traversal[-1]
+            final_relationships: list[str] = []
+            for rel_ref in final_step.relationship_types:
+                resolved = self.resolve_relationship_reference(rel_ref)
+                if resolved is None:
+                    continue
+                rel_schema, _is_reverse = resolved
+                final_relationships.append(rel_schema.name)
+            final_relationships = list(dict.fromkeys(final_relationships))
+            if len(final_relationships) != 1 or query.returns != final_relationships[0]:
+                expected = ", ".join(final_relationships) if final_relationships else "<unknown>"
+                msg = (
+                    f"Named query '{query_name}' with result_shape 'relationship' must set "
+                    f"returns to its final relationship type ({expected})"
+                )
+                raise ValueError(msg)
         return self
 
     def get_relationship(self, name: str) -> RelationshipSchema | None:

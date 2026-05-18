@@ -303,15 +303,38 @@ class TestNamedQuerySchema:
                 result_shape="table",
             )
 
-    @pytest.mark.parametrize("dedupe", ["entity", "path", "none"])
-    def test_valid_dedupe_values(self, dedupe):
+    def test_entity_shape_accepts_entity_dedupe(self):
         query = NamedQuerySchema(
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
+            dedupe="entity",
+        )
+        assert query.dedupe == "entity"
+
+    @pytest.mark.parametrize("dedupe", ["entity", "path", "none"])
+    def test_path_shape_accepts_dedupe_values(self, dedupe):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            result_shape="path",
             dedupe=dedupe,
         )
         assert query.dedupe == dedupe
+
+    @pytest.mark.parametrize("dedupe", ["path", "none"])
+    def test_entity_shape_rejects_path_retaining_dedupe(self, dedupe):
+        with pytest.raises(
+            ValidationError,
+            match="result_shape 'entity' requires dedupe 'entity'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                dedupe=dedupe,
+            )
 
     def test_invalid_dedupe_value(self):
         with pytest.raises(ValidationError, match="entity|path|none"):
@@ -320,6 +343,29 @@ class TestNamedQuerySchema:
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
                 dedupe="terminal",
+            )
+
+    def test_relationship_shape_defaults_to_path_dedupe(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="fits",
+            result_shape="relationship",
+        )
+
+        assert query.dedupe == "path"
+
+    def test_relationship_shape_rejects_entity_dedupe(self):
+        with pytest.raises(
+            ValidationError,
+            match="result_shape 'relationship' requires dedupe 'path' or 'none'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="fits",
+                result_shape="relationship",
+                dedupe="entity",
             )
 
     def test_duplicate_traversal_aliases_fail_validation(self):
@@ -331,6 +377,41 @@ class TestNamedQuerySchema:
                     TraversalStep(relationship="replaces", alias="hop"),
                 ],
                 returns="list[Part]",
+            )
+
+    def test_relationship_shape_requires_returns_to_match_final_relationship(self):
+        with pytest.raises(
+            ValidationError,
+            match=(
+                "Named query 'bad' with result_shape 'relationship' must set returns "
+                "to its final relationship type"
+            ),
+        ):
+            CoreConfig(
+                name="relationship-return-validation",
+                entity_types={
+                    "Vehicle": EntityTypeSchema(
+                        properties={
+                            "vehicle_id": PropertySchema(type="string", primary_key=True)
+                        }
+                    ),
+                    "Part": EntityTypeSchema(
+                        properties={
+                            "part_number": PropertySchema(type="string", primary_key=True)
+                        }
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+                ],
+                named_queries={
+                    "bad": NamedQuerySchema(
+                        entry_point="Vehicle",
+                        traversal=[TraversalStep(relationship="fits", direction="incoming")],
+                        returns="not_fits",
+                        result_shape="relationship",
+                    )
+                },
             )
 
 

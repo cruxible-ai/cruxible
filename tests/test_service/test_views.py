@@ -26,6 +26,30 @@ def test_service_inspect_view_returns_structured_ontology(
     }
 
 
+def test_service_inspect_view_queries_include_result_shape_metadata(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_inspect_view(populated_instance, "queries")
+
+    query = next(item for item in result.payload["queries"] if item["name"] == "parts_for_vehicle")
+    assert query["result_shape"] == "entity"
+    assert query["dedupe"] == "entity"
+
+
+def test_service_inspect_view_overview_queries_include_result_shape_metadata(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_inspect_view(populated_instance, "overview")
+
+    query = next(
+        item
+        for item in result.payload["queries"]["queries"]
+        if item["name"] == "parts_for_vehicle"
+    )
+    assert query["result_shape"] == "entity"
+    assert query["dedupe"] == "entity"
+
+
 def test_service_render_wiki_returns_page_payloads(
     populated_instance: CruxibleInstance,
 ) -> None:

@@ -165,6 +165,8 @@ def execute_query_step(
         "receipt_id": query_result.receipt.receipt_id,
         "total_results": query_result.total_results,
         "steps_executed": query_result.steps_executed,
+        "result_shape": query_result.result_shape,
+        "dedupe": query_result.dedupe,
     }
     if compiled_step.as_name is not None:
         alias_step_ids[compiled_step.as_name] = compiled_step.step_id

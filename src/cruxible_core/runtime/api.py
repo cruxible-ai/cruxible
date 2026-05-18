@@ -639,7 +639,7 @@ def query(
     include_receipt = limit is None
 
     return contracts.QueryToolResult(
-        results=[entity.model_dump(mode="json") for entity in result.results],
+        results=[row.model_dump(mode="json") for row in result.results],
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None
@@ -647,6 +647,8 @@ def query(
         total_results=result.total_results,
         truncated=result.truncated,
         steps_executed=result.steps_executed,
+        result_shape=result.result_shape,
+        dedupe=result.dedupe,
         policy_summary=result.policy_summary,
         param_hints=(
             contracts.QueryParamHints(
@@ -975,6 +977,8 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
                 entry_point=query.entry_point,
                 required_params=query.required_params,
                 returns=query.returns,
+                result_shape=query.result_shape,
+                dedupe=query.dedupe,
                 description=query.description,
                 example_ids=query.example_ids,
             )
@@ -996,6 +1000,8 @@ def describe_query(
         entry_point=query.entry_point,
         required_params=query.required_params,
         returns=query.returns,
+        result_shape=query.result_shape,
+        dedupe=query.dedupe,
         description=query.description,
         example_ids=query.example_ids,
     )

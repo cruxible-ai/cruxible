@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.config.property_validation import (
@@ -31,14 +32,32 @@ from cruxible_core.predicate import (
     PredicateValueType,
     evaluate_typed_comparison,
 )
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape
 from cruxible_core.query.filters import matches_exact_filter
-from cruxible_core.query.types import QueryResult, QueryRow
+from cruxible_core.query.types import (
+    QueryPathRow,
+    QueryPathSegment,
+    QueryRelationshipRow,
+    QueryResult,
+    QueryRow,
+)
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.temporal import is_expired
 
 if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig, TraversalStep
     from cruxible_core.graph.entity_graph import EntityGraph
+
+
+@dataclass(frozen=True)
+class _TraversalState:
+    """Internal path-carrying traversal state."""
+
+    entry: EntityInstance
+    current: EntityInstance
+    entities: tuple[EntityInstance, ...]
+    path: tuple[QueryPathSegment, ...]
+    parent_id: str | None = None
 
 
 def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
@@ -70,6 +89,11 @@ def execute_query(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         raise QueryNotFoundError(query_name)
+    _validate_query_result_shape(config, query_name, query_schema)
+    requires_path_retention = _requires_path_retention(
+        result_shape=query_schema.result_shape,
+        dedupe=query_schema.dedupe,
+    )
 
     builder = ReceiptBuilder(query_name=query_name, parameters=params)
 
@@ -81,35 +105,44 @@ def execute_query(
         builder=builder,
     )
 
-    current_entities = [entry_entity]
-    current_parent_ids: list[str] | None = None
+    current_states = [
+        _TraversalState(
+            entry=entry_entity,
+            current=entry_entity,
+            entities=(entry_entity,),
+            path=(),
+        )
+    ]
     steps_executed = 0
     policy_summary: dict[str, int] = {}
 
     for step in query_schema.traversal:
-        current_entities, current_parent_ids = _execute_step(
+        current_states = _execute_step(
             config,
             graph,
             step,
-            current_entities,
+            current_states,
             params,
             query_name=query_name,
+            requires_path_retention=requires_path_retention,
             policy_summary=policy_summary,
             builder=builder,
         )
         steps_executed += 1
 
-    result_entities: list[QueryRow] = [
-        entity_with_identity_properties(config, entity) for entity in current_entities
-    ]
-    result_dicts = [e.model_dump() for e in result_entities]
-    builder.record_results(result_dicts, parent_ids=current_parent_ids)
+    result_states = _dedupe_states(current_states, query_schema.dedupe)
+    result_rows = _build_result_rows(config, result_states, query_schema.result_shape)
+    result_dicts = [row.model_dump() for row in result_rows]
+    parent_ids = [state.parent_id for state in result_states if state.parent_id is not None]
+    builder.record_results(result_dicts, parent_ids=parent_ids or None)
     receipt = builder.build(result_dicts)
 
     return QueryResult(
         query_name=query_name,
         parameters=params,
-        results=result_entities,
+        results=result_rows,
+        result_shape=query_schema.result_shape,
+        dedupe=query_schema.dedupe,
         steps_executed=steps_executed,
         receipt=receipt,
         policy_summary=policy_summary,
@@ -153,23 +186,76 @@ def _resolve_entry_entity(
     return entity
 
 
+def _validate_query_result_shape(
+    config: CoreConfig,
+    query_name: str,
+    query_schema: Any,
+) -> None:
+    """Validate result-shape constraints before executing traversal."""
+    if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with result_shape 'entity' requires "
+            "dedupe 'entity'"
+        )
+    if query_schema.result_shape != "relationship":
+        return
+    if query_schema.dedupe == "entity":
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with result_shape 'relationship' requires "
+            "dedupe 'path' or 'none'"
+        )
+    if not query_schema.traversal:
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with result_shape 'relationship' requires traversal"
+        )
+    final_step = query_schema.traversal[-1]
+    final_relationships: list[str] = []
+    for rel_ref in final_step.relationship_types:
+        resolved = config.resolve_relationship_reference(rel_ref)
+        if resolved is None:
+            raise RelationshipNotFoundError(rel_ref)
+        rel_schema, _is_reverse = resolved
+        final_relationships.append(rel_schema.name)
+    final_relationships = list(dict.fromkeys(final_relationships))
+    if len(final_relationships) != 1 or query_schema.returns != final_relationships[0]:
+        expected = ", ".join(final_relationships) if final_relationships else "<unknown>"
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with result_shape 'relationship' must set "
+            f"returns to its final relationship type ({expected})"
+        )
+
+
+def _requires_path_retention(
+    *,
+    result_shape: QueryResultShape,
+    dedupe: QueryDedupe,
+) -> bool:
+    """Return whether traversal must retain full path state.
+
+    Future path-dependent features such as projections, ordering, aggregation,
+    or predicates over ``$path`` should feed into this decision.
+    """
+    return result_shape in {"path", "relationship"} or dedupe in {"path", "none"}
+
+
 def _execute_step(
     config: CoreConfig,
     graph: EntityGraph,
     step: TraversalStep,
-    current_entities: list[EntityInstance],
+    current_states: list[_TraversalState],
     params: dict[str, Any],
     query_name: str,
+    requires_path_retention: bool,
     policy_summary: dict[str, int],
     *,
     builder: ReceiptBuilder | None = None,
-) -> tuple[list[EntityInstance], list[str] | None]:
+) -> list[_TraversalState]:
     """Execute one traversal step via BFS with multi-relationship fan-out.
 
     Supports multiple relationship types per step and multi-hop traversal
     via max_depth. Three dedup layers:
-      1. Expansion dedup: never expand the same node twice
-      2. Result dedup: each entity appears once in output (first path owns lineage)
+      1. Entity-frontier pruning: entity rows expand each node at most once
+      2. Result dedup: entity rows appear once in default entity-shaped queries
       3. Evidence: all traversal edges recorded in receipt regardless of dedup
     """
     # Validate and resolve all relationship references up front.
@@ -186,42 +272,46 @@ def _execute_step(
         for rel_name, _ in resolved_refs
     }
 
-    next_entities: list[EntityInstance] = []
-    next_parent_ids: list[str] = []
+    next_states: list[_TraversalState] = []
 
     # BFS state
-    # Queue entries: (entity, current_depth, parent_traversal_id)
-    queue: deque[tuple[EntityInstance, int, str | None]] = deque()
+    # Queue entries: (path state, current_depth)
+    queue: deque[tuple[_TraversalState, int]] = deque()
     seen_expanded: set[str] = set()  # nodes already expanded (neighbors queried)
     seen_results: set[str] = set()  # nodes already in result list
 
     # Seed queue with input entities (they are inputs, not results)
-    for entity in current_entities:
-        nid = entity.node_id()
-        seen_expanded.add(nid)
-        seen_results.add(nid)
-        queue.append((entity, 0, None))
+    for state in current_states:
+        nid = state.current.node_id()
+        if not requires_path_retention:
+            seen_expanded.add(nid)
+            seen_results.add(nid)
+        queue.append((state, 0))
 
     while queue:
-        entity, depth, parent_tid = queue.popleft()
+        state, depth = queue.popleft()
+        entity = state.current
 
         if depth >= step.max_depth:
             continue
 
         for rel_type, direction in resolved_refs:
             rel_policies = step_policies.get(rel_type, [])
-            neighbors = graph.get_neighbors_with_relationship_refs(
-                entity.entity_type,
-                entity.entity_id,
+            for neighbor, segment, relative_direction in _iter_step_relationships(
+                graph,
+                entity,
                 relationship_type=rel_type,
                 direction=direction,
-            )
-
-            for neighbor, edge_props, edge_metadata, edge_key in neighbors:
-                if not relationship_is_live(edge_metadata):
+                alias=step.alias,
+            ):
+                if not relationship_is_live(segment.metadata):
                     continue
 
                 nid = neighbor.node_id()
+                if requires_path_retention and any(
+                    path_entity.node_id() == nid for path_entity in state.entities
+                ):
+                    continue
 
                 # Record evidence regardless of dedup
                 traversal_id = None
@@ -232,14 +322,14 @@ def _execute_step(
                         to_entity_type=neighbor.entity_type,
                         to_entity_id=neighbor.entity_id,
                         relationship=rel_type,
-                        edge_props=edge_props,
-                        edge_key=edge_key,
-                        parent_id=parent_tid,
+                        edge_props=segment.properties,
+                        edge_key=segment.edge_key,
+                        parent_id=state.parent_id,
                     )
 
                 # Apply edge filter (blocks subtree on failure)
                 if step.filter:
-                    passed = matches_exact_filter(edge_props, step.filter)
+                    passed = matches_exact_filter(segment.properties, step.filter)
                     if builder is not None and traversal_id is not None:
                         builder.record_filter(
                             filter_spec=step.filter,
@@ -316,7 +406,7 @@ def _execute_step(
                     if excluded:
                         continue
 
-                if direction == "outgoing":
+                if relative_direction == "outgoing":
                     policy_from_entity = entity
                     policy_to_entity = neighbor
                 else:
@@ -328,7 +418,7 @@ def _execute_step(
                     policies=rel_policies,
                     from_entity=policy_from_entity,
                     to_entity=policy_to_entity,
-                    edge_props=edge_props,
+                    edge_props=segment.properties,
                     context={
                         "query_name": query_name,
                         "relationship_type": rel_type,
@@ -340,19 +430,178 @@ def _execute_step(
                 ):
                     continue
 
+                next_state = _TraversalState(
+                    entry=state.entry,
+                    current=neighbor,
+                    entities=(*state.entities, neighbor),
+                    path=(*state.path, segment),
+                    parent_id=traversal_id,
+                )
+
                 # Result dedup: first path owns the lineage
-                if nid not in seen_results:
-                    seen_results.add(nid)
-                    next_entities.append(neighbor)
-                    if traversal_id is not None:
-                        next_parent_ids.append(traversal_id)
+                if not requires_path_retention:
+                    if nid not in seen_results:
+                        seen_results.add(nid)
+                        next_states.append(next_state)
+                else:
+                    next_states.append(next_state)
 
                 # Expansion dedup: enqueue for deeper hops if not yet expanded
-                if nid not in seen_expanded:
+                if not requires_path_retention and nid not in seen_expanded:
                     seen_expanded.add(nid)
-                    queue.append((neighbor, depth + 1, traversal_id))
+                    queue.append((next_state, depth + 1))
+                elif requires_path_retention:
+                    queue.append((next_state, depth + 1))
 
-    return next_entities, next_parent_ids or None
+    return next_states
+
+
+def _iter_step_relationships(
+    graph: EntityGraph,
+    entity: EntityInstance,
+    *,
+    relationship_type: str,
+    direction: str,
+    alias: str | None,
+) -> list[tuple[EntityInstance, QueryPathSegment, str]]:
+    """Return traversable neighbor relationships with concrete edge identity."""
+    rows = graph.get_neighbor_relationships(
+        entity.entity_type,
+        entity.entity_id,
+        relationship_type=relationship_type,
+        direction=direction,
+    )
+    relationships: list[tuple[EntityInstance, QueryPathSegment, str]] = []
+    for row in rows:
+        neighbor = row.get("entity")
+        if not isinstance(neighbor, EntityInstance):
+            continue
+        relative_direction = str(row.get("direction"))
+        if relative_direction == "outgoing":
+            from_entity = entity
+            to_entity = neighbor
+        else:
+            from_entity = neighbor
+            to_entity = entity
+        segment = QueryPathSegment(
+            alias=alias,
+            relationship_type=str(row["relationship_type"]),
+            from_type=from_entity.entity_type,
+            from_id=from_entity.entity_id,
+            to_type=to_entity.entity_type,
+            to_id=to_entity.entity_id,
+            edge_key=row.get("edge_key"),
+            properties=dict(row.get("properties", {})),
+            metadata=row.get("metadata", {}),
+        )
+        relationships.append((neighbor, segment, relative_direction))
+    return relationships
+
+
+def _dedupe_states(
+    states: list[_TraversalState],
+    dedupe: QueryDedupe,
+) -> list[_TraversalState]:
+    """Apply final query result dedupe while preserving deterministic first paths."""
+    if dedupe == "none":
+        return list(states)
+
+    seen: set[Any] = set()
+    deduped: list[_TraversalState] = []
+    for state in states:
+        key = state.current.node_id() if dedupe == "entity" else _path_identity(state.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(state)
+    return deduped
+
+
+def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...], ...]:
+    """Return a stable graph identity for one evidence path."""
+    return tuple(
+        (
+            segment.relationship_type,
+            segment.from_type,
+            segment.from_id,
+            segment.to_type,
+            segment.to_id,
+            segment.edge_key,
+        )
+        for segment in path
+    )
+
+
+def _build_result_rows(
+    config: CoreConfig,
+    states: list[_TraversalState],
+    result_shape: QueryResultShape,
+) -> list[QueryRow]:
+    if result_shape == "path":
+        return [
+            QueryPathRow(
+                entry=entity_with_identity_properties(config, state.entry),
+                result=entity_with_identity_properties(config, state.current),
+                entities=[
+                    entity_with_identity_properties(config, entity)
+                    for entity in state.entities
+                ],
+                path=list(state.path),
+            )
+            for state in states
+        ]
+    if result_shape == "relationship":
+        return [
+            _build_relationship_row(config, state)
+            for state in states
+            if state.path
+        ]
+    return [
+        entity_with_identity_properties(config, state.current)
+        for state in states
+    ]
+
+
+def _build_relationship_row(
+    config: CoreConfig,
+    state: _TraversalState,
+) -> QueryRelationshipRow:
+    segment = state.path[-1]
+    return QueryRelationshipRow(
+        relationship_type=segment.relationship_type,
+        from_type=segment.from_type,
+        from_id=segment.from_id,
+        to_type=segment.to_type,
+        to_id=segment.to_id,
+        edge_key=segment.edge_key,
+        properties=dict(segment.properties),
+        metadata=segment.metadata,
+        entry=entity_with_identity_properties(config, state.entry),
+        from_entity=_find_path_entity(
+            config,
+            state.entities,
+            segment.from_type,
+            segment.from_id,
+        ),
+        to_entity=_find_path_entity(
+            config,
+            state.entities,
+            segment.to_type,
+            segment.to_id,
+        ),
+    )
+
+
+def _find_path_entity(
+    config: CoreConfig,
+    entities: tuple[EntityInstance, ...],
+    entity_type: str,
+    entity_id: str,
+) -> EntityInstance | None:
+    for entity in entities:
+        if entity.entity_type == entity_type and entity.entity_id == entity_id:
+            return entity_with_identity_properties(config, entity)
+    return None
 
 
 def _related_edge_exists(

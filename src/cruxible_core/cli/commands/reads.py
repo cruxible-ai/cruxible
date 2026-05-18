@@ -95,9 +95,27 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
         "entry_point": query.entry_point,
         "required_params": list(query.required_params),
         "returns": query.returns,
+        "result_shape": getattr(query, "result_shape", "entity"),
+        "dedupe": getattr(query, "dedupe", "entity"),
         "description": query.description,
         "example_ids": list(query.example_ids),
     }
+
+
+def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        if hasattr(row, "model_dump"):
+            payload.append(row.model_dump(mode="python"))
+        else:
+            payload.append(dict(row))
+    return payload
+
+
+def _print_structured_query_rows(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    click.echo(yaml.safe_dump({"results": rows}, sort_keys=False).rstrip())
 
 
 CanonicalViewName = Literal["ontology", "workflows", "queries", "governance", "overview"]
@@ -227,16 +245,31 @@ def _run_query_command(
             )
             _print_query_param_hints(hints)
             raise
-        results = _entities_from_payload(result.results)
+        entity_results = (
+            _entities_from_payload(result.results)
+            if result.result_shape == "entity"
+            else []
+        )
+        structured_results = [] if result.result_shape == "entity" else list(result.results)
         total = result.total_results
         if output_json:
-            items = [] if count_only else [r.model_dump(mode="python") for r in results]
+            items = (
+                []
+                if count_only
+                else (
+                    [r.model_dump(mode="python") for r in entity_results]
+                    if result.result_shape == "entity"
+                    else structured_results
+                )
+            )
             if limit is not None and not count_only:
                 items = items[:limit]
             _emit_json({
                 "results": items,
                 "total_results": total,
                 "steps_executed": result.steps_executed,
+                "result_shape": result.result_shape,
+                "dedupe": result.dedupe,
                 "receipt_id": result.receipt_id,
                 "param_hints": (
                     result.param_hints.model_dump(mode="python")
@@ -254,10 +287,18 @@ def _run_query_command(
         if count_only:
             _print_query_param_hints(result.param_hints)
         elif limit is not None and result.truncated:
-            console.print(entities_table(results, query_name))
-            click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
+            if result.result_shape == "entity":
+                console.print(entities_table(entity_results, query_name))
+            else:
+                _print_structured_query_rows(structured_results)
+            visible_count = (
+                len(entity_results) if result.result_shape == "entity" else len(structured_results)
+            )
+            click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
+        elif result.result_shape == "entity":
+            console.print(entities_table(entity_results, query_name))
         else:
-            console.print(entities_table(results, query_name))
+            _print_structured_query_rows(structured_results)
         if total == 0 and not count_only:
             _print_query_param_hints(result.param_hints)
         if result.receipt_id:
@@ -279,24 +320,32 @@ def _run_query_command(
         raise
 
     results = result.results
+    entity_results = [row for row in results if isinstance(row, EntityInstance)]
+    structured_results = _query_rows_payload(results)
     total = result.total_results
     if output_json:
         items = (
             []
             if count_only
-            else [
-                {
-                    "entity_type": e.entity_type,
-                    "entity_id": e.entity_id,
-                    "properties": dict(e.properties),
-                }
-                for e in results
-            ]
+            else (
+                [
+                    {
+                        "entity_type": e.entity_type,
+                        "entity_id": e.entity_id,
+                        "properties": dict(e.properties),
+                    }
+                    for e in entity_results
+                ]
+                if result.result_shape == "entity"
+                else structured_results
+            )
         )
         _emit_json({
             "results": items,
             "total_results": total,
             "steps_executed": result.steps_executed,
+            "result_shape": result.result_shape,
+            "dedupe": result.dedupe,
             "receipt_id": result.receipt_id,
             "param_hints": asdict(result.param_hints) if result.param_hints is not None else None,
             "policy_summary": result.policy_summary if result.policy_summary else None,
@@ -314,10 +363,15 @@ def _run_query_command(
             )
         _print_query_param_hints(hints)
     elif limit is not None and result.truncated:
-        console.print(entities_table(results, query_name))
+        if result.result_shape == "entity":
+            console.print(entities_table(entity_results, query_name))
+        else:
+            _print_structured_query_rows(structured_results)
         click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
+    elif result.result_shape == "entity":
+        console.print(entities_table(entity_results, query_name))
     else:
-        console.print(entities_table(results, query_name))
+        _print_structured_query_rows(structured_results)
     if total == 0 and not count_only and result.param_hints is not None:
         _print_query_param_hints(
             contracts.QueryParamHints(

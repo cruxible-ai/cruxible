@@ -108,9 +108,11 @@ def service_query(
         status="success",
         input_payload=input_event,
         output_payload={
-            "results": [entity.model_dump(mode="json") for entity in result.results],
+            "results": [row.model_dump(mode="json") for row in result.results],
             "total_results": result.total_results,
             "steps_executed": result.steps_executed,
+            "result_shape": result.result_shape,
+            "dedupe": result.dedupe,
         },
         receipt_id=result.receipt_id,
         head_snapshot_id=receipt_head_snapshot_id,
@@ -150,6 +152,8 @@ def service_query_surface(
         total_results=result.total_results,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        result_shape=result.result_shape,
+        dedupe=result.dedupe,
         param_hints=result.param_hints,
         policy_summary=result.policy_summary,
     )
@@ -176,6 +180,8 @@ def service_evaluate_query_surface(
         total_results=result.total_results,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        result_shape=result.result_shape,
+        dedupe=result.dedupe,
         param_hints=result.param_hints,
         policy_summary=result.policy_summary,
     )
@@ -198,6 +204,8 @@ def _evaluate_query_result(
         receipt=query_result.receipt,
         total_results=total,
         steps_executed=query_result.steps_executed,
+        result_shape=query_result.result_shape,
+        dedupe=query_result.dedupe,
         param_hints=_query_param_hints(config, graph, query_name),
         policy_summary=query_result.policy_summary,
     )
@@ -593,6 +601,8 @@ def _query_definition(
         entry_point=query_schema.entry_point,
         required_params=list(hints.required_params) if hints is not None else [],
         returns=query_schema.returns,
+        result_shape=query_schema.result_shape,
+        dedupe=query_schema.dedupe,
         description=query_schema.description,
         example_ids=list(hints.example_ids) if hints is not None else [],
     )

@@ -10,8 +10,10 @@ from cruxible_core.config.schema import (
     DecisionPolicySchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    NamedQuerySchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
+    TraversalStep,
 )
 from cruxible_core.errors import (
     ConfigError,
@@ -20,6 +22,7 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
 )
 from cruxible_core.graph.types import RelationshipInstance
+from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
 from cruxible_core.service import (
     FeedbackItemInput,
     RelationshipTargetInput,
@@ -48,6 +51,78 @@ class TestQuery:
         assert result.total_results >= 1
         assert result.receipt_id is not None
         assert result.steps_executed >= 1
+        assert result.result_shape == "entity"
+
+    def test_path_query_returns_structured_rows(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["part_paths_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+        )
+        populated_instance.save_config(config)
+
+        result = service_query(
+            populated_instance,
+            "part_paths_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+
+        assert result.result_shape == "path"
+        assert result.dedupe == "path"
+        assert result.results
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert row.entry.entity_type == "Vehicle"
+        assert row.result.entity_type == "Part"
+        assert row.path[0].alias == "fit"
+        assert row.path[0].metadata.assertion.lifecycle.status == "active"
+
+    def test_relationship_query_returns_structured_rows(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            dedupe="path",
+        )
+        populated_instance.save_config(config)
+
+        result = service_query(
+            populated_instance,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+
+        assert result.result_shape == "relationship"
+        assert result.results
+        row = result.results[0]
+        assert isinstance(row, QueryRelationshipRow)
+        assert row.relationship_type == "fits"
+        assert row.edge_key is not None
+        assert row.metadata.assertion.review.status == "unreviewed"
 
     def test_persists_receipt(self, populated_instance: CruxibleInstance) -> None:
         result = service_query(

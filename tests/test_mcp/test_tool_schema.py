@@ -166,6 +166,8 @@ class TestOutputSchema:
                     "total_results",
                     "truncated",
                     "steps_executed",
+                    "result_shape",
+                    "dedupe",
                     "param_hints",
                     "policy_summary",
                 },
