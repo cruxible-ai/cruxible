@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import (
@@ -49,6 +49,7 @@ from cruxible_core.service.types import (
     InspectEntityResult,
     InspectNeighborResult,
     ListResult,
+    NeighborDirection,
     OperationContext,
     QueryDefinitionServiceResult,
     QueryParamHints,
@@ -298,7 +299,7 @@ def service_inspect_entity(
         metadata=result.metadata,
         neighbors=[
             InspectNeighborResult(
-                direction=neighbor.direction,
+                direction=cast(NeighborDirection, neighbor.direction),
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
                 properties=neighbor.properties,

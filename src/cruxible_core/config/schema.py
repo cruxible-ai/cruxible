@@ -28,14 +28,17 @@ Hierarchy:
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape
 
 _PATH_TOKEN = r"[\w-]+"
+_PATH_TOKEN_RE = re.compile(rf"^{_PATH_TOKEN}$")
 _FEEDBACK_PATH_PATTERN = rf"^(FROM|TO|EDGE)\.({_PATH_TOKEN})$"
 _OUTCOME_PATH_PATTERN = (
     rf"^(RESOLUTION|GROUP|WORKFLOW|THESIS|RECEIPT|SURFACE|TRACESET)\.({_PATH_TOKEN})$"
@@ -268,6 +271,9 @@ class TraversalStep(BaseModel):
     constraint_value_type: PredicateValueType | None = None
     exclude_if_related: list[RelatedExclusionSpec] = Field(default_factory=list)
     max_depth: int = Field(default=1, ge=1)
+    alias: str | None = Field(default=None, alias="as")
+
+    model_config = {"populate_by_name": True}
 
     @field_validator("relationship")
     @classmethod
@@ -289,6 +295,14 @@ class TraversalStep(BaseModel):
             raise ValueError(msg)
         return self
 
+    @field_validator("alias")
+    @classmethod
+    def validate_alias(cls, value: str | None) -> str | None:
+        if value is not None and _PATH_TOKEN_RE.fullmatch(value) is None:
+            msg = "as must match [\\w-]+"
+            raise ValueError(msg)
+        return value
+
     @property
     def relationship_types(self) -> list[str]:
         """Normalize relationship to a deduplicated list."""
@@ -308,6 +322,18 @@ class NamedQuerySchema(BaseModel):
     entry_point: str
     traversal: list[TraversalStep]
     returns: str
+    result_shape: QueryResultShape = "entity"
+    dedupe: QueryDedupe = "entity"
+
+    @model_validator(mode="after")
+    def validate_traversal_aliases(self) -> NamedQuerySchema:
+        aliases = [step.alias for step in self.traversal if step.alias is not None]
+        duplicate_aliases = sorted({alias for alias in aliases if aliases.count(alias) > 1})
+        if duplicate_aliases:
+            duplicate_str = ", ".join(duplicate_aliases)
+            msg = f"duplicate traversal aliases: {duplicate_str}"
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------

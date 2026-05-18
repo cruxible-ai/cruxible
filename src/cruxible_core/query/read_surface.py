@@ -14,7 +14,8 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.query.engine import QueryResult, execute_query
+from cruxible_core.query.engine import execute_query
+from cruxible_core.query.types import QueryResult
 
 
 @dataclass

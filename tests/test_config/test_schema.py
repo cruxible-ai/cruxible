@@ -234,6 +234,18 @@ class TestTraversalStep:
         assert step.filter == {"verified": True}
         assert step.exclude_if_related[0].relationship == "retired_fit"
 
+    def test_alias_uses_yaml_as_key(self):
+        step = TraversalStep.model_validate({"relationship": "fits", "as": "fitment"})
+        assert step.alias == "fitment"
+
+    def test_alias_rejects_blank_string(self):
+        with pytest.raises(ValidationError, match=r"as must match \[\\w-\]\+"):
+            TraversalStep.model_validate({"relationship": "fits", "as": "   "})
+
+    def test_alias_rejects_path_punctuation(self):
+        with pytest.raises(ValidationError, match=r"as must match \[\\w-\]\+"):
+            TraversalStep.model_validate({"relationship": "fits", "as": "fit.path"})
+
     def test_related_exclusion_rejects_blank_relationship(self):
         with pytest.raises(ValidationError, match="relationship must be a non-empty string"):
             TraversalStep(
@@ -258,6 +270,8 @@ class TestNamedQuerySchema:
         )
         assert query.entry_point == "Vehicle"
         assert len(query.traversal) == 1
+        assert query.result_shape == "entity"
+        assert query.dedupe == "entity"
 
     def test_multi_step(self):
         query = NamedQuerySchema(
@@ -269,6 +283,55 @@ class TestNamedQuerySchema:
             returns="list[Part]",
         )
         assert len(query.traversal) == 2
+
+    @pytest.mark.parametrize("result_shape", ["entity", "path", "relationship"])
+    def test_valid_result_shapes(self, result_shape):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            result_shape=result_shape,
+        )
+        assert query.result_shape == result_shape
+
+    def test_invalid_result_shape(self):
+        with pytest.raises(ValidationError, match="entity|path|relationship"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="table",
+            )
+
+    @pytest.mark.parametrize("dedupe", ["entity", "path", "none"])
+    def test_valid_dedupe_values(self, dedupe):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            dedupe=dedupe,
+        )
+        assert query.dedupe == dedupe
+
+    def test_invalid_dedupe_value(self):
+        with pytest.raises(ValidationError, match="entity|path|none"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                dedupe="terminal",
+            )
+
+    def test_duplicate_traversal_aliases_fail_validation(self):
+        with pytest.raises(ValidationError, match="duplicate traversal aliases: hop"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[
+                    TraversalStep(relationship="fits", alias="hop"),
+                    TraversalStep(relationship="replaces", alias="hop"),
+                ],
+                returns="list[Part]",
+            )
 
 
 def _config_with_contract_json_schema(schema_yaml: str, *, enums: str = "") -> str:

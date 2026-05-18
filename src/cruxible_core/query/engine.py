@@ -15,8 +15,6 @@ import re
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
-
 from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
     entity_with_identity_properties,
@@ -34,29 +32,13 @@ from cruxible_core.predicate import (
     evaluate_typed_comparison,
 )
 from cruxible_core.query.filters import matches_exact_filter
+from cruxible_core.query.types import QueryResult, QueryRow
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import is_expired
 
 if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig, TraversalStep
     from cruxible_core.graph.entity_graph import EntityGraph
-
-
-class QueryResult(BaseModel):
-    """Result of executing a named query."""
-
-    query_name: str
-    parameters: dict[str, Any]
-    results: list[EntityInstance]
-    steps_executed: int
-    total_results: int | None = None
-    receipt: Receipt | None = None
-    policy_summary: dict[str, int] = Field(default_factory=dict)
-
-    def model_post_init(self, _context: Any) -> None:
-        if self.total_results is None:
-            self.total_results = len(self.results)
 
 
 def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
@@ -117,7 +99,7 @@ def execute_query(
         )
         steps_executed += 1
 
-    result_entities = [
+    result_entities: list[QueryRow] = [
         entity_with_identity_properties(config, entity) for entity in current_entities
     ]
     result_dicts = [e.model_dump() for e in result_entities]

@@ -29,6 +29,7 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.evaluate import EvaluationReport
+from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.snapshot.types import (
     PublishedWorldManifest,
@@ -145,7 +146,7 @@ class QueryParamHints:
 
 @dataclass
 class QueryServiceResult:
-    results: list[EntityInstance]
+    results: list[QueryRow]
     receipt_id: str | None
     receipt: Receipt | None
     total_results: int
@@ -156,7 +157,7 @@ class QueryServiceResult:
 
 @dataclass
 class QuerySurfaceServiceResult:
-    results: list[EntityInstance]
+    results: list[QueryRow]
     receipt_id: str | None
     receipt: Receipt | None
     total_results: int
