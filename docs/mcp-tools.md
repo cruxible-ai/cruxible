@@ -248,9 +248,10 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `query_name` | yes | string |  |
 | `params` | no | object | null |  |
 | `limit` | no | integer | null |  |
+| `relationship_state` | no | string | null | One of `live`, `accepted`, or `pending`. |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `truncated`, `steps_executed`, `param_hints`, `policy_summary`
+**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `truncated`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
 
 **Side Effects:** Read-only.
 

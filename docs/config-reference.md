@@ -315,6 +315,10 @@ named_queries:
 | `entry_point` | string | **yes** | — | Entity type to start the traversal from |
 | `traversal` | list | **yes** | — | Sequence of traversal steps |
 | `returns` | string | **yes** | — | Description of the return type |
+| `result_shape` | string | no | `"entity"` | Output shape: `entity`, `path`, or `relationship` |
+| `dedupe` | string | no | `"entity"` | Result dedupe mode: `entity`, `path`, or `none`. Relationship queries default to `path`. |
+| `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, or `pending` |
+| `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
 
 ### TraversalStep
 
@@ -325,13 +329,52 @@ Each step in the traversal sequence:
 | `relationship` | string or list[string] | **yes** | — | Relationship name(s) to traverse. A list fans out across all listed types and merges results. |
 | `direction` | string | no | `"outgoing"` | `outgoing`, `incoming`, or `both` |
 | `filter` | dict | no | `null` | Property filters on edges or target entities |
+| `target_filter` | dict | no | `null` | Exact-match property filters on candidate entities |
+| `where` | dict | no | `null` | Structured traversal predicates. Top-level paths must start with `edge`, `source`, `target`, `current`, `candidate`, or `entry`. |
+| `where_related` | list | no | `[]` | Related-edge predicates; at least one matching related edge must exist for each item |
+| `where_not_related` | list | no | `[]` | Related-edge predicates; no matching related edge may exist for any item |
 | `constraint` | string | no | `null` | Constraint expression to apply during traversal |
+| `constraint_value_type` | string | no | `null` | Optional typed constraint comparison: `string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime` |
+| `exclude_if_related` | list | no | `[]` | Legacy related-edge exclusion checks |
 | `max_depth` | int | no | `1` | BFS depth for this step (1 = direct neighbors only). Results include all entities from depth 1 through max_depth. |
+| `as` | string | no | `null` | Alias for the traversed path segment in path/relationship outputs |
 
 **Direction semantics:**
 - `outgoing`: Follow edges from entry point (source -> target)
 - `incoming`: Follow edges into entry point (target -> source)
 - `both`: Follow edges in either direction
+
+**Structured predicate example:**
+
+```yaml
+named_queries:
+  pending_exposures:
+    entry_point: Vulnerability
+    returns: asset_exposed_to_vulnerability
+    result_shape: relationship
+    relationship_state: pending
+    allow_relationship_state_override: true
+    traversal:
+      - relationship: asset_exposed_to_vulnerability
+        direction: incoming
+        as: exposure
+        where:
+          edge.metadata.assertion.lifecycle.status:
+            eq: active
+          target.properties.environment:
+            eq: production
+        where_not_related:
+          - relationship: asset_remediated_vulnerability
+            direction: outgoing
+            edge:
+              properties.verification_status:
+                eq: verified
+            target:
+              entity_id:
+                eq: $entry.entity_id
+```
+
+Supported structured predicate operators are `eq`, `ne`, `in`, `not_in`, `lt`, `lte`, `gt`, `gte`, and `exists`. Predicate values may reference query inputs with `$input.<name>` and graph context values such as `$entry.entity_id`.
 
 ---
 
