@@ -100,7 +100,8 @@ def dump_assertion(assertion: RelationshipAssertion) -> dict[str, Any]:
     return assertion.model_dump(mode="json", exclude_none=True)
 
 
-def _assertion_from_metadata_like(value: Any) -> RelationshipAssertion:
+def relationship_assertion_from_metadata(value: Any) -> RelationshipAssertion:
+    """Load relationship assertion state from metadata-like input."""
     if value is None:
         return RelationshipAssertion()
     if isinstance(value, RelationshipAssertion):
@@ -118,13 +119,9 @@ def _assertion_from_metadata_like(value: Any) -> RelationshipAssertion:
     raise TypeError("relationship liveness requires a RelationshipAssertion or metadata")
 
 
-def relationship_is_live(
-    assertion_or_metadata: Any = None,
-    *,
-    require_approved: bool = False,
-) -> bool:
-    """Return whether a relationship participates in live graph semantics."""
-    assertion = _assertion_from_metadata_like(assertion_or_metadata)
+def relationship_lifecycle_is_active(assertion_or_metadata: Any = None) -> bool:
+    """Return whether relationship lifecycle permits current participation."""
+    assertion = relationship_assertion_from_metadata(assertion_or_metadata)
     if assertion.lifecycle.status != "active":
         return False
 
@@ -132,6 +129,18 @@ def relationship_is_live(
         effective_from=assertion.lifecycle.effective_from,
         effective_until=assertion.lifecycle.effective_until,
     ):
+        return False
+    return True
+
+
+def relationship_is_live(
+    assertion_or_metadata: Any = None,
+    *,
+    require_approved: bool = False,
+) -> bool:
+    """Return whether a relationship participates in live graph semantics."""
+    assertion = relationship_assertion_from_metadata(assertion_or_metadata)
+    if not relationship_lifecycle_is_active(assertion):
         return False
 
     if assertion.review.status in {"pending", "rejected"}:
@@ -149,5 +158,7 @@ __all__ = [
     "RelationshipReviewState",
     "RelationshipReviewStatus",
     "dump_assertion",
+    "relationship_assertion_from_metadata",
     "relationship_is_live",
+    "relationship_lifecycle_is_active",
 ]

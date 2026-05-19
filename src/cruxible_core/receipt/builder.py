@@ -29,9 +29,13 @@ class ReceiptBuilder:
         operation_type: OperationType = "query",
         head_snapshot_id: str | None = None,
         workflow_mode: WorkflowReceiptMode | None = None,
+        execution_options: dict[str, Any] | None = None,
+        root_detail: dict[str, Any] | None = None,
     ) -> None:
         self._query_name = query_name
         self._parameters = parameters or {}
+        self._execution_options = execution_options or {}
+        self._root_detail = root_detail or {}
         self._operation_type = operation_type
         self._head_snapshot_id = head_snapshot_id
         self._workflow_mode = workflow_mode
@@ -46,7 +50,12 @@ class ReceiptBuilder:
         if operation_type == "query":
             self._root_id = self._add_node(
                 node_type="query",
-                detail={"query_name": query_name, "parameters": self._parameters},
+                detail={
+                    "query_name": query_name,
+                    "parameters": self._parameters,
+                    "execution_options": self._execution_options,
+                    **self._root_detail,
+                },
             )
         elif operation_type == "workflow":
             self._root_id = self._add_node(
@@ -262,6 +271,7 @@ class ReceiptBuilder:
         return Receipt(
             query_name=self._query_name,
             parameters=self._parameters,
+            execution_options=self._execution_options,
             nodes=list(self._nodes),
             edges=list(self._edges),
             results=results or [],

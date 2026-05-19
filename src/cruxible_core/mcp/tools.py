@@ -163,6 +163,7 @@ def register_tools(server: FastMCP) -> list[str]:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        relationship_state: contracts.QueryRelationshipState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query and return results plus a receipt.
@@ -184,6 +185,7 @@ def register_tools(server: FastMCP) -> list[str]:
             query_name,
             params,
             limit=limit,
+            relationship_state=relationship_state,
             decision_record_id=decision_record_id,
         )
 

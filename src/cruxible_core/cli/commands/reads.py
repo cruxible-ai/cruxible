@@ -97,6 +97,12 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
         "returns": query.returns,
         "result_shape": getattr(query, "result_shape", "entity"),
         "dedupe": getattr(query, "dedupe", "entity"),
+        "relationship_state": getattr(query, "relationship_state", "live"),
+        "allow_relationship_state_override": getattr(
+            query,
+            "allow_relationship_state_override",
+            False,
+        ),
         "description": query.description,
         "example_ids": list(query.example_ids),
     }
@@ -214,29 +220,39 @@ def _run_query_command(
     query_name: str,
     param: tuple[str, ...],
     limit: int | None,
+    relationship_state: str | None,
     count_only: bool,
     output_json: bool,
     decision_record_id: str | None,
 ) -> None:
     params = _parse_params(param)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
-    decision_kwargs = (
-        {"decision_record_id": resolved_decision_record_id}
-        if resolved_decision_record_id is not None
-        else {}
+    effective_relationship_state = cast(
+        contracts.QueryRelationshipState | None,
+        relationship_state,
     )
     client = _common._get_client()
     if client is not None:
         effective_limit = 1 if count_only and limit is None else limit
         instance_id = _require_instance_id()
         try:
-            result = client.query(
-                instance_id,
-                query_name,
-                params,
-                limit=effective_limit,
-                **decision_kwargs,
-            )
+            if effective_relationship_state is None:
+                result = client.query(
+                    instance_id,
+                    query_name,
+                    params,
+                    limit=effective_limit,
+                    decision_record_id=resolved_decision_record_id,
+                )
+            else:
+                result = client.query(
+                    instance_id,
+                    query_name,
+                    params,
+                    limit=effective_limit,
+                    relationship_state=effective_relationship_state,
+                    decision_record_id=resolved_decision_record_id,
+                )
         except CoreError:
             hints = _lookup_query_param_hints_server(
                 client,
@@ -270,6 +286,7 @@ def _run_query_command(
                 "steps_executed": result.steps_executed,
                 "result_shape": result.result_shape,
                 "dedupe": result.dedupe,
+                "relationship_state": result.relationship_state,
                 "receipt_id": result.receipt_id,
                 "param_hints": (
                     result.param_hints.model_dump(mode="python")
@@ -313,6 +330,7 @@ def _run_query_command(
             query_name,
             params,
             limit=effective_limit,
+            relationship_state=effective_relationship_state,
             context=_operation_context(resolved_decision_record_id),
         )
     except CoreError:
@@ -346,6 +364,7 @@ def _run_query_command(
             "steps_executed": result.steps_executed,
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
+            "relationship_state": result.relationship_state,
             "receipt_id": result.receipt_id,
             "param_hints": asdict(result.param_hints) if result.param_hints is not None else None,
             "policy_summary": result.policy_summary if result.policy_summary else None,
@@ -389,6 +408,12 @@ def _run_query_command(
 @click.option("--query", "query_name", required=False, help="Named query from config.")
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
+@click.option(
+    "--relationship-state",
+    type=click.Choice(["live", "accepted", "pending"]),
+    default=None,
+    help="Override query relationship visibility state.",
+)
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
@@ -399,6 +424,7 @@ def query(
     query_name: str | None,
     param: tuple[str, ...],
     limit: int | None,
+    relationship_state: str | None,
     count_only: bool,
     decision_record_id: str | None,
     output_json: bool,
@@ -412,6 +438,7 @@ def query(
         query_name=query_name,
         param=param,
         limit=limit,
+        relationship_state=relationship_state,
         count_only=count_only,
         output_json=output_json,
         decision_record_id=decision_record_id,

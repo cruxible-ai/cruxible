@@ -183,13 +183,14 @@ def render_query_markdown(view: QueryView) -> str:
         f"- Named queries: {view.query_count}",
         "",
         _markdown_table(
-            ("Query", "Entry", "Params", "Returns", "Traversal", "Examples"),
+            ("Query", "Entry", "Params", "Returns", "State", "Traversal", "Examples"),
             [
                 (
                     item.name,
                     item.entry_point,
                     ", ".join(item.required_params),
                     item.returns,
+                    item.relationship_state,
                     " -> ".join(item.traversal_summary),
                     ", ".join(item.example_ids),
                 )
@@ -379,11 +380,12 @@ def render_query_catalog_markdown(view: QueryView) -> str:
                 f"### {humanize_label(entry_point)}",
                 "",
                 _markdown_table(
-                    ("Query", "Returns", "Traversal", "Purpose"),
+                    ("Query", "Returns", "State", "Traversal", "Purpose"),
                     [
                         (
                             humanize_label(query.name),
                             humanize_label(query.returns),
+                            query.relationship_state,
                             " -> ".join(
                                 humanize_traversal_summary(step)
                                 for step in query.traversal_summary
@@ -604,12 +606,13 @@ def render_overview_markdown(view: OverviewView) -> str:
                 f"### {entry_point}",
                 "",
                 _markdown_table(
-                    ("Query", "Params", "Returns", "Traversal"),
+                    ("Query", "Params", "Returns", "State", "Traversal"),
                     [
                         (
                             query.name,
                             ", ".join(query.required_params),
                             query.returns,
+                            query.relationship_state,
                             " -> ".join(query.traversal_summary),
                         )
                         for query in queries_for_entry

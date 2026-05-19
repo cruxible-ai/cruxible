@@ -19,6 +19,7 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.query.enums import QueryRelationshipState
 from cruxible_core.query.read_surface import (
     get_entity as read_get_entity,
 )
@@ -71,6 +72,7 @@ def service_query(
     query_name: str,
     params: dict[str, Any],
     *,
+    relationship_state: QueryRelationshipState | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and persist the receipt.
@@ -78,9 +80,18 @@ def service_query(
     Returns results, receipt, and execution metadata.
     """
     started_at = utc_now()
-    input_event = {"query_name": query_name, "params": params}
+    input_event = {
+        "query_name": query_name,
+        "params": params,
+        "relationship_state": relationship_state,
+    }
     try:
-        result = _evaluate_query_result(instance, query_name, params)
+        result = _evaluate_query_result(
+            instance,
+            query_name,
+            params,
+            relationship_state=relationship_state,
+        )
 
         if result.receipt:
             store = instance.get_receipt_store()
@@ -113,6 +124,7 @@ def service_query(
             "steps_executed": result.steps_executed,
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
+            "relationship_state": result.relationship_state,
         },
         receipt_id=result.receipt_id,
         head_snapshot_id=receipt_head_snapshot_id,
@@ -125,9 +137,16 @@ def service_evaluate_query(
     instance: InstanceProtocol,
     query_name: str,
     params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState | None = None,
 ) -> QueryServiceResult:
     """Evaluate a named query without persisting receipts or decision events."""
-    return _evaluate_query_result(instance, query_name, params)
+    return _evaluate_query_result(
+        instance,
+        query_name,
+        params,
+        relationship_state=relationship_state,
+    )
 
 
 def service_query_surface(
@@ -136,13 +155,20 @@ def service_query_surface(
     params: dict[str, Any],
     *,
     limit: int | None = None,
+    relationship_state: QueryRelationshipState | None = None,
     context: OperationContext | None = None,
 ) -> QuerySurfaceServiceResult:
     """Execute a named query and apply caller-facing result truncation."""
     if limit is not None and limit < 1:
         raise ConfigError("limit must be a positive integer")
 
-    result = service_query(instance, query_name, params, context=context)
+    result = service_query(
+        instance,
+        query_name,
+        params,
+        relationship_state=relationship_state,
+        context=context,
+    )
     truncated = limit is not None and result.total_results > limit
     visible = result.results[:limit] if truncated else result.results
     return QuerySurfaceServiceResult(
@@ -154,6 +180,7 @@ def service_query_surface(
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
         dedupe=result.dedupe,
+        relationship_state=result.relationship_state,
         param_hints=result.param_hints,
         policy_summary=result.policy_summary,
     )
@@ -165,12 +192,18 @@ def service_evaluate_query_surface(
     params: dict[str, Any],
     *,
     limit: int | None = None,
+    relationship_state: QueryRelationshipState | None = None,
 ) -> QuerySurfaceServiceResult:
     """Evaluate a named query with caller-facing truncation and no persisted receipt."""
     if limit is not None and limit < 1:
         raise ConfigError("limit must be a positive integer")
 
-    result = service_evaluate_query(instance, query_name, params)
+    result = service_evaluate_query(
+        instance,
+        query_name,
+        params,
+        relationship_state=relationship_state,
+    )
     truncated = limit is not None and result.total_results > limit
     visible = result.results[:limit] if truncated else result.results
     return QuerySurfaceServiceResult(
@@ -182,6 +215,7 @@ def service_evaluate_query_surface(
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
         dedupe=result.dedupe,
+        relationship_state=result.relationship_state,
         param_hints=result.param_hints,
         policy_summary=result.policy_summary,
     )
@@ -191,10 +225,18 @@ def _evaluate_query_result(
     instance: InstanceProtocol,
     query_name: str,
     params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState | None = None,
 ) -> QueryServiceResult:
     config = instance.load_config()
     graph = instance.load_graph()
-    query_result = read_run_query(config, graph, query_name, params)
+    query_result = read_run_query(
+        config,
+        graph,
+        query_name,
+        params,
+        relationship_state=relationship_state,
+    )
     if query_result.receipt:
         query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
     total = query_result.total_results or len(query_result.results)
@@ -206,6 +248,7 @@ def _evaluate_query_result(
         steps_executed=query_result.steps_executed,
         result_shape=query_result.result_shape,
         dedupe=query_result.dedupe,
+        relationship_state=query_result.relationship_state,
         param_hints=_query_param_hints(config, graph, query_name),
         policy_summary=query_result.policy_summary,
     )
@@ -603,6 +646,8 @@ def _query_definition(
         returns=query_schema.returns,
         result_shape=query_schema.result_shape,
         dedupe=query_schema.dedupe,
+        relationship_state=query_schema.relationship_state,
+        allow_relationship_state_override=query_schema.allow_relationship_state_override,
         description=query_schema.description,
         example_ids=list(hints.example_ids) if hints is not None else [],
     )

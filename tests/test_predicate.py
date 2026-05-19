@@ -8,7 +8,9 @@ from cruxible_core.predicate import (
     comparison_symbol,
     evaluate_comparison,
     evaluate_typed_comparison,
+    infer_predicate_value_type,
     normalize_comparison_op,
+    validate_typed_predicate_operand,
 )
 
 
@@ -205,6 +207,9 @@ class TestEvaluateTypedComparison:
             is True
         )
 
+    def test_date_operand_validation_accepts_datetime_like_strings(self) -> None:
+        validate_typed_predicate_operand("2026-05-17T23:59:59Z", "date")
+
     def test_temporal_operator_aliases(self) -> None:
         assert (
             evaluate_typed_comparison(
@@ -254,3 +259,27 @@ class TestEvaluateTypedComparison:
                 "also-not-a-datetime",
                 value_type="datetime",
             )
+
+
+class TestInferPredicateValueType:
+    def test_infers_temporal_type_from_left_runtime_value_only(self) -> None:
+        assert infer_predicate_value_type(date(2026, 5, 17), "2026-05-18") == "date"
+        assert (
+            infer_predicate_value_type(
+                datetime(2026, 5, 17, 12, tzinfo=timezone.utc),
+                "2026-05-18T12:00:00Z",
+            )
+            == "datetime"
+        )
+        assert infer_predicate_value_type("2026-05-17", "2026-05-18") is None
+        assert (
+            infer_predicate_value_type(
+                "2026-05-17T12:00:00Z",
+                datetime(2026, 5, 18, 12, tzinfo=timezone.utc),
+            )
+            is None
+        )
+
+    def test_infers_scalar_values(self) -> None:
+        assert infer_predicate_value_type("5", 5) == "number"
+        assert infer_predicate_value_type("true", True) == "bool"

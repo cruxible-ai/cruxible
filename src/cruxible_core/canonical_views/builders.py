@@ -178,6 +178,11 @@ def build_query_view(
                 returns=info.get("returns", query.returns),
                 result_shape=info.get("result_shape", query.result_shape),
                 dedupe=info.get("dedupe", query.dedupe),
+                relationship_state=info.get("relationship_state", query.relationship_state),
+                allow_relationship_state_override=info.get(
+                    "allow_relationship_state_override",
+                    query.allow_relationship_state_override,
+                ),
                 description=info.get("description", query.description),
                 example_ids=list(info.get("example_ids", [])),
                 traversal_summary=traversal_summary,

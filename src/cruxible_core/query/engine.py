@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import re
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
@@ -26,14 +29,17 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     RelationshipNotFoundError,
 )
-from cruxible_core.graph.types import EntityInstance, relationship_is_live
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.predicate import (
     COMPARISON_SYMBOL_PATTERN,
     PredicateValueType,
     evaluate_typed_comparison,
+    infer_predicate_value_type,
+    validate_typed_predicate_operand,
 )
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape
+from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
 from cruxible_core.query.filters import matches_exact_filter
+from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import (
     QueryPathRow,
     QueryPathSegment,
@@ -45,8 +51,24 @@ from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.temporal import is_expired
 
 if TYPE_CHECKING:
-    from cruxible_core.config.schema import CoreConfig, TraversalStep
+    from cruxible_core.config.schema import (
+        CoreConfig,
+        NamedQuerySchema,
+        QueryPredicateSpec,
+        RelatedPredicateSpec,
+        TraversalStep,
+    )
     from cruxible_core.graph.entity_graph import EntityGraph
+
+_MISSING = object()
+_RELATED_PREDICATE_SCOPES = (
+    "edge",
+    "source",
+    "target",
+    "current",
+    "candidate",
+    "entry",
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,16 @@ class _TraversalState:
     parent_id: str | None = None
 
 
+@dataclass(frozen=True)
+class _PredicateContext:
+    edge: QueryPathSegment
+    source: EntityInstance
+    target: EntityInstance
+    current: EntityInstance
+    candidate: EntityInstance
+    entry: EntityInstance
+
+
 def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
     """Backward-compatible alias for the shared exact-match helper."""
     return matches_exact_filter(entity_props, filter_spec)
@@ -70,6 +102,8 @@ def execute_query(
     graph: EntityGraph,
     query_name: str,
     params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState | None = None,
 ) -> QueryResult:
     """Execute a named query from the config against the graph.
 
@@ -90,12 +124,30 @@ def execute_query(
     if query_schema is None:
         raise QueryNotFoundError(query_name)
     _validate_query_result_shape(config, query_name, query_schema)
+    effective_relationship_state = _effective_relationship_state(
+        query_schema,
+        relationship_state,
+    )
+    relationship_state_source = (
+        "runtime_override" if relationship_state is not None else "query_config"
+    )
     requires_path_retention = _requires_path_retention(
         result_shape=query_schema.result_shape,
         dedupe=query_schema.dedupe,
     )
 
-    builder = ReceiptBuilder(query_name=query_name, parameters=params)
+    execution_options = {
+        "relationship_state": effective_relationship_state,
+        "relationship_state_source": relationship_state_source,
+        "result_shape": query_schema.result_shape,
+        "dedupe": query_schema.dedupe,
+    }
+    builder = ReceiptBuilder(
+        query_name=query_name,
+        parameters=params,
+        execution_options=execution_options,
+        root_detail={"filter_summary": _query_filter_summary(query_schema)},
+    )
 
     entry_entity = _resolve_entry_entity(
         config,
@@ -125,6 +177,7 @@ def execute_query(
             params,
             query_name=query_name,
             requires_path_retention=requires_path_retention,
+            relationship_state=effective_relationship_state,
             policy_summary=policy_summary,
             builder=builder,
         )
@@ -143,6 +196,7 @@ def execute_query(
         results=result_rows,
         result_shape=query_schema.result_shape,
         dedupe=query_schema.dedupe,
+        relationship_state=effective_relationship_state,
         steps_executed=steps_executed,
         receipt=receipt,
         policy_summary=policy_summary,
@@ -238,6 +292,44 @@ def _requires_path_retention(
     return result_shape in {"path", "relationship"} or dedupe in {"path", "none"}
 
 
+def _effective_relationship_state(
+    query_schema: NamedQuerySchema,
+    override: QueryRelationshipState | None,
+) -> QueryRelationshipState:
+    if override is None:
+        return query_schema.relationship_state
+    if not query_schema.allow_relationship_state_override:
+        raise QueryExecutionError(
+            "relationship_state override is not allowed for this named query"
+        )
+    return override
+
+
+def _query_filter_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for index, step in enumerate(query_schema.traversal):
+        summary: dict[str, Any] = {
+            "step": index,
+            "relationship": step.relationship,
+            "direction": step.direction,
+        }
+        if step.where is not None:
+            summary["where"] = step.where.model_dump(mode="python")
+        if step.where_related:
+            summary["where_related"] = [
+                related.model_dump(mode="python", exclude_none=True)
+                for related in step.where_related
+            ]
+        if step.where_not_related:
+            summary["where_not_related"] = [
+                related.model_dump(mode="python", exclude_none=True)
+                for related in step.where_not_related
+            ]
+        if any(key in summary for key in ("where", "where_related", "where_not_related")):
+            summaries.append(summary)
+    return summaries
+
+
 def _execute_step(
     config: CoreConfig,
     graph: EntityGraph,
@@ -246,6 +338,7 @@ def _execute_step(
     params: dict[str, Any],
     query_name: str,
     requires_path_retention: bool,
+    relationship_state: QueryRelationshipState,
     policy_summary: dict[str, int],
     *,
     builder: ReceiptBuilder | None = None,
@@ -304,7 +397,7 @@ def _execute_step(
                 direction=direction,
                 alias=step.alias,
             ):
-                if not relationship_is_live(segment.metadata):
+                if not relationship_matches_query_state(segment.metadata, relationship_state):
                     continue
 
                 nid = neighbor.node_id()
@@ -359,6 +452,28 @@ def _execute_step(
                     if not passed:
                         continue
 
+                predicate_context = _predicate_context(
+                    state,
+                    current=entity,
+                    candidate=neighbor,
+                    segment=segment,
+                )
+                if step.where is not None:
+                    passed = evaluate_query_predicates(
+                        config,
+                        step.where,
+                        predicate_context,
+                        params,
+                    )
+                    if builder is not None and traversal_id is not None:
+                        builder.record_filter(
+                            filter_spec={"where": step.where.model_dump(mode="python")},
+                            passed=passed,
+                            parent_id=traversal_id,
+                        )
+                    if not passed:
+                        continue
+
                 # Apply constraint (blocks subtree on failure)
                 if step.constraint:
                     passed = _evaluate_constraint(
@@ -388,6 +503,7 @@ def _execute_step(
                             candidate_entity=neighbor,
                             relationship_type=exclusion.relationship,
                             direction=exclusion.direction,
+                            relationship_state=relationship_state,
                         )
                         if builder is not None and traversal_id is not None:
                             builder.record_filter(
@@ -404,6 +520,58 @@ def _execute_step(
                             excluded = True
                             break
                     if excluded:
+                        continue
+
+                if step.where_related:
+                    passed = all(
+                        evaluate_related_predicate(
+                            graph,
+                            related,
+                            predicate_context,
+                            params,
+                            config=config,
+                            relationship_state=relationship_state,
+                        )
+                        for related in step.where_related
+                    )
+                    if builder is not None and traversal_id is not None:
+                        builder.record_filter(
+                            filter_spec={
+                                "where_related": [
+                                    related.model_dump(mode="python")
+                                    for related in step.where_related
+                                ]
+                            },
+                            passed=passed,
+                            parent_id=traversal_id,
+                        )
+                    if not passed:
+                        continue
+
+                if step.where_not_related:
+                    passed = not any(
+                        evaluate_related_predicate(
+                            graph,
+                            related,
+                            predicate_context,
+                            params,
+                            config=config,
+                            relationship_state=relationship_state,
+                        )
+                        for related in step.where_not_related
+                    )
+                    if builder is not None and traversal_id is not None:
+                        builder.record_filter(
+                            filter_spec={
+                                "where_not_related": [
+                                    related.model_dump(mode="python")
+                                    for related in step.where_not_related
+                                ]
+                            },
+                            passed=passed,
+                            parent_id=traversal_id,
+                        )
+                    if not passed:
                         continue
 
                 if relative_direction == "outgoing":
@@ -496,6 +664,390 @@ def _iter_step_relationships(
         )
         relationships.append((neighbor, segment, relative_direction))
     return relationships
+
+
+def _predicate_context(
+    state: _TraversalState,
+    *,
+    current: EntityInstance,
+    candidate: EntityInstance,
+    segment: QueryPathSegment,
+) -> _PredicateContext:
+    source, target = _segment_endpoint_entities(current, candidate, segment)
+    return _PredicateContext(
+        edge=segment,
+        source=source,
+        target=target,
+        current=current,
+        candidate=candidate,
+        entry=state.entry,
+    )
+
+
+def _segment_endpoint_entities(
+    current: EntityInstance,
+    candidate: EntityInstance,
+    segment: QueryPathSegment,
+) -> tuple[EntityInstance, EntityInstance]:
+    if (
+        segment.from_type == current.entity_type
+        and segment.from_id == current.entity_id
+        and segment.to_type == candidate.entity_type
+        and segment.to_id == candidate.entity_id
+    ):
+        return current, candidate
+    if (
+        segment.from_type == candidate.entity_type
+        and segment.from_id == candidate.entity_id
+        and segment.to_type == current.entity_type
+        and segment.to_id == current.entity_id
+    ):
+        return candidate, current
+    return current, candidate
+
+
+def evaluate_query_predicates(
+    config: CoreConfig,
+    predicates: QueryPredicateSpec,
+    context: _PredicateContext,
+    params: dict[str, Any],
+    *,
+    base_scope: str | None = None,
+) -> bool:
+    """Evaluate structured named-query predicates against one traversal context."""
+    for path, operators in predicates.root.items():
+        scope, field_path = _split_predicate_path(path, base_scope=base_scope)
+        left = _resolve_path(_scope_value(context, scope), field_path)
+        for operator, raw_expected in operators.items():
+            expected = _resolve_predicate_value(raw_expected, context, params)
+            if not _evaluate_predicate_operator(
+                config,
+                context,
+                path,
+                scope,
+                field_path,
+                left,
+                operator,
+                expected,
+            ):
+                return False
+    return True
+
+
+def evaluate_related_predicate(
+    graph: EntityGraph,
+    related: RelatedPredicateSpec,
+    context: _PredicateContext,
+    params: dict[str, Any],
+    *,
+    config: CoreConfig,
+    relationship_state: QueryRelationshipState,
+) -> bool:
+    """Return whether a related edge exists and matches the related predicates."""
+    anchor = context.candidate
+    for related_neighbor, related_segment, _relative_direction in _iter_step_relationships(
+        graph,
+        anchor,
+        relationship_type=related.relationship,
+        direction=related.direction,
+        alias=None,
+    ):
+        if not relationship_matches_query_state(
+            related_segment.metadata,
+            relationship_state,
+        ):
+            continue
+        related_context = _build_related_context(
+            context,
+            anchor=anchor,
+            related_neighbor=related_neighbor,
+            related_segment=related_segment,
+        )
+        if _related_predicates_match(config, related, related_context, params):
+            return True
+    return False
+
+
+def _build_related_context(
+    original_context: _PredicateContext,
+    *,
+    anchor: EntityInstance,
+    related_neighbor: EntityInstance,
+    related_segment: QueryPathSegment,
+) -> _PredicateContext:
+    source, target = _segment_endpoint_entities(anchor, related_neighbor, related_segment)
+    return _PredicateContext(
+        edge=related_segment,
+        source=source,
+        target=target,
+        current=original_context.current,
+        candidate=original_context.candidate,
+        entry=original_context.entry,
+    )
+
+
+def _related_predicates_match(
+    config: CoreConfig,
+    related: RelatedPredicateSpec,
+    context: _PredicateContext,
+    params: dict[str, Any],
+) -> bool:
+    for scope, predicates in _iter_related_predicate_scopes(related):
+        if not evaluate_query_predicates(
+            config,
+            predicates,
+            context,
+            params,
+            base_scope=scope,
+        ):
+            return False
+    return True
+
+
+def _iter_related_predicate_scopes(
+    related: RelatedPredicateSpec,
+) -> Iterator[tuple[str, QueryPredicateSpec]]:
+    for scope in _RELATED_PREDICATE_SCOPES:
+        predicates = getattr(related, scope)
+        if predicates is not None:
+            yield scope, predicates
+
+
+def _split_predicate_path(path: str, *, base_scope: str | None) -> tuple[str, list[str]]:
+    parts = path.split(".")
+    if not parts:
+        raise QueryExecutionError("predicate path must not be empty")
+    first = parts[0]
+    if first == "result":
+        raise QueryExecutionError("result predicates are not supported at traversal step time")
+    if first in {"edge", "source", "target", "current", "candidate", "entry"}:
+        return first, parts[1:]
+    if base_scope is not None:
+        return base_scope, parts
+    allowed = "edge, source, target, current, candidate, entry"
+    raise QueryExecutionError(
+        f"Predicate path '{path}' must start with one of: {allowed}"
+    )
+
+
+def _scope_value(context: _PredicateContext, scope: str) -> Any:
+    return {
+        "edge": context.edge,
+        "source": context.source,
+        "target": context.target,
+        "current": context.current,
+        "candidate": context.candidate,
+        "entry": context.entry,
+    }[scope]
+
+
+def _resolve_predicate_value(
+    value: Any,
+    context: _PredicateContext,
+    params: dict[str, Any],
+) -> Any:
+    if isinstance(value, str) and value.startswith("$"):
+        return _resolve_predicate_ref(value, context, params)
+    if isinstance(value, list):
+        return [_resolve_predicate_value(item, context, params) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _resolve_predicate_value(item, context, params)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _resolve_predicate_ref(
+    ref: str,
+    context: _PredicateContext,
+    params: dict[str, Any],
+) -> Any:
+    prefix, sep, path = ref[1:].partition(".")
+    if not sep or not path:
+        raise QueryExecutionError(f"Invalid predicate reference '{ref}'")
+    if prefix == "input":
+        value = _resolve_path(params, path.split("."))
+        if value is _MISSING:
+            raise QueryExecutionError(f"Missing query input reference '{ref}'")
+        return value
+    if prefix in {"edge", "source", "target", "current", "candidate", "entry"}:
+        value = _resolve_path(_scope_value(context, prefix), path.split("."))
+        if value is _MISSING:
+            raise QueryExecutionError(f"Missing predicate reference '{ref}'")
+        return value
+    raise QueryExecutionError(f"Unsupported predicate reference '{ref}'")
+
+
+def _resolve_path(value: Any, parts: list[str]) -> Any:
+    current = value
+    for part in parts:
+        if current is _MISSING:
+            return _MISSING
+        if isinstance(current, BaseModel):
+            if not hasattr(current, part):
+                return _MISSING
+            current = getattr(current, part)
+            continue
+        if isinstance(current, dict):
+            if part not in current:
+                return _MISSING
+            current = current[part]
+            continue
+        return _MISSING
+    return current
+
+
+def _infer_query_predicate_value_type(
+    config: CoreConfig,
+    context: _PredicateContext,
+    scope: str,
+    field_path: list[str],
+    left: Any,
+    expected: Any,
+) -> PredicateValueType | None:
+    declared_type = _declared_predicate_property_type(config, context, scope, field_path)
+    if declared_type in {"date", "datetime"}:
+        return declared_type
+    return infer_predicate_value_type(left, expected)
+
+
+def _declared_predicate_property_type(
+    config: CoreConfig,
+    context: _PredicateContext,
+    scope: str,
+    field_path: list[str],
+) -> PredicateValueType | None:
+    if len(field_path) < 2 or field_path[0] != "properties":
+        return None
+
+    property_name = field_path[1]
+    if scope == "edge":
+        return _relationship_property_type(
+            config,
+            context.edge.relationship_type,
+            property_name,
+        )
+
+    value = _scope_value(context, scope)
+    if isinstance(value, EntityInstance):
+        return _entity_property_type(config, value.entity_type, property_name)
+    return None
+
+
+def _relationship_property_type(
+    config: CoreConfig,
+    relationship_type: str,
+    property_name: str,
+) -> PredicateValueType | None:
+    for relationship in config.relationships:
+        if relationship.name == relationship_type or relationship.reverse_name == relationship_type:
+            prop = relationship.properties.get(property_name)
+            return _temporal_property_value_type(prop.type) if prop is not None else None
+    return None
+
+
+def _entity_property_type(
+    config: CoreConfig,
+    entity_type: str,
+    property_name: str,
+) -> PredicateValueType | None:
+    entity_schema = config.entity_types.get(entity_type)
+    if entity_schema is None:
+        return None
+    prop = entity_schema.properties.get(property_name)
+    return _temporal_property_value_type(prop.type) if prop is not None else None
+
+
+def _temporal_property_value_type(property_type: str) -> PredicateValueType | None:
+    if property_type == "date":
+        return "date"
+    if property_type == "datetime":
+        return "datetime"
+    return None
+
+
+def _evaluate_predicate_operator(
+    config: CoreConfig,
+    context: _PredicateContext,
+    path: str,
+    scope: str,
+    field_path: list[str],
+    left: Any,
+    operator: str,
+    expected: Any,
+) -> bool:
+    if operator == "exists":
+        exists = left is not _MISSING
+        return exists is expected
+    if left is _MISSING:
+        return False
+    if operator in {"in", "not_in"}:
+        if not isinstance(expected, list | tuple | set | frozenset):
+            raise QueryExecutionError(
+                f"Predicate operator '{operator}' for '{path}' requires a list value"
+            )
+        matched = any(
+            _evaluate_comparison(
+                config,
+                context,
+                path,
+                scope,
+                field_path,
+                left,
+                "eq",
+                item,
+            )
+            for item in expected
+        )
+        return matched if operator == "in" else not matched
+    return _evaluate_comparison(
+        config,
+        context,
+        path,
+        scope,
+        field_path,
+        left,
+        operator,
+        expected,
+    )
+
+
+def _evaluate_comparison(
+    config: CoreConfig,
+    context: _PredicateContext,
+    path: str,
+    scope: str,
+    field_path: list[str],
+    left: Any,
+    operator: str,
+    expected: Any,
+) -> bool:
+    value_type = _infer_query_predicate_value_type(
+        config,
+        context,
+        scope,
+        field_path,
+        left,
+        expected,
+    )
+    if value_type in {"date", "datetime"}:
+        _validate_typed_predicate_operand(path, left, value_type)
+        _validate_typed_predicate_operand(path, expected, value_type)
+    return evaluate_typed_comparison(left, operator, expected, value_type=value_type)
+
+
+def _validate_typed_predicate_operand(
+    path: str,
+    value: Any,
+    value_type: PredicateValueType,
+) -> None:
+    try:
+        validate_typed_predicate_operand(value, value_type)
+    except (TypeError, ValueError) as exc:
+        raise QueryExecutionError(
+            f"Invalid {value_type} predicate value for '{path}': {value!r}"
+        ) from exc
 
 
 def _dedupe_states(
@@ -611,37 +1163,21 @@ def _related_edge_exists(
     candidate_entity: EntityInstance,
     relationship_type: str,
     direction: str,
+    relationship_state: QueryRelationshipState,
 ) -> bool:
-    """Check whether a live related edge exists for a current/candidate pair."""
-    if direction == "outgoing":
-        return graph.has_live_relationship(
-            current_entity.entity_type,
-            current_entity.entity_id,
-            candidate_entity.entity_type,
-            candidate_entity.entity_id,
-            relationship_type,
-        )
-    if direction == "incoming":
-        return graph.has_live_relationship(
-            candidate_entity.entity_type,
-            candidate_entity.entity_id,
-            current_entity.entity_type,
-            current_entity.entity_id,
-            relationship_type,
-        )
-    return graph.has_live_relationship(
-        current_entity.entity_type,
-        current_entity.entity_id,
-        candidate_entity.entity_type,
-        candidate_entity.entity_id,
-        relationship_type,
-    ) or graph.has_live_relationship(
-        candidate_entity.entity_type,
-        candidate_entity.entity_id,
-        current_entity.entity_type,
-        current_entity.entity_id,
-        relationship_type,
-    )
+    """Check whether a related edge exists under the effective query state."""
+    for neighbor, segment, _relative_direction in _iter_step_relationships(
+        graph,
+        current_entity,
+        relationship_type=relationship_type,
+        direction=direction,
+        alias=None,
+    ):
+        if neighbor.node_id() != candidate_entity.node_id():
+            continue
+        if relationship_matches_query_state(segment.metadata, relationship_state):
+            return True
+    return False
 
 
 def _flip_relationship_direction(

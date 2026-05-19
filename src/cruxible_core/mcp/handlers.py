@@ -323,30 +323,67 @@ def handle_query(
     query_name: str,
     params: dict[str, Any] | None = None,
     limit: int | None = None,
+    relationship_state: contracts.QueryRelationshipState | None = None,
     decision_record_id: str | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
-    decision_kwargs = (
-        {"decision_record_id": decision_record_id}
-        if decision_record_id is not None
-        else {}
-    )
     return _dispatch_remote_or_local(
-        lambda client: client.query(
-            instance_id,
-            query_name,
-            params,
+        lambda client: _client_query(
+            client,
+            instance_id=instance_id,
+            query_name=query_name,
+            params=params,
             limit=limit,
-            **decision_kwargs,
+            relationship_state=relationship_state,
+            decision_record_id=decision_record_id,
         ),
         lambda: api.query(
             instance_id,
             query_name,
             params,
             limit=limit,
+            relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             surface="mcp",
         ),
+    )
+
+
+def _client_query(
+    client: CruxibleClient,
+    *,
+    instance_id: str,
+    query_name: str,
+    params: dict[str, Any] | None,
+    limit: int | None,
+    relationship_state: contracts.QueryRelationshipState | None,
+    decision_record_id: str | None,
+) -> contracts.QueryToolResult:
+    if relationship_state is None and decision_record_id is None:
+        return client.query(instance_id, query_name, params, limit=limit)
+    if relationship_state is None:
+        return client.query(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            decision_record_id=decision_record_id,
+        )
+    if decision_record_id is None:
+        return client.query(
+            instance_id,
+            query_name,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+        )
+    return client.query(
+        instance_id,
+        query_name,
+        params,
+        limit=limit,
+        relationship_state=relationship_state,
+        decision_record_id=decision_record_id,
     )
 
 

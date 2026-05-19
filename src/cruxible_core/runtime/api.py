@@ -622,6 +622,7 @@ def query(
     params: dict[str, Any] | None = None,
     limit: int | None = None,
     *,
+    relationship_state: contracts.QueryRelationshipState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
 ) -> contracts.QueryToolResult:
@@ -633,6 +634,7 @@ def query(
         query_name,
         params or {},
         limit=limit,
+        relationship_state=relationship_state,
         context=_operation_context(decision_record_id, surface=surface),
     )
 
@@ -649,6 +651,7 @@ def query(
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
         dedupe=result.dedupe,
+        relationship_state=result.relationship_state,
         policy_summary=result.policy_summary,
         param_hints=(
             contracts.QueryParamHints(
@@ -979,6 +982,8 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
                 returns=query.returns,
                 result_shape=query.result_shape,
                 dedupe=query.dedupe,
+                relationship_state=query.relationship_state,
+                allow_relationship_state_override=query.allow_relationship_state_override,
                 description=query.description,
                 example_ids=query.example_ids,
             )
@@ -1002,6 +1007,8 @@ def describe_query(
         returns=query.returns,
         result_shape=query.result_shape,
         dedupe=query.dedupe,
+        relationship_state=query.relationship_state,
+        allow_relationship_state_override=query.allow_relationship_state_override,
         description=query.description,
         example_ids=query.example_ids,
     )

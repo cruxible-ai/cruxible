@@ -90,6 +90,7 @@ class Receipt(BaseModel):
     receipt_id: str = Field(default_factory=lambda: new_id("RCP"))
     query_name: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
+    execution_options: dict[str, Any] = Field(default_factory=dict)
     nodes: list[ReceiptNode]
     edges: list[EvidenceEdge]
     results: list[dict[str, Any]] = Field(default_factory=list)

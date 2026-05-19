@@ -41,6 +41,7 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
         query_name=req.query_name,
         params=req.params,
         limit=req.limit,
+        relationship_state=req.relationship_state,
         decision_record_id=req.decision_record_id,
         surface="http",
     )

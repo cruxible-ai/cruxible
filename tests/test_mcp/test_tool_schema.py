@@ -49,6 +49,16 @@ class TestInputSchema:
         resource_type = schemas["cruxible_list"].inputSchema["properties"]["resource_type"]
         assert resource_type["enum"] == ["entities", "edges", "receipts", "feedback", "outcomes"]
 
+    def test_query_relationship_state_enum(self, server):
+        schemas = _get_tool_schemas(server)
+        relationship_state = schemas["cruxible_query"].inputSchema["properties"][
+            "relationship_state"
+        ]
+        enum_schema = next(
+            item for item in relationship_state["anyOf"] if item.get("type") == "string"
+        )
+        assert enum_schema["enum"] == ["live", "accepted", "pending"]
+
     def test_add_relationship_schema(self, server):
         """RelationshipInput fields appear as required in the relationships array schema."""
         schemas = _get_tool_schemas(server)
@@ -168,6 +178,7 @@ class TestOutputSchema:
                     "steps_executed",
                     "result_shape",
                     "dedupe",
+                    "relationship_state",
                     "param_hints",
                     "policy_summary",
                 },

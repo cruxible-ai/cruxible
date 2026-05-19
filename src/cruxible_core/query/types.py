@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape
+from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
 from cruxible_core.receipt.types import Receipt
 
 
@@ -45,6 +45,7 @@ class QueryResult(BaseModel):
     results: list[QueryRow]
     result_shape: QueryResultShape = "entity"
     dedupe: QueryDedupe = "entity"
+    relationship_state: QueryRelationshipState = "live"
     steps_executed: int
     total_results: int | None = None
     receipt: Receipt | None = None
@@ -58,6 +59,7 @@ class QueryResult(BaseModel):
 __all__ = [
     "QueryDedupe",
     "QueryPathRow",
+    "QueryRelationshipState",
     "QueryPathSegment",
     "QueryRelationshipRow",
     "QueryResult",

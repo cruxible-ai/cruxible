@@ -167,6 +167,7 @@ def execute_query_step(
         "steps_executed": query_result.steps_executed,
         "result_shape": query_result.result_shape,
         "dedupe": query_result.dedupe,
+        "relationship_state": query_result.relationship_state,
     }
     if compiled_step.as_name is not None:
         alias_step_ids[compiled_step.as_name] = compiled_step.step_id

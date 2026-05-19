@@ -93,6 +93,32 @@ def evaluate_typed_comparison(
     return _compare_values(coerced_left, normalized, coerced_right)
 
 
+def infer_predicate_value_type(
+    left: Any,
+    right: Any,
+) -> PredicateValueType | None:
+    """Infer a typed predicate comparison mode from runtime values."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return "bool"
+    if isinstance(left, datetime):
+        return "datetime"
+    if isinstance(left, date):
+        return "date"
+    if isinstance(left, int | float) and not isinstance(left, bool):
+        return "number"
+    if isinstance(right, int | float) and not isinstance(right, bool):
+        return "number"
+    return None
+
+
+def validate_typed_predicate_operand(
+    value: Any,
+    value_type: PredicateValueType,
+) -> None:
+    """Validate one typed predicate operand using the shared coercion rules."""
+    _coerce_value(value, value_type)
+
+
 def _compare_values(left: Any, normalized: ComparisonOp, right: Any) -> bool:
     if normalized == "eq":
         return bool(left == right)
@@ -117,18 +143,22 @@ def _coerce_pair(
     right: Any,
     value_type: PredicateValueType,
 ) -> tuple[Any, Any]:
+    return _coerce_value(left, value_type), _coerce_value(right, value_type)
+
+
+def _coerce_value(value: Any, value_type: PredicateValueType) -> Any:
     if value_type == "string":
-        return _coerce_string(left), _coerce_string(right)
+        return _coerce_string(value)
     if value_type in {"int", "integer"}:
-        return _coerce_int(left), _coerce_int(right)
+        return _coerce_int(value)
     if value_type in {"float", "number"}:
-        return _coerce_float(left), _coerce_float(right)
+        return _coerce_float(value)
     if value_type == "bool":
-        return _coerce_bool(left), _coerce_bool(right)
+        return _coerce_bool(value)
     if value_type == "date":
-        return _coerce_date(left), _coerce_date(right)
+        return _coerce_date(value)
     if value_type == "datetime":
-        return _coerce_datetime(left), _coerce_datetime(right)
+        return _coerce_datetime(value)
     raise ValueError(f"Unsupported predicate value type '{value_type}'")
 
 

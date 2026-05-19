@@ -26,6 +26,7 @@ class QueryRequest(BaseModel):
     query_name: str
     params: dict[str, Any] | None = None
     limit: int | None = None
+    relationship_state: contracts.QueryRelationshipState | None = None
     decision_record_id: str | None = None
 
 

@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config_from_string, save_config
+from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
     AssertSpec,
@@ -104,6 +105,24 @@ class TestPropertySchema:
     def test_inline_enum_accepts_non_string_values(self):
         prop = PropertySchema(type="int", enum=[1, 2, 3], default=2)
         assert prop.enum == [1, 2, 3]
+
+
+class TestStructuredPredicateSpec:
+    def test_accepts_generic_predicate_map(self):
+        spec = StructuredPredicateSpec.model_validate(
+            {
+                "payload.properties.status": {"eq": "active"},
+                "payload.properties.deleted_at": {"exists": False},
+            }
+        )
+
+        assert spec.root["payload.properties.status"] == {"eq": "active"}
+
+    def test_rejects_invalid_generic_predicate_shape(self):
+        with pytest.raises(ValidationError, match="predicate operator 'exists' requires"):
+            StructuredPredicateSpec.model_validate(
+                {"payload.properties.deleted_at": {"exists": "false"}}
+            )
 
 
 class TestEnumSchema:
@@ -260,6 +279,103 @@ class TestTraversalStep:
                 exclude_if_related=[{"relationship": "retired_fit", "direction": "sideways"}],
             )
 
+    def test_where_accepts_structured_predicates(self):
+        step = TraversalStep.model_validate(
+            {
+                "relationship": "fits",
+                "where": {
+                    "edge.properties.priority": {"in": ["critical", "high"]},
+                    "edge.metadata.assertion.lifecycle.status": {"eq": "active"},
+                    "candidate.properties.status": {"not_in": ["retired"]},
+                    "target.properties.due_by": {"exists": True},
+                },
+            }
+        )
+
+        assert step.where is not None
+        assert "edge.properties.priority" in step.where.root
+
+    def test_where_rejects_unknown_operator(self):
+        with pytest.raises(ValidationError, match="unsupported predicate operator 'contains'"):
+            TraversalStep.model_validate(
+                {
+                    "relationship": "fits",
+                    "where": {"edge.properties.priority": {"contains": "critical"}},
+                }
+            )
+
+    def test_where_rejects_value_type_operator(self):
+        with pytest.raises(ValidationError, match="unsupported predicate operator 'value_type'"):
+            TraversalStep.model_validate(
+                {
+                    "relationship": "fits",
+                    "where": {
+                        "edge.properties.due_by": {
+                            "lte": "$input.cutoff",
+                            "value_type": "datetime",
+                        }
+                    },
+                }
+            )
+
+    def test_where_rejects_result_scope(self):
+        with pytest.raises(
+            ValidationError,
+            match="result predicates are not supported at traversal step time",
+        ):
+            TraversalStep.model_validate(
+                {
+                    "relationship": "fits",
+                    "where": {"result.properties.status": {"eq": "active"}},
+                }
+            )
+
+    def test_where_rejects_unscoped_paths(self):
+        with pytest.raises(
+            ValidationError,
+            match="top-level where predicate path 'properties.status' must start with one of",
+        ):
+            TraversalStep.model_validate(
+                {
+                    "relationship": "fits",
+                    "where": {"properties.status": {"eq": "active"}},
+                }
+            )
+
+    def test_where_related_accepts_predicate_scopes(self):
+        step = TraversalStep.model_validate(
+            {
+                "relationship": "fits",
+                "where_related": [
+                    {
+                        "relationship": "asset_owned_by",
+                        "direction": "outgoing",
+                        "target": {"properties.owner_id": {"eq": "$input.owner_id"}},
+                    }
+                ],
+                "where_not_related": [
+                    {
+                        "relationship": "asset_remediated_vulnerability",
+                        "direction": "outgoing",
+                        "edge": {"properties.verification_status": {"eq": "verified"}},
+                        "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                    }
+                ],
+            }
+        )
+
+        assert step.where_related[0].relationship == "asset_owned_by"
+        assert step.where_not_related[0].target is not None
+
+    def test_where_related_rejects_blank_relationship(self):
+        with pytest.raises(ValidationError, match="relationship must be a non-empty string"):
+            TraversalStep.model_validate(
+                {
+                    "relationship": "fits",
+                    "where_related": [{"relationship": "   "}],
+                }
+            )
+
 
 class TestNamedQuerySchema:
     def test_minimal(self):
@@ -272,6 +388,20 @@ class TestNamedQuerySchema:
         assert len(query.traversal) == 1
         assert query.result_shape == "entity"
         assert query.dedupe == "entity"
+        assert query.relationship_state == "live"
+        assert query.allow_relationship_state_override is False
+
+    def test_relationship_state_accepts_pending_with_override_opt_in(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            relationship_state="pending",
+            allow_relationship_state_override=True,
+        )
+
+        assert query.relationship_state == "pending"
+        assert query.allow_relationship_state_override is True
 
     def test_multi_step(self):
         query = NamedQuerySchema(
@@ -410,6 +540,49 @@ class TestNamedQuerySchema:
                         traversal=[TraversalStep(relationship="fits", direction="incoming")],
                         returns="not_fits",
                         result_shape="relationship",
+                    )
+                },
+            )
+
+    def test_where_related_unknown_relationship_fails_config_validation(self):
+        with pytest.raises(
+            ValidationError,
+            match="references unknown relationship 'unknown_owner' in where_related",
+        ):
+            CoreConfig(
+                name="related-predicate-validation",
+                entity_types={
+                    "Vehicle": EntityTypeSchema(
+                        properties={
+                            "vehicle_id": PropertySchema(type="string", primary_key=True)
+                        }
+                    ),
+                    "Part": EntityTypeSchema(
+                        properties={
+                            "part_number": PropertySchema(type="string", primary_key=True)
+                        }
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+                ],
+                named_queries={
+                    "bad": NamedQuerySchema(
+                        entry_point="Vehicle",
+                        traversal=[
+                            TraversalStep.model_validate(
+                                {
+                                    "relationship": "fits",
+                                    "where_related": [
+                                        {
+                                            "relationship": "unknown_owner",
+                                            "direction": "outgoing",
+                                        }
+                                    ],
+                                }
+                            )
+                        ],
+                        returns="list[Part]",
                     )
                 },
             )

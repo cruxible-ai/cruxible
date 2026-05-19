@@ -33,9 +33,10 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
-from cruxible_core.query.enums import QueryDedupe, QueryResultShape
+from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
 
 _PATH_TOKEN = r"[\w-]+"
 _PATH_TOKEN_RE = re.compile(rf"^{_PATH_TOKEN}$")
@@ -253,6 +254,48 @@ class RelatedExclusionSpec(BaseModel):
         return value
 
 
+class QueryPredicateSpec(StructuredPredicateSpec):
+    """Structured predicate map used by named-query traversal steps."""
+
+    @model_validator(mode="after")
+    def validate_query_predicates(self) -> QueryPredicateSpec:
+        for path in self.root:
+            if path.split(".", 1)[0] == "result":
+                msg = "result predicates are not supported at traversal step time"
+                raise ValueError(msg)
+        return self
+
+
+_TOP_LEVEL_QUERY_PREDICATE_SCOPES = {
+    "edge",
+    "source",
+    "target",
+    "current",
+    "candidate",
+    "entry",
+}
+
+
+class RelatedPredicateSpec(BaseModel):
+    """Predicate-backed related-edge existence check for a traversal candidate."""
+
+    relationship: str
+    direction: Literal["outgoing", "incoming", "both"] = "outgoing"
+    edge: QueryPredicateSpec | None = None
+    source: QueryPredicateSpec | None = None
+    target: QueryPredicateSpec | None = None
+    current: QueryPredicateSpec | None = None
+    candidate: QueryPredicateSpec | None = None
+    entry: QueryPredicateSpec | None = None
+
+    @field_validator("relationship")
+    @classmethod
+    def validate_relationship_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("relationship must be a non-empty string")
+        return value
+
+
 class TraversalStep(BaseModel):
     """A single step in a named query's traversal path.
 
@@ -267,6 +310,9 @@ class TraversalStep(BaseModel):
     direction: Literal["outgoing", "incoming", "both"] = "outgoing"
     filter: dict[str, Any] | None = None
     target_filter: dict[str, Any] | None = None
+    where: QueryPredicateSpec | None = None
+    where_related: list[RelatedPredicateSpec] = Field(default_factory=list)
+    where_not_related: list[RelatedPredicateSpec] = Field(default_factory=list)
     constraint: str | None = None
     constraint_value_type: PredicateValueType | None = None
     exclude_if_related: list[RelatedExclusionSpec] = Field(default_factory=list)
@@ -293,6 +339,18 @@ class TraversalStep(BaseModel):
         if self.constraint is None and self.constraint_value_type is not None:
             msg = "constraint_value_type requires constraint"
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_where_scope(self) -> TraversalStep:
+        if self.where is None:
+            return self
+        for path in self.where.root:
+            scope = path.split(".", 1)[0]
+            if scope not in _TOP_LEVEL_QUERY_PREDICATE_SCOPES:
+                allowed = ", ".join(sorted(_TOP_LEVEL_QUERY_PREDICATE_SCOPES))
+                msg = f"top-level where predicate path '{path}' must start with one of: {allowed}"
+                raise ValueError(msg)
         return self
 
     @field_validator("alias")
@@ -324,6 +382,8 @@ class NamedQuerySchema(BaseModel):
     returns: str
     result_shape: QueryResultShape = "entity"
     dedupe: QueryDedupe = "entity"
+    relationship_state: QueryRelationshipState = "live"
+    allow_relationship_state_override: bool = False
 
     @model_validator(mode="after")
     def validate_result_shape(self) -> NamedQuerySchema:
@@ -1327,7 +1387,7 @@ class CoreConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_query_related_exclusions(self) -> CoreConfig:
-        """Check that related-edge exclusion specs use declared canonical relationships."""
+        """Check that related-edge predicate specs use declared canonical relationships."""
         declared_relationships = {rel.name for rel in self.relationships}
         for query_name, query in self.named_queries.items():
             for step_index, step in enumerate(query.traversal):
@@ -1339,6 +1399,18 @@ class CoreConfig(BaseModel):
                             "in exclude_if_related"
                         )
                         raise ValueError(msg)
+                for field_name, related_specs in (
+                    ("where_related", step.where_related),
+                    ("where_not_related", step.where_not_related),
+                ):
+                    for related in related_specs:
+                        if related.relationship not in declared_relationships:
+                            msg = (
+                                f"Named query '{query_name}' traversal step {step_index} "
+                                f"references unknown relationship '{related.relationship}' "
+                                f"in {field_name}"
+                            )
+                            raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

@@ -135,6 +135,7 @@ class CruxibleClient:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        relationship_state: contracts.QueryRelationshipState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
@@ -143,6 +144,7 @@ class CruxibleClient:
                 "query_name": query_name,
                 "params": params,
                 "limit": limit,
+                "relationship_state": relationship_state,
                 "decision_record_id": decision_record_id,
             },
         )

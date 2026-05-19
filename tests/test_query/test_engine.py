@@ -1,5 +1,7 @@
 """Tests for the query engine."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from cruxible_core.config.schema import (
@@ -12,7 +14,13 @@ from cruxible_core.config.schema import (
     TraversalStep,
 )
 from cruxible_core.errors import EntityNotFoundError, QueryExecutionError, QueryNotFoundError
-from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.feedback.applier import apply_feedback
+from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.graph.assertion_state import (
+    RelationshipAssertion,
+    RelationshipLifecycleState,
+    RelationshipReviewState,
+)
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.query.engine import (
@@ -27,6 +35,19 @@ from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _metadata(
+    *,
+    review_status: str = "unreviewed",
+    lifecycle_status: str = "active",
+) -> RelationshipMetadata:
+    return RelationshipMetadata(
+        assertion=RelationshipAssertion(
+            review=RelationshipReviewState(status=review_status),
+            lifecycle=RelationshipLifecycleState(status=lifecycle_status),
+        )
+    )
 
 
 @pytest.fixture
@@ -690,6 +711,113 @@ class TestRelatedEdgeExclusions:
         )
 
         assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_related_exclusion_uses_accepted_query_state(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="approved"),
+        )
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="approved"),
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+            )
+        )
+        config.named_queries["accepted_without_suppressed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    exclude_if_related=[
+                        {"relationship": "suppressed_fit", "direction": "incoming"}
+                    ],
+                )
+            ],
+            returns="list[Part]",
+            relationship_state="accepted",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "accepted_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_related_exclusion_uses_pending_query_state(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+        )
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                metadata=_metadata(review_status="pending"),
+            )
+        )
+        config.named_queries["pending_without_suppressed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    exclude_if_related=[
+                        {"relationship": "suppressed_fit", "direction": "incoming"}
+                    ],
+                )
+            ],
+            returns="list[Part]",
+            relationship_state="pending",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "pending_without_suppressed",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert [item.entity_id for item in result.results] == ["BP-5678"]
 
     def test_related_edge_rejected_does_not_exclude(
         self, config: CoreConfig, graph: EntityGraph
@@ -1782,6 +1910,1022 @@ def _kev_path_graph() -> EntityGraph:
         )
     )
     return graph
+
+
+class TestStructuredPredicates:
+    def test_where_filters_edge_source_target_and_candidate_values(self, config, graph):
+        config.named_queries["production_brake_fitments"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "outgoing",
+                        "where": {
+                            "edge.properties.confidence": {"gte": 0.9},
+                            "edge.properties.deprecated": {"exists": False},
+                            "source.properties.category": {"eq": "brakes"},
+                            "target.properties.make": {"eq": "Honda"},
+                            "target.properties.model": {"not_in": ["Accord"]},
+                            "candidate.entity_id": {"in": ["V-CIVIC"]},
+                        },
+                    }
+                )
+            ],
+            returns="list[Vehicle]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "production_brake_fitments",
+            {"part_number": "BP-1234"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["V-CIVIC"]
+
+    def test_where_does_not_treat_runtime_as_temporal_field(self, config, graph):
+        config.relationships[0].properties["runtime"] = PropertySchema(type="string")
+        graph.update_entity_properties("Part", "BP-1234", {"uptime": 42})
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={"runtime": "2026-05-17-build"},
+        )
+        config.named_queries["python_runtime_fitments"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "outgoing",
+                        "where": {
+                            "edge.properties.runtime": {"eq": "2026-05-17-build"},
+                            "source.properties.uptime": {"gt": 10},
+                        },
+                    }
+                )
+            ],
+            returns="list[Vehicle]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "python_runtime_fitments",
+            {"part_number": "BP-1234"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["V-CIVIC"]
+
+    def test_where_does_not_treat_date_like_entity_id_as_temporal(self, config, graph):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="2026-05-17-build",
+                properties={
+                    "vehicle_id": "2026-05-17-build",
+                    "year": 2026,
+                    "make": "Build",
+                    "model": "Candidate",
+                },
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="2026-05-17-build",
+                properties={"verified": True},
+            )
+        )
+        config.named_queries["date_like_vehicle_id_fitments"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "outgoing",
+                        "where": {
+                            "candidate.entity_id": {"eq": "2026-05-17-build"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Vehicle]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "date_like_vehicle_id_fitments",
+            {"part_number": "BP-1234"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["2026-05-17-build"]
+
+    def test_where_filters_relationship_metadata_review_and_lifecycle(self, config):
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"vehicle_id": "V-1", "make": "Honda", "model": "Civic", "year": 2026},
+            )
+        )
+        for part_id, review_status, lifecycle_status in (
+            ("P-APPROVED", "approved", "active"),
+            ("P-REJECTED", "rejected", "active"),
+            ("P-INACTIVE", "approved", "inactive"),
+        ):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id=part_id,
+                    properties={
+                        "part_number": part_id,
+                        "name": part_id,
+                        "category": "brakes",
+                        "brand": "Acme",
+                    },
+                )
+            )
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id=part_id,
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                    metadata=RelationshipMetadata(
+                        assertion=RelationshipAssertion(
+                            review=RelationshipReviewState(
+                                status=review_status,
+                                source="human",
+                            ),
+                            lifecycle=RelationshipLifecycleState(status=lifecycle_status),
+                        )
+                    ),
+                )
+            )
+        config.named_queries["approved_active_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.metadata.assertion.lifecycle.status": {"eq": "active"},
+                            "edge.metadata.assertion.review.status": {"eq": "approved"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "approved_active_parts",
+            {"vehicle_id": "V-1"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["P-APPROVED"]
+
+    def test_where_compares_date_input_refs(self, config, graph):
+        config.relationships[0].properties["due_by"] = PropertySchema(type="date")
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CAMRY",
+                properties={"verified": True, "due_by": "2026-05-21"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CAMRY",
+                properties={"verified": True, "due_by": "2026-05-28"},
+            )
+        )
+        config.named_queries["parts_due_before_cutoff"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.properties.due_by": {"lte": "$input.cutoff_date"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_due_before_cutoff",
+            {"vehicle_id": "V-CAMRY", "cutoff_date": "2026-05-22T00:00:00Z"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["BP-1234"]
+
+    def test_where_compares_datetime_values(self, config, graph):
+        config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CAMRY",
+                properties={"verified": True, "checked_at": "2026-05-17T12:00:00Z"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CAMRY",
+                properties={"verified": True, "checked_at": "2026-05-18T12:00:00+00:00"},
+            )
+        )
+        config.named_queries["parts_checked_before"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.properties.checked_at": {"lt": "$input.as_of"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_checked_before",
+            {"vehicle_id": "V-CAMRY", "as_of": "2026-05-18T00:00:00+00:00"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["BP-1234"]
+
+    def test_invalid_temporal_predicate_value_raises(self, config, graph):
+        config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CAMRY",
+                properties={"verified": True, "checked_at": "2026-05-17T12:00:00Z"},
+            )
+        )
+        config.named_queries["bad_checked_at"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.properties.checked_at": {"lte": "$input.as_of"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        with pytest.raises(QueryExecutionError, match="Invalid datetime predicate value"):
+            execute_query(
+                config,
+                graph,
+                "bad_checked_at",
+                {"vehicle_id": "V-CAMRY", "as_of": "not-a-datetime"},
+            )
+
+    def test_where_compares_metadata_datetime_from_runtime_value(self, config):
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"vehicle_id": "V-1", "make": "Honda", "model": "Civic", "year": 2026},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P-1",
+                properties={
+                    "part_number": "P-1",
+                    "name": "Metadata Part",
+                    "category": "brakes",
+                },
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"verified": True},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        lifecycle=RelationshipLifecycleState(
+                            effective_until=datetime(2026, 5, 20, tzinfo=timezone.utc)
+                        )
+                    )
+                ),
+            )
+        )
+        config.named_queries["effective_fitments"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.metadata.assertion.lifecycle.effective_until": {
+                                "gt": "$input.as_of"
+                            },
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "effective_fitments",
+            {"vehicle_id": "V-1", "as_of": "2026-05-19T00:00:00Z"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["P-1"]
+
+    def test_missing_input_ref_raises_clear_error(self, config, graph):
+        config.named_queries["missing_input_ref"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.properties.confidence": {"gte": "$input.min_confidence"},
+                        },
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        with pytest.raises(QueryExecutionError, match="Missing query input reference"):
+            execute_query(
+                config,
+                graph,
+                "missing_input_ref",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_where_related_from_candidate_matches_edge_source_and_target_predicates(
+        self,
+        config,
+        graph,
+    ):
+        config.entity_types["Owner"] = EntityTypeSchema(
+            properties={
+                "owner_id": PropertySchema(type="string", primary_key=True),
+                "name": PropertySchema(type="string"),
+            }
+        )
+        config.relationships.append(
+            RelationshipSchema(name="owned_by", from_entity="Part", to_entity="Owner")
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Owner",
+                entity_id="OWNER-1",
+                properties={"owner_id": "OWNER-1", "name": "Team One"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Owner",
+                entity_id="OWNER-2",
+                properties={"owner_id": "OWNER-2", "name": "Team Two"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="owned_by",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Owner",
+                to_id="OWNER-1",
+                properties={"verification_status": "verified"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="owned_by",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Owner",
+                to_id="OWNER-2",
+                properties={"verification_status": "pending"},
+            )
+        )
+        config.named_queries["owned_parts_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_related": [
+                            {
+                                "relationship": "owned_by",
+                                "direction": "outgoing",
+                                # Related checks are anchored from the traversal candidate:
+                                # here, the Part reached by the incoming fits edge.
+                                "edge": {
+                                    "properties.verification_status": {"eq": "verified"}
+                                },
+                                "source": {"properties.brand": {"eq": "StopTech"}},
+                                "target": {
+                                    "properties.owner_id": {"eq": "$input.owner_id"}
+                                },
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "owned_parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC", "owner_id": "OWNER-1"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["BP-1234"]
+
+    def test_where_not_related_excludes_matching_related_edge(self, config, graph):
+        config.relationships.append(
+            RelationshipSchema(name="suppressed_fit", from_entity="Part", to_entity="Vehicle")
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"reason": "retired"},
+            )
+        )
+        config.named_queries["unsuppressed_parts_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_not_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                # Related checks are anchored from the traversal candidate:
+                                # here, the Part reached by the incoming fits edge.
+                                "edge": {"properties.reason": {"eq": "retired"}},
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "unsuppressed_parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert [row.entity_id for row in result.results] == ["BP-1234"]
+
+
+class TestRelationshipState:
+    def test_where_related_ignores_pending_related_edge_under_live_state(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                metadata=_metadata(review_status="pending"),
+            )
+        )
+        config.named_queries["parts_with_live_suppression"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_with_live_suppression",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.results == []
+
+    def test_where_not_related_ignores_pending_related_edge_under_live_state(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                metadata=_metadata(review_status="pending"),
+            )
+        )
+        config.named_queries["parts_without_live_suppression"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_not_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_without_live_suppression",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert {row.entity_id for row in result.results} == {"BP-1234", "BP-5678"}
+
+    def test_inactive_related_edge_does_not_affect_related_predicates(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="suppressed_fit",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                metadata=_metadata(lifecycle_status="inactive"),
+            )
+        )
+        config.named_queries["parts_with_inactive_suppression"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+        config.named_queries["parts_without_inactive_suppression"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where_not_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        related = execute_query(
+            config,
+            graph,
+            "parts_with_inactive_suppression",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        not_related = execute_query(
+            config,
+            graph,
+            "parts_without_inactive_suppression",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert related.results == []
+        assert {row.entity_id for row in not_related.results} == {"BP-1234", "BP-5678"}
+
+    def test_relationship_state_modes_filter_traversal(self, config):
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-1",
+                properties={"vehicle_id": "V-1", "year": 2026, "make": "Honda", "model": "Civic"},
+            )
+        )
+        states = [
+            ("P-APPROVED", "approved", "active"),
+            ("P-PENDING", "pending", "active"),
+            ("P-UNREVIEWED", "unreviewed", "active"),
+            ("P-REJECTED", "rejected", "active"),
+            ("P-INACTIVE", "approved", "inactive"),
+        ]
+        for part_id, review_status, lifecycle_status in states:
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id=part_id,
+                    properties={
+                        "part_number": part_id,
+                        "name": part_id,
+                        "category": "brakes",
+                        "brand": "Acme",
+                    },
+                )
+            )
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id=part_id,
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True},
+                    metadata=_metadata(
+                        review_status=review_status,
+                        lifecycle_status=lifecycle_status,
+                    ),
+                )
+            )
+        traversal = [TraversalStep(relationship="fits", direction="incoming")]
+        config.named_queries["live_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=traversal,
+            returns="list[Part]",
+        )
+        config.named_queries["accepted_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=traversal,
+            returns="list[Part]",
+            relationship_state="accepted",
+        )
+        config.named_queries["pending_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=traversal,
+            returns="list[Part]",
+            relationship_state="pending",
+        )
+
+        live = execute_query(config, graph, "live_parts", {"vehicle_id": "V-1"})
+        accepted = execute_query(config, graph, "accepted_parts", {"vehicle_id": "V-1"})
+        pending = execute_query(config, graph, "pending_parts", {"vehicle_id": "V-1"})
+
+        assert [row.entity_id for row in live.results] == ["P-APPROVED", "P-UNREVIEWED"]
+        assert [row.entity_id for row in accepted.results] == ["P-APPROVED"]
+        assert [row.entity_id for row in pending.results] == ["P-PENDING"]
+
+    def test_runtime_relationship_state_override_requires_opt_in(self, config, graph):
+        config.named_queries["pending_override_blocked"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+        )
+
+        with pytest.raises(QueryExecutionError, match="override is not allowed"):
+            execute_query(
+                config,
+                graph,
+                "pending_override_blocked",
+                {"vehicle_id": "V-CIVIC"},
+                relationship_state="pending",
+            )
+
+    def test_runtime_relationship_state_override_filters_when_allowed(self, config, graph):
+        rel = graph.get_relationship("Part", "BP-5678", "Vehicle", "V-CIVIC", "fits")
+        assert rel is not None
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+            edge_key=rel.edge_key,
+        )
+        config.named_queries["parts_override_allowed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            allow_relationship_state_override=True,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_override_allowed",
+            {"vehicle_id": "V-CIVIC"},
+            relationship_state="pending",
+        )
+
+        assert result.relationship_state == "pending"
+        assert [row.entity_id for row in result.results] == ["BP-5678"]
+
+    def test_receipt_records_config_relationship_state_and_shape_options(self, config, graph):
+        config.named_queries["pending_path_receipt"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    alias="fitment",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            relationship_state="pending",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "pending_path_receipt",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.receipt is not None
+        assert result.receipt.execution_options == {
+            "relationship_state": "pending",
+            "relationship_state_source": "query_config",
+            "result_shape": "path",
+            "dedupe": "path",
+        }
+        root = result.receipt.nodes[0]
+        assert root.node_type == "query"
+        assert root.detail["execution_options"] == result.receipt.execution_options
+
+    def test_receipt_records_runtime_relationship_state_override_source(self, config, graph):
+        config.named_queries["override_receipt"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            allow_relationship_state_override=True,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "override_receipt",
+            {"vehicle_id": "V-CIVIC"},
+            relationship_state="accepted",
+        )
+
+        assert result.receipt is not None
+        assert result.receipt.execution_options["relationship_state"] == "accepted"
+        assert result.receipt.execution_options["relationship_state_source"] == "runtime_override"
+        assert (
+            result.receipt.nodes[0].detail["execution_options"]
+            == result.receipt.execution_options
+        )
+
+    def test_receipt_records_structured_predicate_summary(self, config, graph):
+        config.named_queries["predicate_summary_receipt"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep.model_validate(
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                        "where": {
+                            "edge.properties.verified": {"eq": True},
+                        },
+                        "where_related": [
+                            {
+                                "relationship": "suppressed_fit",
+                                "direction": "outgoing",
+                                "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                        "where_not_related": [
+                            {
+                                "relationship": "vehicle_blocks_part",
+                                "direction": "incoming",
+                                "source": {"entity_id": {"eq": "$entry.entity_id"}},
+                            }
+                        ],
+                    }
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "predicate_summary_receipt",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.receipt is not None
+        filter_summary = result.receipt.nodes[0].detail["filter_summary"]
+        assert filter_summary == [
+            {
+                "step": 0,
+                "relationship": "fits",
+                "direction": "incoming",
+                "where": {"edge.properties.verified": {"eq": True}},
+                "where_related": [
+                    {
+                        "relationship": "suppressed_fit",
+                        "direction": "outgoing",
+                        "target": {"entity_id": {"eq": "$entry.entity_id"}},
+                    }
+                ],
+                "where_not_related": [
+                    {
+                        "relationship": "vehicle_blocks_part",
+                        "direction": "incoming",
+                        "source": {"entity_id": {"eq": "$entry.entity_id"}},
+                    }
+                ],
+            }
+        ]
+
+    def test_pending_relationship_query_can_be_approved_into_live_state(self, config, graph):
+        rel = graph.get_relationship("Part", "BP-5678", "Vehicle", "V-CIVIC", "fits")
+        assert rel is not None
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+            edge_key=rel.edge_key,
+        )
+        config.named_queries["pending_fit_edges"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="fits",
+            result_shape="relationship",
+            relationship_state="pending",
+        )
+        config.named_queries["accepted_fit_edges"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="fits",
+            result_shape="relationship",
+            relationship_state="accepted",
+        )
+        config.named_queries["live_fit_edges"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="fits",
+            result_shape="relationship",
+        )
+
+        pending = execute_query(
+            config,
+            graph,
+            "pending_fit_edges",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert len(pending.results) == 1
+        row = pending.results[0]
+        assert isinstance(row, QueryRelationshipRow)
+        assert row.edge_key is not None
+        assert row.metadata.assertion.review.status == "pending"
+        assert row.from_entity is not None
+        assert row.to_entity is not None
+
+        applied = apply_feedback(
+            graph,
+            FeedbackRecord(
+                receipt_id=pending.receipt.receipt_id,
+                action="approve",
+                target=row,
+            ),
+        )
+        assert applied is True
+
+        approved_rel = graph.get_relationship(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            edge_key=row.edge_key,
+        )
+        assert approved_rel is not None
+        assert approved_rel.metadata.assertion.review.status == "approved"
+
+        accepted = execute_query(
+            config,
+            graph,
+            "accepted_fit_edges",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        live = execute_query(
+            config,
+            graph,
+            "live_fit_edges",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        pending_after = execute_query(
+            config,
+            graph,
+            "pending_fit_edges",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert [row.edge_key for row in accepted.results] == [approved_rel.edge_key]
+        assert approved_rel.edge_key in [row.edge_key for row in live.results]
+        assert pending_after.results == []
 
 
 class TestRelationshipResults:

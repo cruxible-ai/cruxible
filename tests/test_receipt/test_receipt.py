@@ -159,6 +159,7 @@ class TestReceiptTypes:
         assert receipt.committed is False
         assert receipt.head_snapshot_id is None
         assert receipt.workflow_mode is None
+        assert receipt.execution_options == {}
 
     def test_receipt_query_name_optional(self):
         receipt = Receipt(nodes=[], edges=[])
@@ -183,6 +184,7 @@ class TestReceiptBuilder:
         assert root.node_type == "query"
         assert root.detail["query_name"] == "test_q"
         assert root.detail["parameters"] == {"a": 1}
+        assert root.detail["execution_options"] == {}
 
     def test_receipt_id_format(self):
         builder = ReceiptBuilder(query_name="q", parameters={})

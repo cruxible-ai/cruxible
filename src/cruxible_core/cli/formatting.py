@@ -192,6 +192,7 @@ def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
     table.add_column("Entry")
     table.add_column("Params")
     table.add_column("Returns")
+    table.add_column("State")
     table.add_column("Description")
 
     for query in queries:
@@ -201,6 +202,7 @@ def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
             str(query.get("entry_point", "")),
             params,
             str(query.get("returns", "")),
+            str(query.get("relationship_state", "live")),
             str(query.get("description") or ""),
         )
     return table

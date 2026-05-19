@@ -90,6 +90,8 @@ class QuerySummaryView:
     returns: str
     result_shape: str = "entity"
     dedupe: str = "entity"
+    relationship_state: str = "live"
+    allow_relationship_state_override: bool = False
     description: str | None = None
     example_ids: list[str] = field(default_factory=list)
     traversal_summary: list[str] = field(default_factory=list)

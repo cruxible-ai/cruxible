@@ -16,7 +16,9 @@ from cruxible_core.graph.assertion_state import (
     RelationshipLifecycleState,
     RelationshipReviewState,
     dump_assertion,
+    relationship_assertion_from_metadata,
     relationship_is_live,
+    relationship_lifecycle_is_active,
 )
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
@@ -108,7 +110,9 @@ __all__ = [
     "make_node_id",
     "make_provenance",
     "provenance_group_id",
+    "relationship_assertion_from_metadata",
     "relationship_is_live",
+    "relationship_lifecycle_is_active",
     "split_node_id",
     "stamp_provenance_modified",
 ]
