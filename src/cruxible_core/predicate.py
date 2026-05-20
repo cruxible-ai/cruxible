@@ -77,18 +77,22 @@ def evaluate_typed_comparison(
     right: Any,
     *,
     value_type: PredicateValueType | None = None,
+    invalid: Literal["false", "raise"] = "false",
 ) -> bool:
     """Evaluate a comparison after optional type-aware coercion.
 
     Invalid typed coercions return False. Unsupported operators still raise
     ValueError through normalize_comparison_op, matching evaluate_comparison.
+    Set invalid="raise" to let callers report strict typed coercion failures.
     """
     normalized = normalize_comparison_op(op)
     if value_type is None:
         return _compare_values(left, normalized, right)
     try:
         coerced_left, coerced_right = _coerce_pair(left, right, value_type)
-    except (TypeError, ValueError):
+    except PredicateCoercionError:
+        if invalid == "raise":
+            raise
         return False
     return _compare_values(coerced_left, normalized, coerced_right)
 
@@ -119,6 +123,15 @@ def validate_typed_predicate_operand(
     _coerce_value(value, value_type)
 
 
+class PredicateCoercionError(ValueError):
+    """Typed predicate operand coercion failed."""
+
+    def __init__(self, value: Any, value_type: PredicateValueType) -> None:
+        self.value = value
+        self.value_type = value_type
+        super().__init__(f"Invalid {value_type} predicate value: {value!r}")
+
+
 def _compare_values(left: Any, normalized: ComparisonOp, right: Any) -> bool:
     if normalized == "eq":
         return bool(left == right)
@@ -143,7 +156,15 @@ def _coerce_pair(
     right: Any,
     value_type: PredicateValueType,
 ) -> tuple[Any, Any]:
-    return _coerce_value(left, value_type), _coerce_value(right, value_type)
+    try:
+        coerced_left = _coerce_value(left, value_type)
+    except (TypeError, ValueError) as exc:
+        raise PredicateCoercionError(left, value_type) from exc
+    try:
+        coerced_right = _coerce_value(right, value_type)
+    except (TypeError, ValueError) as exc:
+        raise PredicateCoercionError(right, value_type) from exc
+    return coerced_left, coerced_right
 
 
 def _coerce_value(value: Any, value_type: PredicateValueType) -> Any:

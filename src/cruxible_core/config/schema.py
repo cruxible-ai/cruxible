@@ -266,16 +266,6 @@ class QueryPredicateSpec(StructuredPredicateSpec):
         return self
 
 
-_TOP_LEVEL_QUERY_PREDICATE_SCOPES = {
-    "edge",
-    "source",
-    "target",
-    "current",
-    "candidate",
-    "entry",
-}
-
-
 class RelatedPredicateSpec(BaseModel):
     """Predicate-backed related-edge existence check for a traversal candidate."""
 
@@ -343,12 +333,14 @@ class TraversalStep(BaseModel):
 
     @model_validator(mode="after")
     def validate_where_scope(self) -> TraversalStep:
+        from cruxible_core.query.predicates import QUERY_PREDICATE_SCOPES
+
         if self.where is None:
             return self
         for path in self.where.root:
             scope = path.split(".", 1)[0]
-            if scope not in _TOP_LEVEL_QUERY_PREDICATE_SCOPES:
-                allowed = ", ".join(sorted(_TOP_LEVEL_QUERY_PREDICATE_SCOPES))
+            if scope not in QUERY_PREDICATE_SCOPES:
+                allowed = ", ".join(sorted(QUERY_PREDICATE_SCOPES))
                 msg = f"top-level where predicate path '{path}' must start with one of: {allowed}"
                 raise ValueError(msg)
         return self

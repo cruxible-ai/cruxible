@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from cruxible_core.predicate import (
+    PredicateCoercionError,
     comparison_symbol,
     evaluate_comparison,
     evaluate_typed_comparison,
@@ -250,6 +251,18 @@ class TestEvaluateTypedComparison:
             is False
         )
         assert evaluate_typed_comparison("nope", "eq", True, value_type="bool") is False
+
+    def test_invalid_typed_coercion_can_raise(self) -> None:
+        with pytest.raises(PredicateCoercionError) as exc_info:
+            evaluate_typed_comparison(
+                "nope",
+                "eq",
+                True,
+                value_type="bool",
+                invalid="raise",
+            )
+        assert exc_info.value.value == "nope"
+        assert exc_info.value.value_type == "bool"
 
     def test_invalid_operator_still_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported comparison operator"):

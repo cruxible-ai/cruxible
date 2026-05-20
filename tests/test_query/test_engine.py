@@ -30,7 +30,8 @@ from cruxible_core.query.engine import (
     execute_query,
 )
 from cruxible_core.query.evaluate import evaluate_graph
-from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
+from cruxible_core.query.predicates import build_predicate_context
+from cruxible_core.query.types import QueryPathRow, QueryPathSegment, QueryRelationshipRow
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1913,6 +1914,27 @@ def _kev_path_graph() -> EntityGraph:
 
 
 class TestStructuredPredicates:
+    def test_predicate_context_rejects_mismatched_segment(self, graph):
+        current = graph.get_entity("Part", "BP-1234")
+        candidate = graph.get_entity("Vehicle", "V-CIVIC")
+        assert current is not None
+        assert candidate is not None
+        segment = QueryPathSegment(
+            relationship_type="fits",
+            from_type="Part",
+            from_id="BP-9999",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
+        )
+
+        with pytest.raises(QueryExecutionError, match="endpoints do not match"):
+            build_predicate_context(
+                entry=current,
+                current=current,
+                candidate=candidate,
+                segment=segment,
+            )
+
     def test_where_filters_edge_source_target_and_candidate_values(self, config, graph):
         config.named_queries["production_brake_fitments"] = NamedQuerySchema(
             entry_point="Part",
