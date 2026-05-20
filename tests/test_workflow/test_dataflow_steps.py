@@ -8,6 +8,7 @@ import pytest
 from tests.support.workflow_helpers import dataflow_instance
 
 from cruxible_core.errors import QueryExecutionError
+from cruxible_core.graph.types import EntityInstance
 from cruxible_core.workflow import execute_workflow
 
 
@@ -274,6 +275,63 @@ class TestWorkflowDataflowSteps:
         assert result.output["right_count"] == 0
         assert result.output["items"] == []
 
+    def test_execute_join_items_preserves_left_and_right_read_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: left_rows
+              list_entities:
+                entity_type: Row
+                limit: 1
+              as: left_rows
+            - id: right_rows
+              list_entities:
+                entity_type: Row
+                limit: 1
+              as: right_rows
+            - id: joined
+              join_items:
+                left_items: $steps.left_rows.items
+                right_items: $steps.right_rows.items
+                left_key: $item.entity_id
+                right_key: $item.entity_id
+                fields:
+                  id: $item.join_key
+              as: joined
+            """,
+            returns="joined",
+        )
+        graph = instance.load_graph()
+        for row_id in ("ROW-1", "ROW-2"):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Row",
+                    entity_id=row_id,
+                    properties={"id": row_id},
+                )
+            )
+        instance.save_graph(graph)
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        metadata = result.output["source_metadata"]
+        assert metadata == {
+            "truncated": True,
+            "limit_truncated": True,
+            "path_truncated": False,
+            "truncation_reasons": ["limit"],
+        }
+        assert result.output["left_source_metadata"]["source_step"] == "left_rows"
+        assert result.output["left_source_metadata"]["source_ref"] == "$steps.left_rows.items"
+        assert result.output["left_source_metadata"]["total_results"] == 2
+        assert result.output["left_source_metadata"]["returned_results"] == 1
+        assert result.output["right_source_metadata"]["source_step"] == "right_rows"
+        assert result.output["right_source_metadata"]["source_ref"] == "$steps.right_rows.items"
+        assert result.output["right_source_metadata"]["total_results"] == 2
+        assert result.output["right_source_metadata"]["returned_results"] == 1
+
     def test_execute_filter_items_where_comparisons_and_passthrough(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
@@ -351,6 +409,61 @@ class TestWorkflowDataflowSteps:
                 "business_date": "2026-05-17",
             }
         ]
+
+    def test_execute_filter_and_dedupe_items_preserve_read_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: rows
+              list_entities:
+                entity_type: Row
+                limit: 1
+              as: rows
+            - id: filtered
+              filter_items:
+                items: $steps.rows.items
+                where:
+                  entity_type: Row
+              as: filtered
+            - id: deduped
+              dedupe_items:
+                items: $steps.filtered.items
+                keys: [$item.entity_id]
+              as: deduped
+            """,
+            returns="deduped",
+        )
+        graph = instance.load_graph()
+        for row_id in ("ROW-1", "ROW-2"):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Row",
+                    entity_id=row_id,
+                    properties={"id": row_id},
+                )
+            )
+        instance.save_graph(graph)
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        filtered_metadata = result.step_outputs["filtered"]["source_metadata"]
+        assert filtered_metadata["source_step"] == "rows"
+        assert filtered_metadata["source_ref"] == "$steps.rows.items"
+        assert filtered_metadata["input_ref"] == "$steps.rows.items"
+        assert filtered_metadata["total_results"] == 2
+        assert filtered_metadata["returned_results"] == 1
+        assert filtered_metadata["truncated"] is True
+        assert filtered_metadata["truncation_reasons"] == ["limit"]
+        deduped_metadata = result.output["source_metadata"]
+        assert deduped_metadata["source_step"] == "rows"
+        assert deduped_metadata["source_ref"] == "$steps.rows.items"
+        assert deduped_metadata["input_ref"] == "$steps.filtered.items"
+        assert deduped_metadata["total_results"] == 2
+        assert deduped_metadata["returned_results"] == 1
+        assert deduped_metadata["truncated"] is True
+        assert deduped_metadata["truncation_reasons"] == ["limit"]
 
     def test_execute_assert_honors_typed_datetime_comparison(
         self, tmp_path: Path

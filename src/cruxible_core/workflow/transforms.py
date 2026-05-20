@@ -19,7 +19,10 @@ from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
     MAX_DUPLICATE_EXAMPLES,
+    attach_source_metadata,
+    merge_read_metadata,
     resolve_step_items,
+    source_read_metadata,
 )
 
 
@@ -55,6 +58,7 @@ def shape_items(
             mode.
     """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
+    source_metadata = source_read_metadata(spec.items, step_outputs)
     output_items: list[dict[str, Any]] = []
     dropped_count = 0
     drop_examples: list[dict[str, Any]] = []
@@ -105,13 +109,16 @@ def shape_items(
             )
         output_items.append(shaped)
 
-    return {
-        "items": output_items,
-        "input_count": len(items),
-        "output_count": len(output_items),
-        "dropped_count": dropped_count,
-        "drop_examples": drop_examples,
-    }
+    return attach_source_metadata(
+        {
+            "items": output_items,
+            "input_count": len(items),
+            "output_count": len(output_items),
+            "dropped_count": dropped_count,
+            "drop_examples": drop_examples,
+        },
+        source_metadata,
+    )
 
 
 def join_items(
@@ -145,6 +152,8 @@ def join_items(
     """
     left_items = resolve_step_items(spec.left_items, input_payload, step_outputs)
     right_items = resolve_step_items(spec.right_items, input_payload, step_outputs)
+    left_source_metadata = source_read_metadata(spec.left_items, step_outputs)
+    right_source_metadata = source_read_metadata(spec.right_items, step_outputs)
     right_index: dict[str, list[dict[str, Any]]] = {}
     skipped_right_count = 0
 
@@ -197,7 +206,7 @@ def join_items(
                 }
             )
 
-    return {
+    output = {
         "items": output_items,
         "left_count": len(left_items),
         "right_count": len(right_items),
@@ -205,6 +214,14 @@ def join_items(
         "matched_left_count": matched_left_count,
         "output_count": len(output_items),
     }
+    if left_source_metadata:
+        output["left_source_metadata"] = left_source_metadata
+    if right_source_metadata:
+        output["right_source_metadata"] = right_source_metadata
+    return attach_source_metadata(
+        output,
+        merge_read_metadata(left_source_metadata, right_source_metadata),
+    )
 
 
 def filter_items(
@@ -236,6 +253,7 @@ def filter_items(
             operator is unsupported.
     """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
+    source_metadata = source_read_metadata(spec.items, step_outputs)
     resolved_where = _resolve_filter_where(
         step_id,
         spec.where,
@@ -281,12 +299,15 @@ def filter_items(
         if matched:
             output_items.append(item)
 
-    return {
-        "items": output_items,
-        "input_count": len(items),
-        "output_count": len(output_items),
-        "filtered_count": len(items) - len(output_items),
-    }
+    return attach_source_metadata(
+        {
+            "items": output_items,
+            "input_count": len(items),
+            "output_count": len(output_items),
+            "filtered_count": len(items) - len(output_items),
+        },
+        source_metadata,
+    )
 
 
 def dedupe_items(
@@ -319,6 +340,7 @@ def dedupe_items(
             cannot be resolved, or ranked values are incomparable.
     """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
+    source_metadata = source_read_metadata(spec.items, step_outputs)
     selected: dict[str, dict[str, Any]] = {}
     duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
@@ -393,13 +415,16 @@ def dedupe_items(
             }
 
     output_items = [entry["item"] for entry in selected.values()]
-    return {
-        "items": output_items,
-        "input_count": len(items),
-        "output_count": len(output_items),
-        "duplicate_count": duplicate_count,
-        "duplicate_examples": duplicate_examples,
-    }
+    return attach_source_metadata(
+        {
+            "items": output_items,
+            "input_count": len(items),
+            "output_count": len(output_items),
+            "duplicate_count": duplicate_count,
+            "duplicate_examples": duplicate_examples,
+        },
+        source_metadata,
+    )
 
 
 def _ensure_item_mapping(

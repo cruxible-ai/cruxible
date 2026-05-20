@@ -333,6 +333,84 @@ class TestWorkflowExecutor:
         assert set(result.output["results"][0]) == {"values"}
         assert result.output["results"][0]["values"]["sku"] == "SKU-123"
 
+    def test_shape_items_preserves_limited_query_read_metadata(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            limit=1,
+        )
+        config.workflows["shape_limited_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                ),
+                WorkflowStepSchema(
+                    id="shaped",
+                    shape_items={
+                        "items": "$steps.paths.results",
+                        "fields": {"sku": "$item.result.entity_id"},
+                    },
+                    **{"as": "shaped"},
+                ),
+            ],
+            returns="shaped",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "shape_limited_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.output["items"] == [{"sku": "SKU-123"}]
+        metadata = result.output["source_metadata"]
+        assert metadata["source_step"] == "paths"
+        assert metadata["source_ref"] == "$steps.paths.results"
+        assert metadata["input_ref"] == "$steps.paths.results"
+        assert metadata["total_results"] == 2
+        assert metadata["returned_results"] == 1
+        assert metadata["limit"] == 1
+        assert metadata["truncated"] is True
+        assert metadata["limit_truncated"] is True
+        assert metadata["path_truncated"] is False
+        assert metadata["truncation_reasons"] == ["limit"]
+        assert metadata["result_shape"] == "path"
+        assert metadata["dedupe"] == "path"
+        assert metadata["relationship_state"] == "live"
+
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance
     ) -> None:
