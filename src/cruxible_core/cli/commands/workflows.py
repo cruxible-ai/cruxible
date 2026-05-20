@@ -394,6 +394,7 @@ def run_cmd(
             "head_snapshot_id": result.head_snapshot_id,
             "receipt_id": result.receipt_id,
             "trace_ids": result.trace_ids or [],
+            "read_metadata": result.read_metadata,
             "output": result.output,
         })
         return
@@ -568,6 +569,7 @@ def apply_cmd(
             "committed_snapshot_id": result.committed_snapshot_id,
             "receipt_id": result.receipt_id,
             "trace_ids": result.trace_ids or [],
+            "read_metadata": result.read_metadata,
             "output": result.output,
         })
         return
@@ -670,6 +672,7 @@ def propose_cmd(
             ],
             "receipt_id": result.receipt_id,
             "trace_ids": result.trace_ids or [],
+            "read_metadata": result.read_metadata,
             "output": result.output,
         })
         return

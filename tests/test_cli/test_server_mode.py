@@ -1349,6 +1349,7 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
                 workflow=workflow_name,
                 output={"decision": "approve"},
                 receipt_id="RCP-1",
+                read_metadata={"any_read_truncated": True},
                 trace_ids=["TRC-1"],
             )
 
@@ -1413,6 +1414,26 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
     )
     assert run.exit_code == 0
     assert "Receipt ID: RCP-1" in run.output
+
+    run_json = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "run",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+            "--json",
+        ],
+    )
+    assert run_json.exit_code == 0
+    assert json.loads(run_json.output)["read_metadata"] == {
+        "any_read_truncated": True
+    }
 
     test = runner.invoke(
         cli,
@@ -1484,6 +1505,7 @@ def test_workflow_apply_explicit_digest_delegates_to_client(
                 apply_digest=expected_apply_digest,
                 head_snapshot_id=expected_head_snapshot_id,
                 committed_snapshot_id="snap_committed",
+                read_metadata={"any_read_truncated": True},
                 trace_ids=[],
             )
 
@@ -1515,6 +1537,8 @@ def test_workflow_apply_explicit_digest_delegates_to_client(
         "expected_head_snapshot_id": "snap_manual",
         "input_payload": {"vendor": "acme"},
     }
+    payload = json.loads(result.output)
+    assert payload["read_metadata"] == {"any_read_truncated": True}
 
 
 def test_workflow_apply_preview_file_delegates_to_client(
@@ -1740,6 +1764,7 @@ def test_propose_json_includes_suppressed_members(
                         source_workflow_name="wf",
                     )
                 ],
+                read_metadata={"any_read_truncated": True},
                 trace_ids=["TRC-1"],
             )
 
@@ -1763,6 +1788,7 @@ def test_propose_json_includes_suppressed_members(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["suppressed"] is True
+    assert payload["read_metadata"] == {"any_read_truncated": True}
     assert payload["suppressed_members"] == [
         {
             "relationship_type": "recommended_for",

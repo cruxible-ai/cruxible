@@ -300,6 +300,7 @@ def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.Monkey
                 group_status="suppressed",
                 review_priority="review",
                 suppressed=True,
+                read_metadata={"any_read_truncated": True},
                 suppressed_members=[
                     contracts.SuppressedProposalMember(
                         relationship_type="recommended_for",
@@ -321,6 +322,7 @@ def test_workflow_propose_handler_delegates_to_client(monkeypatch: pytest.Monkey
     result = handlers.handle_propose_workflow("inst_123", "wf", {"id": "1"})
     assert result.group_id is None
     assert result.suppressed is True
+    assert result.read_metadata == {"any_read_truncated": True}
     assert result.suppressed_members[0].existing_group_id == "GRP-1"
 
 
@@ -366,12 +368,14 @@ def test_workflow_run_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatc
                 receipt_id="RCP-1",
                 mode="run",
                 canonical=False,
+                read_metadata={"any_read_truncated": True},
                 trace_ids=["TRC-1"],
             )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     result = handlers.handle_workflow_run("inst_123", "wf", {"id": "1"})
     assert result.receipt_id == "RCP-1"
+    assert result.read_metadata == {"any_read_truncated": True}
 
 
 def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
@@ -399,6 +403,7 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
                 apply_digest="sha256:abc",
                 head_snapshot_id="snap_1",
                 committed_snapshot_id="snap_2",
+                read_metadata={"any_read_truncated": True},
                 trace_ids=["TRC-2"],
             )
 
@@ -411,6 +416,7 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
         input_payload={"id": "1"},
     )
     assert result.committed_snapshot_id == "snap_2"
+    assert result.read_metadata == {"any_read_truncated": True}
 
 
 @pytest.mark.parametrize(
