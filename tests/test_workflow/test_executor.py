@@ -323,11 +323,13 @@ class TestWorkflowExecutor:
 
         assert len(result.output["results"]) == 1
         assert result.output["total_results"] == 2
+        assert result.output["returned_results"] == 1
         assert result.output["limit"] == 1
         assert result.output["truncated"] is True
         assert result.output["limit_truncated"] is True
         assert result.output["path_truncated"] is False
         assert result.output["truncation_reasons"] == ["limit"]
+        assert result.output["policy_summary"] == {}
         assert set(result.output["results"][0]) == {"values"}
         assert result.output["results"][0]["values"]["sku"] == "SKU-123"
 
@@ -375,6 +377,60 @@ class TestWorkflowExecutor:
         )
         assert products_step.detail["entity_type"] == "Product"
         assert products_step.detail["item_count"] == 1
+
+    def test_execute_workflow_limited_list_entities_reports_read_metadata(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        graph = workflow_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="SKU-456",
+                properties={"sku": "SKU-456", "category": "soda", "base_margin": 0.3},
+            )
+        )
+        workflow_instance.save_graph(graph)
+        config = workflow_instance.load_config()
+        config.contracts["PromoInput"].fields["category"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="products",
+                list_entities={
+                    "entity_type": "Product",
+                    "property_filter": {"category": "$input.category"},
+                    "limit": 1,
+                },
+                **{"as": "products"},
+            ),
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "category": "soda",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        products = result.step_outputs["products"]
+        assert products["total"] == 2
+        assert products["total_results"] == 2
+        assert products["returned_results"] == 1
+        assert products["limit"] == 1
+        assert products["truncated"] is True
+        assert products["limit_truncated"] is True
+        assert products["path_truncated"] is False
+        assert products["truncation_reasons"] == ["limit"]
 
     def test_execute_workflow_list_entities_matches_service_list(
         self, workflow_instance: CruxibleInstance
@@ -472,6 +528,58 @@ class TestWorkflowExecutor:
         )
         assert links_step.detail["relationship_type"] == "recommended_for"
         assert links_step.detail["item_count"] == 0
+
+    def test_execute_workflow_limited_list_relationships_reports_read_metadata(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.workflows["list_campaign_links"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="existing_links",
+                    list_relationships={
+                        "relationship_type": "recommended_for",
+                        "limit": 1,
+                    },
+                    **{"as": "existing_links"},
+                )
+            ],
+            returns="existing_links",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"status": "active"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "list_campaign_links",
+            {"campaign_id": "CMP-1"},
+        )
+
+        links = result.step_outputs["existing_links"]
+        assert links["total"] == 2
+        assert links["total_results"] == 2
+        assert links["returned_results"] == 1
+        assert links["limit"] == 1
+        assert links["truncated"] is True
+        assert links["limit_truncated"] is True
+        assert links["path_truncated"] is False
+        assert links["truncation_reasons"] == ["limit"]
 
     def test_execute_workflow_list_relationships_matches_service_list(
         self, proposal_workflow_instance: CruxibleInstance

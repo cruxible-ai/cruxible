@@ -85,6 +85,50 @@ def _resolve_property_filter(
     return property_filter
 
 
+def _read_output_metadata(
+    *,
+    total_results: int,
+    returned_results: int,
+    limit: int | None = None,
+    truncated: bool | None = None,
+    limit_truncated: bool = False,
+    path_truncated: bool = False,
+    truncation_reasons: list[str] | None = None,
+    result_shape: str | None = None,
+    dedupe: str | None = None,
+    relationship_state: str | None = None,
+    policy_summary: dict[str, int] | None = None,
+    receipt_id: str | None = None,
+) -> dict[str, Any]:
+    """Build consistent workflow read-step metadata."""
+    reasons = list(truncation_reasons or [])
+    is_truncated = (
+        truncated
+        if truncated is not None
+        else limit_truncated or path_truncated or bool(reasons)
+    )
+    metadata: dict[str, Any] = {
+        "total_results": total_results,
+        "returned_results": returned_results,
+        "limit": limit,
+        "truncated": is_truncated,
+        "limit_truncated": limit_truncated,
+        "path_truncated": path_truncated,
+        "truncation_reasons": reasons,
+    }
+    if result_shape is not None:
+        metadata["result_shape"] = result_shape
+    if dedupe is not None:
+        metadata["dedupe"] = dedupe
+    if relationship_state is not None:
+        metadata["relationship_state"] = relationship_state
+    if policy_summary is not None:
+        metadata["policy_summary"] = dict(policy_summary)
+    if receipt_id is not None:
+        metadata["receipt_id"] = receipt_id
+    return metadata
+
+
 def list_entities_step(
     config: CoreConfig,
     graph: EntityGraph,
@@ -108,9 +152,18 @@ def list_entities_step(
         limit=limit,
     )
     items = [entity.model_dump(mode="python") for entity in result.items]
+    limit_truncated = limit is not None and len(items) < result.total
     return {
         "items": items,
         "total": result.total,
+        **_read_output_metadata(
+            total_results=result.total,
+            returned_results=len(items),
+            limit=limit,
+            limit_truncated=limit_truncated,
+            path_truncated=False,
+            truncation_reasons=["limit"] if limit_truncated else [],
+        ),
     }
 
 
@@ -134,9 +187,18 @@ def list_relationships_step(
         property_filter=property_filter or None,
         limit=limit,
     )
+    limit_truncated = limit is not None and len(result.items) < result.total
     return {
         "items": result.items,
         "total": result.total,
+        **_read_output_metadata(
+            total_results=result.total,
+            returned_results=len(result.items),
+            limit=limit,
+            limit_truncated=limit_truncated,
+            path_truncated=False,
+            truncation_reasons=["limit"] if limit_truncated else [],
+        ),
     }
 
 
@@ -161,23 +223,28 @@ def execute_query_step(
     if persist_receipt:
         persist_workflow_receipt(instance, query_result.receipt)
     query_receipt_ids.append(query_result.receipt.receipt_id)
+    query_metadata = _read_output_metadata(
+        total_results=query_result.total_results or len(query_result.results),
+        returned_results=len(query_result.results),
+        limit=query_result.limit,
+        truncated=query_result.truncated,
+        limit_truncated=query_result.limit_truncated,
+        path_truncated=query_result.path_truncated,
+        truncation_reasons=list(query_result.truncation_reasons),
+        result_shape=query_result.result_shape,
+        dedupe=query_result.dedupe,
+        relationship_state=query_result.relationship_state,
+        policy_summary=query_result.policy_summary,
+        receipt_id=query_result.receipt.receipt_id,
+    )
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
         "results": [dump_query_row(item) for item in query_result.results],
-        "receipt_id": query_result.receipt.receipt_id,
-        "total_results": query_result.total_results,
-        "limit": query_result.limit,
-        "truncated": query_result.truncated,
-        "limit_truncated": query_result.limit_truncated,
-        "path_truncated": query_result.path_truncated,
-        "truncation_reasons": list(query_result.truncation_reasons),
+        **query_metadata,
         "max_paths": query_result.max_paths,
         "max_paths_per_result": query_result.max_paths_per_result,
         "total_path_count": query_result.total_path_count,
         "retained_path_count": query_result.retained_path_count,
         "steps_executed": query_result.steps_executed,
-        "result_shape": query_result.result_shape,
-        "dedupe": query_result.dedupe,
-        "relationship_state": query_result.relationship_state,
     }
     if compiled_step.as_name is not None:
         alias_step_ids[compiled_step.as_name] = compiled_step.step_id
