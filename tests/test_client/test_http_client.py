@@ -141,6 +141,54 @@ def test_trace_methods_call_trace_routes():
     assert seen[1][1] == expected_url
 
 
+def test_feedback_from_query_uses_expected_route_and_payload():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "feedback_id": "FB-1",
+                "applied": True,
+                "receipt_id": "RCP-FB-1",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.feedback_from_query(
+        "inst_123",
+        receipt_id="RCP-QUERY-1",
+        result_index=2,
+        action="reject",
+        source="agent",
+        reason="stale evidence",
+        reason_code="vendor_mismatch",
+        scope_hints={"vendor": "acme"},
+        group_override=True,
+        path_alias="exposure",
+    )
+
+    assert result.feedback_id == "FB-1"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/v1/inst_123/feedback/from-query"
+    assert captured["payload"] == {
+        "receipt_id": "RCP-QUERY-1",
+        "result_index": 2,
+        "action": "reject",
+        "source": "agent",
+        "reason": "stale evidence",
+        "reason_code": "vendor_mismatch",
+        "scope_hints": {"vendor": "acme"},
+        "corrections": None,
+        "group_override": True,
+        "path_index": None,
+        "path_alias": "exposure",
+    }
+
+
 def test_client_includes_bearer_token_header_when_configured():
     captured: dict[str, Any] = {}
 

@@ -365,6 +365,40 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.FeedbackBatchResult)
 
+    def feedback_from_query(
+        self,
+        instance_id: str,
+        *,
+        receipt_id: str,
+        result_index: int,
+        action: contracts.FeedbackAction,
+        source: contracts.FeedbackSource = "human",
+        reason: str = "",
+        reason_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
+        corrections: dict[str, Any] | None = None,
+        group_override: bool = False,
+        path_index: int | None = None,
+        path_alias: str | None = None,
+    ) -> contracts.FeedbackResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/feedback/from-query",
+            json={
+                "receipt_id": receipt_id,
+                "result_index": result_index,
+                "action": action,
+                "source": source,
+                "reason": reason,
+                "reason_code": reason_code,
+                "scope_hints": scope_hints,
+                "corrections": corrections,
+                "group_override": group_override,
+                "path_index": path_index,
+                "path_alias": path_alias,
+            },
+        )
+        return self._parse_model(response, contracts.FeedbackResult)
+
     def outcome(
         self,
         instance_id: str,

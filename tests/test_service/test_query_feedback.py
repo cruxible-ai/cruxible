@@ -23,10 +23,12 @@ from cruxible_core.errors import (
 )
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service import (
     FeedbackItemInput,
     RelationshipTargetInput,
     service_feedback,
+    service_feedback_from_query_result,
     service_feedback_input,
     service_get_feedback_profile,
     service_get_outcome_profile,
@@ -300,6 +302,119 @@ def _edge_target() -> RelationshipInstance:
     )
 
 
+def _persist_receipt(instance: CruxibleInstance, receipt) -> str:
+    store = instance.get_receipt_store()
+    try:
+        return store.save_receipt(receipt)
+    finally:
+        store.close()
+
+
+def _get_receipt(instance: CruxibleInstance, receipt_id: str):
+    store = instance.get_receipt_store()
+    try:
+        return store.get_receipt(receipt_id)
+    finally:
+        store.close()
+
+
+def _set_review_status(
+    instance: CruxibleInstance,
+    target: RelationshipInstance,
+    status: str,
+) -> None:
+    graph = instance.load_graph()
+    rel = graph.get_relationship(
+        target.from_type,
+        target.from_id,
+        target.to_type,
+        target.to_id,
+        target.relationship_type,
+        edge_key=target.edge_key,
+    )
+    assert rel is not None
+    rel.metadata.assertion.review.status = status  # type: ignore[assignment]
+    rel.metadata.assertion.review.source = "system"
+    updated = graph.update_relationship_state(
+        rel.from_type,
+        rel.from_id,
+        rel.to_type,
+        rel.to_id,
+        rel.relationship_type,
+        metadata=rel.metadata,
+        edge_key=rel.edge_key,
+    )
+    assert updated is True
+    instance.save_graph(graph)
+
+
+def _add_relationship_query(
+    instance: CruxibleInstance,
+    *,
+    name: str = "fit_edges_for_vehicle",
+    relationship_state: str = "live",
+) -> None:
+    config = instance.load_config()
+    config.named_queries[name] = NamedQuerySchema(
+        entry_point="Vehicle",
+        traversal=[
+            TraversalStep(
+                relationship="fits",
+                direction="incoming",
+                filter={"source": "catalog"},
+            )
+        ],
+        returns="fits",
+        result_shape="relationship",
+        dedupe="path",
+        relationship_state=relationship_state,  # type: ignore[arg-type]
+    )
+    instance.save_config(config)
+
+
+def _add_single_hop_path_query(instance: CruxibleInstance) -> None:
+    config = instance.load_config()
+    config.named_queries["fit_path_for_vehicle"] = NamedQuerySchema(
+        entry_point="Vehicle",
+        traversal=[
+            TraversalStep(
+                relationship="fits",
+                direction="incoming",
+                filter={"source": "catalog"},
+                alias="fit",
+            )
+        ],
+        returns="list[Part]",
+        result_shape="path",
+        dedupe="path",
+    )
+    instance.save_config(config)
+
+
+def _add_multi_hop_path_query(instance: CruxibleInstance) -> None:
+    config = instance.load_config()
+    config.named_queries["replacement_path_for_vehicle"] = NamedQuerySchema(
+        entry_point="Vehicle",
+        traversal=[
+            TraversalStep(
+                relationship="fits",
+                direction="incoming",
+                filter={"source": "catalog"},
+                alias="fit",
+            ),
+            TraversalStep(
+                relationship="replaces",
+                direction="incoming",
+                alias="replacement",
+            ),
+        ],
+        returns="list[Part]",
+        result_shape="path",
+        dedupe="path",
+    )
+    instance.save_config(config)
+
+
 class TestFeedback:
     def _run_query(self, instance: CruxibleInstance) -> str:
         """Run a query and return the receipt_id."""
@@ -477,6 +592,448 @@ class TestFeedback:
 
         assert profile is not None
         assert "vendor_mismatch" in profile.reason_codes
+
+
+class TestFeedbackFromQuery:
+    def test_relationship_row_can_be_approved_from_query_receipt(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_relationship_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+            source="human",
+            reason="catalog evidence accepted",
+        )
+
+        assert result.applied is True
+        row = query.results[0]
+        assert isinstance(row, QueryRelationshipRow)
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            edge_key=row.edge_key,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+        assert result.receipt_id is not None
+        feedback_receipt = _get_receipt(populated_instance, result.receipt_id)
+        assert feedback_receipt is not None
+        detail = feedback_receipt.nodes[0].detail["parameters"]["feedback_from_query"]
+        assert detail["receipt_id"] == query.receipt_id
+        assert detail["result_index"] == 0
+        assert detail["result_shape"] == "relationship"
+        assert detail["resolved_target"]["relationship_type"] == "fits"
+        assert detail["action"] == "approve"
+        assert detail["reason"] == "catalog evidence accepted"
+
+    def test_feedback_from_query_supports_profiled_agent_feedback(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.feedback_profiles["fits"] = FeedbackProfileSchema(
+            version=1,
+            reason_codes={
+                "vendor_mismatch": FeedbackReasonCodeSchema(
+                    description="Vendor mismatch",
+                    remediation_hint="constraint",
+                )
+            },
+            scope_keys={},
+        )
+        populated_instance.save_config(config)
+        _add_relationship_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="reject",
+            source="agent",
+            reason_code="vendor_mismatch",
+            scope_hints={},
+        )
+
+        assert result.applied is True
+        row = query.results[0]
+        assert isinstance(row, QueryRelationshipRow)
+        rel = populated_instance.load_graph().get_relationship(
+            row.from_type,
+            row.from_id,
+            row.to_type,
+            row.to_id,
+            row.relationship_type,
+            edge_key=row.edge_key,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "rejected"
+        assert rel.metadata.assertion.review.source == "agent"
+        assert result.receipt_id is not None
+        feedback_receipt = _get_receipt(populated_instance, result.receipt_id)
+        assert feedback_receipt is not None
+        detail = feedback_receipt.nodes[0].detail["parameters"]["feedback_from_query"]
+        assert detail["reason_code"] == "vendor_mismatch"
+        assert detail["scope_hints"] == {}
+
+    def test_path_row_with_one_segment_can_be_approved_without_selector(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_single_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "fit_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+        )
+
+        assert result.applied is True
+        row = query.results[0]
+        assert isinstance(row, QueryPathRow)
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            edge_key=row.path[0].edge_key,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+
+    def test_multi_hop_path_requires_selector(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_multi_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "replacement_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        with pytest.raises(ConfigError, match="requires path_index or path_alias"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+            )
+
+    def test_multi_hop_path_can_select_by_index(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_multi_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "replacement_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+            path_index=1,
+        )
+
+        assert result.applied is True
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Part",
+            "BP-1001",
+            "replaces",
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+
+    def test_multi_hop_path_can_select_by_alias(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_multi_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "replacement_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+            path_alias="fit",
+        )
+
+        assert result.applied is True
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+
+    def test_entity_row_is_rejected(self, populated_instance: CruxibleInstance) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["entity_parts_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            result_shape="entity",
+            dedupe="entity",
+        )
+        populated_instance.save_config(config)
+        query = service_query(
+            populated_instance,
+            "entity_parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        with pytest.raises(ConfigError, match="Entity query rows do not contain"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+            )
+
+    def test_invalid_receipt_and_result_selection_errors(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_relationship_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        with pytest.raises(ReceiptNotFoundError):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id="missing",
+                result_index=0,
+                action="approve",
+            )
+        with pytest.raises(ConfigError, match="out of range"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=99,
+                action="approve",
+            )
+        with pytest.raises(ConfigError, match="do not accept path_index"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+                path_index=0,
+            )
+
+    def test_non_query_receipt_is_rejected(self, populated_instance: CruxibleInstance) -> None:
+        receipt = ReceiptBuilder(operation_type="feedback", parameters={}).build(results=[])
+        receipt_id = _persist_receipt(populated_instance, receipt)
+
+        with pytest.raises(ConfigError, match="not 'query'"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=receipt_id,
+                result_index=0,
+                action="approve",
+            )
+
+    def test_invalid_path_alias_and_index_errors(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_multi_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "replacement_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+
+        with pytest.raises(ConfigError, match="Provide either path_index or path_alias"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+                path_index=0,
+                path_alias="fit",
+            )
+        with pytest.raises(ConfigError, match="out of range"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+                path_index=9,
+            )
+        with pytest.raises(ConfigError, match="was not found"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+                path_alias="missing",
+            )
+
+    def test_duplicate_path_alias_errors(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_multi_hop_path_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "replacement_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt is not None
+        assert query.receipt_id is not None
+        row = query.receipt.results[0]
+        row["path"][0]["alias"] = "duplicate"
+        row["path"][1]["alias"] = "duplicate"
+        receipt = query.receipt.model_copy(update={"results": [row]})
+        receipt_id = _persist_receipt(populated_instance, receipt)
+
+        with pytest.raises(ConfigError, match="duplicated"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=receipt_id,
+                result_index=0,
+                action="approve",
+                path_alias="duplicate",
+            )
+
+    def test_selected_edge_missing_errors(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _add_relationship_query(populated_instance)
+        query = service_query(
+            populated_instance,
+            "fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+        row = query.results[0]
+        assert isinstance(row, QueryRelationshipRow)
+        graph = populated_instance.load_graph()
+        assert graph.remove_relationship(
+            row.from_type,
+            row.from_id,
+            row.to_type,
+            row.to_id,
+            row.relationship_type,
+            edge_key=row.edge_key,
+        )
+        populated_instance.save_graph(graph)
+
+        with pytest.raises(ConfigError, match="not found in the graph"):
+            service_feedback_from_query_result(
+                populated_instance,
+                receipt_id=query.receipt_id,
+                result_index=0,
+                action="approve",
+            )
+
+    def test_pending_relationship_becomes_approved_from_query_feedback(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        target = _edge_target()
+        _set_review_status(populated_instance, target, "pending")
+        _add_relationship_query(
+            populated_instance,
+            name="pending_fit_edges_for_vehicle",
+            relationship_state="pending",
+        )
+        _add_relationship_query(
+            populated_instance,
+            name="live_fit_edges_for_vehicle",
+            relationship_state="live",
+        )
+        query = service_query(
+            populated_instance,
+            "pending_fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+        assert query.results
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+            source="human",
+        )
+
+        assert result.applied is True
+        rel = populated_instance.load_graph().get_relationship(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship_type,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+
+        accepted = service_query(
+            populated_instance,
+            "live_fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        pending = service_query(
+            populated_instance,
+            "pending_fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert accepted.results
+        assert pending.results == []
 
 
 # ---------------------------------------------------------------------------

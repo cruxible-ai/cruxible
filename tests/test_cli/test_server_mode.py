@@ -2067,6 +2067,40 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
                 receipt_id="RCP-BATCH-1",
             )
 
+        def feedback_from_query(
+            self,
+            instance_id,
+            *,
+            receipt_id,
+            result_index,
+            action,
+            source,
+            reason,
+            reason_code,
+            scope_hints,
+            corrections,
+            group_override,
+            path_index,
+            path_alias,
+        ):
+            assert instance_id == "inst_123"
+            assert receipt_id == "RCP-QUERY-1"
+            assert result_index == 0
+            assert action == "approve"
+            assert source == "human"
+            assert reason == "looks valid"
+            assert reason_code == "vendor_mismatch"
+            assert scope_hints == {"vendor": "acme"}
+            assert corrections is None
+            assert group_override is False
+            assert path_index == 1
+            assert path_alias is None
+            return contracts.FeedbackResult(
+                feedback_id="FB-QUERY-1",
+                applied=True,
+                receipt_id="RCP-FB-1",
+            )
+
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     feedback = runner.invoke(
@@ -2083,6 +2117,33 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     )
     assert feedback.exit_code == 0
     assert "Batch feedback recorded for 1/1 item(s)." in feedback.output
+
+    feedback_from_query = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback-from-query",
+            "--receipt",
+            "RCP-QUERY-1",
+            "--result-index",
+            "0",
+            "--path-index",
+            "1",
+            "--action",
+            "approve",
+            "--reason",
+            "looks valid",
+            "--reason-code",
+            "vendor_mismatch",
+            "--scope-hints",
+            '{"vendor":"acme"}',
+        ],
+    )
+    assert feedback_from_query.exit_code == 0
+    assert "Feedback FB-QUERY-1 applied to graph." in feedback_from_query.output
 
 
 def test_reload_config_uploads_composed_yaml_in_server_mode(

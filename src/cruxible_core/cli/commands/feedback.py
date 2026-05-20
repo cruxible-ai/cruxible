@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 import yaml
@@ -21,11 +21,26 @@ from cruxible_core.service import (
     FeedbackItemInput,
     RelationshipTargetInput,
     service_feedback_batch_inputs,
+    service_feedback_from_query_result,
     service_feedback_input,
     service_get_feedback_profile,
     service_get_outcome_profile,
     service_outcome,
 )
+
+
+def _parse_json_object(raw: str | None, *, option: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw) if raw else None
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter(f"{option} must be valid JSON") from exc
+    if payload is not None and not isinstance(payload, dict):
+        raise click.BadParameter(f"{option} must be a JSON object")
+    return payload
+
+
+def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
+    return _parse_json_object(corrections, option="--corrections")
 
 
 @click.command("feedback")
@@ -43,6 +58,8 @@ from cruxible_core.service import (
 @click.option("--to-id", required=True, help="Target entity ID.")
 @click.option("--edge-key", default=None, type=int, help="Edge key (multi-edge disambiguation).")
 @click.option("--reason", default="", help="Reason for feedback.")
+@click.option("--reason-code", default=None, help="Structured feedback reason code.")
+@click.option("--scope-hints", default=None, help="JSON object of structured scope hints.")
 @click.option(
     "--corrections",
     default=None,
@@ -71,17 +88,15 @@ def feedback_cmd(
     to_id: str,
     edge_key: int | None,
     reason: str,
+    reason_code: str | None,
+    scope_hints: str | None,
     corrections: str | None,
     source: str,
     group_override: bool,
 ) -> None:
-    """Submit feedback on a specific edge from a query result."""
-    try:
-        corrections_dict = json.loads(corrections) if corrections else None
-    except json.JSONDecodeError as exc:
-        raise click.BadParameter("--corrections must be valid JSON") from exc
-    if corrections_dict is not None and not isinstance(corrections_dict, dict):
-        raise click.BadParameter("--corrections must be a JSON object")
+    """Submit feedback on a specific edge by explicit relationship coordinates."""
+    corrections_dict = _parse_corrections(corrections)
+    scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
 
     target = RelationshipTargetInput(
         from_type=from_type,
@@ -105,6 +120,8 @@ def feedback_cmd(
             to_id=to_id,
             edge_key=edge_key,
             reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints_dict,
             corrections=corrections_dict,
             group_override=group_override,
         ),
@@ -115,6 +132,8 @@ def feedback_cmd(
                 action=cast(contracts.FeedbackAction, action),
                 target=target,
                 reason=reason,
+                reason_code=reason_code,
+                scope_hints=scope_hints_dict,
                 corrections=corrections_dict,
                 group_override=group_override,
             ),
@@ -122,6 +141,110 @@ def feedback_cmd(
         ),
         allow_local=False,
         command_name="feedback",
+    )
+
+    if result.applied:
+        click.echo(f"Feedback {result.feedback_id} applied to graph.")
+    else:
+        click.echo(f"Feedback {result.feedback_id} saved (edge not found in graph).")
+    if result.receipt_id:
+        click.echo(f"  Receipt: {result.receipt_id}")
+
+
+@click.command("feedback-from-query")
+@click.option("--receipt", "receipt_id", required=True, help="Query receipt ID.")
+@click.option(
+    "--result-index",
+    required=True,
+    type=int,
+    help="Zero-based index of the query result row to adjudicate.",
+)
+@click.option(
+    "--action",
+    required=True,
+    type=click.Choice(["approve", "reject", "correct", "flag"]),
+    help="Feedback action.",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["human", "agent"]),
+    default="human",
+    help="Who produced this feedback (default: human).",
+)
+@click.option("--reason", default="", help="Reason for feedback.")
+@click.option("--reason-code", default=None, help="Structured feedback reason code.")
+@click.option("--scope-hints", default=None, help="JSON object of structured scope hints.")
+@click.option(
+    "--corrections",
+    default=None,
+    help="JSON object of edge property corrections (for action=correct).",
+)
+@click.option(
+    "--group-override",
+    is_flag=True,
+    default=False,
+    help="Stamp selected edge with group_override property (edge must exist).",
+)
+@click.option(
+    "--path-index",
+    default=None,
+    type=int,
+    help="Zero-based path segment index for path query rows.",
+)
+@click.option(
+    "--path-alias",
+    default=None,
+    help="Traversal alias for the selected path segment.",
+)
+@handle_errors
+def feedback_from_query_cmd(
+    receipt_id: str,
+    result_index: int,
+    action: str,
+    source: str,
+    reason: str,
+    reason_code: str | None,
+    scope_hints: str | None,
+    corrections: str | None,
+    group_override: bool,
+    path_index: int | None,
+    path_alias: str | None,
+) -> None:
+    """Submit edge feedback by selecting relationship evidence from a query receipt."""
+    corrections_dict = _parse_corrections(corrections)
+    scope_hints_dict = _parse_json_object(scope_hints, option="--scope-hints")
+
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.feedback_from_query(
+            instance_id,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            action=cast(contracts.FeedbackAction, action),
+            source=cast(contracts.FeedbackSource, source),
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints_dict,
+            corrections=corrections_dict,
+            group_override=group_override,
+            path_index=path_index,
+            path_alias=path_alias,
+        ),
+        lambda instance: service_feedback_from_query_result(
+            instance,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            action=cast(contracts.FeedbackAction, action),
+            source=cast(contracts.FeedbackSource, source),
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints_dict,
+            corrections=corrections_dict,
+            group_override=group_override,
+            path_index=path_index,
+            path_alias=path_alias,
+        ),
+        allow_local=False,
+        command_name="feedback-from-query",
     )
 
     if result.applied:

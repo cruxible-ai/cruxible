@@ -123,6 +123,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
     "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
+    "cruxible_feedback_from_query": PermissionMode.GOVERNED_WRITE,
     "cruxible_outcome": PermissionMode.GOVERNED_WRITE,
     "cruxible_run_workflow": PermissionMode.GOVERNED_WRITE,
     "cruxible_test_workflow": PermissionMode.GOVERNED_WRITE,

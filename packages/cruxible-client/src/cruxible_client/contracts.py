@@ -115,6 +115,20 @@ class FeedbackBatchItemInput(BaseModel):
     group_override: bool = False
 
 
+class FeedbackFromQueryInput(BaseModel):
+    receipt_id: str
+    result_index: int
+    action: FeedbackAction
+    source: FeedbackSource = "human"
+    reason: str = ""
+    reason_code: str | None = None
+    scope_hints: dict[str, Any] | None = None
+    corrections: dict[str, Any] | None = None
+    group_override: bool = False
+    path_index: int | None = None
+    path_alias: str | None = None
+
+
 class DecisionPolicyMatchInput(BaseModel):
     from_match: dict[str, Any] = Field(default_factory=dict, alias="from")
     to: dict[str, Any] = Field(default_factory=dict)

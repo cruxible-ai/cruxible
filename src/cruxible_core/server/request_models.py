@@ -82,6 +82,10 @@ class FeedbackBatchRequest(BaseModel):
     items: list[contracts.FeedbackBatchItemInput]
 
 
+class FeedbackFromQueryRequest(contracts.FeedbackFromQueryInput):
+    pass
+
+
 class OutcomeRequest(BaseModel):
     receipt_id: str | None = None
     outcome: contracts.OutcomeValue

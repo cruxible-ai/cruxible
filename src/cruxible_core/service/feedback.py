@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
@@ -36,6 +38,7 @@ from cruxible_core.service.mutation_receipts import (
     mutation_receipt,
     save_graph_for_mutation,
 )
+from cruxible_core.service.queries import service_get_receipt
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
     FeedbackItemInput,
@@ -753,6 +756,134 @@ def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchIte
     )
 
 
+def _target_from_query_relationship_mapping(
+    value: dict[str, Any],
+    *,
+    context: str,
+) -> RelationshipInstance:
+    try:
+        target = RelationshipInstance.model_validate(value)
+    except ValidationError as exc:
+        raise ConfigError(
+            f"Selected {context} is missing or has invalid relationship identity"
+        ) from exc
+    return RelationshipInstance(
+        from_type=target.from_type,
+        from_id=target.from_id,
+        relationship_type=target.relationship_type,
+        to_type=target.to_type,
+        to_id=target.to_id,
+        edge_key=target.edge_key,
+    )
+
+
+def _select_query_path_segment(
+    row: dict[str, Any],
+    *,
+    path_index: int | None,
+    path_alias: str | None,
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    if path_index is not None and path_alias is not None:
+        raise ConfigError("Provide either path_index or path_alias, not both")
+
+    path = row.get("path")
+    if not isinstance(path, list):
+        raise ConfigError("Path query row does not contain relationship path evidence")
+    if not path:
+        raise ConfigError("Path query row has no selectable relationship segment")
+
+    if path_index is None and path_alias is None:
+        if len(path) == 1:
+            segment = path[0]
+            if not isinstance(segment, dict):
+                raise ConfigError("Selected path segment is not an object")
+            return 0, segment, {"path_index": 0}
+        raise ConfigError("Multi-hop path query row requires path_index or path_alias")
+
+    if path_index is not None:
+        if path_index < 0 or path_index >= len(path):
+            raise ConfigError(
+                f"path_index {path_index} is out of range for path with {len(path)} segment(s)"
+            )
+        segment = path[path_index]
+        if not isinstance(segment, dict):
+            raise ConfigError("Selected path segment is not an object")
+        return path_index, segment, {"path_index": path_index}
+
+    assert path_alias is not None
+    matches = [
+        (index, segment)
+        for index, segment in enumerate(path)
+        if isinstance(segment, dict) and segment.get("alias") == path_alias
+    ]
+    if not matches:
+        raise ConfigError(f"path_alias '{path_alias}' was not found in query result path")
+    if len(matches) > 1:
+        raise ConfigError(f"path_alias '{path_alias}' is duplicated in query result path")
+    index, segment = matches[0]
+    return index, segment, {"path_index": index, "path_alias": path_alias}
+
+
+def _feedback_target_from_query_result(
+    receipt: Receipt,
+    *,
+    result_index: int,
+    path_index: int | None,
+    path_alias: str | None,
+) -> tuple[RelationshipInstance, dict[str, Any]]:
+    if result_index < 0 or result_index >= len(receipt.results):
+        raise ConfigError(
+            f"result_index {result_index} is out of range for receipt "
+            f"'{receipt.receipt_id}' with {len(receipt.results)} result(s)"
+        )
+
+    row = receipt.results[result_index]
+    if not isinstance(row, dict):
+        raise ConfigError(f"Query result {result_index} is not an object")
+
+    if "path" in row:
+        selected_index, segment, selector = _select_query_path_segment(
+            row,
+            path_index=path_index,
+            path_alias=path_alias,
+        )
+        target = _target_from_query_relationship_mapping(segment, context="path segment")
+        return target, {
+            "receipt_id": receipt.receipt_id,
+            "result_index": result_index,
+            "result_shape": "path",
+            **selector,
+            "resolved_target": target.model_dump(
+                mode="json",
+                exclude={"properties", "metadata"},
+            ),
+            "selected_path_alias": segment.get("alias"),
+            "selected_path_index": selected_index,
+        }
+
+    if "relationship_type" in row:
+        if path_index is not None or path_alias is not None:
+            raise ConfigError("Relationship query rows do not accept path_index or path_alias")
+        target = _target_from_query_relationship_mapping(row, context="relationship row")
+        return target, {
+            "receipt_id": receipt.receipt_id,
+            "result_index": result_index,
+            "result_shape": "relationship",
+            "resolved_target": target.model_dump(
+                mode="json",
+                exclude={"properties", "metadata"},
+            ),
+        }
+
+    if "entity_type" in row and "entity_id" in row:
+        raise ConfigError(
+            "Entity query rows do not contain relationship evidence and cannot be used "
+            "as feedback targets"
+        )
+
+    raise ConfigError(f"Unsupported query result shape at result_index {result_index}")
+
+
 def _apply_feedback_record(
     graph,
     record: FeedbackRecord,
@@ -796,6 +927,73 @@ def service_feedback_input(
     )
 
 
+def service_feedback_from_query_result(
+    instance: InstanceProtocol,
+    *,
+    receipt_id: str,
+    result_index: int,
+    action: Literal["approve", "reject", "correct", "flag"],
+    source: Literal["human", "agent"] = "human",
+    reason: str = "",
+    reason_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
+    path_index: int | None = None,
+    path_alias: str | None = None,
+) -> FeedbackServiceResult:
+    """Record edge feedback by selecting relationship evidence from a query receipt."""
+    _validate_feedback_request_values(
+        action=action,
+        source=source,
+        corrections=corrections,
+    )
+    receipt = service_get_receipt(instance, receipt_id)
+    if receipt.operation_type != "query":
+        raise ConfigError(
+            f"Receipt '{receipt_id}' has operation_type '{receipt.operation_type}', not 'query'"
+        )
+    target, query_selection = _feedback_target_from_query_result(
+        receipt,
+        result_index=result_index,
+        path_index=path_index,
+        path_alias=path_alias,
+    )
+    graph = instance.load_graph()
+    if (
+        graph.get_relationship(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship_type,
+            edge_key=target.edge_key,
+        )
+        is None
+    ):
+        raise ConfigError("Selected query relationship target was not found in the graph")
+    return service_feedback(
+        instance,
+        receipt_id=receipt_id,
+        action=action,
+        source=source,
+        target=target,
+        reason=reason,
+        reason_code=reason_code,
+        scope_hints=scope_hints,
+        corrections=corrections,
+        group_override=group_override,
+        _feedback_from_query={
+            **query_selection,
+            "action": action,
+            "source": source,
+            "reason": reason,
+            "reason_code": reason_code,
+            "scope_hints": scope_hints or {},
+        },
+    )
+
+
 def service_feedback(
     instance: InstanceProtocol,
     receipt_id: str,
@@ -807,6 +1005,7 @@ def service_feedback(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    _feedback_from_query: dict[str, Any] | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
@@ -843,10 +1042,18 @@ def service_feedback(
 
     feedback_store = instance.get_feedback_store()
     ctx: MutationReceiptContext[FeedbackServiceResult]
+    receipt_parameters: dict[str, Any] = {
+        "receipt_id": receipt_id,
+        "action": action,
+        "source": source,
+    }
+    if _feedback_from_query is not None:
+        receipt_parameters["feedback_from_query"] = _feedback_from_query
+
     with mutation_receipt(
         instance,
         "feedback",
-        {"receipt_id": receipt_id, "action": action, "source": source},
+        receipt_parameters,
         store=feedback_store,
     ) as ctx:
         assert ctx.builder is not None

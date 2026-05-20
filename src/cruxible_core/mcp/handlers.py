@@ -783,6 +783,56 @@ def handle_feedback_batch(
     )
 
 
+def handle_feedback_from_query(
+    instance_id: str,
+    *,
+    receipt_id: str,
+    result_index: int,
+    action: contracts.FeedbackAction,
+    source: contracts.FeedbackSource = "human",
+    reason: str = "",
+    reason_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
+    path_index: int | None = None,
+    path_alias: str | None = None,
+) -> contracts.FeedbackResult:
+    """Record edge feedback by selecting relationship evidence from a query receipt."""
+    return _dispatch_remote_or_local(
+        lambda client: client.feedback_from_query(
+            instance_id,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            action=action,
+            source=source,
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
+            corrections=corrections,
+            group_override=group_override,
+            path_index=path_index,
+            path_alias=path_alias,
+        ),
+        lambda: api.feedback_from_query(
+            instance_id,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            action=action,
+            source=source,
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
+            corrections=corrections,
+            group_override=group_override,
+            path_index=path_index,
+            path_alias=path_alias,
+        ),
+        allow_local=False,
+        operation_name="cruxible_feedback_from_query",
+    )
+
+
 def handle_outcome(
     instance_id: str,
     outcome: contracts.OutcomeValue,

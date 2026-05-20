@@ -585,7 +585,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible feedback [OPTIONS]`
 
-**Purpose:** Submit feedback on a specific edge from a query result.
+**Purpose:** Submit feedback on a specific edge by explicit relationship coordinates.
 
 **Options And Arguments:**
 
@@ -600,6 +600,8 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
 | `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
 | `--reason` | no | `` | text | Reason for feedback. |
+| `--reason-code` | no | `` | text | Structured feedback reason code. |
+| `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
 | `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--group-override` | no | `False` | boolean | Stamp edge with group_override property (edge must exist). |
@@ -611,6 +613,39 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible feedback-from-query
+
+**Usage:** `cruxible feedback-from-query [OPTIONS]`
+
+**Purpose:** Submit edge-level feedback by selecting one relationship row or path segment from a query receipt.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--receipt` | yes | `Sentinel.UNSET` | text | Query receipt ID. |
+| `--result-index` | yes | `Sentinel.UNSET` | integer | Zero-based index of the query result row to adjudicate. |
+| `--action` | yes | `Sentinel.UNSET` | choice | Feedback action. |
+| `--source` | no | `human` | choice | Who produced this feedback (default: human). |
+| `--reason` | no | `` | text | Reason for feedback. |
+| `--reason-code` | no | `` | text | Structured feedback reason code. |
+| `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
+| `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
+| `--group-override` | no | `False` | boolean | Stamp selected edge with group_override property (edge must exist). |
+| `--path-index` | no | `` | integer | Zero-based path segment index for path query rows. |
+| `--path-alias` | no | `` | text | Traversal alias for the selected path segment. |
+
+**Output And Side Effects:**
+- Creates normal feedback records and feedback receipts through the existing edge-feedback path.
+- Adjudicates one existing relationship assertion from query evidence. It does not resolve candidate groups.
+- Use `cruxible group get --group <group_id>` and `cruxible group resolve --group <group_id> --action approve|reject --expected-pending-version <n>` when the decision is about a group thesis or member set.
+
+**Common Errors:**
+- The receipt is missing, is not a query receipt, or the result index is out of range.
+- Entity-shaped query rows do not contain relationship evidence.
+- Multi-hop path rows require exactly one of `--path-index` or `--path-alias`.
+- The selected path alias is missing or duplicated, or the selected edge is no longer in the graph.
 
 ## cruxible feedback-batch
 

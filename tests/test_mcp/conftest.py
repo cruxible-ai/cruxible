@@ -303,6 +303,9 @@ class GovernedLocalClient:
     def feedback_batch(self, instance_id: str, *, items, source: str):
         return api.feedback_batch(instance_id, items=items, source=source)
 
+    def feedback_from_query(self, instance_id: str, **kwargs):
+        return api.feedback_from_query(instance_id, **kwargs)
+
     def outcome(
         self,
         instance_id: str,

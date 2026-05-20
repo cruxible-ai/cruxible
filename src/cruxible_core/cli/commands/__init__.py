@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     export_group: Any
     feedback_batch_cmd: Any
     feedback_cmd: Any
+    feedback_from_query_cmd: Any
     feedback_profile_cmd: Any
     clone_cmd: Any
     get_entity_cmd: Any
@@ -55,6 +56,7 @@ else:
     from cruxible_core.cli.commands.feedback import (
         feedback_batch_cmd,
         feedback_cmd,
+        feedback_from_query_cmd,
         feedback_profile_cmd,
         outcome_cmd,
         outcome_profile_cmd,
@@ -119,6 +121,7 @@ __all__ = [
     "export_group",
     "feedback_batch_cmd",
     "feedback_cmd",
+    "feedback_from_query_cmd",
     "feedback_profile_cmd",
     "clone_cmd",
     "get_entity_cmd",

@@ -407,6 +407,39 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_feedback_from_query
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Record edge-level feedback by selecting one relationship row or path segment from a query receipt. This adjudicates one existing relationship assertion and does not resolve candidate groups; use group get/resolve for group thesis and member-set decisions.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string | Governed instance ID or local instance root. |
+| `receipt_id` | yes | string | Query receipt ID. |
+| `result_index` | yes | integer | Zero-based query result row index. |
+| `action` | yes | enum: approve, reject, correct, flag | Feedback action. |
+| `source` | no | enum: human, agent | Who produced this feedback. |
+| `reason` | no | string | Reason for feedback. |
+| `reason_code` | no | string | Structured feedback reason code. |
+| `scope_hints` | no | object | Structured feedback scope hints. |
+| `corrections` | no | object | Edge property corrections for `action="correct"`. |
+| `group_override` | no | boolean | Stamp the selected edge for group override. |
+| `path_index` | no | integer | Zero-based path segment index for path rows. |
+| `path_alias` | no | string | Traversal alias for the selected path segment. |
+
+**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`
+
+**Side Effects:** Creates normal feedback records and feedback receipts through the existing edge-feedback path.
+
+**Common Errors:**
+- Receipt is missing, not a query receipt, or result index is out of range.
+- Entity-shaped query rows do not contain relationship evidence.
+- Multi-hop path rows require exactly one of `path_index` or `path_alias`.
+- Selected path alias is missing or duplicated, or selected edge is no longer in the graph.
+
 ## cruxible_feedback_batch
 
 **Permission:** `GOVERNED_WRITE`

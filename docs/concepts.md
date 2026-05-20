@@ -113,13 +113,10 @@ Cruxible stores entities and relationships in a directed graph. Each node is an
 entity with a type and typed properties. Each edge is a typed relationship with
 declared properties plus system-managed review and provenance metadata.
 
-Config-defined edge properties are domain data. System-managed properties
-include:
-
-- `review_status`, updated by feedback and group resolution
-- `_provenance`, tracking how the edge was created or modified
-
-Do not set system-managed properties manually.
+Config-defined edge properties are domain data. Cruxible-managed relationship
+metadata stores assertion review/lifecycle state and provenance separately from
+domain properties; feedback and group resolution update that metadata rather
+than writing domain fields.
 
 ## Named Queries
 
@@ -159,6 +156,13 @@ Feedback is edge-level review tied to a receipt:
 Outcomes record whether a result, proposal, or resolution was correct,
 incorrect, partial, or unknown. Feedback and outcomes let Cruxible accumulate
 accepted judgment state without relying on agent memory.
+
+Query receipts with relationship or path results can be used as evidence for
+edge feedback via `feedback-from-query`: the user selects one relationship row
+or one path segment, and Cruxible applies the normal feedback path to that
+existing assertion. This is separate from group resolution. Use `group get` and
+`group resolve` when the decision is about a candidate group thesis or member
+set rather than one existing edge.
 
 ## Constraints And Evaluation
 

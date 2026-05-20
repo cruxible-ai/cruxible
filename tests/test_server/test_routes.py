@@ -1029,6 +1029,20 @@ def test_feedback_batch_route(
     assert query.status_code == 200
     receipt_id = query.json()["receipt_id"]
 
+    from_query = app_client.post(
+        f"/api/v1/{instance_id}/feedback/from-query",
+        json={
+            "receipt_id": receipt_id,
+            "result_index": 0,
+            "action": "approve",
+            "source": "human",
+            "reason_code": "route_review",
+            "scope_hints": {"route": "feedback-from-query"},
+        },
+    )
+    assert from_query.status_code == 200
+    assert from_query.json()["applied"] is True
+
     batch = app_client.post(
         f"/api/v1/{instance_id}/feedback/batch",
         json={

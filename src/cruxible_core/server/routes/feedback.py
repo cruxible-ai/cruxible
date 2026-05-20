@@ -10,6 +10,7 @@ from cruxible_core.server.request_models import (
     AnalyzeFeedbackRequest,
     AnalyzeOutcomesRequest,
     FeedbackBatchRequest,
+    FeedbackFromQueryRequest,
     FeedbackRequest,
     OutcomeRequest,
 )
@@ -50,6 +51,28 @@ async def feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
         source=req.source,
+    )
+
+
+@router.post("/{instance_id}/feedback/from-query", response_model=contracts.FeedbackResult)
+async def feedback_from_query(
+    instance_id: str,
+    req: FeedbackFromQueryRequest,
+) -> contracts.FeedbackResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.feedback_from_query(
+        instance_id=resolved_instance_id,
+        receipt_id=req.receipt_id,
+        result_index=req.result_index,
+        action=req.action,
+        source=req.source,
+        reason=req.reason,
+        reason_code=req.reason_code,
+        scope_hints=req.scope_hints,
+        corrections=req.corrections,
+        group_override=req.group_override,
+        path_index=req.path_index,
+        path_alias=req.path_alias,
     )
 
 

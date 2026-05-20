@@ -35,6 +35,7 @@ from cruxible_core.service import (
     service_describe_query,
     service_evaluate,
     service_feedback_batch_inputs,
+    service_feedback_from_query_result,
     service_feedback_input,
     service_finalize_decision_record,
     service_get_decision_record,
@@ -819,6 +820,45 @@ def feedback_batch(
         feedback_ids=result.feedback_ids,
         applied_count=result.applied_count,
         total=result.total,
+        receipt_id=result.receipt_id,
+    )
+
+
+def feedback_from_query(
+    instance_id: str,
+    *,
+    receipt_id: str,
+    result_index: int,
+    action: contracts.FeedbackAction,
+    source: contracts.FeedbackSource = "human",
+    reason: str = "",
+    reason_code: str | None = None,
+    scope_hints: dict[str, Any] | None = None,
+    corrections: dict[str, Any] | None = None,
+    group_override: bool = False,
+    path_index: int | None = None,
+    path_alias: str | None = None,
+) -> contracts.FeedbackResult:
+    """Record edge feedback by selecting relationship evidence from a query receipt."""
+    check_permission("cruxible_feedback_from_query", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_feedback_from_query_result(
+        instance,
+        receipt_id=receipt_id,
+        result_index=result_index,
+        action=action,
+        source=source,
+        reason=reason,
+        reason_code=reason_code,
+        scope_hints=scope_hints,
+        corrections=corrections,
+        group_override=group_override,
+        path_index=path_index,
+        path_alias=path_alias,
+    )
+    return contracts.FeedbackResult(
+        feedback_id=result.feedback_id,
+        applied=result.applied,
         receipt_id=result.receipt_id,
     )
 

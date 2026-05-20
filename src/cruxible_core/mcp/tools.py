@@ -299,6 +299,42 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_feedback_batch(instance_id, items, source=source)
 
     @_tool
+    def cruxible_feedback_from_query(
+        instance_id: str,
+        receipt_id: str,
+        result_index: int,
+        action: contracts.FeedbackAction,
+        source: contracts.FeedbackSource = "human",
+        reason: str = "",
+        reason_code: str | None = None,
+        scope_hints: dict[str, Any] | None = None,
+        corrections: dict[str, Any] | None = None,
+        group_override: bool = False,
+        path_index: int | None = None,
+        path_alias: str | None = None,
+    ) -> contracts.FeedbackResult:
+        """Record edge feedback from one relationship/path row in a query receipt.
+
+        This adjudicates one existing relationship assertion. It does not
+        resolve candidate groups; use group resolution for group theses and
+        member-set decisions.
+        """
+        return handlers.handle_feedback_from_query(
+            instance_id,
+            receipt_id=receipt_id,
+            result_index=result_index,
+            action=action,
+            source=source,
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
+            corrections=corrections,
+            group_override=group_override,
+            path_index=path_index,
+            path_alias=path_alias,
+        )
+
+    @_tool
     def cruxible_outcome(
         instance_id: str,
         outcome: contracts.OutcomeValue,

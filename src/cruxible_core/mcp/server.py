@@ -43,7 +43,7 @@ Workflow guidance belongs client-side in agent skills or playbooks, not in MCP p
 - `cruxible_query`
 - `cruxible_list`
 - `cruxible_receipt`
-- `cruxible_feedback`
+- `cruxible_feedback` / `cruxible_feedback_from_query`
 
 ## Permission Modes
 

@@ -139,6 +139,15 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
             },
         ),
         (
+            "cruxible_feedback_from_query",
+            {
+                "instance_id": "inst_123",
+                "receipt_id": "RCP-1",
+                "result_index": 0,
+                "action": "approve",
+            },
+        ),
+        (
             "cruxible_outcome",
             {"instance_id": "inst_123", "receipt_id": "RCP-1", "outcome": "correct"},
         ),

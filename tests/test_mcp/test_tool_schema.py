@@ -39,6 +39,18 @@ class TestInputSchema:
         source = schemas["cruxible_feedback"].inputSchema["properties"]["source"]
         assert source["enum"] == ["human", "agent"]
 
+    def test_feedback_from_query_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
+        required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
+        assert {"instance_id", "receipt_id", "result_index", "action"} <= required
+        assert props["action"]["enum"] == ["approve", "reject", "correct", "flag"]
+        assert props["source"]["enum"] == ["human", "agent"]
+        assert "reason_code" in props
+        assert "scope_hints" in props
+        assert "path_index" in props
+        assert "path_alias" in props
+
     def test_outcome_outcome_enum(self, server):
         schemas = _get_tool_schemas(server)
         outcome = schemas["cruxible_outcome"].inputSchema["properties"]["outcome"]
@@ -184,6 +196,7 @@ class TestOutputSchema:
                 },
             ),
             ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
+            ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_outcome", {"outcome_id"}),
             ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
             ("cruxible_list", {"items", "total"}),

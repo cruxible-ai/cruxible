@@ -143,6 +143,7 @@ class TestCheckPermission:
         init_permissions()
         check_permission("cruxible_feedback")
         check_permission("cruxible_feedback_batch")
+        check_permission("cruxible_feedback_from_query")
         check_permission("cruxible_run_workflow")
         check_permission("cruxible_test_workflow")
         check_permission("cruxible_propose_workflow")

@@ -115,6 +115,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     export_group,
     feedback_batch_cmd,
     feedback_cmd,
+    feedback_from_query_cmd,
     feedback_profile_cmd,
     get_entity_cmd,
     get_relationship_cmd,
@@ -163,6 +164,7 @@ cli.add_command(server_group, "server")  # type: ignore[has-type]
 cli.add_command(explain)  # type: ignore[has-type]
 cli.add_command(feedback_cmd, "feedback")  # type: ignore[has-type]
 cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]
+cli.add_command(feedback_from_query_cmd, "feedback-from-query")  # type: ignore[has-type]
 cli.add_command(feedback_profile_cmd, "feedback-profile")  # type: ignore[has-type]
 cli.add_command(analyze_feedback_cmd, "analyze-feedback")  # type: ignore[has-type]
 cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
