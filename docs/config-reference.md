@@ -319,12 +319,57 @@ named_queries:
 | `dedupe` | string | no | shape-dependent | Result dedupe mode: `entity`, `path`, or `none`. Entity queries default to `entity`; path and relationship queries default to `path`. |
 | `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, `pending`, or `reviewable` |
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
+| `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
+| `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), and optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`). |
+| `limit` | int | no | `null` | Query-level result limit applied after ordering. Result metadata reports pre-limit `total_results`, effective `limit`, and `truncated`. |
 
 Validation rules:
 - `result_shape: entity` requires `dedupe: entity`.
 - `result_shape: relationship` requires `dedupe: path` or `none`.
 - `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.
 - `relationship_state: reviewable` requires `result_shape: path`, and does not allow `dedupe: entity`.
+- `order_by` runs after traversal and dedupe, before `limit`.
+- Missing projected property or metadata refs resolve to `null`; missing `$input.*` refs fail execution.
+- Missing order values sort last, with stable graph-identity tie-breakers added automatically.
+- Query-level `limit` is part of the named query contract. Runtime/API caller limits are only a caller-facing response cap.
+- Projected query receipts retain source path/relationship evidence. User-facing projected results intentionally omit that source payload by default.
+
+Projection refs:
+- All shapes: `$input.<name>`, `$entry.entity_type`, `$entry.entity_id`, `$entry.properties.<name>`, `$entry.metadata.<path>`, `$result.entity_type`, `$result.entity_id`, `$result.properties.<name>`, `$result.metadata.<path>`.
+- `result_shape: path`: `$path.<alias>.edge.*`, `$path.<alias>.source.*`, and `$path.<alias>.target.*`. Path refs require a traversal `as` alias.
+- `result_shape: relationship`: `$relationship.*`, `$from_entity.*`, and `$to_entity.*`.
+
+Projection and ordering example:
+
+```yaml
+named_queries:
+  remediation_exposure_context:
+    entry_point: Vulnerability
+    returns: Asset
+    result_shape: path
+    dedupe: path
+    traversal:
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: outgoing
+      - as: exposure
+        relationship: asset_runs_product
+        direction: incoming
+    select:
+      vulnerability_id: $entry.entity_id
+      asset_id: $result.entity_id
+      hostname: $result.properties.hostname
+      exposure_edge_key: $path.exposure.edge.edge_key
+      due_by: $path.exposure.edge.properties.due_by
+      review_status: $path.exposure.edge.metadata.assertion.review.status
+    order_by:
+      - by: $path.exposure.edge.properties.due_by
+        direction: asc
+        value_type: date
+      - by: $result.entity_id
+        direction: asc
+    limit: 50
+```
 
 ### TraversalStep
 

@@ -26,6 +26,7 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
+from cruxible_core.query.types import dump_query_row
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
@@ -161,9 +162,11 @@ def execute_query_step(
         persist_workflow_receipt(instance, query_result.receipt)
     query_receipt_ids.append(query_result.receipt.receipt_id)
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
-        "results": [item.model_dump() for item in query_result.results],
+        "results": [dump_query_row(item) for item in query_result.results],
         "receipt_id": query_result.receipt.receipt_id,
         "total_results": query_result.total_results,
+        "limit": query_result.limit,
+        "truncated": query_result.truncated,
         "steps_executed": query_result.steps_executed,
         "result_shape": query_result.result_shape,
         "dedupe": query_result.dedupe,

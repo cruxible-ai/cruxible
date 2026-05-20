@@ -162,6 +162,7 @@ class QueryToolResult(BaseModel):
     receipt_id: str | None
     receipt: dict[str, Any] | None
     total_results: int
+    limit: int | None = None
     truncated: bool = False
     steps_executed: int
     result_shape: Literal["entity", "path", "relationship"] = "path"
@@ -327,6 +328,9 @@ class NamedQueryInfoResult(BaseModel):
     dedupe: Literal["entity", "path", "none"] = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
+    select: dict[str, Any] | None = None
+    order_by: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int | None = None
     description: str | None = None
     example_ids: list[str] = Field(default_factory=list)
 

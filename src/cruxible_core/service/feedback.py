@@ -840,6 +840,15 @@ def _feedback_target_from_query_result(
     row = receipt.results[result_index]
     if not isinstance(row, dict):
         raise ConfigError(f"Query result {result_index} is not an object")
+    if "values" in row and "source" in row:
+        source = row.get("source")
+        if source is None:
+            raise ConfigError(
+                "Projected query row does not contain source relationship evidence"
+            )
+        if not isinstance(source, dict):
+            raise ConfigError("Projected query row source is not an object")
+        row = source
 
     if "path" in row:
         selected_index, segment, selector = _select_query_path_segment(

@@ -286,6 +286,46 @@ class RelatedPredicateSpec(BaseModel):
         return value
 
 
+class QueryOrderSpec(BaseModel):
+    """Deterministic ordering rule for named query result rows."""
+
+    by: str
+    direction: Literal["asc", "desc"] = "asc"
+    value_type: PredicateValueType | None = None
+
+    @field_validator("by")
+    @classmethod
+    def validate_order_ref(cls, value: str) -> str:
+        if not value.startswith("$") or len(value) == 1:
+            raise ValueError("order_by.by must be a query reference like $result.entity_id")
+        return value
+
+
+def _collect_query_refs(value: Any) -> list[str]:
+    refs: list[str] = []
+    if isinstance(value, str):
+        if value.startswith("$"):
+            refs.append(value)
+        return refs
+    if isinstance(value, list):
+        for item in value:
+            refs.extend(_collect_query_refs(item))
+        return refs
+    if isinstance(value, dict):
+        for item in value.values():
+            refs.extend(_collect_query_refs(item))
+    return refs
+
+
+def _split_query_ref(ref: str) -> tuple[str, str]:
+    if not ref.startswith("$"):
+        raise ValueError(f"query reference '{ref}' must start with '$'")
+    scope, sep, path = ref[1:].partition(".")
+    if not scope or not sep or not path:
+        raise ValueError(f"invalid query reference '{ref}'")
+    return scope, path
+
+
 class TraversalStep(BaseModel):
     """A single step in a named query's traversal path.
 
@@ -376,6 +416,9 @@ class NamedQuerySchema(BaseModel):
     dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
+    select: dict[str, Any] | None = None
+    order_by: list[QueryOrderSpec] = Field(default_factory=list)
+    limit: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_result_shape(self) -> NamedQuerySchema:
@@ -385,6 +428,7 @@ class NamedQuerySchema(BaseModel):
             duplicate_str = ", ".join(duplicate_aliases)
             msg = f"duplicate traversal aliases: {duplicate_str}"
             raise ValueError(msg)
+        self._validate_projection_and_order_refs(set(aliases))
         if "dedupe" not in self.model_fields_set:
             self.dedupe = "entity" if self.result_shape == "entity" else "path"
         if self.result_shape == "entity" and self.dedupe != "entity":
@@ -412,6 +456,60 @@ class NamedQuerySchema(BaseModel):
                 msg = "relationship_state 'reviewable' requires dedupe 'path' or 'none'"
                 raise ValueError(msg)
         return self
+
+    def _validate_projection_and_order_refs(self, aliases: set[str]) -> None:
+        allowed_scopes = {
+            "input",
+            "entry",
+            "result",
+            "path",
+            "relationship",
+            "from_entity",
+            "to_entity",
+        }
+        refs: list[str] = []
+        if self.select is not None:
+            for value in self.select.values():
+                refs.extend(_collect_query_refs(value))
+        refs.extend(order.by for order in self.order_by)
+        for ref in refs:
+            scope, path = _split_query_ref(ref)
+            if scope not in allowed_scopes:
+                allowed = ", ".join(sorted(allowed_scopes))
+                msg = (
+                    f"unsupported query reference scope '${scope}' in '{ref}'; "
+                    f"use one of: {allowed}"
+                )
+                raise ValueError(msg)
+            if scope == "path":
+                alias = path.split(".", 1)[0] if path else ""
+                if not alias:
+                    raise ValueError(f"path reference '{ref}' must include a traversal alias")
+                if alias not in aliases:
+                    raise ValueError(
+                        f"path reference '{ref}' uses unknown traversal alias '{alias}'"
+                    )
+            if self.result_shape == "entity" and scope in {
+                "path",
+                "relationship",
+                "from_entity",
+                "to_entity",
+            }:
+                raise ValueError(
+                    f"query reference '{ref}' is not available for result_shape 'entity'"
+                )
+            if self.result_shape == "relationship" and scope == "path":
+                raise ValueError(
+                    f"query reference '{ref}' is not available for result_shape 'relationship'"
+                )
+            if self.result_shape == "path" and scope in {
+                "relationship",
+                "from_entity",
+                "to_entity",
+            }:
+                raise ValueError(
+                    f"query reference '{ref}' is not available for result_shape 'path'"
+                )
 
 
 # ---------------------------------------------------------------------------

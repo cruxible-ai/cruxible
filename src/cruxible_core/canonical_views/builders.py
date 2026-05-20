@@ -183,6 +183,17 @@ def build_query_view(
                     "allow_relationship_state_override",
                     query.allow_relationship_state_override,
                 ),
+                select=info.get("select", query.select),
+                order_by=list(
+                    info.get(
+                        "order_by",
+                        [
+                            order.model_dump(mode="json", exclude_none=True)
+                            for order in query.order_by
+                        ],
+                    )
+                ),
+                limit=info.get("limit", query.limit),
                 description=info.get("description", query.description),
                 example_ids=list(info.get("example_ids", [])),
                 traversal_summary=traversal_summary,

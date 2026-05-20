@@ -67,6 +67,7 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
     InspectEntityResult,
     service_analyze_feedback,
@@ -103,6 +104,9 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
             "allow_relationship_state_override",
             False,
         ),
+        "select": getattr(query, "select", None),
+        "order_by": list(getattr(query, "order_by", [])),
+        "limit": getattr(query, "limit", None),
         "description": query.description,
         "example_ids": list(query.example_ids),
     }
@@ -112,7 +116,7 @@ def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for row in rows:
         if hasattr(row, "model_dump"):
-            payload.append(row.model_dump(mode="python"))
+            payload.append(dump_query_row(row, mode="python"))
         else:
             payload.append(dict(row))
     return payload
@@ -233,7 +237,7 @@ def _run_query_command(
     )
     client = _common._get_client()
     if client is not None:
-        effective_limit = 1 if count_only and limit is None else limit
+        response_limit = 1 if count_only and limit is None else limit
         instance_id = _require_instance_id()
         try:
             if effective_relationship_state is None:
@@ -241,7 +245,7 @@ def _run_query_command(
                     instance_id,
                     query_name,
                     params,
-                    limit=effective_limit,
+                    limit=response_limit,
                     decision_record_id=resolved_decision_record_id,
                 )
             else:
@@ -249,7 +253,7 @@ def _run_query_command(
                     instance_id,
                     query_name,
                     params,
-                    limit=effective_limit,
+                    limit=response_limit,
                     relationship_state=effective_relationship_state,
                     decision_record_id=resolved_decision_record_id,
                 )
@@ -261,12 +265,17 @@ def _run_query_command(
             )
             _print_query_param_hints(hints)
             raise
+        projected_results = any("values" in item for item in result.results)
         entity_results = (
             _entities_from_payload(result.results)
-            if result.result_shape == "entity"
+            if result.result_shape == "entity" and not projected_results
             else []
         )
-        structured_results = [] if result.result_shape == "entity" else list(result.results)
+        structured_results = (
+            list(result.results)
+            if result.result_shape != "entity" or projected_results
+            else []
+        )
         total = result.total_results
         if output_json:
             items = (
@@ -274,7 +283,7 @@ def _run_query_command(
                 if count_only
                 else (
                     [r.model_dump(mode="python") for r in entity_results]
-                    if result.result_shape == "entity"
+                    if result.result_shape == "entity" and not projected_results
                     else structured_results
                 )
             )
@@ -283,6 +292,8 @@ def _run_query_command(
             _emit_json({
                 "results": items,
                 "total_results": total,
+                "limit": result.limit,
+                "truncated": result.truncated,
                 "steps_executed": result.steps_executed,
                 "result_shape": result.result_shape,
                 "dedupe": result.dedupe,
@@ -304,7 +315,7 @@ def _run_query_command(
         if count_only:
             _print_query_param_hints(result.param_hints)
         elif limit is not None and result.truncated:
-            if result.result_shape == "entity":
+            if result.result_shape == "entity" and not projected_results:
                 console.print(entities_table(entity_results, query_name))
             else:
                 _print_structured_query_rows(structured_results)
@@ -312,7 +323,7 @@ def _run_query_command(
                 len(entity_results) if result.result_shape == "entity" else len(structured_results)
             )
             click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
-        elif result.result_shape == "entity":
+        elif result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
         else:
             _print_structured_query_rows(structured_results)
@@ -323,13 +334,13 @@ def _run_query_command(
         return
 
     instance = CruxibleInstance.load()
-    effective_limit = 1 if count_only and limit is None else limit
+    response_limit = 1 if count_only and limit is None else limit
     try:
         result = service_query_surface(
             instance,
             query_name,
             params,
-            limit=effective_limit,
+            limit=response_limit,
             relationship_state=effective_relationship_state,
             context=_operation_context(resolved_decision_record_id),
         )
@@ -338,7 +349,12 @@ def _run_query_command(
         raise
 
     results = result.results
-    entity_results = [row for row in results if isinstance(row, EntityInstance)]
+    projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
+    entity_results = [
+        row
+        for row in results
+        if isinstance(row, EntityInstance) and not projected_results
+    ]
     structured_results = _query_rows_payload(results)
     total = result.total_results
     if output_json:
@@ -354,13 +370,15 @@ def _run_query_command(
                     }
                     for e in entity_results
                 ]
-                if result.result_shape == "entity"
+                if result.result_shape == "entity" and not projected_results
                 else structured_results
             )
         )
         _emit_json({
             "results": items,
             "total_results": total,
+            "limit": result.limit,
+            "truncated": result.truncated,
             "steps_executed": result.steps_executed,
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
@@ -382,12 +400,12 @@ def _run_query_command(
             )
         _print_query_param_hints(hints)
     elif limit is not None and result.truncated:
-        if result.result_shape == "entity":
+        if result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
         else:
             _print_structured_query_rows(structured_results)
         click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
-    elif result.result_shape == "entity":
+    elif result.result_shape == "entity" and not projected_results:
         console.print(entities_table(entity_results, query_name))
     else:
         _print_structured_query_rows(structured_results)

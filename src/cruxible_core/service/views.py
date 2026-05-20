@@ -69,6 +69,9 @@ def service_inspect_view(
                 "dedupe": query.dedupe,
                 "relationship_state": query.relationship_state,
                 "allow_relationship_state_override": query.allow_relationship_state_override,
+                "select": query.select,
+                "order_by": list(query.order_by),
+                "limit": query.limit,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }
@@ -100,6 +103,9 @@ def service_inspect_view(
                 "dedupe": query.dedupe,
                 "relationship_state": query.relationship_state,
                 "allow_relationship_state_override": query.allow_relationship_state_override,
+                "select": query.select,
+                "order_by": list(query.order_by),
+                "limit": query.limit,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }

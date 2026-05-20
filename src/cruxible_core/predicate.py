@@ -123,6 +123,14 @@ def validate_typed_predicate_operand(
     _coerce_value(value, value_type)
 
 
+def coerce_predicate_value(value: Any, value_type: PredicateValueType) -> Any:
+    """Coerce one predicate operand using the shared typed comparison rules."""
+    try:
+        return _coerce_value(value, value_type)
+    except (TypeError, ValueError) as exc:
+        raise PredicateCoercionError(value, value_type) from exc
+
+
 class PredicateCoercionError(ValueError):
     """Typed predicate operand coercion failed."""
 

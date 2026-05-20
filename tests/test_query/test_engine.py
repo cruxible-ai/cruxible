@@ -31,7 +31,13 @@ from cruxible_core.query.engine import (
 )
 from cruxible_core.query.evaluate import evaluate_graph
 from cruxible_core.query.predicates import build_predicate_context
-from cruxible_core.query.types import QueryPathRow, QueryPathSegment, QueryRelationshipRow
+from cruxible_core.query.types import (
+    ProjectedQueryRow,
+    QueryPathRow,
+    QueryPathSegment,
+    QueryRelationshipRow,
+    dump_query_row,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1850,6 +1856,314 @@ class TestPathResults:
             "deployed_on",
             "supports",
         ]
+
+
+class TestProjectionOrderingAndLimit:
+    def test_projected_entity_query_rows(self, config, graph):
+        config.named_queries["projected_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="entity",
+            select={
+                "vehicle_id": "$entry.entity_id",
+                "part_id": "$result.entity_id",
+                "brand": "$result.properties.brand",
+                "missing": "$result.properties.unknown",
+                "input_vehicle": "$input.vehicle_id",
+            },
+        )
+
+        result = execute_query(config, graph, "projected_parts", {"vehicle_id": "V-CIVIC"})
+
+        assert all(isinstance(row, ProjectedQueryRow) for row in result.results)
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values["vehicle_id"] == "V-CIVIC"
+        assert row.values["part_id"] == "BP-1234"
+        assert row.values["brand"] == "StopTech"
+        assert row.values["missing"] is None
+        assert row.values["input_vehicle"] == "V-CIVIC"
+        assert isinstance(row.source, EntityInstance)
+        assert dump_query_row(row) == {"values": row.values}
+        assert "source" in dump_query_row(row, include_source=True)
+
+    def test_projected_path_query_uses_alias_edge_source_and_target(self, config, graph):
+        config.named_queries["projected_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            select={
+                "edge_key": "$path.fit.edge.edge_key",
+                "confidence": "$path.fit.edge.properties.confidence",
+                "review_status": "$path.fit.edge.metadata.assertion.review.status",
+                "part_id": "$path.fit.source.entity_id",
+                "vehicle_id": "$path.fit.target.entity_id",
+            },
+        )
+
+        result = execute_query(config, graph, "projected_fit_paths", {"vehicle_id": "V-CIVIC"})
+
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values["part_id"] == "BP-1234"
+        assert row.values["vehicle_id"] == "V-CIVIC"
+        assert row.values["confidence"] == 0.95
+        assert row.values["review_status"] == "unreviewed"
+        assert isinstance(row.source, QueryPathRow)
+        assert result.receipt is not None
+        receipt_row = result.receipt.results[0]
+        assert "source" in receipt_row
+        assert "path" in receipt_row["source"]
+
+    def test_projected_relationship_query_uses_relationship_and_endpoints(
+        self, config, graph
+    ):
+        config.named_queries["projected_fit_edges"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            select={
+                "edge_key": "$relationship.edge_key",
+                "relationship_type": "$relationship.relationship_type",
+                "from_id": "$from_entity.entity_id",
+                "to_id": "$to_entity.entity_id",
+                "result_id": "$result.entity_id",
+            },
+        )
+
+        result = execute_query(config, graph, "projected_fit_edges", {"vehicle_id": "V-CIVIC"})
+
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values["relationship_type"] == "fits"
+        assert row.values["from_id"] == "BP-1234"
+        assert row.values["to_id"] == "V-CIVIC"
+        assert row.values["result_id"] == "BP-1234"
+        assert isinstance(row.source, QueryRelationshipRow)
+
+    def test_missing_input_projection_ref_fails(self, config, graph):
+        config.named_queries["missing_input_ref"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            result_shape="entity",
+            select={"missing": "$input.not_provided"},
+        )
+
+        with pytest.raises(QueryExecutionError, match="Missing query input reference"):
+            execute_query(config, graph, "missing_input_ref", {"vehicle_id": "V-CIVIC"})
+
+    def test_default_stable_ordering_without_order_by(self, config, graph):
+        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
+
+        assert [row.entity_id for row in result.results] == ["BP-1234", "BP-5678"]
+
+    def test_explicit_order_by_number_and_stable_tie_breaker(self, config, graph):
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={"confidence": 0.9},
+        )
+        config.named_queries["ordered_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[
+                {"by": "$path.fit.edge.properties.confidence", "direction": "desc"},
+            ],
+        )
+
+        result = execute_query(config, graph, "ordered_fit_paths", {"vehicle_id": "V-CIVIC"})
+
+        assert _terminal_ids(result.results) == ["BP-1234", "BP-5678"]
+
+    def test_explicit_order_by_date_and_datetime_values(self, config, graph):
+        config.relationships[0].properties["due_by"] = PropertySchema(type="date")
+        config.relationships[0].properties["observed_at"] = PropertySchema(type="datetime")
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={
+                "due_by": "2026-05-18T12:00:00Z",
+                "observed_at": "2026-05-17T12:00:00Z",
+            },
+        )
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={
+                "due_by": "2026-05-17",
+                "observed_at": "2026-05-17T13:00:00+00:00",
+            },
+        )
+        config.named_queries["date_ordered_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[
+                {
+                    "by": "$path.fit.edge.properties.due_by",
+                    "direction": "asc",
+                    "value_type": "date",
+                },
+                {
+                    "by": "$path.fit.edge.properties.observed_at",
+                    "direction": "desc",
+                    "value_type": "datetime",
+                },
+            ],
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "date_ordered_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-5678", "BP-1234"]
+
+    def test_order_by_missing_values_sort_last(self, config, graph):
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={"rank": 1},
+        )
+        config.named_queries["missing_last_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[{"by": "$path.fit.edge.properties.rank", "direction": "asc"}],
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "missing_last_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-5678", "BP-1234"]
+
+    def test_invalid_typed_order_value_fails(self, config, graph):
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            property_updates={"due_by": "not-a-date"},
+        )
+        config.named_queries["bad_date_order"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[
+                {
+                    "by": "$path.fit.edge.properties.due_by",
+                    "value_type": "date",
+                }
+            ],
+        )
+
+        with pytest.raises(QueryExecutionError, match="Invalid date order_by value"):
+            execute_query(config, graph, "bad_date_order", {"vehicle_id": "V-CIVIC"})
+
+    def test_query_limit_records_total_and_truncation(self, config, graph):
+        config.named_queries["limited_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="entity",
+            limit=1,
+        )
+
+        result = execute_query(config, graph, "limited_parts", {"vehicle_id": "V-CIVIC"})
+
+        assert len(result.results) == 1
+        assert result.total_results == 2
+        assert result.limit == 1
+        assert result.truncated is True
+        assert result.receipt is not None
+        assert len(result.receipt.results) == 1
+        assert result.receipt.execution_options["result_shape"] == "entity"
+        result_node = next(node for node in result.receipt.nodes if node.node_type == "result")
+        assert result_node.detail["total_results"] == 2
+        assert result_node.detail["limit"] == 1
+        assert result_node.detail["truncated"] is True
 
 
 def _kev_path_config() -> CoreConfig:

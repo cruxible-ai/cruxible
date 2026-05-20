@@ -34,7 +34,31 @@ class QueryRelationshipRow(RelationshipInstance):
     to_entity: EntityInstance | None = None
 
 
-QueryRow = EntityInstance | QueryPathRow | QueryRelationshipRow
+BaseQueryRow = EntityInstance | QueryPathRow | QueryRelationshipRow
+
+
+class ProjectedQueryRow(BaseModel):
+    """Projected query row with preserved source evidence."""
+
+    values: dict[str, Any]
+    source: BaseQueryRow | None = None
+
+
+QueryRow = BaseQueryRow | ProjectedQueryRow
+
+
+def dump_query_row(
+    row: QueryRow,
+    *,
+    include_source: bool = False,
+    mode: str = "python",
+) -> dict[str, Any]:
+    """Serialize a query row with explicit projected-source handling."""
+    if isinstance(row, ProjectedQueryRow):
+        if include_source:
+            return row.model_dump(mode=mode)
+        return row.model_dump(mode=mode, exclude={"source"})
+    return row.model_dump(mode=mode)
 
 
 class QueryResult(BaseModel):
@@ -48,6 +72,8 @@ class QueryResult(BaseModel):
     relationship_state: QueryRelationshipState = "live"
     steps_executed: int
     total_results: int | None = None
+    limit: int | None = None
+    truncated: bool = False
     receipt: Receipt | None = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
 
@@ -57,6 +83,8 @@ class QueryResult(BaseModel):
 
 
 __all__ = [
+    "BaseQueryRow",
+    "ProjectedQueryRow",
     "QueryDedupe",
     "QueryPathRow",
     "QueryRelationshipState",
@@ -65,4 +93,5 @@ __all__ = [
     "QueryResult",
     "QueryResultShape",
     "QueryRow",
+    "dump_query_row",
 ]

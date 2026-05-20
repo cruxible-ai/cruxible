@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
+from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
@@ -642,12 +643,16 @@ def query(
     include_receipt = limit is None
 
     return contracts.QueryToolResult(
-        results=[row.model_dump(mode="json") for row in result.results],
+        results=[
+            dump_query_row(row, mode="json")
+            for row in result.results
+        ],
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None
         ),
         total_results=result.total_results,
+        limit=result.limit,
         truncated=result.truncated,
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
@@ -1024,6 +1029,9 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
                 dedupe=query.dedupe,
                 relationship_state=query.relationship_state,
                 allow_relationship_state_override=query.allow_relationship_state_override,
+                select=query.select,
+                order_by=query.order_by,
+                limit=query.limit,
                 description=query.description,
                 example_ids=query.example_ids,
             )
@@ -1049,6 +1057,9 @@ def describe_query(
         dedupe=query.dedupe,
         relationship_state=query.relationship_state,
         allow_relationship_state_override=query.allow_relationship_state_override,
+        select=query.select,
+        order_by=query.order_by,
+        limit=query.limit,
         description=query.description,
         example_ids=query.example_ids,
     )

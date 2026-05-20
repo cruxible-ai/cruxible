@@ -44,6 +44,7 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.query.read_surface import (
     sample_entities as read_sample_entities,
 )
+from cruxible_core.query.types import dump_query_row
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
@@ -119,8 +120,13 @@ def service_query(
         status="success",
         input_payload=input_event,
         output_payload={
-            "results": [row.model_dump(mode="json") for row in result.results],
+            "results": [
+                dump_query_row(row, mode="json")
+                for row in result.results
+            ],
             "total_results": result.total_results,
+            "limit": result.limit,
+            "truncated": result.truncated,
             "steps_executed": result.steps_executed,
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
@@ -159,7 +165,8 @@ def service_query_surface(
     context: OperationContext | None = None,
 ) -> QuerySurfaceServiceResult:
     """Execute a named query and apply caller-facing result truncation."""
-    if limit is not None and limit < 1:
+    surface_limit = limit
+    if surface_limit is not None and surface_limit < 1:
         raise ConfigError("limit must be a positive integer")
 
     result = service_query(
@@ -169,13 +176,16 @@ def service_query_surface(
         relationship_state=relationship_state,
         context=context,
     )
-    truncated = limit is not None and result.total_results > limit
-    visible = result.results[:limit] if truncated else result.results
+    visible, effective_limit, truncated = _apply_response_limit(
+        result,
+        surface_limit=surface_limit,
+    )
     return QuerySurfaceServiceResult(
         results=visible,
         receipt_id=result.receipt_id,
         receipt=result.receipt,
         total_results=result.total_results,
+        limit=effective_limit,
         truncated=truncated,
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
@@ -195,7 +205,8 @@ def service_evaluate_query_surface(
     relationship_state: QueryRelationshipState | None = None,
 ) -> QuerySurfaceServiceResult:
     """Evaluate a named query with caller-facing truncation and no persisted receipt."""
-    if limit is not None and limit < 1:
+    surface_limit = limit
+    if surface_limit is not None and surface_limit < 1:
         raise ConfigError("limit must be a positive integer")
 
     result = service_evaluate_query(
@@ -204,13 +215,16 @@ def service_evaluate_query_surface(
         params,
         relationship_state=relationship_state,
     )
-    truncated = limit is not None and result.total_results > limit
-    visible = result.results[:limit] if truncated else result.results
+    visible, effective_limit, truncated = _apply_response_limit(
+        result,
+        surface_limit=surface_limit,
+    )
     return QuerySurfaceServiceResult(
         results=visible,
         receipt_id=result.receipt_id,
         receipt=result.receipt,
         total_results=result.total_results,
+        limit=effective_limit,
         truncated=truncated,
         steps_executed=result.steps_executed,
         result_shape=result.result_shape,
@@ -245,6 +259,8 @@ def _evaluate_query_result(
         receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
         receipt=query_result.receipt,
         total_results=total,
+        limit=query_result.limit,
+        truncated=query_result.truncated,
         steps_executed=query_result.steps_executed,
         result_shape=query_result.result_shape,
         dedupe=query_result.dedupe,
@@ -648,6 +664,28 @@ def _query_definition(
         dedupe=query_schema.dedupe,
         relationship_state=query_schema.relationship_state,
         allow_relationship_state_override=query_schema.allow_relationship_state_override,
+        select=query_schema.select,
+        order_by=[
+            order.model_dump(mode="json", exclude_none=True)
+            for order in query_schema.order_by
+        ],
+        limit=query_schema.limit,
         description=query_schema.description,
         example_ids=list(hints.example_ids) if hints is not None else [],
     )
+
+
+def _apply_response_limit(
+    result: QueryServiceResult,
+    *,
+    surface_limit: int | None,
+) -> tuple[list[Any], int | None, bool]:
+    visible = result.results
+    response_truncated = False
+    if surface_limit is not None and len(result.results) > surface_limit:
+        visible = result.results[:surface_limit]
+        response_truncated = True
+    query_limit = result.limit
+    limits = [value for value in (query_limit, surface_limit) if value is not None]
+    effective_limit = min(limits) if limits else None
+    return visible, effective_limit, result.truncated or response_truncated

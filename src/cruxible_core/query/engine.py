@@ -42,13 +42,20 @@ from cruxible_core.query.predicates import (
     query_filter_summary,
     related_edge_exists,
 )
+from cruxible_core.query.projection import (
+    QueryRowContext,
+    project_query_row,
+    sort_query_row_contexts,
+)
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import (
+    BaseQueryRow,
     QueryPathRow,
     QueryPathSegment,
     QueryRelationshipRow,
     QueryResult,
     QueryRow,
+    dump_query_row,
 )
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.temporal import is_expired
@@ -138,7 +145,15 @@ def execute_query(
         query_name=query_name,
         parameters=params,
         execution_options=effective_options.receipt_options(),
-        root_detail={"filter_summary": query_filter_summary(query_schema)},
+        root_detail={
+            "filter_summary": query_filter_summary(query_schema),
+            "select": query_schema.select,
+            "order_by": [
+                order.model_dump(mode="python", exclude_none=True)
+                for order in query_schema.order_by
+            ],
+            "limit": query_schema.limit,
+        },
     )
 
     entry_entity = _resolve_entry_entity(
@@ -176,10 +191,47 @@ def execute_query(
         steps_executed += 1
 
     result_states = _dedupe_states(current_states, effective_options.dedupe)
-    result_rows = _build_result_rows(config, result_states, effective_options.result_shape)
-    result_dicts = [row.model_dump() for row in result_rows]
-    parent_ids = [state.parent_id for state in result_states if state.parent_id is not None]
-    builder.record_results(result_dicts, parent_ids=parent_ids or None)
+    result_contexts = _build_result_contexts(
+        config,
+        result_states,
+        effective_options.result_shape,
+    )
+    result_contexts = sort_query_row_contexts(
+        result_contexts,
+        query_schema.order_by,
+        params,
+    )
+    total_results = len(result_contexts)
+    limited_contexts = (
+        result_contexts[: query_schema.limit]
+        if query_schema.limit is not None
+        else result_contexts
+    )
+    truncated = query_schema.limit is not None and total_results > query_schema.limit
+    result_rows: list[QueryRow] = [
+        (
+            project_query_row(query_schema.select, context, params)
+            if query_schema.select is not None
+            else context.row
+        )
+        for context in limited_contexts
+    ]
+    result_dicts = [
+        dump_query_row(row, include_source=True)
+        for row in result_rows
+    ]
+    parent_ids = [
+        context.parent_id for context in limited_contexts if context.parent_id is not None
+    ]
+    builder.record_results(
+        result_dicts,
+        parent_ids=parent_ids or None,
+        detail={
+            "total_results": total_results,
+            "limit": query_schema.limit,
+            "truncated": truncated,
+        },
+    )
     receipt = builder.build(result_dicts)
 
     return QueryResult(
@@ -190,6 +242,9 @@ def execute_query(
         dedupe=effective_options.dedupe,
         relationship_state=effective_options.relationship_state,
         steps_executed=steps_executed,
+        total_results=total_results,
+        limit=query_schema.limit,
+        truncated=truncated,
         receipt=receipt,
         policy_summary=policy_summary,
     )
@@ -679,34 +734,44 @@ def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...],
     )
 
 
-def _build_result_rows(
+def _build_result_contexts(
     config: CoreConfig,
     states: list[_TraversalState],
     result_shape: QueryResultShape,
-) -> list[QueryRow]:
-    if result_shape == "path":
-        return [
-            QueryPathRow(
-                entry=entity_with_identity_properties(config, state.entry),
-                result=entity_with_identity_properties(config, state.current),
-                entities=[
-                    entity_with_identity_properties(config, entity)
-                    for entity in state.entities
-                ],
+) -> list[QueryRowContext]:
+    contexts: list[QueryRowContext] = []
+    for state in states:
+        entry = entity_with_identity_properties(config, state.entry)
+        result = entity_with_identity_properties(config, state.current)
+        entities = tuple(
+            entity_with_identity_properties(config, entity)
+            for entity in state.entities
+        )
+        row: BaseQueryRow | None
+        if result_shape == "path":
+            row = QueryPathRow(
+                entry=entry,
+                result=result,
+                entities=list(entities),
                 path=list(state.path),
             )
-            for state in states
-        ]
-    if result_shape == "relationship":
-        return [
-            _build_relationship_row(config, state)
-            for state in states
-            if state.path
-        ]
-    return [
-        entity_with_identity_properties(config, state.current)
-        for state in states
-    ]
+        elif result_shape == "relationship":
+            row = _build_relationship_row(config, state) if state.path else None
+        else:
+            row = result
+        if row is None:
+            continue
+        contexts.append(
+            QueryRowContext(
+                row=row,
+                entry=entry,
+                result=result,
+                entities=entities,
+                path=state.path,
+                parent_id=state.parent_id,
+            )
+        )
+    return contexts
 
 
 def _build_relationship_row(

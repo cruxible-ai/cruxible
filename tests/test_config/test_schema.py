@@ -608,6 +608,87 @@ class TestNamedQuerySchema:
                 returns="list[Part]",
             )
 
+    def test_accepts_projection_order_and_limit(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            select={
+                "part_id": "$result.entity_id",
+                "edge_key": "$path.fit.edge.edge_key",
+                "literal": {"mode": "review"},
+            },
+            order_by=[
+                {
+                    "by": "$path.fit.edge.properties.due_by",
+                    "direction": "asc",
+                    "value_type": "date",
+                }
+            ],
+            limit=25,
+        )
+
+        assert query.select is not None
+        assert query.order_by[0].by == "$path.fit.edge.properties.due_by"
+        assert query.limit == 25
+
+    def test_projection_rejects_unknown_scope(self):
+        with pytest.raises(ValidationError, match="unsupported query reference scope"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                select={"bad": "$unknown.value"},
+            )
+
+    def test_projection_rejects_unknown_path_alias(self):
+        with pytest.raises(ValidationError, match="unknown traversal alias 'missing'"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="path",
+                select={"edge_key": "$path.missing.edge.edge_key"},
+            )
+
+    def test_projection_rejects_unavailable_shape_scope(self):
+        with pytest.raises(
+            ValidationError,
+            match="not available for result_shape 'entity'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="entity",
+                select={"edge_key": "$path.fit.edge.edge_key"},
+            )
+
+    def test_order_by_rejects_non_reference(self):
+        with pytest.raises(ValidationError, match="order_by.by must be a query reference"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                order_by=[{"by": "result.entity_id"}],
+            )
+
+    def test_limit_rejects_negative_values(self):
+        with pytest.raises(ValidationError):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                limit=-1,
+            )
+
     def test_relationship_shape_requires_returns_to_match_final_relationship(self):
         with pytest.raises(
             ValidationError,

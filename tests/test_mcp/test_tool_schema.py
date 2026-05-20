@@ -186,6 +186,7 @@ class TestOutputSchema:
                     "receipt_id",
                     "receipt",
                     "total_results",
+                    "limit",
                     "truncated",
                     "steps_executed",
                     "result_shape",

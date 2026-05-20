@@ -22,7 +22,7 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
 )
 from cruxible_core.graph.types import RelationshipInstance
-from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
+from cruxible_core.query.types import ProjectedQueryRow, QueryPathRow, QueryRelationshipRow
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service import (
     FeedbackItemInput,
@@ -694,6 +694,110 @@ class TestFeedbackFromQuery:
         detail = feedback_receipt.nodes[0].detail["parameters"]["feedback_from_query"]
         assert detail["reason_code"] == "vendor_mismatch"
         assert detail["scope_hints"] == {}
+
+    def test_projected_relationship_row_can_be_approved_from_source_evidence(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["projected_fit_edges_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"source": "catalog"},
+                )
+            ],
+            returns="fits",
+            result_shape="relationship",
+            select={
+                "part_id": "$from_entity.entity_id",
+                "edge_key": "$relationship.edge_key",
+            },
+        )
+        populated_instance.save_config(config)
+        query = service_query(
+            populated_instance,
+            "projected_fit_edges_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+        row = query.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert isinstance(row.source, QueryRelationshipRow)
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+        )
+
+        assert result.applied is True
+        rel = populated_instance.load_graph().get_relationship(
+            row.source.from_type,
+            row.source.from_id,
+            row.source.to_type,
+            row.source.to_id,
+            row.source.relationship_type,
+            edge_key=row.source.edge_key,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
+
+    def test_projected_path_row_can_be_approved_from_source_evidence(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["projected_fit_path_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"source": "catalog"},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            select={
+                "part_id": "$result.entity_id",
+                "review_status": "$path.fit.edge.metadata.assertion.review.status",
+            },
+        )
+        populated_instance.save_config(config)
+        query = service_query(
+            populated_instance,
+            "projected_fit_path_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert query.receipt_id is not None
+        row = query.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert isinstance(row.source, QueryPathRow)
+
+        result = service_feedback_from_query_result(
+            populated_instance,
+            receipt_id=query.receipt_id,
+            result_index=0,
+            action="approve",
+        )
+
+        assert result.applied is True
+        segment = row.source.path[0]
+        rel = populated_instance.load_graph().get_relationship(
+            segment.from_type,
+            segment.from_id,
+            segment.to_type,
+            segment.to_id,
+            segment.relationship_type,
+            edge_key=segment.edge_key,
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "approved"
 
     def test_path_row_with_one_segment_can_be_approved_without_selector(
         self,

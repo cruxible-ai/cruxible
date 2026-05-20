@@ -151,6 +151,8 @@ class QueryServiceResult:
     receipt_id: str | None
     receipt: Receipt | None
     total_results: int
+    limit: int | None
+    truncated: bool
     steps_executed: int
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
@@ -165,6 +167,7 @@ class QuerySurfaceServiceResult:
     receipt_id: str | None
     receipt: Receipt | None
     total_results: int
+    limit: int | None
     truncated: bool
     steps_executed: int
     result_shape: QueryResultShape = "path"
@@ -201,6 +204,9 @@ class QueryDefinitionServiceResult:
     dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
+    select: dict[str, Any] | None = None
+    order_by: list[dict[str, Any]] = field(default_factory=list)
+    limit: int | None = None
     description: str | None = None
     example_ids: list[str] = field(default_factory=list)
 

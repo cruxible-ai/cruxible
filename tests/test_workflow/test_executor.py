@@ -263,6 +263,71 @@ class TestWorkflowExecutor:
         assert row["entry"]["entity_type"] == "Campaign"
         assert row["to_entity"]["entity_id"] == "SKU-123"
 
+    def test_query_step_includes_query_limit_metadata(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            select={
+                "sku": "$result.entity_id",
+                "edge_key": "$path.recommendation.edge.edge_key",
+            },
+            limit=1,
+        )
+        config.workflows["query_limited_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                )
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_limited_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert len(result.output["results"]) == 1
+        assert result.output["total_results"] == 2
+        assert result.output["limit"] == 1
+        assert result.output["truncated"] is True
+        assert set(result.output["results"][0]) == {"values"}
+        assert result.output["results"][0]["values"]["sku"] == "SKU-123"
+
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance
     ) -> None:

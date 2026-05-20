@@ -391,6 +391,11 @@ def resolve_path(value: Any, parts: list[str]) -> Any:
     return current
 
 
+def is_missing_path(value: Any) -> bool:
+    """Return whether a resolved path value represents a missing path."""
+    return value is _MISSING
+
+
 def resolve_query_predicate_value_type(
     config: CoreConfig,
     context: PredicateContext,
@@ -546,6 +551,7 @@ __all__ = [
     "evaluate_query_predicates",
     "evaluate_related_predicate",
     "iter_step_relationships",
+    "is_missing_path",
     "query_filter_summary",
     "related_edge_exists",
     "resolve_path",

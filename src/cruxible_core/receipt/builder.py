@@ -165,11 +165,12 @@ class ReceiptBuilder:
         self,
         results: list[dict[str, Any]],
         parent_ids: list[str] | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> str:
         """Record the final query results."""
         node_id = self._add_node(
             node_type="result",
-            detail={"count": len(results)},
+            detail={"count": len(results), **(detail or {})},
         )
         for pid in parent_ids or [self._root_id]:
             self._add_edge(pid, node_id, "produced")
