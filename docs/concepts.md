@@ -125,7 +125,12 @@ entry point, traversal steps, optional filters, and a return type. Every query
 returns a receipt that explains the traversal path and evidence used.
 
 Agents should use named queries as the stable read API for downstream work
-instead of spelunking graph storage.
+instead of spelunking graph storage. Named queries package a stable primary
+traversal and evidence path; they do not yet attach independent,
+non-advancing neighbor context to the same result row. For richer triage, an
+agent should run a named query for the primary operational set, then inspect
+the returned entity, neighboring relationships, lineage, receipts, or
+feedback targets with read tools.
 
 ## Receipts, Traces, And Decision Records
 
