@@ -154,6 +154,13 @@ class QueryServiceResult:
     limit: int | None
     truncated: bool
     steps_executed: int
+    limit_truncated: bool = False
+    path_truncated: bool = False
+    truncation_reasons: list[str] = field(default_factory=list)
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
+    total_path_count: int | None = None
+    retained_path_count: int | None = None
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
@@ -170,6 +177,13 @@ class QuerySurfaceServiceResult:
     limit: int | None
     truncated: bool
     steps_executed: int
+    limit_truncated: bool = False
+    path_truncated: bool = False
+    truncation_reasons: list[str] = field(default_factory=list)
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
+    total_path_count: int | None = None
+    retained_path_count: int | None = None
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
@@ -207,6 +221,8 @@ class QueryDefinitionServiceResult:
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = field(default_factory=list)
     limit: int | None = None
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
     description: str | None = None
     example_ids: list[str] = field(default_factory=list)
 

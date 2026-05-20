@@ -194,6 +194,11 @@ def build_query_view(
                     )
                 ),
                 limit=info.get("limit", query.limit),
+                max_paths=info.get("max_paths", query.max_paths),
+                max_paths_per_result=info.get(
+                    "max_paths_per_result",
+                    query.max_paths_per_result,
+                ),
                 description=info.get("description", query.description),
                 example_ids=list(info.get("example_ids", [])),
                 traversal_summary=traversal_summary,

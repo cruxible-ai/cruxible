@@ -164,6 +164,13 @@ class QueryToolResult(BaseModel):
     total_results: int
     limit: int | None = None
     truncated: bool = False
+    limit_truncated: bool = False
+    path_truncated: bool = False
+    truncation_reasons: list[str] = Field(default_factory=list)
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
+    total_path_count: int | None = None
+    retained_path_count: int | None = None
     steps_executed: int
     result_shape: Literal["entity", "path", "relationship"] = "path"
     dedupe: Literal["entity", "path", "none"] = "path"
@@ -331,6 +338,8 @@ class NamedQueryInfoResult(BaseModel):
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = Field(default_factory=list)
     limit: int | None = None
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
     description: str | None = None
     example_ids: list[str] = Field(default_factory=list)
 

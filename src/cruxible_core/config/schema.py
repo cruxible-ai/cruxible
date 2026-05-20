@@ -347,6 +347,7 @@ class TraversalStep(BaseModel):
     constraint_value_type: PredicateValueType | None = None
     exclude_if_related: list[RelatedExclusionSpec] = Field(default_factory=list)
     max_depth: int = Field(default=1, ge=1)
+    required: bool = True
     alias: str | None = Field(default=None, alias="as")
 
     model_config = {"populate_by_name": True}
@@ -419,6 +420,8 @@ class NamedQuerySchema(BaseModel):
     select: dict[str, Any] | None = None
     order_by: list[QueryOrderSpec] = Field(default_factory=list)
     limit: int | None = Field(default=None, ge=0)
+    max_paths: int | None = Field(default=None, gt=0)
+    max_paths_per_result: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def validate_result_shape(self) -> NamedQuerySchema:
@@ -431,8 +434,17 @@ class NamedQuerySchema(BaseModel):
         self._validate_projection_and_order_refs(set(aliases))
         if "dedupe" not in self.model_fields_set:
             self.dedupe = "entity" if self.result_shape == "entity" else "path"
+        has_non_required_step = any(not step.required for step in self.traversal)
         if self.result_shape == "entity" and self.dedupe != "entity":
             msg = "result_shape 'entity' requires dedupe 'entity'"
+            raise ValueError(msg)
+        if self.result_shape == "entity" and has_non_required_step:
+            msg = "required false traversal steps require result_shape 'path' or 'relationship'"
+            raise ValueError(msg)
+        if self.result_shape == "entity" and (
+            self.max_paths is not None or self.max_paths_per_result is not None
+        ):
+            msg = "path budgets require result_shape 'path' or 'relationship'"
             raise ValueError(msg)
         if self.result_shape == "relationship":
             if not self.traversal:
@@ -440,6 +452,12 @@ class NamedQuerySchema(BaseModel):
                 raise ValueError(msg)
             if self.dedupe == "entity":
                 msg = "result_shape 'relationship' requires dedupe 'path' or 'none'"
+                raise ValueError(msg)
+            if has_non_required_step and not self.traversal[-1].required:
+                msg = (
+                    "result_shape 'relationship' requires the final traversal step "
+                    "to be required when using required false"
+                )
                 raise ValueError(msg)
         if self.relationship_state == "pending":
             if self.result_shape not in {"path", "relationship"}:

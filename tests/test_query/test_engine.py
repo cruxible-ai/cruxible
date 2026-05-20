@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import cruxible_core.query.engine as query_engine
 from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
@@ -2166,6 +2167,465 @@ class TestProjectionOrderingAndLimit:
         assert result_node.detail["truncated"] is True
 
 
+class TestOperationalQueryControls:
+    def test_non_required_step_without_match_preserves_path_row(self, config, graph):
+        config.named_queries["fit_with_optional_replacement"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                ),
+                TraversalStep(
+                    relationship="replaces",
+                    direction="outgoing",
+                    required=False,
+                    alias="replacement",
+                ),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            select={
+                "part_id": "$result.entity_id",
+                "replacement_edge": "$path.replacement.edge.edge_key",
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_with_optional_replacement",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert len(result.results) == 1
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values == {"part_id": "BP-1234", "replacement_edge": None}
+        assert result.receipt is not None
+        assert any(
+            node.detail.get("optional_traversal_preserved") is True
+            for node in result.receipt.nodes
+        )
+
+    def test_non_required_step_with_match_appends_segment(self, config, graph):
+        config.named_queries["fit_with_replacement_match"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.9},
+                    alias="fit",
+                ),
+                TraversalStep(
+                    relationship="replaces",
+                    direction="outgoing",
+                    required=False,
+                    alias="replacement",
+                ),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_with_replacement_match",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert len(result.results) == 1
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [segment.alias for segment in row.path] == ["fit", "replacement"]
+        assert row.result.entity_id == "BP-1234"
+
+    def test_non_required_step_with_multiple_matches_fans_out_deterministically(
+        self, config, graph
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Part",
+                to_id="BP-9999",
+                properties={"direction": "alternate", "confidence": 0.7},
+            )
+        )
+        config.named_queries["fit_with_replacement_fanout"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.9},
+                    alias="fit",
+                ),
+                TraversalStep(
+                    relationship="replaces",
+                    direction="outgoing",
+                    required=False,
+                    alias="replacement",
+                ),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "fit_with_replacement_fanout",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        result_ids = [
+            row.result.entity_id
+            for row in result.results
+            if isinstance(row, QueryPathRow)
+        ]
+        assert result_ids == ["BP-1234", "BP-9999"]
+
+    def test_unknown_path_alias_still_fails(self, config, graph):
+        config.named_queries["unknown_projection_alias"] = NamedQuerySchema.model_construct(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            select={"bad": "$path.missing.edge.edge_key"},
+        )
+
+        with pytest.raises(QueryExecutionError, match="Unknown path alias"):
+            execute_query(
+                config,
+                graph,
+                "unknown_projection_alias",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_max_paths_truncates_deterministically_and_records_metadata(
+        self, config, graph
+    ):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="AA-0001",
+                properties={
+                    "part_number": "AA-0001",
+                    "name": "Sorted First Pad",
+                    "category": "brakes",
+                },
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="AA-0001",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True, "confidence": 0.97},
+            )
+        )
+        config.named_queries["budgeted_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            max_paths=1,
+        )
+
+        result = execute_query(config, graph, "budgeted_fit_paths", {"vehicle_id": "V-CIVIC"})
+
+        assert _terminal_ids(result.results) == ["AA-0001"]
+        assert result.total_results == 1
+        assert result.total_path_count is None
+        assert result.retained_path_count == 1
+        assert result.path_truncated is True
+        assert result.limit_truncated is False
+        assert result.truncated is True
+        assert result.truncation_reasons == ["max_paths"]
+        assert result.receipt is not None
+        traversal_nodes = [
+            node for node in result.receipt.nodes if node.node_type == "edge_traversal"
+        ]
+        assert len(traversal_nodes) == 1
+        assert traversal_nodes[0].entity_id == "AA-0001"
+        result_node = next(node for node in result.receipt.nodes if node.node_type == "result")
+        assert result_node.detail["path_truncated"] is True
+        assert result_node.detail["truncation_reasons"] == ["max_paths"]
+        assert result_node.detail["total_path_count"] is None
+        assert result_node.detail["retained_path_count"] == 1
+        assert result_node.detail["evaluated_path_candidate_count"] == 1
+
+    def test_max_paths_does_not_gather_later_relationship_types(
+        self, config, graph, monkeypatch
+    ):
+        calls: list[str] = []
+        original_iter = query_engine.iter_step_relationships
+
+        def spy_iter_step_relationships(*args, **kwargs):
+            calls.append(kwargs["relationship_type"])
+            return original_iter(*args, **kwargs)
+
+        monkeypatch.setattr(
+            query_engine,
+            "iter_step_relationships",
+            spy_iter_step_relationships,
+        )
+        config.named_queries["budgeted_multi_relationship"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship=["fits", "replaces"],
+                    direction="incoming",
+                    alias="hop",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            max_paths=1,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "budgeted_multi_relationship",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-1234"]
+        assert calls == ["fits"]
+        assert result.truncation_reasons == ["max_paths"]
+
+    def test_max_paths_does_not_queue_capped_state_for_deeper_traversal(
+        self, config, graph, monkeypatch
+    ):
+        original_deque = query_engine.deque
+        deeper_appends: list[object] = []
+
+        class TrackingDeque(original_deque):
+            def append(self, item):
+                if isinstance(item, tuple) and len(item) == 3 and item[2] > 0:
+                    deeper_appends.append(item)
+                super().append(item)
+
+        monkeypatch.setattr(query_engine, "deque", TrackingDeque)
+        config.named_queries["budgeted_deep_replacements"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship="replaces",
+                    direction="outgoing",
+                    max_depth=2,
+                    alias="replacement",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            max_paths=1,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "budgeted_deep_replacements",
+            {"part_number": "BP-5678"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-1234"]
+        assert deeper_appends == []
+        assert result.path_truncated is True
+        assert result.truncation_reasons == ["max_paths"]
+
+    def test_max_paths_uses_stable_identity_not_insertion_order(self, config, graph):
+        for part_id in ("ZZ-9999", "AA-0001"):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id=part_id,
+                    properties={
+                        "part_number": part_id,
+                        "name": part_id,
+                        "category": "brakes",
+                    },
+                )
+            )
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id=part_id,
+                    to_type="Vehicle",
+                    to_id="V-CIVIC",
+                    properties={"verified": True, "confidence": 0.97},
+                )
+            )
+        config.named_queries["stable_budgeted_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            max_paths=2,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "stable_budgeted_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results) == ["AA-0001", "BP-1234"]
+
+    def test_max_paths_per_result_caps_each_result_entity(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
+                properties={"verified": True, "confidence": 0.96},
+            )
+        )
+        config.named_queries["per_result_budgeted_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            max_paths_per_result=1,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "per_result_budgeted_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results).count("BP-1234") == 1
+        assert _terminal_ids(result.results).count("BP-5678") == 1
+        assert result.total_path_count == 3
+        assert result.retained_path_count == 2
+        assert result.truncation_reasons == ["max_paths_per_result"]
+
+    def test_optional_matches_respect_max_paths(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Part",
+                to_id="BP-9999",
+                properties={"direction": "alternate", "confidence": 0.7},
+            )
+        )
+        config.named_queries["optional_budgeted_replacements"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.9},
+                    alias="fit",
+                ),
+                TraversalStep(
+                    relationship="replaces",
+                    direction="outgoing",
+                    required=False,
+                    alias="replacement",
+                ),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            max_paths=1,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "optional_budgeted_replacements",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-1234"]
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [segment.alias for segment in row.path] == ["fit", "replacement"]
+        assert result.path_truncated is True
+        assert result.truncation_reasons == ["max_paths"]
+
+    def test_output_limit_is_distinct_from_path_budget_truncation(self, config, graph):
+        config.named_queries["budget_and_limited_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            max_paths=2,
+            limit=1,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "budget_and_limited_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert len(result.results) == 1
+        assert result.total_results == 2
+        assert result.total_path_count == 2
+        assert result.retained_path_count == 2
+        assert result.path_truncated is False
+        assert result.limit_truncated is True
+        assert result.truncation_reasons == ["limit"]
+
+
 def _kev_path_config() -> CoreConfig:
     return CoreConfig(
         name="kev-path",
@@ -3371,6 +3831,7 @@ class TestRelationshipState:
                 "step": 0,
                 "relationship": "fits",
                 "direction": "incoming",
+                "required": True,
                 "where": {"edge.properties.verified": {"eq": True}},
                 "where_related": [
                     {

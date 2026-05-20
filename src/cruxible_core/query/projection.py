@@ -35,6 +35,7 @@ class QueryRowContext:
     entities: tuple[EntityInstance, ...]
     path: tuple[QueryPathSegment, ...]
     parent_id: str | None = None
+    optional_path_aliases: frozenset[str] = frozenset()
 
 
 def project_query_row(
@@ -212,7 +213,14 @@ def _resolve_path_ref(
             f"Path query reference '{ref}' must include alias and edge/source/target"
         )
     alias, section, *field_path = path
-    segment = _path_segment_by_alias(ref, context.path, alias)
+    segment = _path_segment_by_alias(
+        ref,
+        context.path,
+        alias,
+        optional_path_aliases=context.optional_path_aliases,
+    )
+    if segment is None:
+        return None
     if section == "edge":
         return _optional_path(ref, segment, field_path)
     if section == "source":
@@ -230,9 +238,13 @@ def _path_segment_by_alias(
     ref: str,
     path: tuple[QueryPathSegment, ...],
     alias: str,
-) -> QueryPathSegment:
+    *,
+    optional_path_aliases: frozenset[str],
+) -> QueryPathSegment | None:
     matches = [segment for segment in path if segment.alias == alias]
     if not matches:
+        if alias in optional_path_aliases:
+            return None
         raise QueryExecutionError(f"Unknown path alias '{alias}' in query reference '{ref}'")
     if len(matches) > 1:
         raise QueryExecutionError(f"Duplicate path alias '{alias}' in query result path")

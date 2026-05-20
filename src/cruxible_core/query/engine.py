@@ -46,6 +46,7 @@ from cruxible_core.query.projection import (
     QueryRowContext,
     project_query_row,
     sort_query_row_contexts,
+    stable_row_identity,
 )
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import (
@@ -94,6 +95,25 @@ class _EffectiveQueryOptions:
             "result_shape": self.result_shape,
             "dedupe": self.dedupe,
         }
+
+
+@dataclass(frozen=True)
+class _PathBudgetResult:
+    contexts: list[QueryRowContext]
+    total_path_count: int | None
+    retained_path_count: int | None
+    path_truncated: bool
+    truncation_reasons: list[str]
+
+
+@dataclass
+class _TraversalBudgetState:
+    """Mutable per-query traversal budget bookkeeping."""
+
+    max_paths: int | None
+    truncated: bool = False
+    truncation_recorded: bool = False
+    evaluated_path_candidate_count: int = 0
 
 
 def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
@@ -153,6 +173,8 @@ def execute_query(
                 for order in query_schema.order_by
             ],
             "limit": query_schema.limit,
+            "max_paths": query_schema.max_paths,
+            "max_paths_per_result": query_schema.max_paths_per_result,
         },
     )
 
@@ -174,8 +196,11 @@ def execute_query(
     ]
     steps_executed = 0
     policy_summary: dict[str, int] = {}
+    traversal_budget = _TraversalBudgetState(
+        max_paths=query_schema.max_paths if requires_path_retention else None
+    )
 
-    for step in query_schema.traversal:
+    for step_index, step in enumerate(query_schema.traversal):
         current_states = _execute_step(
             config,
             graph,
@@ -185,6 +210,8 @@ def execute_query(
             query_name=query_name,
             requires_path_retention=requires_path_retention,
             relationship_state=effective_options.relationship_state,
+            traversal_budget=traversal_budget,
+            step_index=step_index,
             policy_summary=policy_summary,
             builder=builder,
         )
@@ -195,7 +222,15 @@ def execute_query(
         config,
         result_states,
         effective_options.result_shape,
+        optional_path_aliases=_optional_path_aliases(query_schema),
     )
+    budget_result = _apply_path_budgets(
+        result_contexts,
+        max_paths_per_result=query_schema.max_paths_per_result,
+        traversal_max_paths=query_schema.max_paths,
+        traversal_truncated=traversal_budget.truncated,
+    )
+    result_contexts = budget_result.contexts
     result_contexts = sort_query_row_contexts(
         result_contexts,
         query_schema.order_by,
@@ -207,7 +242,11 @@ def execute_query(
         if query_schema.limit is not None
         else result_contexts
     )
-    truncated = query_schema.limit is not None and total_results > query_schema.limit
+    limit_truncated = query_schema.limit is not None and total_results > query_schema.limit
+    truncation_reasons = list(budget_result.truncation_reasons)
+    if limit_truncated:
+        truncation_reasons.append("limit")
+    truncated = bool(truncation_reasons)
     result_rows: list[QueryRow] = [
         (
             project_query_row(query_schema.select, context, params)
@@ -230,6 +269,18 @@ def execute_query(
             "total_results": total_results,
             "limit": query_schema.limit,
             "truncated": truncated,
+            "limit_truncated": limit_truncated,
+            "path_truncated": budget_result.path_truncated,
+            "truncation_reasons": truncation_reasons,
+            "max_paths": query_schema.max_paths,
+            "max_paths_per_result": query_schema.max_paths_per_result,
+            "total_path_count": budget_result.total_path_count,
+            "retained_path_count": budget_result.retained_path_count,
+            "evaluated_path_candidate_count": (
+                traversal_budget.evaluated_path_candidate_count
+                if query_schema.max_paths is not None
+                else None
+            ),
         },
     )
     receipt = builder.build(result_dicts)
@@ -245,6 +296,13 @@ def execute_query(
         total_results=total_results,
         limit=query_schema.limit,
         truncated=truncated,
+        limit_truncated=limit_truncated,
+        path_truncated=budget_result.path_truncated,
+        truncation_reasons=truncation_reasons,
+        max_paths=query_schema.max_paths,
+        max_paths_per_result=query_schema.max_paths_per_result,
+        total_path_count=budget_result.total_path_count,
+        retained_path_count=budget_result.retained_path_count,
         receipt=receipt,
         policy_summary=policy_summary,
     )
@@ -341,6 +399,19 @@ def _validate_effective_query_options(
             f"Named query '{query_name}' with result_shape 'entity' requires "
             "dedupe 'entity'"
         )
+    has_non_required_step = any(not step.required for step in query_schema.traversal)
+    if query_schema.result_shape == "entity" and has_non_required_step:
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with required false traversal steps requires "
+            "result_shape 'path' or 'relationship'"
+        )
+    if query_schema.result_shape == "entity" and (
+        query_schema.max_paths is not None or query_schema.max_paths_per_result is not None
+    ):
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with path budgets requires "
+            "result_shape 'path' or 'relationship'"
+        )
     if effective_relationship_state == "pending":
         if query_schema.result_shape not in {"path", "relationship"}:
             raise QueryExecutionError(
@@ -373,6 +444,11 @@ def _validate_effective_query_options(
     if not query_schema.traversal:
         raise QueryExecutionError(
             f"Named query '{query_name}' with result_shape 'relationship' requires traversal"
+        )
+    if has_non_required_step and not query_schema.traversal[-1].required:
+        raise QueryExecutionError(
+            f"Named query '{query_name}' with result_shape 'relationship' requires "
+            "the final traversal step to be required when using required false"
         )
     final_step = query_schema.traversal[-1]
     final_relationships: list[str] = []
@@ -413,6 +489,8 @@ def _execute_step(
     query_name: str,
     requires_path_retention: bool,
     relationship_state: QueryRelationshipState,
+    traversal_budget: _TraversalBudgetState,
+    step_index: int,
     policy_summary: dict[str, int],
     *,
     builder: ReceiptBuilder | None = None,
@@ -444,35 +522,84 @@ def _execute_step(
     next_states: list[_TraversalState] = []
 
     # BFS state
-    # Queue entries: (path state, current_depth)
-    queue: deque[tuple[_TraversalState, int]] = deque()
+    # Queue entries: (root input index, path state, current_depth)
+    queue: deque[tuple[int, _TraversalState, int]] = deque()
     seen_expanded: set[str] = set()  # nodes already expanded (neighbors queried)
     seen_results: set[str] = set()  # nodes already in result list
+    produced_roots: set[int] = set()
+
+    indexed_states = list(enumerate(current_states))
+    if requires_path_retention and traversal_budget.max_paths is not None:
+        indexed_states.sort(key=lambda item: _traversal_state_identity(item[1]))
 
     # Seed queue with input entities (they are inputs, not results)
-    for state in current_states:
+    for root_index, state in indexed_states:
         nid = state.current.node_id()
         if not requires_path_retention:
             seen_expanded.add(nid)
             seen_results.add(nid)
-        queue.append((state, 0))
+        queue.append((root_index, state, 0))
 
     while queue:
-        state, depth = queue.popleft()
+        root_index, state, depth = queue.popleft()
         entity = state.current
 
         if depth >= step.max_depth:
             continue
+        if _retained_path_cap_reached(
+            next_states,
+            requires_path_retention=requires_path_retention,
+            traversal_budget=traversal_budget,
+        ):
+            _record_max_paths_truncation(
+                traversal_budget,
+                builder,
+                step_index=step_index,
+                step=step,
+                retained_path_count=len(next_states),
+            )
+            queue.clear()
+            break
 
         for rel_type, direction in resolved_refs:
+            if _retained_path_cap_reached(
+                next_states,
+                requires_path_retention=requires_path_retention,
+                traversal_budget=traversal_budget,
+            ):
+                _record_max_paths_truncation(
+                    traversal_budget,
+                    builder,
+                    step_index=step_index,
+                    step=step,
+                    retained_path_count=len(next_states),
+                )
+                queue.clear()
+                break
             rel_policies = step_policies.get(rel_type, [])
-            for neighbor, segment, relative_direction in iter_step_relationships(
+            relationships = _step_relationships_for_execution(
                 graph,
                 entity,
                 relationship_type=rel_type,
                 direction=direction,
                 alias=step.alias,
-            ):
+                stable=requires_path_retention and traversal_budget.max_paths is not None,
+            )
+            for neighbor, segment, relative_direction in relationships:
+                if _retained_path_cap_reached(
+                    next_states,
+                    requires_path_retention=requires_path_retention,
+                    traversal_budget=traversal_budget,
+                ):
+                    _record_max_paths_truncation(
+                        traversal_budget,
+                        builder,
+                        step_index=step_index,
+                        step=step,
+                        retained_path_count=len(next_states),
+                    )
+                    queue.clear()
+                    break
                 if not relationship_matches_query_state(segment.metadata, relationship_state):
                     continue
 
@@ -481,6 +608,8 @@ def _execute_step(
                     path_entity.node_id() == nid for path_entity in state.entities
                 ):
                     continue
+                if requires_path_retention and traversal_budget.max_paths is not None:
+                    traversal_budget.evaluated_path_candidate_count += 1
 
                 # Record evidence regardless of dedup
                 traversal_id = None
@@ -681,23 +810,176 @@ def _execute_step(
                     path=(*state.path, segment),
                     parent_id=traversal_id,
                 )
+                if _retained_path_cap_reached(
+                    next_states,
+                    requires_path_retention=requires_path_retention,
+                    traversal_budget=traversal_budget,
+                ):
+                    _record_max_paths_truncation(
+                        traversal_budget,
+                        builder,
+                        step_index=step_index,
+                        step=step,
+                        retained_path_count=len(next_states),
+                    )
+                    queue.clear()
+                    break
 
                 # Result dedup: first path owns the lineage
                 if not requires_path_retention:
                     if nid not in seen_results:
                         seen_results.add(nid)
                         next_states.append(next_state)
+                        produced_roots.add(root_index)
                 else:
                     next_states.append(next_state)
+                    produced_roots.add(root_index)
 
                 # Expansion dedup: enqueue for deeper hops if not yet expanded
                 if not requires_path_retention and nid not in seen_expanded:
                     seen_expanded.add(nid)
-                    queue.append((next_state, depth + 1))
+                    queue.append((root_index, next_state, depth + 1))
                 elif requires_path_retention:
-                    queue.append((next_state, depth + 1))
+                    if _retained_path_cap_reached(
+                        next_states,
+                        requires_path_retention=requires_path_retention,
+                        traversal_budget=traversal_budget,
+                    ):
+                        if depth + 1 < step.max_depth:
+                            _record_max_paths_truncation(
+                                traversal_budget,
+                                builder,
+                                step_index=step_index,
+                                step=step,
+                                retained_path_count=len(next_states),
+                            )
+                    else:
+                        queue.append((root_index, next_state, depth + 1))
+
+    if not step.required:
+        fallback_states = indexed_states if (
+            requires_path_retention and traversal_budget.max_paths is not None
+        ) else list(enumerate(current_states))
+        for root_index, state in fallback_states:
+            if root_index in produced_roots:
+                continue
+            if _retained_path_cap_reached(
+                next_states,
+                requires_path_retention=requires_path_retention,
+                traversal_budget=traversal_budget,
+            ):
+                _record_max_paths_truncation(
+                    traversal_budget,
+                    builder,
+                    step_index=step_index,
+                    step=step,
+                    retained_path_count=len(next_states),
+                )
+                break
+            if builder is not None:
+                builder.record_validation(
+                    passed=True,
+                    detail={
+                        "optional_traversal_preserved": True,
+                        "relationship": step.relationship,
+                        "direction": step.direction,
+                        "alias": step.alias,
+                        "reason": "no_matching_segment",
+                    },
+                    parent_id=state.parent_id,
+                )
+            next_states.append(state)
 
     return next_states
+
+
+def _step_relationships_for_execution(
+    graph: EntityGraph,
+    entity: EntityInstance,
+    *,
+    relationship_type: str,
+    direction: str,
+    alias: str | None,
+    stable: bool,
+) -> list[tuple[EntityInstance, QueryPathSegment, str]]:
+    relationships = iter_step_relationships(
+        graph,
+        entity,
+        relationship_type=relationship_type,
+        direction=direction,
+        alias=alias,
+    )
+    if not stable:
+        return relationships
+    return sorted(relationships, key=_relationship_candidate_identity)
+
+
+def _relationship_candidate_identity(
+    row: tuple[EntityInstance, QueryPathSegment, str],
+) -> tuple[Any, ...]:
+    neighbor, segment, relative_direction = row
+    return (
+        segment.relationship_type,
+        segment.from_type,
+        segment.from_id,
+        segment.to_type,
+        segment.to_id,
+        segment.edge_key is None,
+        segment.edge_key if segment.edge_key is not None else -1,
+        neighbor.entity_type,
+        neighbor.entity_id,
+        relative_direction,
+    )
+
+
+def _traversal_state_identity(state: _TraversalState) -> tuple[Any, ...]:
+    return (
+        state.current.entity_type,
+        state.current.entity_id,
+        _path_identity(state.path),
+    )
+
+
+def _retained_path_cap_reached(
+    retained_states: list[_TraversalState],
+    *,
+    requires_path_retention: bool,
+    traversal_budget: _TraversalBudgetState,
+) -> bool:
+    return (
+        requires_path_retention
+        and traversal_budget.max_paths is not None
+        and len(retained_states) >= traversal_budget.max_paths
+    )
+
+
+def _record_max_paths_truncation(
+    traversal_budget: _TraversalBudgetState,
+    builder: ReceiptBuilder | None,
+    *,
+    step_index: int,
+    step: TraversalStep,
+    retained_path_count: int,
+) -> None:
+    traversal_budget.truncated = True
+    if builder is None or traversal_budget.truncation_recorded:
+        return
+    traversal_budget.truncation_recorded = True
+    builder.record_validation(
+        passed=False,
+        detail={
+            "path_truncated": True,
+            "truncation_reason": "max_paths",
+            "max_paths": traversal_budget.max_paths,
+            "retained_path_count": retained_path_count,
+            "evaluated_path_candidate_count": (
+                traversal_budget.evaluated_path_candidate_count
+            ),
+            "step": step_index,
+            "relationship": step.relationship,
+            "direction": step.direction,
+        },
+    )
 
 
 def _dedupe_states(
@@ -738,6 +1020,8 @@ def _build_result_contexts(
     config: CoreConfig,
     states: list[_TraversalState],
     result_shape: QueryResultShape,
+    *,
+    optional_path_aliases: frozenset[str] = frozenset(),
 ) -> list[QueryRowContext]:
     contexts: list[QueryRowContext] = []
     for state in states:
@@ -769,9 +1053,65 @@ def _build_result_contexts(
                 entities=entities,
                 path=state.path,
                 parent_id=state.parent_id,
+                optional_path_aliases=optional_path_aliases,
             )
         )
     return contexts
+
+
+def _optional_path_aliases(query_schema: NamedQuerySchema) -> frozenset[str]:
+    """Return aliases that may be absent because their traversal step is non-required."""
+    return frozenset(
+        step.alias
+        for step in query_schema.traversal
+        if not step.required and step.alias is not None
+    )
+
+
+def _apply_path_budgets(
+    contexts: list[QueryRowContext],
+    *,
+    max_paths_per_result: int | None,
+    traversal_max_paths: int | None,
+    traversal_truncated: bool,
+) -> _PathBudgetResult:
+    """Apply final retained-path-per-result budget before query ordering and limit."""
+    if traversal_max_paths is None and max_paths_per_result is None:
+        return _PathBudgetResult(
+            contexts=list(contexts),
+            total_path_count=None,
+            retained_path_count=None,
+            path_truncated=False,
+            truncation_reasons=[],
+        )
+
+    ordered = sorted(contexts, key=stable_row_identity)
+    total_path_count = None if traversal_truncated else len(ordered)
+    retained = ordered
+    reasons: list[str] = ["max_paths"] if traversal_truncated else []
+
+    if max_paths_per_result is not None:
+        per_result_counts: dict[tuple[str, str], int] = {}
+        per_result_retained: list[QueryRowContext] = []
+        for context in retained:
+            key = (context.result.entity_type, context.result.entity_id)
+            count = per_result_counts.get(key, 0)
+            if count >= max_paths_per_result:
+                if "max_paths_per_result" not in reasons:
+                    reasons.append("max_paths_per_result")
+                continue
+            per_result_counts[key] = count + 1
+            per_result_retained.append(context)
+        retained = per_result_retained
+
+    retained_path_count = len(retained)
+    return _PathBudgetResult(
+        contexts=retained,
+        total_path_count=total_path_count,
+        retained_path_count=retained_path_count,
+        path_truncated=bool(reasons),
+        truncation_reasons=reasons,
+    )
 
 
 def _build_relationship_row(

@@ -242,6 +242,7 @@ def query_filter_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]
             "step": index,
             "relationship": step.relationship,
             "direction": step.direction,
+            "required": step.required,
         }
         if step.where is not None:
             summary["where"] = step.where.model_dump(mode="python")

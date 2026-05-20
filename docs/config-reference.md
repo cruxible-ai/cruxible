@@ -321,15 +321,26 @@ named_queries:
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
 | `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
 | `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), and optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`). |
-| `limit` | int | no | `null` | Query-level result limit applied after ordering. Result metadata reports pre-limit `total_results`, effective `limit`, and `truncated`. |
+| `limit` | int | no | `null` | Query-level output cap applied after traversal, dedupe, path budgets, ordering, and before projection. Result metadata reports pre-limit `total_results`, effective `limit`, and `limit_truncated`. |
+| `max_paths` | int | no | `null` | Traversal-time retained-path frontier budget. It caps retained path states for each traversal step, limiting memory and receipt growth. It is not a total candidate-evaluation budget. |
+| `max_paths_per_result` | int | no | `null` | Post-traversal final retained-path-per-result cap applied after traversal/dedupe, before ordering and `limit`. It does not bound traversal work. |
 
 Validation rules:
 - `result_shape: entity` requires `dedupe: entity`.
 - `result_shape: relationship` requires `dedupe: path` or `none`.
 - `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.
 - `relationship_state: reviewable` requires `result_shape: path`, and does not allow `dedupe: entity`.
-- `order_by` runs after traversal and dedupe, before `limit`.
+- `required: false` traversal steps are optional continuations, not independent context enrichment. They require `result_shape: path` or `relationship`.
+- `result_shape: relationship` may use `required: false` optional-continuation steps only when the final returned relationship step is still required.
+- `max_paths` and `max_paths_per_result` require `result_shape: path` or `relationship`, and must be positive integers when set.
+- `max_paths` is the retained-path frontier safety control. Once reached for a traversal step, the engine stops retaining/enqueuing more path states and avoids recording traversal receipts for the skipped frontier. Candidates that fail filters before any path is retained can still be evaluated; use a future candidate/work budget if total edge evaluation needs a separate cap.
+- `max_paths_per_result` is a result-time evidence cap. It trims retained paths per final result entity after traversal, when result identity is known. It is distinct from `limit`: `max_paths_per_result` controls evidence fanout per result, while `limit` controls how many ordered rows are returned.
+- `order_by` runs after traversal, dedupe, and path budgets, before `limit`.
+- Path budget truncation is reported separately with `path_truncated`, `retained_path_count`, and `truncation_reasons`.
+- `path_truncated` means traversal was cut short by a path budget before the engine could prove completeness. It does not guarantee that every skipped frontier item would have produced a returned row.
+- `total_path_count` is populated only when traversal completes. If traversal-time `max_paths` cuts exploration short, `total_path_count` is `null` because the full possible path count was intentionally not computed.
 - Missing projected property or metadata refs resolve to `null`; missing `$input.*` refs fail execution.
+- Missing `$path.<alias>...` refs for a non-required traversal alias resolve to `null` when that step did not match. Unknown aliases still fail validation/execution.
 - Missing order values sort last, with stable graph-identity tie-breakers added automatically.
 - Query-level `limit` is part of the named query contract. Runtime/API caller limits are only a caller-facing response cap.
 - Projected query receipts retain source path/relationship evidence. User-facing projected results intentionally omit that source payload by default.
@@ -368,6 +379,8 @@ named_queries:
         value_type: date
       - by: $result.entity_id
         direction: asc
+    max_paths: 500
+    max_paths_per_result: 20
     limit: 50
 ```
 
@@ -377,7 +390,7 @@ Each step in the traversal sequence:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `relationship` | string or list[string] | **yes** | — | Relationship name(s) to traverse. A list fans out across all listed types and merges results. |
+| `relationship` | string or list[string] | **yes** | — | Relationship name(s) to traverse. A list fans out across listed types in declared order and merges results. Candidates within each relationship type are stable-sorted when path budgets apply. |
 | `direction` | string | no | `"outgoing"` | `outgoing`, `incoming`, or `both` |
 | `filter` | dict | no | `null` | Property filters on edges or target entities |
 | `target_filter` | dict | no | `null` | Exact-match property filters on candidate entities |
@@ -388,7 +401,27 @@ Each step in the traversal sequence:
 | `constraint_value_type` | string | no | `null` | Optional typed constraint comparison: `string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime` |
 | `exclude_if_related` | list | no | `[]` | Legacy related-edge exclusion checks |
 | `max_depth` | int | no | `1` | BFS depth for this step (1 = direct neighbors only). Results include all entities from depth 1 through max_depth. |
+| `required` | bool | no | `true` | Optional continuation. When `false`, preserves the incoming path if no edge passes relationship state, filters, predicates, related predicates, constraints, and policies. Matching edges still continue to the matched neighbor, which becomes the current `$result`. |
 | `as` | string | no | `null` | Alias for the traversed path segment in path/relationship outputs |
+
+**Optional continuation semantics:**
+
+`required: false` makes a traversal step optional, but it does not attach
+independent neighbor context to the same result row. When a non-required step
+matches, traversal continues to the matched neighbor and that neighbor becomes
+the current `$result`. When no candidate passes relationship state, filters,
+predicates, related predicates, constraints, and policies, the incoming path is
+preserved and `$result` remains the prior current entity.
+
+Use `required: false` for optional successor, replacement, or follow-on paths.
+Do not use it when the desired shape is "return this same asset, but attach
+owner/service/control facts as additional row context." For that workflow, use
+the named query to return the primary operational set and evidence path, then
+inspect the returned entity and nearby relationships with read tools.
+
+Future consideration: add attached related context for named queries if
+workflows repeatedly need single-row projections containing non-advancing
+neighbor facts.
 
 **Direction semantics:**
 - `outgoing`: Follow edges from entry point (source -> target)

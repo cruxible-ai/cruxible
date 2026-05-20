@@ -95,6 +95,8 @@ class QuerySummaryView:
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = field(default_factory=list)
     limit: int | None = None
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
     description: str | None = None
     example_ids: list[str] = field(default_factory=list)
     traversal_summary: list[str] = field(default_factory=list)

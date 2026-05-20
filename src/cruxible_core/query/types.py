@@ -74,6 +74,13 @@ class QueryResult(BaseModel):
     total_results: int | None = None
     limit: int | None = None
     truncated: bool = False
+    limit_truncated: bool = False
+    path_truncated: bool = False
+    truncation_reasons: list[str] = Field(default_factory=list)
+    max_paths: int | None = None
+    max_paths_per_result: int | None = None
+    total_path_count: int | None = None
+    retained_path_count: int | None = None
     receipt: Receipt | None = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
 

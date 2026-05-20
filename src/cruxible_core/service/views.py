@@ -72,6 +72,8 @@ def service_inspect_view(
                 "select": query.select,
                 "order_by": list(query.order_by),
                 "limit": query.limit,
+                "max_paths": query.max_paths,
+                "max_paths_per_result": query.max_paths_per_result,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }
@@ -106,6 +108,8 @@ def service_inspect_view(
                 "select": query.select,
                 "order_by": list(query.order_by),
                 "limit": query.limit,
+                "max_paths": query.max_paths,
+                "max_paths_per_result": query.max_paths_per_result,
                 "description": query.description,
                 "example_ids": list(query.example_ids),
             }

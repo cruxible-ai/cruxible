@@ -251,7 +251,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `limit`, `truncated`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
+**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `limit`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
 
 **Side Effects:** Read-only.
 
@@ -294,7 +294,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `instance_id` | yes | string |  |
 | `query_name` | yes | string |  |
 
-**Returns:** Top-level fields: `name`, `entry_point`, `required_params`, `returns`, `description`, `example_ids`
+**Returns:** Top-level fields: `name`, `entry_point`, `required_params`, `returns`, `result_shape`, `dedupe`, `relationship_state`, `allow_relationship_state_override`, `select`, `order_by`, `limit`, `max_paths`, `max_paths_per_result`, `description`, `example_ids`
 
 **Side Effects:** Read-only.
 

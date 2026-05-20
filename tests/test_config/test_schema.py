@@ -633,11 +633,77 @@ class TestNamedQuerySchema:
                 }
             ],
             limit=25,
+            max_paths=500,
+            max_paths_per_result=20,
         )
 
         assert query.select is not None
         assert query.order_by[0].by == "$path.fit.edge.properties.due_by"
         assert query.limit == 25
+        assert query.max_paths == 500
+        assert query.max_paths_per_result == 20
+
+    def test_required_false_defaults_and_is_accepted_for_path_shape(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(relationship="fits", alias="fit"),
+                TraversalStep(relationship="replaces", required=False, alias="replacement"),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+        )
+
+        assert query.traversal[0].required is True
+        assert query.traversal[1].required is False
+
+    def test_required_false_rejects_entity_shape(self):
+        with pytest.raises(
+            ValidationError,
+            match="required false traversal steps require result_shape 'path' or 'relationship'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", required=False)],
+                returns="list[Part]",
+                result_shape="entity",
+            )
+
+    def test_relationship_shape_rejects_non_required_final_step(self):
+        with pytest.raises(
+            ValidationError,
+            match="final traversal step to be required",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", required=False)],
+                returns="fits",
+                result_shape="relationship",
+            )
+
+    def test_path_budgets_reject_entity_shape(self):
+        with pytest.raises(
+            ValidationError,
+            match="path budgets require result_shape 'path' or 'relationship'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="entity",
+                max_paths=10,
+            )
+
+    @pytest.mark.parametrize("field", ["max_paths", "max_paths_per_result"])
+    def test_path_budgets_reject_non_positive_values(self, field):
+        with pytest.raises(ValidationError):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="path",
+                **{field: 0},
+            )
 
     def test_projection_rejects_unknown_scope(self):
         with pytest.raises(ValidationError, match="unsupported query reference scope"):

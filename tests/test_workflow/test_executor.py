@@ -325,6 +325,9 @@ class TestWorkflowExecutor:
         assert result.output["total_results"] == 2
         assert result.output["limit"] == 1
         assert result.output["truncated"] is True
+        assert result.output["limit_truncated"] is True
+        assert result.output["path_truncated"] is False
+        assert result.output["truncation_reasons"] == ["limit"]
         assert set(result.output["results"][0]) == {"values"}
         assert result.output["results"][0]["values"]["sku"] == "SKU-123"
 

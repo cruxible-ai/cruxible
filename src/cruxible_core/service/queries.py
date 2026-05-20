@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig
@@ -62,6 +63,9 @@ from cruxible_core.service.types import (
     TraceListResult,
 )
 from cruxible_core.temporal import utc_now
+
+_INPUT_REF_RE = re.compile(r"\$input\.([A-Za-z_][\w-]*)")
+_CONSTRAINT_PARAM_RE = re.compile(r"\$([A-Za-z_][\w-]*)(?:\.([A-Za-z_][\w-]*))?")
 
 # ---------------------------------------------------------------------------
 # Query
@@ -127,6 +131,13 @@ def service_query(
             "total_results": result.total_results,
             "limit": result.limit,
             "truncated": result.truncated,
+            "limit_truncated": result.limit_truncated,
+            "path_truncated": result.path_truncated,
+            "truncation_reasons": list(result.truncation_reasons),
+            "max_paths": result.max_paths,
+            "max_paths_per_result": result.max_paths_per_result,
+            "total_path_count": result.total_path_count,
+            "retained_path_count": result.retained_path_count,
             "steps_executed": result.steps_executed,
             "result_shape": result.result_shape,
             "dedupe": result.dedupe,
@@ -176,7 +187,7 @@ def service_query_surface(
         relationship_state=relationship_state,
         context=context,
     )
-    visible, effective_limit, truncated = _apply_response_limit(
+    visible, effective_limit, truncated, response_truncated = _apply_response_limit(
         result,
         surface_limit=surface_limit,
     )
@@ -188,6 +199,16 @@ def service_query_surface(
         limit=effective_limit,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        limit_truncated=result.limit_truncated or response_truncated,
+        path_truncated=result.path_truncated,
+        truncation_reasons=_merge_truncation_reasons(
+            result.truncation_reasons,
+            "response_limit" if response_truncated else None,
+        ),
+        max_paths=result.max_paths,
+        max_paths_per_result=result.max_paths_per_result,
+        total_path_count=result.total_path_count,
+        retained_path_count=result.retained_path_count,
         result_shape=result.result_shape,
         dedupe=result.dedupe,
         relationship_state=result.relationship_state,
@@ -215,7 +236,7 @@ def service_evaluate_query_surface(
         params,
         relationship_state=relationship_state,
     )
-    visible, effective_limit, truncated = _apply_response_limit(
+    visible, effective_limit, truncated, response_truncated = _apply_response_limit(
         result,
         surface_limit=surface_limit,
     )
@@ -227,6 +248,16 @@ def service_evaluate_query_surface(
         limit=effective_limit,
         truncated=truncated,
         steps_executed=result.steps_executed,
+        limit_truncated=result.limit_truncated or response_truncated,
+        path_truncated=result.path_truncated,
+        truncation_reasons=_merge_truncation_reasons(
+            result.truncation_reasons,
+            "response_limit" if response_truncated else None,
+        ),
+        max_paths=result.max_paths,
+        max_paths_per_result=result.max_paths_per_result,
+        total_path_count=result.total_path_count,
+        retained_path_count=result.retained_path_count,
         result_shape=result.result_shape,
         dedupe=result.dedupe,
         relationship_state=result.relationship_state,
@@ -262,6 +293,13 @@ def _evaluate_query_result(
         limit=query_result.limit,
         truncated=query_result.truncated,
         steps_executed=query_result.steps_executed,
+        limit_truncated=query_result.limit_truncated,
+        path_truncated=query_result.path_truncated,
+        truncation_reasons=list(query_result.truncation_reasons),
+        max_paths=query_result.max_paths,
+        max_paths_per_result=query_result.max_paths_per_result,
+        total_path_count=query_result.total_path_count,
+        retained_path_count=query_result.retained_path_count,
         result_shape=query_result.result_shape,
         dedupe=query_result.dedupe,
         relationship_state=query_result.relationship_state,
@@ -634,7 +672,7 @@ def _query_param_hints(
         return None
     entity_schema = config.get_entity_type(query_schema.entry_point)
     primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
-    required_params = [primary_key] if primary_key is not None else []
+    required_params = _infer_query_required_params(query_schema, primary_key=primary_key)
     example_ids: list[str] = []
     if primary_key is not None:
         example_ids = sorted(
@@ -646,6 +684,60 @@ def _query_param_hints(
         primary_key=primary_key,
         example_ids=example_ids,
     )
+
+
+def _infer_query_required_params(
+    query_schema: Any,
+    *,
+    primary_key: str | None,
+) -> list[str]:
+    params: set[str] = set()
+    if primary_key is not None:
+        params.add(primary_key)
+    if query_schema.select is not None:
+        params.update(_input_params_from_value(query_schema.select))
+    for order in query_schema.order_by:
+        params.update(_input_params_from_value(order.by))
+    for step in query_schema.traversal:
+        if step.where is not None:
+            params.update(_input_params_from_value(step.where.root))
+        for related in [*step.where_related, *step.where_not_related]:
+            params.update(
+                _input_params_from_value(
+                    related.model_dump(mode="python", exclude_none=True)
+                )
+            )
+        if step.constraint:
+            params.update(_input_params_from_constraint(step.constraint))
+    return sorted(params)
+
+
+def _input_params_from_value(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return set(_INPUT_REF_RE.findall(value))
+    if isinstance(value, list | tuple | set | frozenset):
+        params: set[str] = set()
+        for item in value:
+            params.update(_input_params_from_value(item))
+        return params
+    if isinstance(value, dict):
+        params: set[str] = set()
+        for key, item in value.items():
+            params.update(_input_params_from_value(key))
+            params.update(_input_params_from_value(item))
+        return params
+    return set()
+
+
+def _input_params_from_constraint(constraint: str) -> set[str]:
+    params: set[str] = set()
+    for name, dotted_name in _CONSTRAINT_PARAM_RE.findall(constraint):
+        if name == "input" and dotted_name:
+            params.add(dotted_name)
+            continue
+        if name not in {"entry", "result", "path", "relationship", "from_entity", "to_entity"}:
+            params.add(name)
+    return params
 
 
 def _query_definition(
@@ -670,6 +762,8 @@ def _query_definition(
             for order in query_schema.order_by
         ],
         limit=query_schema.limit,
+        max_paths=query_schema.max_paths,
+        max_paths_per_result=query_schema.max_paths_per_result,
         description=query_schema.description,
         example_ids=list(hints.example_ids) if hints is not None else [],
     )
@@ -679,7 +773,7 @@ def _apply_response_limit(
     result: QueryServiceResult,
     *,
     surface_limit: int | None,
-) -> tuple[list[Any], int | None, bool]:
+) -> tuple[list[Any], int | None, bool, bool]:
     visible = result.results
     response_truncated = False
     if surface_limit is not None and len(result.results) > surface_limit:
@@ -688,4 +782,14 @@ def _apply_response_limit(
     query_limit = result.limit
     limits = [value for value in (query_limit, surface_limit) if value is not None]
     effective_limit = min(limits) if limits else None
-    return visible, effective_limit, result.truncated or response_truncated
+    return visible, effective_limit, result.truncated or response_truncated, response_truncated
+
+
+def _merge_truncation_reasons(
+    reasons: list[str],
+    extra: str | None,
+) -> list[str]:
+    merged = list(reasons)
+    if extra is not None and extra not in merged:
+        merged.append(extra)
+    return merged

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.schema import NamedQuerySchema, TraversalStep
 from cruxible_core.service import (
+    service_describe_query,
     service_explain_receipt,
     service_export_edges,
     service_inspect_view,
@@ -48,6 +50,52 @@ def test_service_inspect_view_overview_queries_include_result_shape_metadata(
     )
     assert query["result_shape"] == "path"
     assert query["dedupe"] == "path"
+
+
+def test_service_describe_query_infers_required_input_refs(
+    populated_instance: CruxibleInstance,
+) -> None:
+    config = populated_instance.load_config()
+    config.named_queries["parts_with_input_refs"] = NamedQuerySchema(
+        entry_point="Vehicle",
+        traversal=[
+            TraversalStep(
+                relationship="fits",
+                direction="incoming",
+                where={
+                    "edge.properties.confidence": {"lte": "$input.max_confidence"},
+                },
+                where_related=[
+                    {
+                        "relationship": "fits",
+                        "direction": "outgoing",
+                        "edge": {
+                            "properties.confidence": {
+                                "gte": "$input.related_confidence"
+                            }
+                        },
+                    }
+                ],
+                constraint="target.year >= $min_year",
+                alias="fit",
+            )
+        ],
+        returns="list[Part]",
+        select={"mode": "$input.selected_mode", "part_id": "$result.entity_id"},
+        order_by=[{"by": "$input.sort_token"}],
+    )
+    populated_instance.save_config(config)
+
+    query = service_describe_query(populated_instance, "parts_with_input_refs")
+
+    assert query.required_params == [
+        "max_confidence",
+        "min_year",
+        "related_confidence",
+        "selected_mode",
+        "sort_token",
+        "vehicle_id",
+    ]
 
 
 def test_service_render_wiki_returns_page_payloads(
