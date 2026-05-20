@@ -118,6 +118,7 @@ def _build_workflow_execution_contract(
         committed_snapshot_id=result.committed_snapshot_id,
         apply_previews=result.apply_previews,
         query_receipt_ids=result.query_receipt_ids,
+        read_metadata=result.read_metadata,
         trace_ids=result.trace_ids,
         receipt=result.receipt.model_dump(mode="json") if result.receipt else None,
         traces=[trace.model_dump(mode="json") for trace in result.traces],
@@ -414,6 +415,7 @@ def propose_workflow(
             for item in result.suppressed_members
         ],
         query_receipt_ids=result.query_receipt_ids,
+        read_metadata=result.read_metadata,
         trace_ids=result.trace_ids,
         prior_resolution=(
             result.prior_resolution.model_dump(mode="json")

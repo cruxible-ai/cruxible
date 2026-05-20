@@ -153,6 +153,12 @@ class TestWorkflowExecutionServices:
         assert len(result.query_receipt_ids) == 1
         assert len(result.trace_ids) == 2
         assert all(trace_id.startswith("TRC-") for trace_id in result.trace_ids)
+        assert result.read_metadata["query_receipt_ids"] == result.query_receipt_ids
+        assert result.read_metadata["any_read_truncated"] is False
+        assert result.read_metadata["any_query_truncated"] is False
+        assert [step["step_id"] for step in result.read_metadata["read_steps"]] == [
+            "context"
+        ]
 
     def test_service_run_previews_canonical_workflow(
         self, canonical_workflow_instance: CruxibleInstance
@@ -314,6 +320,8 @@ class TestWorkflowExecutionServices:
         assert result.receipt.workflow_mode == "proposal"
         assert result.receipt.committed is True
         assert result.trace_ids
+        assert result.read_metadata["query_receipt_ids"] == result.query_receipt_ids
+        assert result.receipt.nodes[0].detail["read_metadata"] == result.read_metadata
 
         group_store = proposal_workflow_instance.get_group_store()
         try:

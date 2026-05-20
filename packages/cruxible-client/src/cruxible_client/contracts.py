@@ -417,6 +417,7 @@ class WorkflowExecutionResult(BaseModel):
     committed_snapshot_id: str | None = None
     apply_previews: dict[str, Any] = Field(default_factory=dict)
     query_receipt_ids: list[str] = Field(default_factory=list)
+    read_metadata: dict[str, Any] = Field(default_factory=dict)
     trace_ids: list[str] = Field(default_factory=list)
     receipt: dict[str, Any] | None = None
     traces: list[dict[str, Any]] = Field(default_factory=list)
@@ -463,6 +464,7 @@ class WorkflowProposeResult(BaseModel):
     suppressed: bool = False
     suppressed_members: list[SuppressedProposalMember] = Field(default_factory=list)
     query_receipt_ids: list[str] = Field(default_factory=list)
+    read_metadata: dict[str, Any] = Field(default_factory=dict)
     trace_ids: list[str] = Field(default_factory=list)
     prior_resolution: dict[str, Any] | None = None
     policy_summary: dict[str, int] = Field(default_factory=dict)

@@ -234,6 +234,7 @@ def test_workflow_propose_uses_expected_route():
                 "group_status": "pending_review",
                 "review_priority": "review",
                 "query_receipt_ids": [],
+                "read_metadata": {"any_read_truncated": False},
                 "trace_ids": ["TRC-1"],
                 "prior_resolution": None,
                 "receipt": None,
@@ -244,6 +245,7 @@ def test_workflow_propose_uses_expected_route():
     client = _build_client(handler)
     result = client.propose_workflow("inst_123", workflow_name="wf", input_payload={"id": "1"})
     assert result.group_id == "GRP-1"
+    assert result.read_metadata == {"any_read_truncated": False}
     assert captured["path"].endswith("/api/v1/inst_123/workflows/propose")
     assert captured["payload"]["workflow_name"] == "wf"
 
@@ -370,6 +372,7 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
                     "group_status": "suppressed",
                     "review_priority": "review",
                     "query_receipt_ids": [],
+                    "read_metadata": {"any_read_truncated": False},
                     "trace_ids": [],
                     "prior_resolution": None,
                     "policy_summary": {},
@@ -393,6 +396,7 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
                 "committed_snapshot_id": None,
                 "apply_previews": {},
                 "query_receipt_ids": [],
+                "read_metadata": {"any_read_truncated": False},
                 "trace_ids": [],
                 "receipt": None,
                 "traces": [],
@@ -401,15 +405,23 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
 
     client = _build_client(handler)
     client.query("inst_123", "q", {}, decision_record_id="DR-1")
-    client.workflow_run("inst_123", workflow_name="wf", decision_record_id="DR-1")
-    client.workflow_apply(
+    run_result = client.workflow_run(
+        "inst_123", workflow_name="wf", decision_record_id="DR-1"
+    )
+    apply_result = client.workflow_apply(
         "inst_123",
         workflow_name="wf",
         expected_apply_digest="sha256:abc",
         expected_head_snapshot_id="snap_1",
         decision_record_id="DR-1",
     )
-    client.propose_workflow("inst_123", workflow_name="wf", decision_record_id="DR-1")
+    propose_result = client.propose_workflow(
+        "inst_123", workflow_name="wf", decision_record_id="DR-1"
+    )
+
+    assert run_result.read_metadata == {"any_read_truncated": False}
+    assert apply_result.read_metadata == {"any_read_truncated": False}
+    assert propose_result.read_metadata == {"any_read_truncated": False}
 
     assert [payload["decision_record_id"] for _, payload in captured] == [
         "DR-1",
@@ -487,6 +499,7 @@ def test_workflow_apply_uses_expected_route():
                 "committed_snapshot_id": "snap_2",
                 "apply_previews": {},
                 "query_receipt_ids": [],
+                "read_metadata": {"any_read_truncated": False},
                 "trace_ids": ["TRC-2"],
                 "receipt": None,
                 "traces": [],
@@ -502,6 +515,7 @@ def test_workflow_apply_uses_expected_route():
         input_payload={"id": "1"},
     )
     assert result.committed_snapshot_id == "snap_2"
+    assert result.read_metadata == {"any_read_truncated": False}
     assert captured["path"].endswith("/api/v1/inst_123/workflows/apply")
     assert captured["payload"]["workflow_name"] == "wf"
     assert captured["payload"]["expected_apply_digest"] == "sha256:abc"

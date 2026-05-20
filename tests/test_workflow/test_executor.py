@@ -624,6 +624,26 @@ class TestWorkflowExecutor:
         assert metadata["result_shape"] == "path"
         assert metadata["dedupe"] == "path"
         assert metadata["relationship_state"] == "live"
+        read_metadata = result.read_metadata
+        assert read_metadata["any_read_truncated"] is True
+        assert read_metadata["any_query_truncated"] is True
+        assert read_metadata["truncation_reasons"] == ["limit"]
+        assert read_metadata["query_receipt_ids"] == result.query_receipt_ids
+        assert [step["step_id"] for step in read_metadata["read_steps"]] == [
+            "paths",
+            "shaped",
+        ]
+        assert read_metadata["step_counts"]["paths"] == {
+            "total_results": 2,
+            "returned_results": 1,
+        }
+        assert read_metadata["step_counts"]["shaped"] == {
+            "input_count": 1,
+            "output_count": 1,
+            "dropped_count": 0,
+        }
+        receipt_metadata = result.receipt.nodes[0].detail["read_metadata"]
+        assert receipt_metadata == read_metadata
 
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance

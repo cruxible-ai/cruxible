@@ -38,7 +38,7 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
-from cruxible_core.workflow.step_helpers import resolve_step_items
+from cruxible_core.workflow.step_helpers import extract_read_metadata, resolve_step_items
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.transforms import (
     dedupe_items,
@@ -50,6 +50,27 @@ from cruxible_core.workflow.types import WorkflowExecutionResult
 from cruxible_core.workflow_execution_types import (
     WorkflowExecutionAction,
     WorkflowResultMode,
+)
+
+_WORKFLOW_READ_COUNT_KEYS = (
+    "total_results",
+    "returned_results",
+    "total",
+    "input_count",
+    "output_count",
+    "filtered_count",
+    "dropped_count",
+    "duplicate_count",
+    "left_count",
+    "right_count",
+    "matched_left_count",
+    "skipped_right_count",
+)
+
+_TRUNCATION_REASON_ORDER = (
+    "limit",
+    "max_paths",
+    "max_paths_per_result",
 )
 
 
@@ -519,6 +540,11 @@ def execute_workflow(
             )
 
         output = step_outputs[plan.returns]
+        read_metadata = _aggregate_workflow_read_metadata(
+            plan,
+            step_outputs,
+            query_receipt_ids,
+        )
         success_results = [{"output": output}]
         receipt_builder.record_results(success_results)
         results_recorded = True
@@ -529,6 +555,7 @@ def execute_workflow(
             plan=plan,
             result_mode=result_mode,
             apply_digest=apply_digest,
+            read_metadata=read_metadata,
         )
 
         if workflow_type == "canonical" and execution_action == "apply":
@@ -562,6 +589,7 @@ def execute_workflow(
         committed_snapshot_id=committed_snapshot_id,
         apply_previews=apply_previews,
         query_receipt_ids=query_receipt_ids,
+        read_metadata=read_metadata,
         traces=traces,
         step_outputs=step_outputs,
         alias_step_ids=alias_step_ids,
@@ -575,6 +603,7 @@ def _annotate_workflow_receipt(
     plan: Any,
     result_mode: WorkflowResultMode,
     apply_digest: str | None,
+    read_metadata: dict[str, Any] | None = None,
     error: BaseException | None = None,
 ) -> None:
     """Attach workflow-level result metadata to the receipt root."""
@@ -584,6 +613,7 @@ def _annotate_workflow_receipt(
             "config_digest": plan.config_digest,
             "lock_digest": plan.lock_digest,
             "apply_digest": apply_digest,
+            "read_metadata": read_metadata or _empty_workflow_read_metadata([]),
         }
     )
     if error is not None:
@@ -613,9 +643,91 @@ def _build_failed_workflow_receipt(
         plan=plan,
         result_mode=result_mode,
         apply_digest=None,
+        read_metadata=_empty_workflow_read_metadata([]),
         error=error,
     )
     return receipt
+
+
+def _aggregate_workflow_read_metadata(
+    plan: Any,
+    step_outputs: dict[str, Any],
+    query_receipt_ids: list[str],
+) -> dict[str, Any]:
+    read_steps: list[dict[str, Any]] = []
+    for compiled_step in plan.steps:
+        output_key = compiled_step.as_name or compiled_step.step_id
+        if output_key not in step_outputs:
+            continue
+        output = step_outputs[output_key]
+        if not isinstance(output, dict):
+            continue
+        metadata = extract_read_metadata(output)
+        if not metadata:
+            continue
+        summary: dict[str, Any] = {
+            "step_id": compiled_step.step_id,
+            "kind": compiled_step.kind,
+            "metadata": metadata,
+            "counts": _workflow_read_step_counts(output),
+        }
+        if compiled_step.as_name is not None:
+            summary["alias"] = compiled_step.as_name
+        if isinstance(metadata.get("source_step"), str):
+            summary["source_step"] = metadata["source_step"]
+        if isinstance(metadata.get("source_ref"), str):
+            summary["source_ref"] = metadata["source_ref"]
+        read_steps.append(summary)
+
+    reasons = _ordered_truncation_reasons(
+        reason
+        for summary in read_steps
+        for reason in summary["metadata"].get("truncation_reasons", [])
+        if isinstance(reason, str)
+    )
+    return {
+        "read_steps": read_steps,
+        "step_counts": {
+            summary["step_id"]: summary["counts"]
+            for summary in read_steps
+            if summary["counts"]
+        },
+        "any_read_truncated": any(
+            bool(summary["metadata"].get("truncated")) for summary in read_steps
+        ),
+        "any_query_truncated": any(
+            summary["kind"] == "query" and bool(summary["metadata"].get("truncated"))
+            for summary in read_steps
+        ),
+        "truncation_reasons": reasons,
+        "query_receipt_ids": list(query_receipt_ids),
+    }
+
+
+def _workflow_read_step_counts(output: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: output[key]
+        for key in _WORKFLOW_READ_COUNT_KEYS
+        if key in output
+    }
+
+
+def _ordered_truncation_reasons(reasons: Any) -> list[str]:
+    unique = set(reasons)
+    ordered = [reason for reason in _TRUNCATION_REASON_ORDER if reason in unique]
+    ordered.extend(sorted(unique.difference(_TRUNCATION_REASON_ORDER)))
+    return ordered
+
+
+def _empty_workflow_read_metadata(query_receipt_ids: list[str]) -> dict[str, Any]:
+    return {
+        "read_steps": [],
+        "step_counts": {},
+        "any_read_truncated": False,
+        "any_query_truncated": False,
+        "truncation_reasons": [],
+        "query_receipt_ids": list(query_receipt_ids),
+    }
 
 
 def _clone_graph(graph: EntityGraph) -> EntityGraph:

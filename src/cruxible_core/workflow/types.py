@@ -150,6 +150,7 @@ class WorkflowExecutionResult(BaseModel):
     committed_snapshot_id: str | None = None
     apply_previews: dict[str, Any] = Field(default_factory=dict)
     query_receipt_ids: list[str] = Field(default_factory=list)
+    read_metadata: dict[str, Any] = Field(default_factory=dict)
     traces: list[ExecutionTrace] = Field(default_factory=list)
     step_outputs: dict[str, Any] = Field(default_factory=dict)
     alias_step_ids: dict[str, str] = Field(default_factory=dict)
