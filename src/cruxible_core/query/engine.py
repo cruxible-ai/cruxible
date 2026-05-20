@@ -106,16 +106,19 @@ def execute_query(
 
     Resolves the entry entity from params using the entry_point type's
     primary key, then chains traversal steps. Builds a receipt DAG
-    recording every lookup, traversal, filter, and constraint.
+    recording every lookup, traversal, filter, and constraint. Result rows
+    are shaped by the named query's ``result_shape`` setting.
 
     Args:
         config: Config with named query definitions
         graph: Populated graph to query
         query_name: Name of the query in config.named_queries
         params: Query parameters (must include entry entity ID)
+        relationship_state: Optional relationship visibility override. The
+            named query must allow runtime overrides when this is provided.
 
     Returns:
-        QueryResult with matching entities and a Receipt
+        QueryResult with shaped rows, execution metadata, and a Receipt
     """
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
@@ -274,7 +277,7 @@ def _validate_effective_query_options(
         raise QueryExecutionError(
             "relationship_state override is not allowed for this named query"
         )
-    if effective_relationship_state not in {"live", "accepted", "pending"}:
+    if effective_relationship_state not in {"live", "accepted", "pending", "reviewable"}:
         raise QueryExecutionError(
             f"Unsupported relationship_state '{effective_relationship_state}'"
         )
@@ -283,6 +286,28 @@ def _validate_effective_query_options(
             f"Named query '{query_name}' with result_shape 'entity' requires "
             "dedupe 'entity'"
         )
+    if effective_relationship_state == "pending":
+        if query_schema.result_shape not in {"path", "relationship"}:
+            raise QueryExecutionError(
+                f"Named query '{query_name}' with relationship_state 'pending' "
+                "requires result_shape 'path' or 'relationship'"
+            )
+        if query_schema.dedupe == "entity":
+            raise QueryExecutionError(
+                f"Named query '{query_name}' with relationship_state 'pending' "
+                "requires dedupe 'path' or 'none'"
+            )
+    if effective_relationship_state == "reviewable":
+        if query_schema.result_shape != "path":
+            raise QueryExecutionError(
+                f"Named query '{query_name}' with relationship_state 'reviewable' "
+                "requires result_shape 'path'"
+            )
+        if query_schema.dedupe == "entity":
+            raise QueryExecutionError(
+                f"Named query '{query_name}' with relationship_state 'reviewable' "
+                "requires dedupe 'path' or 'none'"
+            )
     if query_schema.result_shape != "relationship":
         return
     if query_schema.dedupe == "entity":
@@ -340,10 +365,12 @@ def _execute_step(
     """Execute one traversal step via BFS with multi-relationship fan-out.
 
     Supports multiple relationship types per step and multi-hop traversal
-    via max_depth. Three dedup layers:
-      1. Entity-frontier pruning: entity rows expand each node at most once
-      2. Result dedup: entity rows appear once in default entity-shaped queries
-      3. Evidence: all traversal edges recorded in receipt regardless of dedup
+    via max_depth. Entity-shaped queries can prune repeated entities during
+    expansion, while path-retaining queries preserve distinct evidence paths
+    for path or relationship-shaped output. Three dedup layers:
+      1. Entity-frontier pruning: compact entity queries expand each node at most once
+      2. Result dedup: final rows are deduped by entity, path, or not at all
+      3. Evidence: all traversed edges are recorded in the receipt before dedup
     """
     # Validate and resolve all relationship references up front.
     resolved_refs: list[tuple[str, str]] = []

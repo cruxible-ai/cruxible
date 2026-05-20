@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-QueryRelationshipState = Literal["live", "accepted", "pending"]
+QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
 
 # ── Constrained input types ───────────────────────────────────────────
 
@@ -150,8 +150,8 @@ class QueryToolResult(BaseModel):
     total_results: int
     truncated: bool = False
     steps_executed: int
-    result_shape: Literal["entity", "path", "relationship"] = "entity"
-    dedupe: Literal["entity", "path", "none"] = "entity"
+    result_shape: Literal["entity", "path", "relationship"] = "path"
+    dedupe: Literal["entity", "path", "none"] = "path"
     relationship_state: QueryRelationshipState = "live"
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
@@ -309,8 +309,8 @@ class NamedQueryInfoResult(BaseModel):
     entry_point: str
     required_params: list[str] = Field(default_factory=list)
     returns: str
-    result_shape: Literal["entity", "path", "relationship"] = "entity"
-    dedupe: Literal["entity", "path", "none"] = "entity"
+    result_shape: Literal["entity", "path", "relationship"] = "path"
+    dedupe: Literal["entity", "path", "none"] = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
     description: str | None = None

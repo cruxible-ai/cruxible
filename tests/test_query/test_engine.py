@@ -1,6 +1,6 @@
 """Tests for the query engine."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -42,13 +42,31 @@ def _metadata(
     *,
     review_status: str = "unreviewed",
     lifecycle_status: str = "active",
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> RelationshipMetadata:
     return RelationshipMetadata(
         assertion=RelationshipAssertion(
             review=RelationshipReviewState(status=review_status),
-            lifecycle=RelationshipLifecycleState(status=lifecycle_status),
+            lifecycle=RelationshipLifecycleState(
+                status=lifecycle_status,
+                effective_from=effective_from,
+                effective_until=effective_until,
+            ),
         )
     )
+
+
+def _terminal_ids(rows: list[object]) -> list[str]:
+    ids: list[str] = []
+    for row in rows:
+        if isinstance(row, QueryPathRow):
+            ids.append(row.result.entity_id)
+        elif isinstance(row, EntityInstance):
+            ids.append(row.entity_id)
+        elif isinstance(row, QueryRelationshipRow):
+            ids.append(row.to_id)
+    return ids
 
 
 @pytest.fixture
@@ -121,6 +139,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "vehicles_for_part": NamedQuerySchema(
                 description="Find vehicles a part fits",
@@ -132,6 +151,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Vehicle]",
+                result_shape="entity",
             ),
             "fitted_parts_for_vehicle": NamedQuerySchema(
                 description="Find parts for a vehicle using the reverse relationship alias",
@@ -144,6 +164,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "replacements_for_vehicle": NamedQuerySchema(
                 description="Find replacements that fit a specific vehicle",
@@ -161,6 +182,7 @@ def config() -> CoreConfig:
                     ),
                 ],
                 returns="list[Vehicle]",
+                result_shape="entity",
             ),
             "parts_for_vehicle_without_suppressed": NamedQuerySchema(
                 description="Find verified parts excluding suppressed fitments",
@@ -179,6 +201,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "parts_for_vehicle_without_vehicle_blocks": NamedQuerySchema(
                 description="Find verified parts excluding vehicle-side blocks",
@@ -197,6 +220,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "replacements_excluding_blocked": NamedQuerySchema(
                 description="Find replacements excluding blocked part pairs",
@@ -211,6 +235,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
         },
     )
@@ -430,7 +455,7 @@ class TestExecuteQuery:
             {"vehicle_id": "V-CIVIC", "as_of": "2026-05-17T12:00:00Z"},
         )
 
-        assert [entity.entity_id for entity in result.results] == ["BP-1234"]
+        assert _terminal_ids(result.results) == ["BP-1234"]
 
     def test_top_level_temporal_constraint_alias_is_evaluated(
         self, config: CoreConfig, graph: EntityGraph
@@ -592,7 +617,7 @@ class TestRelatedEdgeExclusions:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+        assert set(_terminal_ids(result.results)) == {"BP-1234", "BP-5678"}
 
     def test_outgoing_related_edge_excludes_candidate(
         self, config: CoreConfig, graph: EntityGraph
@@ -711,7 +736,7 @@ class TestRelatedEdgeExclusions:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+        assert set(_terminal_ids(result.results)) == {"BP-1234", "BP-5678"}
 
     def test_related_exclusion_uses_accepted_query_state(
         self, config: CoreConfig, graph: EntityGraph
@@ -764,7 +789,7 @@ class TestRelatedEdgeExclusions:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert {item.entity_id for item in result.results} == {"BP-1234", "BP-5678"}
+        assert set(_terminal_ids(result.results)) == {"BP-1234", "BP-5678"}
 
     def test_related_exclusion_uses_pending_query_state(
         self, config: CoreConfig, graph: EntityGraph
@@ -818,7 +843,7 @@ class TestRelatedEdgeExclusions:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert [item.entity_id for item in result.results] == ["BP-5678"]
+        assert _terminal_ids(result.results) == ["BP-5678"]
 
     def test_related_edge_rejected_does_not_exclude(
         self, config: CoreConfig, graph: EntityGraph
@@ -1185,6 +1210,7 @@ def _fan_out_config() -> CoreConfig:
                     )
                 ],
                 returns="list",
+                result_shape="entity",
             ),
             "screen_org_filtered": NamedQuerySchema(
                 entry_point="Org",
@@ -1196,6 +1222,7 @@ def _fan_out_config() -> CoreConfig:
                     )
                 ],
                 returns="list",
+                result_shape="entity",
             ),
             "screen_org_constrained": NamedQuerySchema(
                 entry_point="Org",
@@ -1207,6 +1234,7 @@ def _fan_out_config() -> CoreConfig:
                     )
                 ],
                 returns="list",
+                result_shape="entity",
             ),
             "screen_org_single": NamedQuerySchema(
                 entry_point="Org",
@@ -1217,6 +1245,7 @@ def _fan_out_config() -> CoreConfig:
                     )
                 ],
                 returns="list",
+                result_shape="entity",
             ),
         },
     )
@@ -1281,7 +1310,7 @@ class TestMultiRelationshipStep:
         config = _fan_out_config()
         graph = _fan_out_graph()
         result = execute_query(config, graph, "screen_org", {"org_id": "ORG-1"})
-        ids = {r.entity_id for r in result.results}
+        ids = set(_terminal_ids(result.results))
         assert ids == {"P-1", "P-2", "PARENT-1"}
 
     def test_fan_out_deduplication(self):
@@ -1338,7 +1367,7 @@ class TestMultiRelationshipStep:
         config = _fan_out_config()
         graph = _fan_out_graph()
         result = execute_query(config, graph, "screen_org_filtered", {"org_id": "ORG-1"})
-        ids = {r.entity_id for r in result.results}
+        ids = set(_terminal_ids(result.results))
         # Only stake=0.5 edges pass: P-1 (owns, 0.5) and PARENT-1 (owns_org, 0.5)
         assert ids == {"P-1", "PARENT-1"}
 
@@ -1349,7 +1378,7 @@ class TestMultiRelationshipStep:
         result = execute_query(
             config, graph, "screen_org_constrained", {"org_id": "ORG-1", "exclude_id": "P-1"}
         )
-        ids = {r.entity_id for r in result.results}
+        ids = set(_terminal_ids(result.results))
         # P-1 excluded by constraint; P-2 and PARENT-1 pass
         # Note: PARENT-1 doesn't have person_id so constraint target.person_id != $exclude_id
         # evaluates to None != "P-1" which is True
@@ -1361,7 +1390,7 @@ class TestMultiRelationshipStep:
         config = _fan_out_config()
         graph = _fan_out_graph()
         result = execute_query(config, graph, "screen_org_single", {"org_id": "ORG-1"})
-        ids = {r.entity_id for r in result.results}
+        ids = set(_terminal_ids(result.results))
         assert ids == {"P-1", "P-2"}
 
 
@@ -1398,16 +1427,19 @@ def _depth_config() -> CoreConfig:
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=1)],
                 returns="list[Node]",
+                result_shape="entity",
             ),
             "depth_2": NamedQuerySchema(
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=2)],
                 returns="list[Node]",
+                result_shape="entity",
             ),
             "depth_3": NamedQuerySchema(
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=3)],
                 returns="list[Node]",
+                result_shape="entity",
             ),
             "depth_2_filtered": NamedQuerySchema(
                 entry_point="Node",
@@ -1420,6 +1452,7 @@ def _depth_config() -> CoreConfig:
                     )
                 ],
                 returns="list[Node]",
+                result_shape="entity",
             ),
             "fan_out_depth_2": NamedQuerySchema(
                 entry_point="Node",
@@ -1431,6 +1464,7 @@ def _depth_config() -> CoreConfig:
                     )
                 ],
                 returns="list[Node]",
+                result_shape="entity",
             ),
         },
     )
@@ -1538,6 +1572,7 @@ class TestMaxDepth:
                 )
             ],
             returns="list[Node]",
+            result_shape="entity",
         )
         result = execute_query(config, graph, "depth_4", {"node_id": "A"})
         ids = {r.entity_id for r in result.results}
@@ -1619,6 +1654,36 @@ class TestPathResults:
         assert [type(row) for row in result.results] == [EntityInstance, EntityInstance]
         assert {row.entity_id for row in result.results} == {"BP-1234", "BP-5678"}
 
+    def test_default_query_output_is_path_rows(self, config, graph):
+        config.named_queries["default_parts_for_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="list[Part]",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "default_parts_for_vehicle",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.result_shape == "path"
+        assert result.dedupe == "path"
+        assert all(isinstance(row, QueryPathRow) for row in result.results)
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert row.entry.entity_id == "V-CIVIC"
+        assert row.result.entity_type == "Part"
+        assert [entity.entity_type for entity in row.entities] == ["Vehicle", "Part"]
+        assert len(row.path) == 1
+
     def test_entity_query_rejects_path_retaining_dedupe_at_runtime(self, config, graph):
         query = NamedQuerySchema(
             entry_point="Vehicle",
@@ -1630,6 +1695,7 @@ class TestPathResults:
                 )
             ],
             returns="list[Part]",
+            result_shape="entity",
         )
         query.dedupe = "none"
         config.named_queries["bad_entity_dedupe"] = query
@@ -1964,7 +2030,7 @@ class TestStructuredPredicates:
             {"part_number": "BP-1234"},
         )
 
-        assert [row.entity_id for row in result.results] == ["V-CIVIC"]
+        assert _terminal_ids(result.results) == ["V-CIVIC"]
 
     def test_where_does_not_treat_runtime_as_temporal_field(self, config, graph):
         config.relationships[0].properties["runtime"] = PropertySchema(type="string")
@@ -2001,7 +2067,7 @@ class TestStructuredPredicates:
             {"part_number": "BP-1234"},
         )
 
-        assert [row.entity_id for row in result.results] == ["V-CIVIC"]
+        assert _terminal_ids(result.results) == ["V-CIVIC"]
 
     def test_where_does_not_treat_date_like_entity_id_as_temporal(self, config, graph):
         graph.add_entity(
@@ -2049,7 +2115,7 @@ class TestStructuredPredicates:
             {"part_number": "BP-1234"},
         )
 
-        assert [row.entity_id for row in result.results] == ["2026-05-17-build"]
+        assert _terminal_ids(result.results) == ["2026-05-17-build"]
 
     def test_where_filters_relationship_metadata_review_and_lifecycle(self, config):
         graph = EntityGraph()
@@ -2120,7 +2186,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-1"},
         )
 
-        assert [row.entity_id for row in result.results] == ["P-APPROVED"]
+        assert _terminal_ids(result.results) == ["P-APPROVED"]
 
     def test_where_compares_date_input_refs(self, config, graph):
         config.relationships[0].properties["due_by"] = PropertySchema(type="date")
@@ -2167,7 +2233,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-CAMRY", "cutoff_date": "2026-05-22T00:00:00Z"},
         )
 
-        assert [row.entity_id for row in result.results] == ["BP-1234"]
+        assert _terminal_ids(result.results) == ["BP-1234"]
 
     def test_where_compares_datetime_values(self, config, graph):
         config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
@@ -2214,7 +2280,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-CAMRY", "as_of": "2026-05-18T00:00:00+00:00"},
         )
 
-        assert [row.entity_id for row in result.results] == ["BP-1234"]
+        assert _terminal_ids(result.results) == ["BP-1234"]
 
     def test_invalid_temporal_predicate_value_raises(self, config, graph):
         config.relationships[0].properties["checked_at"] = PropertySchema(type="datetime")
@@ -2283,7 +2349,7 @@ class TestStructuredPredicates:
                 metadata=RelationshipMetadata(
                     assertion=RelationshipAssertion(
                         lifecycle=RelationshipLifecycleState(
-                            effective_until=datetime(2026, 5, 20, tzinfo=timezone.utc)
+                            effective_until=datetime(2027, 5, 20, tzinfo=timezone.utc)
                         )
                     )
                 ),
@@ -2314,7 +2380,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-1", "as_of": "2026-05-19T00:00:00Z"},
         )
 
-        assert [row.entity_id for row in result.results] == ["P-1"]
+        assert _terminal_ids(result.results) == ["P-1"]
 
     def test_missing_input_ref_raises_clear_error(self, config, graph):
         config.named_queries["missing_input_ref"] = NamedQuerySchema(
@@ -2424,7 +2490,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-CIVIC", "owner_id": "OWNER-1"},
         )
 
-        assert [row.entity_id for row in result.results] == ["BP-1234"]
+        assert _terminal_ids(result.results) == ["BP-1234"]
 
     def test_where_not_related_excludes_matching_related_edge(self, config, graph):
         config.relationships.append(
@@ -2470,7 +2536,7 @@ class TestStructuredPredicates:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert [row.entity_id for row in result.results] == ["BP-1234"]
+        assert _terminal_ids(result.results) == ["BP-1234"]
 
 
 class TestRelationshipState:
@@ -2552,7 +2618,7 @@ class TestRelationshipState:
             {"vehicle_id": "V-CIVIC"},
         )
 
-        assert {row.entity_id for row in result.results} == {"BP-1234", "BP-5678"}
+        assert set(_terminal_ids(result.results)) == {"BP-1234", "BP-5678"}
 
     def test_inactive_related_edge_does_not_affect_related_predicates(self, config, graph):
         graph.add_relationship(
@@ -2618,10 +2684,11 @@ class TestRelationshipState:
         )
 
         assert related.results == []
-        assert {row.entity_id for row in not_related.results} == {"BP-1234", "BP-5678"}
+        assert set(_terminal_ids(not_related.results)) == {"BP-1234", "BP-5678"}
 
     def test_relationship_state_modes_filter_traversal(self, config):
         graph = EntityGraph()
+        now = datetime.now(timezone.utc)
         graph.add_entity(
             EntityInstance(
                 entity_type="Vehicle",
@@ -2635,6 +2702,10 @@ class TestRelationshipState:
             ("P-UNREVIEWED", "unreviewed", "active"),
             ("P-REJECTED", "rejected", "active"),
             ("P-INACTIVE", "approved", "inactive"),
+            ("P-SUPERSEDED", "approved", "superseded"),
+            ("P-RETRACTED", "approved", "retracted"),
+            ("P-FUTURE", "pending", "active"),
+            ("P-EXPIRED", "pending", "active"),
         ]
         for part_id, review_status, lifecycle_status in states:
             graph.add_entity(
@@ -2660,6 +2731,12 @@ class TestRelationshipState:
                     metadata=_metadata(
                         review_status=review_status,
                         lifecycle_status=lifecycle_status,
+                        effective_from=(
+                            now + timedelta(days=1) if part_id == "P-FUTURE" else None
+                        ),
+                        effective_until=(
+                            now - timedelta(days=1) if part_id == "P-EXPIRED" else None
+                        ),
                     ),
                 )
             )
@@ -2668,12 +2745,14 @@ class TestRelationshipState:
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
+            result_shape="entity",
         )
         config.named_queries["accepted_parts"] = NamedQuerySchema(
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
             relationship_state="accepted",
+            result_shape="entity",
         )
         config.named_queries["pending_parts"] = NamedQuerySchema(
             entry_point="Vehicle",
@@ -2681,14 +2760,26 @@ class TestRelationshipState:
             returns="list[Part]",
             relationship_state="pending",
         )
+        config.named_queries["reviewable_parts"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=traversal,
+            returns="list[Part]",
+            relationship_state="reviewable",
+        )
 
         live = execute_query(config, graph, "live_parts", {"vehicle_id": "V-1"})
         accepted = execute_query(config, graph, "accepted_parts", {"vehicle_id": "V-1"})
         pending = execute_query(config, graph, "pending_parts", {"vehicle_id": "V-1"})
+        reviewable = execute_query(config, graph, "reviewable_parts", {"vehicle_id": "V-1"})
 
         assert [row.entity_id for row in live.results] == ["P-APPROVED", "P-UNREVIEWED"]
         assert [row.entity_id for row in accepted.results] == ["P-APPROVED"]
-        assert [row.entity_id for row in pending.results] == ["P-PENDING"]
+        assert _terminal_ids(pending.results) == ["P-PENDING"]
+        assert _terminal_ids(reviewable.results) == [
+            "P-APPROVED",
+            "P-PENDING",
+            "P-UNREVIEWED",
+        ]
 
     def test_runtime_relationship_state_override_requires_opt_in(self, config, graph):
         config.named_queries["pending_override_blocked"] = NamedQuerySchema(
@@ -2734,7 +2825,82 @@ class TestRelationshipState:
         )
 
         assert result.relationship_state == "pending"
-        assert [row.entity_id for row in result.results] == ["BP-5678"]
+        assert _terminal_ids(result.results) == ["BP-5678"]
+
+    @pytest.mark.parametrize("state", ["pending", "reviewable"])
+    def test_runtime_relationship_state_override_rejects_compact_entity_query(
+        self,
+        config,
+        graph,
+        state,
+    ):
+        config.named_queries["compact_override_allowed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            result_shape="entity",
+            allow_relationship_state_override=True,
+        )
+
+        with pytest.raises(QueryExecutionError, match=f"relationship_state '{state}'"):
+            execute_query(
+                config,
+                graph,
+                "compact_override_allowed",
+                {"vehicle_id": "V-CIVIC"},
+                relationship_state=state,
+            )
+
+    def test_runtime_relationship_state_override_rejects_reviewable_relationship_query(
+        self,
+        config,
+        graph,
+    ):
+        config.named_queries["relationship_override_allowed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="fits",
+            result_shape="relationship",
+            allow_relationship_state_override=True,
+        )
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="relationship_state 'reviewable' requires result_shape 'path'",
+        ):
+            execute_query(
+                config,
+                graph,
+                "relationship_override_allowed",
+                {"vehicle_id": "V-CIVIC"},
+                relationship_state="reviewable",
+            )
+
+    @pytest.mark.parametrize("state", ["pending", "reviewable"])
+    def test_runtime_relationship_state_override_allows_path_query(
+        self,
+        config,
+        graph,
+        state,
+    ):
+        config.named_queries["path_override_allowed"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", direction="incoming")],
+            returns="list[Part]",
+            result_shape="path",
+            allow_relationship_state_override=True,
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "path_override_allowed",
+            {"vehicle_id": "V-CIVIC"},
+            relationship_state=state,
+        )
+
+        assert result.relationship_state == state
+        assert result.result_shape == "path"
 
     def test_receipt_records_config_relationship_state_and_shape_options(self, config, graph):
         config.named_queries["pending_path_receipt"] = NamedQuerySchema(
@@ -2793,6 +2959,58 @@ class TestRelationshipState:
             result.receipt.nodes[0].detail["execution_options"]
             == result.receipt.execution_options
         )
+
+    def test_reviewable_path_rows_expose_segment_review_state_and_receipt_options(
+        self,
+        config,
+        graph,
+    ):
+        rel = graph.get_relationship("Part", "BP-5678", "Vehicle", "V-CIVIC", "fits")
+        assert rel is not None
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+            edge_key=rel.edge_key,
+        )
+        config.named_queries["reviewable_path_receipt"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    alias="fitment",
+                )
+            ],
+            returns="list[Part]",
+            relationship_state="reviewable",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "reviewable_path_receipt",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.result_shape == "path"
+        assert result.dedupe == "path"
+        assert result.receipt is not None
+        assert result.receipt.execution_options == {
+            "relationship_state": "reviewable",
+            "relationship_state_source": "query_config",
+            "result_shape": "path",
+            "dedupe": "path",
+        }
+        statuses = {
+            row.result.entity_id: row.path[0].metadata.assertion.review.status
+            for row in result.results
+            if isinstance(row, QueryPathRow)
+        }
+        assert statuses == {"BP-1234": "unreviewed", "BP-5678": "pending"}
 
     def test_receipt_records_structured_predicate_summary(self, config, graph):
         config.named_queries["predicate_summary_receipt"] = NamedQuerySchema(

@@ -148,6 +148,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "approved_parts_for_vehicle": NamedQuerySchema(
                 description="Find approved parts that fit a vehicle",
@@ -162,6 +163,7 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
         },
     )

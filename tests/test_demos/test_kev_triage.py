@@ -39,6 +39,15 @@ _matching_module = load_kit_provider_module(
     KEV_KIT_DIR / "providers" / "matching.py",
     KEV_KIT_DIR,
 )
+
+
+def _query_entity_ids(rows: list[object]) -> set[str]:
+    ids: set[str] = set()
+    for row in rows:
+        entity = getattr(row, "result", row)
+        entity_id = getattr(entity, "entity_id")
+        ids.add(entity_id)
+    return ids
 _assessment_module = load_kit_provider_module(
     KEV_KIT_DIR / "providers" / "assessment.py",
     KEV_KIT_DIR,
@@ -591,7 +600,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     asset_id, cve_id, owner_id = unique_pair
 
     before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    before_ids = {item.entity_id for item in before.results}
+    before_ids = _query_entity_ids(before.results)
     assert cve_id in before_ids
 
     graph.add_relationship(
@@ -611,7 +620,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     instance.save_graph(graph)
 
     after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    after_ids = {item.entity_id for item in after.results}
+    after_ids = _query_entity_ids(after.results)
 
     assert cve_id not in after_ids
     assert after.total_results == before.total_results - 1

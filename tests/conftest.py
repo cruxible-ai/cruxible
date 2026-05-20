@@ -31,6 +31,7 @@ named_queries:
     entry_point: Product
     traversal: []
     returns: "list[Product]"
+    result_shape: entity
 
 contracts:
   PromoInput:
@@ -183,6 +184,7 @@ named_queries:
     entry_point: Campaign
     traversal: []
     returns: "list[Campaign]"
+    result_shape: entity
 
 contracts:
   CampaignInput:

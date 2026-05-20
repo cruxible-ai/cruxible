@@ -1423,7 +1423,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--query` | no | `Sentinel.UNSET` | text | Named query from config. |
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
-| `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, or `pending`. The named query must set `allow_relationship_state_override: true`. |
+| `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, `pending`, or `reviewable`. The named query must set `allow_relationship_state_override: true`. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |

@@ -386,8 +386,8 @@ class TestNamedQuerySchema:
         )
         assert query.entry_point == "Vehicle"
         assert len(query.traversal) == 1
-        assert query.result_shape == "entity"
-        assert query.dedupe == "entity"
+        assert query.result_shape == "path"
+        assert query.dedupe == "path"
         assert query.relationship_state == "live"
         assert query.allow_relationship_state_override is False
 
@@ -424,6 +424,16 @@ class TestNamedQuerySchema:
         )
         assert query.result_shape == result_shape
 
+    def test_default_result_shape_is_path_with_path_dedupe(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+        )
+
+        assert query.result_shape == "path"
+        assert query.dedupe == "path"
+
     def test_invalid_result_shape(self):
         with pytest.raises(ValidationError, match="entity|path|relationship"):
             NamedQuerySchema(
@@ -438,8 +448,19 @@ class TestNamedQuerySchema:
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
+            result_shape="entity",
             dedupe="entity",
         )
+        assert query.dedupe == "entity"
+
+    def test_entity_shape_defaults_to_entity_dedupe(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            result_shape="entity",
+        )
+
         assert query.dedupe == "entity"
 
     @pytest.mark.parametrize("dedupe", ["entity", "path", "none"])
@@ -463,6 +484,7 @@ class TestNamedQuerySchema:
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
+                result_shape="entity",
                 dedupe=dedupe,
             )
 
@@ -497,6 +519,83 @@ class TestNamedQuerySchema:
                 result_shape="relationship",
                 dedupe="entity",
             )
+
+    def test_pending_relationship_state_rejects_entity_shape(self):
+        with pytest.raises(
+            ValidationError,
+            match="relationship_state 'pending' requires result_shape 'path' or 'relationship'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="entity",
+                relationship_state="pending",
+            )
+
+    def test_pending_relationship_state_uses_path_default(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            relationship_state="pending",
+        )
+
+        assert query.result_shape == "path"
+        assert query.dedupe == "path"
+
+    def test_pending_relationship_state_rejects_entity_dedupe(self):
+        with pytest.raises(
+            ValidationError,
+            match="relationship_state 'pending' requires dedupe 'path' or 'none'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="path",
+                dedupe="entity",
+                relationship_state="pending",
+            )
+
+    @pytest.mark.parametrize("shape", ["entity", "relationship"])
+    def test_reviewable_relationship_state_rejects_non_path_shapes(self, shape):
+        with pytest.raises(
+            ValidationError,
+            match="relationship_state 'reviewable' requires result_shape 'path'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="fits" if shape == "relationship" else "list[Part]",
+                result_shape=shape,
+                relationship_state="reviewable",
+            )
+
+    def test_reviewable_relationship_state_rejects_entity_dedupe(self):
+        with pytest.raises(
+            ValidationError,
+            match="relationship_state 'reviewable' requires dedupe 'path' or 'none'",
+        ):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="path",
+                dedupe="entity",
+                relationship_state="reviewable",
+            )
+
+    def test_reviewable_relationship_state_uses_path_default(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            relationship_state="reviewable",
+        )
+
+        assert query.result_shape == "path"
+        assert query.dedupe == "path"
 
     def test_duplicate_traversal_aliases_fail_validation(self):
         with pytest.raises(ValidationError, match="duplicate traversal aliases: hop"):

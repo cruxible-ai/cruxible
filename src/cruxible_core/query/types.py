@@ -43,8 +43,8 @@ class QueryResult(BaseModel):
     query_name: str
     parameters: dict[str, Any]
     results: list[QueryRow]
-    result_shape: QueryResultShape = "entity"
-    dedupe: QueryDedupe = "entity"
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     steps_executed: int
     total_results: int | None = None

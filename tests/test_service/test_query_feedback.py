@@ -51,7 +51,8 @@ class TestQuery:
         assert result.total_results >= 1
         assert result.receipt_id is not None
         assert result.steps_executed >= 1
-        assert result.result_shape == "entity"
+        assert result.result_shape == "path"
+        assert result.dedupe == "path"
 
     def test_path_query_returns_structured_rows(
         self,

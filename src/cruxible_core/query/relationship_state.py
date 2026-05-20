@@ -27,6 +27,8 @@ def relationship_matches_query_state(
         return assertion.review.status == "approved"
     if state == "pending":
         return assertion.review.status == "pending"
+    if state == "reviewable":
+        return relationship_is_live(assertion) or assertion.review.status == "pending"
     raise ValueError(f"Unsupported query relationship state '{state}'")
 
 

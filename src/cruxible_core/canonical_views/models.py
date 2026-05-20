@@ -88,8 +88,8 @@ class QuerySummaryView:
     entry_point: str
     required_params: list[str]
     returns: str
-    result_shape: str = "entity"
-    dedupe: str = "entity"
+    result_shape: str = "path"
+    dedupe: str = "path"
     relationship_state: str = "live"
     allow_relationship_state_override: bool = False
     description: str | None = None

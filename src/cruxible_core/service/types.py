@@ -152,8 +152,8 @@ class QueryServiceResult:
     receipt: Receipt | None
     total_results: int
     steps_executed: int
-    result_shape: QueryResultShape = "entity"
-    dedupe: QueryDedupe = "entity"
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
@@ -167,8 +167,8 @@ class QuerySurfaceServiceResult:
     total_results: int
     truncated: bool
     steps_executed: int
-    result_shape: QueryResultShape = "entity"
-    dedupe: QueryDedupe = "entity"
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
@@ -197,8 +197,8 @@ class QueryDefinitionServiceResult:
     entry_point: str
     required_params: list[str] = field(default_factory=list)
     returns: str = ""
-    result_shape: QueryResultShape = "entity"
-    dedupe: QueryDedupe = "entity"
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
     description: str | None = None

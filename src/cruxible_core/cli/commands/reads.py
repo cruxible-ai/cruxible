@@ -95,8 +95,8 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
         "entry_point": query.entry_point,
         "required_params": list(query.required_params),
         "returns": query.returns,
-        "result_shape": getattr(query, "result_shape", "entity"),
-        "dedupe": getattr(query, "dedupe", "entity"),
+        "result_shape": getattr(query, "result_shape", "path"),
+        "dedupe": getattr(query, "dedupe", "path"),
         "relationship_state": getattr(query, "relationship_state", "live"),
         "allow_relationship_state_override": getattr(
             query,
@@ -410,7 +410,7 @@ def _run_query_command(
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @click.option(
     "--relationship-state",
-    type=click.Choice(["live", "accepted", "pending"]),
+    type=click.Choice(["live", "accepted", "pending", "reviewable"]),
     default=None,
     help="Override query relationship visibility state.",
 )

@@ -6,6 +6,6 @@ from typing import Literal
 
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]
-QueryRelationshipState = Literal["live", "accepted", "pending"]
+QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
 
 __all__ = ["QueryDedupe", "QueryRelationshipState", "QueryResultShape"]

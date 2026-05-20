@@ -315,10 +315,16 @@ named_queries:
 | `entry_point` | string | **yes** | — | Entity type to start the traversal from |
 | `traversal` | list | **yes** | — | Sequence of traversal steps |
 | `returns` | string | **yes** | — | Description of the return type |
-| `result_shape` | string | no | `"entity"` | Output shape: `entity`, `path`, or `relationship` |
-| `dedupe` | string | no | `"entity"` | Result dedupe mode: `entity`, `path`, or `none`. Relationship queries default to `path`. |
-| `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, or `pending` |
+| `result_shape` | string | no | `"path"` | Output shape: `entity`, `path`, or `relationship` |
+| `dedupe` | string | no | shape-dependent | Result dedupe mode: `entity`, `path`, or `none`. Entity queries default to `entity`; path and relationship queries default to `path`. |
+| `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, `pending`, or `reviewable` |
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
+
+Validation rules:
+- `result_shape: entity` requires `dedupe: entity`.
+- `result_shape: relationship` requires `dedupe: path` or `none`.
+- `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.
+- `relationship_state: reviewable` requires `result_shape: path`, and does not allow `dedupe: entity`.
 
 ### TraversalStep
 

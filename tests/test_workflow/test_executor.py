@@ -85,6 +85,7 @@ class TestWorkflowExecutor:
                 )
             ],
             returns="list[Product]",
+            result_shape="entity",
         )
         config.workflows["query_active_recommendations"] = WorkflowSchema(
             contract_in="CampaignInput",

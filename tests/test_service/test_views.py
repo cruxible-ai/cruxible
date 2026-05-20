@@ -32,8 +32,8 @@ def test_service_inspect_view_queries_include_result_shape_metadata(
     result = service_inspect_view(populated_instance, "queries")
 
     query = next(item for item in result.payload["queries"] if item["name"] == "parts_for_vehicle")
-    assert query["result_shape"] == "entity"
-    assert query["dedupe"] == "entity"
+    assert query["result_shape"] == "path"
+    assert query["dedupe"] == "path"
 
 
 def test_service_inspect_view_overview_queries_include_result_shape_metadata(
@@ -46,8 +46,8 @@ def test_service_inspect_view_overview_queries_include_result_shape_metadata(
         for item in result.payload["queries"]["queries"]
         if item["name"] == "parts_for_vehicle"
     )
-    assert query["result_shape"] == "entity"
-    assert query["dedupe"] == "entity"
+    assert query["result_shape"] == "path"
+    assert query["dedupe"] == "path"
 
 
 def test_service_render_wiki_returns_page_payloads(

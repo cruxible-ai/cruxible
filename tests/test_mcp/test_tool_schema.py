@@ -57,7 +57,7 @@ class TestInputSchema:
         enum_schema = next(
             item for item in relationship_state["anyOf"] if item.get("type") == "string"
         )
-        assert enum_schema["enum"] == ["live", "accepted", "pending"]
+        assert enum_schema["enum"] == ["live", "accepted", "pending", "reviewable"]
 
     def test_add_relationship_schema(self, server):
         """RelationshipInput fields appear as required in the relationships array schema."""

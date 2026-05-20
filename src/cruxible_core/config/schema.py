@@ -372,8 +372,8 @@ class NamedQuerySchema(BaseModel):
     entry_point: str
     traversal: list[TraversalStep]
     returns: str
-    result_shape: QueryResultShape = "entity"
-    dedupe: QueryDedupe = "entity"
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
 
@@ -385,6 +385,8 @@ class NamedQuerySchema(BaseModel):
             duplicate_str = ", ".join(duplicate_aliases)
             msg = f"duplicate traversal aliases: {duplicate_str}"
             raise ValueError(msg)
+        if "dedupe" not in self.model_fields_set:
+            self.dedupe = "entity" if self.result_shape == "entity" else "path"
         if self.result_shape == "entity" and self.dedupe != "entity":
             msg = "result_shape 'entity' requires dedupe 'entity'"
             raise ValueError(msg)
@@ -392,10 +394,22 @@ class NamedQuerySchema(BaseModel):
             if not self.traversal:
                 msg = "result_shape 'relationship' requires at least one traversal step"
                 raise ValueError(msg)
-            if "dedupe" not in self.model_fields_set:
-                self.dedupe = "path"
-            elif self.dedupe == "entity":
+            if self.dedupe == "entity":
                 msg = "result_shape 'relationship' requires dedupe 'path' or 'none'"
+                raise ValueError(msg)
+        if self.relationship_state == "pending":
+            if self.result_shape not in {"path", "relationship"}:
+                msg = "relationship_state 'pending' requires result_shape 'path' or 'relationship'"
+                raise ValueError(msg)
+            if self.dedupe == "entity":
+                msg = "relationship_state 'pending' requires dedupe 'path' or 'none'"
+                raise ValueError(msg)
+        if self.relationship_state == "reviewable":
+            if self.result_shape != "path":
+                msg = "relationship_state 'reviewable' requires result_shape 'path'"
+                raise ValueError(msg)
+            if self.dedupe == "entity":
+                msg = "relationship_state 'reviewable' requires dedupe 'path' or 'none'"
                 raise ValueError(msg)
         return self
 
