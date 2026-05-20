@@ -555,6 +555,164 @@ class TestExecuteQuery:
                 {"vehicle_id": "V-CIVIC"},
             )
 
+    def test_entity_query_enforces_matching_returns(self, config, graph):
+        config.named_queries["parts_as_part"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="Part",
+            result_shape="entity",
+        )
+
+        result = execute_query(config, graph, "parts_as_part", {"vehicle_id": "V-CIVIC"})
+
+        assert {row.entity_type for row in result.results} == {"Part"}
+
+    def test_path_query_enforces_matching_returns(self, config, graph):
+        config.named_queries["parts_path_as_part"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "parts_path_as_part",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        result_types = {
+            row.result.entity_type
+            for row in result.results
+            if isinstance(row, QueryPathRow)
+        }
+        assert result_types == {"Part"}
+
+    def test_entity_query_rejects_wrong_declared_returns(self, config, graph):
+        config.named_queries["parts_declared_as_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                )
+            ],
+            returns="Vehicle",
+            result_shape="entity",
+        )
+
+        with pytest.raises(
+            QueryExecutionError,
+            match=(
+                "Named query 'parts_declared_as_vehicle' returned "
+                "Part:BP-1234 but declares result entity type 'Vehicle'"
+            ),
+        ):
+            execute_query(
+                config,
+                graph,
+                "parts_declared_as_vehicle",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_path_query_rejects_wrong_declared_returns(self, config, graph):
+        config.named_queries["parts_path_declared_as_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="Vehicle",
+            result_shape="path",
+        )
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="parts_path_declared_as_vehicle.*Part:BP-1234.*Vehicle",
+        ):
+            execute_query(
+                config,
+                graph,
+                "parts_path_declared_as_vehicle",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_optional_continuation_rejects_different_result_type(self, config, graph):
+        config.named_queries["optional_fit_continues_to_vehicle"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                ),
+                TraversalStep(
+                    relationship="fits",
+                    direction="outgoing",
+                    required=False,
+                    alias="other_vehicle",
+                ),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+        )
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="optional_fit_continues_to_vehicle.*Vehicle:V-ACCORD.*Part",
+        ):
+            execute_query(
+                config,
+                graph,
+                "optional_fit_continues_to_vehicle",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_unknown_entity_returns_type_fails_before_traversal(self, config, graph):
+        config.named_queries["unknown_returns_even_with_no_rows"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": "never"},
+                )
+            ],
+            returns="list[MissingEntity]",
+            result_shape="entity",
+        )
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="unknown_returns_even_with_no_rows.*list\\[MissingEntity\\]",
+        ):
+            execute_query(
+                config,
+                graph,
+                "unknown_returns_even_with_no_rows",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
 
 # ---------------------------------------------------------------------------
 # execute_query: multi-step with constraint
@@ -1189,9 +1347,6 @@ def _fan_out_config() -> CoreConfig:
             "Person": EntityTypeSchema(
                 properties={"person_id": PropertySchema(type="string", primary_key=True)}
             ),
-            "ParentOrg": EntityTypeSchema(
-                properties={"org_id": PropertySchema(type="string", primary_key=True)}
-            ),
         },
         relationships=[
             RelationshipSchema(
@@ -1202,7 +1357,7 @@ def _fan_out_config() -> CoreConfig:
             ),
             RelationshipSchema(
                 name="owns_org",
-                from_entity="ParentOrg",
+                from_entity="Person",
                 to_entity="Org",
                 properties={"stake": PropertySchema(type="float", optional=True)},
             ),
@@ -1216,7 +1371,7 @@ def _fan_out_config() -> CoreConfig:
                         direction="incoming",
                     )
                 ],
-                returns="list",
+                returns="list[Person]",
                 result_shape="entity",
             ),
             "screen_org_filtered": NamedQuerySchema(
@@ -1228,7 +1383,7 @@ def _fan_out_config() -> CoreConfig:
                         filter={"stake": 0.5},
                     )
                 ],
-                returns="list",
+                returns="list[Person]",
                 result_shape="entity",
             ),
             "screen_org_constrained": NamedQuerySchema(
@@ -1240,7 +1395,7 @@ def _fan_out_config() -> CoreConfig:
                         constraint="target.person_id != $exclude_id",
                     )
                 ],
-                returns="list",
+                returns="list[Person]",
                 result_shape="entity",
             ),
             "screen_org_single": NamedQuerySchema(
@@ -1251,7 +1406,7 @@ def _fan_out_config() -> CoreConfig:
                         direction="incoming",
                     )
                 ],
-                returns="list",
+                returns="list[Person]",
                 result_shape="entity",
             ),
         },
@@ -1271,7 +1426,9 @@ def _fan_out_graph() -> EntityGraph:
     )
     g.add_entity(
         EntityInstance(
-            entity_type="ParentOrg", entity_id="PARENT-1", properties={"org_id": "PARENT-1"}
+            entity_type="Person",
+            entity_id="PARENT-1",
+            properties={"person_id": "PARENT-1"},
         )
     )
 
@@ -1301,7 +1458,7 @@ def _fan_out_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="owns_org",
-            from_type="ParentOrg",
+            from_type="Person",
             from_id="PARENT-1",
             to_type="Org",
             to_id="ORG-1",
@@ -1387,8 +1544,6 @@ class TestMultiRelationshipStep:
         )
         ids = set(_terminal_ids(result.results))
         # P-1 excluded by constraint; P-2 and PARENT-1 pass
-        # Note: PARENT-1 doesn't have person_id so constraint target.person_id != $exclude_id
-        # evaluates to None != "P-1" which is True
         assert "P-2" in ids
         assert "P-1" not in ids
 

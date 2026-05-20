@@ -156,6 +156,12 @@ def execute_query(
         query_schema,
         relationship_state,
     )
+    declared_entity_return_type = _resolve_declared_entity_return_type(
+        config,
+        query_name,
+        query_schema,
+        effective_options.result_shape,
+    )
     requires_path_retention = _requires_path_retention(
         result_shape=effective_options.result_shape,
         dedupe=effective_options.dedupe,
@@ -224,6 +230,12 @@ def execute_query(
         effective_options.result_shape,
         optional_path_aliases=_optional_path_aliases(query_schema),
     )
+    if declared_entity_return_type is not None:
+        _validate_result_context_return_types(
+            query_name,
+            result_contexts,
+            expected_entity_type=declared_entity_return_type,
+        )
     budget_result = _apply_path_budgets(
         result_contexts,
         max_paths_per_result=query_schema.max_paths_per_result,
@@ -343,6 +355,48 @@ def _resolve_entry_entity(
         )
 
     return entity
+
+
+def _resolve_declared_entity_return_type(
+    config: CoreConfig,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    result_shape: QueryResultShape,
+) -> str | None:
+    """Normalize entity/path query returns to an entity type."""
+    if result_shape == "relationship":
+        return None
+    declared = _normalize_entity_returns(query_schema.returns)
+    if declared not in config.entity_types:
+        raise QueryExecutionError(
+            f"Named query '{query_name}' declares unknown result entity type "
+            f"'{query_schema.returns}'"
+        )
+    return declared
+
+
+def _normalize_entity_returns(returns: str) -> str:
+    value = returns.strip()
+    list_match = re.fullmatch(r"list\[\s*([A-Za-z_][\w-]*)\s*\]", value)
+    if list_match is not None:
+        return list_match.group(1)
+    return value
+
+
+def _validate_result_context_return_types(
+    query_name: str,
+    contexts: list[QueryRowContext],
+    *,
+    expected_entity_type: str,
+) -> None:
+    for context in contexts:
+        actual = context.result
+        if actual.entity_type == expected_entity_type:
+            continue
+        raise QueryExecutionError(
+            f"Named query '{query_name}' returned {actual.entity_type}:{actual.entity_id} "
+            f"but declares result entity type '{expected_entity_type}'"
+        )
 
 
 def _resolve_effective_query_options(
