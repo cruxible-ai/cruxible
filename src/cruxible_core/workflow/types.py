@@ -94,6 +94,8 @@ class CompiledPlanStep(BaseModel):
     artifact_sha256: str | None = None
     params_template: dict[str, Any] = Field(default_factory=dict)
     params_preview: dict[str, Any] = Field(default_factory=dict)
+    relationship_state_template: Any | None = None
+    include_source: bool = False
     input_template: dict[str, Any] = Field(default_factory=dict)
     input_preview: dict[str, Any] = Field(default_factory=dict)
     assert_spec: AssertSpec | None = None

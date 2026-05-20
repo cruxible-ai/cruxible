@@ -40,6 +40,29 @@ class TestWorkflowCompiler:
         assert plan.steps[1].provider_version == "1.2.0"
         assert plan.steps[1].artifact_sha256 == "abc123"
 
+    def test_compile_workflow_carries_query_step_options(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["evaluate_promo"].steps[0].relationship_state = "accepted"
+        config.workflows["evaluate_promo"].steps[0].include_source = True
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        plan = compile_workflow(
+            workflow_instance.load_config(),
+            build_lock(workflow_instance.load_config()),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert plan.steps[0].relationship_state_template == "accepted"
+        assert plan.steps[0].include_source is True
+
     def test_compile_workflow_includes_list_entities_step(
         self, workflow_instance: CruxibleInstance
     ) -> None:

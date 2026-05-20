@@ -1226,6 +1226,19 @@ class TestWorkflowSchema:
         assert step.list_relationships is not None
         assert step.list_relationships.relationship_type == "recommended_for"
 
+    def test_query_step_accepts_relationship_state_and_source_output_options(self):
+        step = WorkflowStepSchema(
+            id="review_rows",
+            query="reviewable_recommendations",
+            params={"campaign_id": "$input.campaign_id"},
+            relationship_state="$input.relationship_state",
+            include_source=True,
+            **{"as": "review_rows"},
+        )
+
+        assert step.relationship_state == "$input.relationship_state"
+        assert step.include_source is True
+
     def test_shape_items_step_accepts_projection_config(self):
         step = WorkflowStepSchema(
             id="shaped",

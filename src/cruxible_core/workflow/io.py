@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig, ListEntitiesSpec, ListRelationshipsSpec
 from cruxible_core.errors import ConfigError, QueryExecutionError
@@ -17,6 +17,7 @@ from cruxible_core.provider.types import (
     ProviderContext,
     ResolvedArtifact,
 )
+from cruxible_core.query.enums import QueryRelationshipState
 from cruxible_core.query.read_surface import (
     list_entities as read_list_entities,
 )
@@ -83,6 +84,27 @@ def _resolve_property_filter(
             f"Workflow step '{step_id}' property_filter must resolve to a mapping"
         )
     return property_filter
+
+
+def _resolve_query_relationship_state(
+    relationship_state_template: Any,
+    step_id: str,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> QueryRelationshipState | None:
+    if relationship_state_template is None:
+        return None
+    relationship_state = resolve_value(
+        relationship_state_template,
+        input_payload,
+        step_outputs,
+    )
+    if relationship_state not in {"live", "accepted", "pending", "reviewable"}:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' relationship_state must resolve to one of "
+            "accepted, live, pending, reviewable"
+        )
+    return cast(QueryRelationshipState, relationship_state)
 
 
 def _read_output_metadata(
@@ -217,7 +239,19 @@ def execute_query_step(
 ) -> None:
     assert compiled_step.query_name is not None
     step_params = resolve_value(compiled_step.params_template, plan.input_payload, step_outputs)
-    query_result = read_run_query(config, graph, compiled_step.query_name, step_params)
+    relationship_state = _resolve_query_relationship_state(
+        compiled_step.relationship_state_template,
+        compiled_step.step_id,
+        plan.input_payload,
+        step_outputs,
+    )
+    query_result = read_run_query(
+        config,
+        graph,
+        compiled_step.query_name,
+        step_params,
+        relationship_state=relationship_state,
+    )
     if query_result.receipt is None:
         raise QueryExecutionError(f"Query step '{compiled_step.step_id}' did not produce a receipt")
     if persist_receipt:
@@ -238,7 +272,10 @@ def execute_query_step(
         receipt_id=query_result.receipt.receipt_id,
     )
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
-        "results": [dump_query_row(item) for item in query_result.results],
+        "results": [
+            dump_query_row(item, include_source=compiled_step.include_source)
+            for item in query_result.results
+        ],
         **query_metadata,
         "max_paths": query_result.max_paths,
         "max_paths_per_result": query_result.max_paths_per_result,
@@ -255,6 +292,8 @@ def execute_query_step(
             "query_name": compiled_step.query_name,
             "receipt_id": query_result.receipt.receipt_id,
             "params": step_params,
+            "relationship_state": relationship_state,
+            "include_source": compiled_step.include_source,
         },
     )
 

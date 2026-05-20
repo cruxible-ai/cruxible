@@ -201,6 +201,8 @@ def compile_workflow(
                     query_name=step.query,
                     params_template=step.params,
                     params_preview=preview_value(step.params, normalized_input),
+                    relationship_state_template=step.relationship_state,
+                    include_source=step.include_source,
                 )
             )
             continue

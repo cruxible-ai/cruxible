@@ -1331,6 +1331,8 @@ class WorkflowStepSchema(BaseModel):
     apply_entities: ApplyEntitiesSpec | None = None
     apply_relationships: ApplyRelationshipsSpec | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    relationship_state: Any | None = None
+    include_source: bool = False
     input: dict[str, Any] = Field(default_factory=dict)
     as_: str | None = Field(alias="as", default=None)
 
@@ -1387,6 +1389,14 @@ class WorkflowStepSchema(BaseModel):
 
         if not policy["allow_params"] and self.params:
             msg = f"{step_label} workflow steps may not define 'params'"
+            raise ValueError(msg)
+
+        if step_kind != "query" and self.relationship_state is not None:
+            msg = f"{step_label} workflow steps may not define 'relationship_state'"
+            raise ValueError(msg)
+
+        if step_kind != "query" and self.include_source:
+            msg = f"{step_label} workflow steps may not define 'include_source'"
             raise ValueError(msg)
 
         if not policy["allow_input"] and self.input:

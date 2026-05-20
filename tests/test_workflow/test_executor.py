@@ -23,10 +23,19 @@ from cruxible_core.config.schema import (
     WorkflowStepSchema,
 )
 from cruxible_core.errors import ConfigError, QueryExecutionError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
 from cruxible_core.workflow import build_lock, compile_workflow, execute_workflow
+
+
+def _review_metadata(status: str) -> RelationshipMetadata:
+    return RelationshipMetadata(
+        assertion=RelationshipAssertion(
+            review=RelationshipReviewState(status=status),
+        )
+    )
 
 
 class TestWorkflowExecutor:
@@ -262,6 +271,211 @@ class TestWorkflowExecutor:
         assert row["edge_key"] is not None
         assert row["entry"]["entity_type"] == "Campaign"
         assert row["to_entity"]["entity_id"] == "SKU-123"
+
+    def test_query_step_can_override_relationship_state_when_allowed(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.contracts["CampaignInput"].fields["relationship_state"] = PropertySchema(
+            type="string",
+            optional=True,
+        )
+        config.named_queries["reviewable_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            allow_relationship_state_override=True,
+        )
+        config.workflows["query_reviewable_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="reviewable_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    relationship_state="$input.relationship_state",
+                    **{"as": "paths"},
+                )
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-123",
+                properties={"reason": "catalog"},
+                metadata=_review_metadata("approved"),
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={"reason": "candidate"},
+                metadata=_review_metadata("pending"),
+            )
+        )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        pending = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_reviewable_recommendations",
+            {"campaign_id": "CMP-1", "relationship_state": "pending"},
+        )
+        accepted = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_reviewable_recommendations",
+            {"campaign_id": "CMP-1", "relationship_state": "accepted"},
+        )
+        reviewable = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_reviewable_recommendations",
+            {"campaign_id": "CMP-1", "relationship_state": "reviewable"},
+        )
+
+        assert pending.output["relationship_state"] == "pending"
+        assert [row["result"]["entity_id"] for row in pending.output["results"]] == [
+            "SKU-456"
+        ]
+        assert accepted.output["relationship_state"] == "accepted"
+        assert [row["result"]["entity_id"] for row in accepted.output["results"]] == [
+            "SKU-123"
+        ]
+        assert reviewable.output["relationship_state"] == "reviewable"
+        assert [row["result"]["entity_id"] for row in reviewable.output["results"]] == [
+            "SKU-123",
+            "SKU-456",
+        ]
+
+    def test_query_step_rejects_unauthorized_relationship_state_override(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+        )
+        config.workflows["query_pending_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    relationship_state="pending",
+                    **{"as": "paths"},
+                )
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="relationship_state override"):
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "query_pending_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+    def test_query_step_includes_projected_source_only_when_requested(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["projected_recommendations"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            select={"sku": "$result.entity_id"},
+        )
+        config.workflows["query_projected_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="default_rows",
+                    query="projected_recommendations",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "default_rows"},
+                ),
+                WorkflowStepSchema(
+                    id="source_rows",
+                    query="projected_recommendations",
+                    params={"campaign_id": "$input.campaign_id"},
+                    include_source=True,
+                    **{"as": "source_rows"},
+                ),
+            ],
+            returns="source_rows",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="recommended_for",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-123",
+                properties={"reason": "catalog"},
+            )
+        )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        result = execute_workflow(
+            proposal_workflow_instance,
+            proposal_workflow_instance.load_config(),
+            "query_projected_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        default_row = result.step_outputs["default_rows"]["results"][0]
+        source_row = result.output["results"][0]
+        assert default_row == {"values": {"sku": "SKU-123"}}
+        assert source_row["values"] == {"sku": "SKU-123"}
+        assert source_row["source"]["result"]["entity_id"] == "SKU-123"
+        assert source_row["source"]["path"][0]["relationship_type"] == "recommended_for"
 
     def test_query_step_includes_query_limit_metadata(
         self,
