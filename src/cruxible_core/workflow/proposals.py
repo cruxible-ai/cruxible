@@ -20,6 +20,7 @@ from cruxible_core.errors import QueryExecutionError
 from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
+    QuerySourceEvidence,
     SignalBucketBasis,
     SignalValue,
 )
@@ -172,12 +173,13 @@ def _query_source_evidence(
     item: Any,
     *,
     source_metadata: dict[str, Any],
-) -> list[dict[str, Any]]:
+) -> list[QuerySourceEvidence]:
     receipt_id = source_metadata.get("receipt_id")
     if not isinstance(receipt_id, str) or not isinstance(item, dict):
         return []
 
-    row = item.get("source") if isinstance(item.get("source"), dict) else item
+    source = item.get("source")
+    row: dict[str, Any] = source if isinstance(source, dict) else item
     evidence: dict[str, Any] = {"query_receipt_id": receipt_id}
     original_row_index = query_result_index(item)
     if original_row_index is not None:
@@ -192,7 +194,7 @@ def _query_source_evidence(
         evidence.update(row_evidence)
     else:
         evidence["row_shape"] = "unknown"
-    return [evidence]
+    return [QuerySourceEvidence.model_validate(evidence)]
 
 
 def _query_row_evidence(row: dict[str, Any]) -> dict[str, Any]:
@@ -286,7 +288,7 @@ def _bounded_json_value(value: Any) -> Any:
 
 def _append_member_query_evidence(
     member: CandidateMember,
-    evidence: list[dict[str, Any]],
+    evidence: list[QuerySourceEvidence],
 ) -> None:
     if not evidence:
         return

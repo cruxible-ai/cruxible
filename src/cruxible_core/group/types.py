@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, StrictFloat, StrictInt, StrictStr, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
@@ -60,6 +68,42 @@ class CandidateSignal(BaseModel):
     basis: SignalBucketBasis | None = None
 
 
+class QuerySourceEvidence(BaseModel):
+    """Compact query evidence attached to proposed relationship members."""
+
+    query_receipt_id: str
+    row_index: int | None = None
+    feedback_addressable: bool = True
+    source_step: str | None = None
+    row_shape: Literal["relationship", "path", "entity", "unknown"] = "unknown"
+    relationship: dict[str, Any] | None = None
+    path: list[dict[str, Any]] | None = None
+    entry: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    entity: dict[str, Any] | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _validate_row_addressability(self) -> QuerySourceEvidence:
+        if self.row_index is not None and self.row_index < 0:
+            raise ValueError("query source evidence row_index must be non-negative")
+        if self.row_index is None:
+            self.feedback_addressable = False
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_compact(self, handler: Any) -> dict[str, Any]:
+        data = {
+            key: value
+            for key, value in handler(self).items()
+            if value is not None
+        }
+        if self.row_index is not None and self.feedback_addressable is True:
+            data.pop("feedback_addressable", None)
+        return data
+
+
 class CandidateMember(RelationshipInstance):
     """A candidate edge within a group proposal.
 
@@ -69,7 +113,7 @@ class CandidateMember(RelationshipInstance):
     """
 
     signals: list[CandidateSignal] = Field(default_factory=list)
-    source_query_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    source_query_evidence: list[QuerySourceEvidence] = Field(default_factory=list)
 
 
 class GroupResolution(BaseModel):

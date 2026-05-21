@@ -25,6 +25,7 @@ from cruxible_core.group.types import (
     CandidateSignal,
     GroupResolution,
     GroupStatus,
+    QuerySourceEvidence,
     ReviewPriority,
     SignalBucketBasis,
     TrustStatus,
@@ -889,9 +890,7 @@ def _source_query_receipt_ids_from_members(members: list[CandidateMember]) -> li
     receipt_ids: list[str] = []
     for member in members:
         for evidence in member.source_query_evidence:
-            receipt_id = evidence.get("query_receipt_id")
-            if isinstance(receipt_id, str):
-                receipt_ids.append(receipt_id)
+            receipt_ids.append(evidence.query_receipt_id)
     return ordered_unique(receipt_ids)
 
 
@@ -916,9 +915,17 @@ def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
         to_id=member.to_id,
         relationship_type=member.relationship_type,
         signals=[_candidate_signal_from_input(signal) for signal in member.signals],
-        source_query_evidence=member.source_query_evidence,
+        source_query_evidence=_query_source_evidence_from_input(
+            member.source_query_evidence
+        ),
         properties=member.properties,
     )
+
+
+def _query_source_evidence_from_input(
+    evidence: list[QuerySourceEvidence | dict[str, Any]],
+) -> list[QuerySourceEvidence]:
+    return [QuerySourceEvidence.model_validate(item) for item in evidence]
 
 
 def service_propose_group_inputs(
@@ -1151,6 +1158,10 @@ def service_propose_group(
             )
 
         group_id = new_id("GRP")
+        metadata = _metadata_with_source_query_receipts(
+            metadata,
+            _source_query_receipt_ids_from_members(pending_members),
+        )
         group = _new_candidate_group(
             group_id=group_id,
             relationship_type=relationship_type,

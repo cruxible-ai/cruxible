@@ -627,21 +627,23 @@ class TestWorkflowExecutionServices:
 
         evidence = members[0].source_query_evidence
         assert len(evidence) == 1
-        assert evidence[0]["query_receipt_id"] == result.query_receipt_ids[0]
-        assert evidence[0]["row_index"] == 0
-        assert evidence[0]["row_shape"] == row_shape
+        assert evidence[0].query_receipt_id == result.query_receipt_ids[0]
+        assert evidence[0].row_index == 0
+        assert evidence[0].row_shape == row_shape
         if row_shape == "relationship":
-            assert evidence[0]["relationship"]["relationship_type"] == "candidate_product"
-            assert evidence[0]["relationship"]["from_id"] == "CMP-1"
-            assert evidence[0]["relationship"]["to_id"] == "SKU-123"
-            assert evidence[0]["relationship"]["properties"] == {
+            assert evidence[0].relationship is not None
+            assert evidence[0].relationship["relationship_type"] == "candidate_product"
+            assert evidence[0].relationship["from_id"] == "CMP-1"
+            assert evidence[0].relationship["to_id"] == "SKU-123"
+            assert evidence[0].relationship["properties"] == {
                 "reason": "query evidence"
             }
         else:
-            assert evidence[0]["path"][0]["alias"] == "candidate"
-            assert evidence[0]["path"][0]["relationship_type"] == "candidate_product"
-            assert evidence[0]["path"][0]["from_id"] == "CMP-1"
-            assert evidence[0]["path"][0]["to_id"] == "SKU-123"
+            assert evidence[0].path is not None
+            assert evidence[0].path[0]["alias"] == "candidate"
+            assert evidence[0].path[0]["relationship_type"] == "candidate_product"
+            assert evidence[0].path[0]["from_id"] == "CMP-1"
+            assert evidence[0].path[0]["to_id"] == "SKU-123"
 
     def test_service_propose_workflow_uses_original_query_row_index_after_filter(
         self,
@@ -684,16 +686,18 @@ class TestWorkflowExecutionServices:
         assert len(members) == 1
         assert members[0].to_id == "SKU-456"
         evidence = members[0].source_query_evidence
-        assert evidence[0]["query_receipt_id"] == result.query_receipt_ids[0]
-        assert evidence[0]["row_index"] == 1
-        assert evidence[0]["relationship"]["to_id"] == "SKU-456"
+        assert evidence[0].query_receipt_id == result.query_receipt_ids[0]
+        assert evidence[0].row_index == 1
+        assert evidence[0].relationship is not None
+        assert evidence[0].relationship["to_id"] == "SKU-456"
         receipt_store = query_evidence_proposal_instance.get_receipt_store()
         try:
-            query_receipt = receipt_store.get_receipt(evidence[0]["query_receipt_id"])
+            query_receipt = receipt_store.get_receipt(evidence[0].query_receipt_id)
         finally:
             receipt_store.close()
         assert query_receipt is not None
-        receipt_row = query_receipt.results[evidence[0]["row_index"]]
+        assert evidence[0].row_index is not None
+        receipt_row = query_receipt.results[evidence[0].row_index]
         assert receipt_row["to_id"] == "SKU-456"
 
     def test_service_propose_workflow_preserves_query_evidence_from_signal_rows(
@@ -722,19 +726,20 @@ class TestWorkflowExecutionServices:
         assert len(members) == 1
         assert members[0].signals[0].signal_source == "query_signal"
         evidence_by_step = {
-            evidence["source_step"]: evidence
+            evidence.source_step: evidence
             for evidence in members[0].source_query_evidence
         }
         assert set(evidence_by_step) == {"candidates_query", "signal_query"}
         signal_evidence = evidence_by_step["signal_query"]
-        assert signal_evidence["query_receipt_id"] in result.query_receipt_ids
-        assert signal_evidence["row_shape"] == "path"
-        assert signal_evidence["path"][0]["alias"] == "candidate"
-        assert signal_evidence["path"][0]["relationship_type"] == "candidate_product"
+        assert signal_evidence.query_receipt_id in result.query_receipt_ids
+        assert signal_evidence.row_shape == "path"
+        assert signal_evidence.path is not None
+        assert signal_evidence.path[0]["alias"] == "candidate"
+        assert signal_evidence.path[0]["relationship_type"] == "candidate_product"
         receipt_store = query_evidence_proposal_instance.get_receipt_store()
         try:
             for evidence in members[0].source_query_evidence:
-                assert receipt_store.get_receipt(evidence["query_receipt_id"]) is not None
+                assert receipt_store.get_receipt(evidence.query_receipt_id) is not None
         finally:
             receipt_store.close()
 
@@ -804,7 +809,7 @@ class TestWorkflowExecutionServices:
             ("CMP-1", "SKU-456"),
         }
         member_receipts = {
-            member.to_id: member.source_query_evidence[0]["query_receipt_id"]
+            member.to_id: member.source_query_evidence[0].query_receipt_id
             for member in members
         }
         assert member_receipts == {
@@ -872,8 +877,9 @@ class TestWorkflowExecutionServices:
             ("CMP-1", "SKU-456"),
         }
         evidence = members[0].source_query_evidence
-        assert evidence[0]["query_receipt_id"] == second.query_receipt_ids[0]
-        assert evidence[0]["relationship"]["to_id"] == "SKU-456"
+        assert evidence[0].query_receipt_id == second.query_receipt_ids[0]
+        assert evidence[0].relationship is not None
+        assert evidence[0].relationship["to_id"] == "SKU-456"
 
     def test_service_propose_workflow_honors_retain_missing_pending_refresh_mode(
         self,

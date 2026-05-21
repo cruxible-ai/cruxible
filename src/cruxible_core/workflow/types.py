@@ -26,7 +26,12 @@ from cruxible_core.config.schema import (
     WorkflowType,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember, SignalBucketBasis, SignalValue
+from cruxible_core.group.types import (
+    CandidateMember,
+    QuerySourceEvidence,
+    SignalBucketBasis,
+    SignalValue,
+)
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import utc_now
@@ -196,7 +201,7 @@ class SignalBatchSignal(BaseModel):
     signal: SignalValue
     evidence: str = ""
     basis: SignalBucketBasis | None = None
-    source_query_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    source_query_evidence: list[QuerySourceEvidence] = Field(default_factory=list)
 
 
 class SignalBatch(BaseModel):

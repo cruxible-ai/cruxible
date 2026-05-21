@@ -20,7 +20,12 @@ from cruxible_core.graph.assertion_state import RelationshipAssertion, Relations
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
-from cruxible_core.group.types import CandidateMember, CandidateSignal, GroupResolution
+from cruxible_core.group.types import (
+    CandidateMember,
+    CandidateSignal,
+    GroupResolution,
+    QuerySourceEvidence,
+)
 from cruxible_core.service import (
     GroupMemberInput,
     GroupSignalInput,
@@ -434,6 +439,19 @@ class TestBasicProposal:
                         ),
                     ],
                     properties={"verified": True},
+                    source_query_evidence=[
+                        {
+                            "query_receipt_id": "RCP-query000001",
+                            "row_index": 0,
+                            "source_step": "candidate_query",
+                            "row_shape": "relationship",
+                            "relationship": {
+                                "relationship_type": "fits",
+                                "from_id": "BP-1001",
+                                "to_id": "V-2024-CIVIC",
+                            },
+                        }
+                    ],
                 )
             ],
             thesis_facts={"k": "v"},
@@ -442,11 +460,19 @@ class TestBasicProposal:
         store = matching_instance.get_group_store()
         try:
             assert result.group_id is not None
+            group = store.get_group(result.group_id)
             stored = store.get_members(result.group_id)
+            assert group is not None
+            assert group.source_query_receipt_ids == ["RCP-query000001"]
             assert len(stored) == 1
             assert stored[0].properties == {"verified": True}
             assert stored[0].signals[0].basis is not None
             assert stored[0].signals[0].basis.mode == "enum"
+            assert isinstance(stored[0].source_query_evidence[0], QuerySourceEvidence)
+            assert (
+                stored[0].source_query_evidence[0].query_receipt_id
+                == "RCP-query000001"
+            )
         finally:
             store.close()
 

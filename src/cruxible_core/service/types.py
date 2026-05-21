@@ -22,6 +22,7 @@ from cruxible_core.group.types import (
     CandidateMember,
     GroupResolution,
     GroupStatus,
+    QuerySourceEvidence,
     ResolutionAction,
     ReviewPriority,
     TrustStatus,
@@ -758,7 +759,9 @@ class GroupMemberInput:
     relationship_type: str
     signals: list[GroupSignalInput] = field(default_factory=list)
     properties: dict[str, Any] = field(default_factory=dict)
-    source_query_evidence: list[dict[str, Any]] = field(default_factory=list)
+    source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(
+        default_factory=list
+    )
 
 
 @dataclass

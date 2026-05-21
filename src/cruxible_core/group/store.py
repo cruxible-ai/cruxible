@@ -483,7 +483,13 @@ class GroupStore(GroupStoreProtocol):
             signals_json = json.dumps(
                 [s.model_dump(mode="json", exclude_none=True) for s in m.signals]
             )
-            source_query_evidence_json = json.dumps(m.source_query_evidence, sort_keys=True)
+            source_query_evidence_json = json.dumps(
+                [
+                    evidence.model_dump(mode="json")
+                    for evidence in m.source_query_evidence
+                ],
+                sort_keys=True,
+            )
             self._conn.execute(
                 "INSERT INTO candidate_members "
                 "(group_id, from_type, from_id, to_type, to_id, relationship_type, "

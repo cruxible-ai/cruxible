@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.group.signature import compute_group_signature
@@ -16,6 +17,7 @@ from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
     CandidateSignal,
+    QuerySourceEvidence,
     SignalBucketBasis,
 )
 from cruxible_core.temporal import format_datetime, utc_now
@@ -314,6 +316,93 @@ class TestMembers:
             "path": "score",
             "value": 0.95,
             "matched": "support_gte",
+        }
+
+    def test_save_get_members_preserves_query_source_evidence(self, store: GroupStore) -> None:
+        member = _member("s1", "o1")
+        member.source_query_evidence = [
+            QuerySourceEvidence(
+                query_receipt_id="RCP-query000001",
+                row_index=0,
+                source_step="candidate_query",
+                row_shape="relationship",
+                relationship={
+                    "relationship_type": "fits",
+                    "from_id": "s1",
+                    "to_id": "o1",
+                    "properties": {"score": 0.95},
+                },
+            )
+        ]
+        with store.transaction():
+            store.save_group(_group("GRP-1"))
+            store.save_members("GRP-1", [member])
+
+        loaded = store.get_members("GRP-1")
+
+        evidence = loaded[0].source_query_evidence[0]
+        assert isinstance(evidence, QuerySourceEvidence)
+        assert evidence.query_receipt_id == "RCP-query000001"
+        assert evidence.row_index == 0
+        assert evidence.feedback_addressable is True
+        assert evidence.row_shape == "relationship"
+        assert evidence.relationship == {
+            "relationship_type": "fits",
+            "from_id": "s1",
+            "to_id": "o1",
+            "properties": {"score": 0.95},
+        }
+
+
+class TestQuerySourceEvidence:
+    def test_rejects_negative_row_index(self) -> None:
+        with pytest.raises(ValidationError, match="row_index must be non-negative"):
+            QuerySourceEvidence(query_receipt_id="RCP-query000001", row_index=-1)
+
+    def test_missing_row_index_is_not_feedback_addressable(self) -> None:
+        evidence = QuerySourceEvidence(
+            query_receipt_id="RCP-query000001",
+            row_shape="unknown",
+        )
+
+        assert evidence.row_index is None
+        assert evidence.feedback_addressable is False
+        assert evidence.model_dump(mode="json") == {
+            "query_receipt_id": "RCP-query000001",
+            "feedback_addressable": False,
+            "row_shape": "unknown",
+        }
+
+    def test_accepts_flexible_nested_payloads(self) -> None:
+        evidence = QuerySourceEvidence(
+            query_receipt_id="RCP-query000001",
+            row_index=2,
+            row_shape="path",
+            entry={"entity_type": "Campaign", "entity_id": "CMP-1"},
+            result={"entity_type": "Product", "entity_id": "SKU-123"},
+            path=[
+                {
+                    "alias": "candidate",
+                    "relationship_type": "candidate_product",
+                    "properties": {"scores": [1, 2, {"k": "v"}]},
+                }
+            ],
+        )
+
+        assert evidence.feedback_addressable is True
+        assert evidence.model_dump(mode="json") == {
+            "query_receipt_id": "RCP-query000001",
+            "row_index": 2,
+            "row_shape": "path",
+            "path": [
+                {
+                    "alias": "candidate",
+                    "relationship_type": "candidate_product",
+                    "properties": {"scores": [1, 2, {"k": "v"}]},
+                }
+            ],
+            "entry": {"entity_type": "Campaign", "entity_id": "CMP-1"},
+            "result": {"entity_type": "Product", "entity_id": "SKU-123"},
         }
 
 
