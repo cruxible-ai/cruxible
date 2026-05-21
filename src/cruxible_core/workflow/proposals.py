@@ -7,6 +7,7 @@ for the service layer to bridge into a governed candidate group.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from cruxible_core.config.schema import (
@@ -16,21 +17,33 @@ from cruxible_core.config.schema import (
     ProposeRelationshipGroupSpec,
 )
 from cruxible_core.errors import QueryExecutionError
-from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
     SignalBucketBasis,
     SignalValue,
 )
+from cruxible_core.primitives import ordered_unique
+from cruxible_core.temporal import format_datetime
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.step_helpers import MAX_DUPLICATE_EXAMPLES, resolve_step_items
+from cruxible_core.workflow.step_helpers import (
+    MAX_DUPLICATE_EXAMPLES,
+    query_result_index,
+    resolve_step_items,
+    source_read_metadata,
+)
 from cruxible_core.workflow.types import (
     CandidateSet,
     RelationshipGroupProposalArtifact,
     SignalBatch,
     SignalBatchSignal,
 )
+
+MAX_QUERY_EVIDENCE_PER_MEMBER = 3
+MAX_QUERY_EVIDENCE_PATH_SEGMENTS = 8
+MAX_QUERY_EVIDENCE_LIST_ITEMS = 20
+MAX_QUERY_EVIDENCE_DICT_ITEMS = 40
+MAX_QUERY_EVIDENCE_STRING_LENGTH = 500
 
 
 def make_candidate_set(
@@ -61,13 +74,16 @@ def make_candidate_set(
 
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    candidates: list[RelationshipInstance] = []
+    source_metadata = source_read_metadata(spec.items, step_outputs)
+    query_receipt_id = source_metadata.get("receipt_id")
+    query_receipt_ids = [query_receipt_id] if isinstance(query_receipt_id, str) else []
+    candidates: list[CandidateMember] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
 
     for item in items:
-        member = RelationshipInstance.model_validate(
+        member = CandidateMember.model_validate(
             {
                 "relationship_type": relationship_type,
                 "from_type": resolve_value(
@@ -105,6 +121,10 @@ def make_candidate_set(
                     item_payload=item,
                     allow_item=True,
                 ),
+                "source_query_evidence": _query_source_evidence(
+                    item,
+                    source_metadata=source_metadata,
+                ),
             }
         )
         if member.from_type != rel_schema.from_entity or member.to_type != rel_schema.to_entity:
@@ -141,10 +161,139 @@ def make_candidate_set(
     return CandidateSet(
         relationship_type=relationship_type,
         candidates=candidates,
+        query_receipt_ids=query_receipt_ids,
         duplicate_input_count=duplicate_input_count,
         conflicting_duplicate_count=conflicting_duplicate_count,
         duplicate_examples=duplicate_examples,
     )
+
+
+def _query_source_evidence(
+    item: Any,
+    *,
+    source_metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    receipt_id = source_metadata.get("receipt_id")
+    if not isinstance(receipt_id, str) or not isinstance(item, dict):
+        return []
+
+    row = item.get("source") if isinstance(item.get("source"), dict) else item
+    evidence: dict[str, Any] = {"query_receipt_id": receipt_id}
+    original_row_index = query_result_index(item)
+    if original_row_index is not None:
+        evidence["row_index"] = original_row_index
+    else:
+        evidence["feedback_addressable"] = False
+    if isinstance(source_metadata.get("source_step"), str):
+        evidence["source_step"] = source_metadata["source_step"]
+
+    row_evidence = _query_row_evidence(row)
+    if row_evidence:
+        evidence.update(row_evidence)
+    else:
+        evidence["row_shape"] = "unknown"
+    return [evidence]
+
+
+def _query_row_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(row.get("path"), list):
+        return {
+            "row_shape": "path",
+            "entry": _entity_identity(row.get("entry")),
+            "result": _entity_identity(row.get("result")),
+            "path": [
+                _relationship_evidence(segment)
+                for segment in row["path"][:MAX_QUERY_EVIDENCE_PATH_SEGMENTS]
+                if isinstance(segment, dict)
+            ],
+        }
+    if _has_relationship_identity(row):
+        return {
+            "row_shape": "relationship",
+            "relationship": _relationship_evidence(row),
+            "entry": _entity_identity(row.get("entry")),
+        }
+    if _has_entity_identity(row):
+        return {
+            "row_shape": "entity",
+            "entity": _entity_identity(row),
+        }
+    return {}
+
+
+def _relationship_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        key: row.get(key)
+        for key in (
+            "alias",
+            "relationship_type",
+            "from_type",
+            "from_id",
+            "to_type",
+            "to_id",
+            "edge_key",
+        )
+        if key in row
+    }
+    if isinstance(row.get("properties"), dict):
+        evidence["properties"] = _bounded_json_value(row["properties"])
+    if isinstance(row.get("metadata"), dict):
+        evidence["metadata"] = _bounded_json_value(row["metadata"])
+    return evidence
+
+
+def _entity_identity(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not _has_entity_identity(value):
+        return None
+    return {
+        "entity_type": value.get("entity_type"),
+        "entity_id": value.get("entity_id"),
+    }
+
+
+def _has_relationship_identity(row: dict[str, Any]) -> bool:
+    return all(
+        isinstance(row.get(key), str)
+        for key in ("relationship_type", "from_type", "from_id", "to_type", "to_id")
+    )
+
+
+def _has_entity_identity(row: dict[str, Any]) -> bool:
+    return isinstance(row.get("entity_type"), str) and isinstance(row.get("entity_id"), str)
+
+
+def _bounded_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        if len(value) <= MAX_QUERY_EVIDENCE_STRING_LENGTH:
+            return value
+        return f"{value[:MAX_QUERY_EVIDENCE_STRING_LENGTH]}..."
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_json_value(value[key])
+            for key in sorted(value, key=str)[:MAX_QUERY_EVIDENCE_DICT_ITEMS]
+        }
+    if isinstance(value, list):
+        return [
+            _bounded_json_value(item)
+            for item in value[:MAX_QUERY_EVIDENCE_LIST_ITEMS]
+        ]
+    return value
+
+
+def _append_member_query_evidence(
+    member: CandidateMember,
+    evidence: list[dict[str, Any]],
+) -> None:
+    if not evidence:
+        return
+    member.source_query_evidence = [
+        *member.source_query_evidence,
+        *evidence,
+    ][:MAX_QUERY_EVIDENCE_PER_MEMBER]
 
 
 def map_signal_batch(
@@ -165,6 +314,9 @@ def map_signal_batch(
     membership is checked later when the proposal artifact is assembled.
     """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
+    source_metadata = source_read_metadata(spec.items, step_outputs)
+    query_receipt_id = source_metadata.get("receipt_id")
+    query_receipt_ids = [query_receipt_id] if isinstance(query_receipt_id, str) else []
     seen_pairs: set[tuple[str, str]] = set()
     signals: list[SignalBatchSignal] = []
 
@@ -272,11 +424,19 @@ def map_signal_batch(
                 signal=signal,
                 evidence=evidence,
                 basis=basis,
+                source_query_evidence=_query_source_evidence(
+                    item,
+                    source_metadata=source_metadata,
+                ),
             )
         )
         seen_pairs.add(key)
 
-    return SignalBatch(signal_source=spec.signal_source, signals=signals)
+    return SignalBatch(
+        signal_source=spec.signal_source,
+        signals=signals,
+        query_receipt_ids=query_receipt_ids,
+    )
 
 
 def signal_mapping_snapshot(spec: MapSignalsSpec) -> dict[str, Any]:
@@ -329,14 +489,19 @@ def build_relationship_group_proposal(
             to_id=candidate.to_id,
             relationship_type=relationship_type,
             properties=candidate.properties,
+            source_query_evidence=candidate.source_query_evidence[
+                :MAX_QUERY_EVIDENCE_PER_MEMBER
+            ],
         )
         for candidate in candidate_set.candidates
     }
 
     signal_sources_used: list[str] = []
+    query_receipt_ids = list(candidate_set.query_receipt_ids)
     for alias in spec.signals_from:
         signal_batch = SignalBatch.model_validate(step_outputs[alias])
         signal_sources_used.append(signal_batch.signal_source)
+        query_receipt_ids.extend(signal_batch.query_receipt_ids)
         for signal in signal_batch.signals:
             key = (signal.from_id, signal.to_id)
             if key not in members_by_pair:
@@ -361,6 +526,7 @@ def build_relationship_group_proposal(
                     basis=signal.basis,
                 )
             )
+            _append_member_query_evidence(member, signal.source_query_evidence)
 
     return RelationshipGroupProposalArtifact.model_validate(
         {
@@ -383,6 +549,7 @@ def build_relationship_group_proposal(
                 step_outputs,
             ),
             "signal_sources_used": signal_sources_used,
+            "query_receipt_ids": ordered_unique(query_receipt_ids),
             "suggested_priority": resolve_value(
                 spec.suggested_priority,
                 input_payload,

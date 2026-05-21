@@ -170,7 +170,8 @@ class CandidateSet(_DuplicateTrackedCollection):
     """
 
     relationship_type: str
-    candidates: list[RelationshipInstance] = Field(default_factory=list)
+    candidates: list[CandidateMember] = Field(default_factory=list)
+    query_receipt_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _enforce_member_type(self) -> CandidateSet:
@@ -195,6 +196,7 @@ class SignalBatchSignal(BaseModel):
     signal: SignalValue
     evidence: str = ""
     basis: SignalBucketBasis | None = None
+    source_query_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SignalBatch(BaseModel):
@@ -202,6 +204,7 @@ class SignalBatch(BaseModel):
 
     signal_source: str
     signals: list[SignalBatchSignal] = Field(default_factory=list)
+    query_receipt_ids: list[str] = Field(default_factory=list)
 
 
 class RelationshipGroupProposalArtifact(BaseModel):
@@ -214,6 +217,7 @@ class RelationshipGroupProposalArtifact(BaseModel):
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     signal_sources_used: list[str] = Field(default_factory=list)
+    query_receipt_ids: list[str] = Field(default_factory=list)
     suggested_priority: str | None = None
     proposed_by: Literal["human", "agent"] = "agent"
 

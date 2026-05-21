@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import (
     ensure_decision_record_open,
@@ -441,6 +442,7 @@ def service_propose_workflow(
             workflow_name,
             input_payload,
             persist_receipt=False,
+            persist_query_receipts=True,
         )
         try:
             proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
@@ -457,12 +459,16 @@ def service_propose_workflow(
                 to_id=member.to_id,
                 relationship_type=relationship_type,
                 signals=member.signals,
+                source_query_evidence=member.source_query_evidence,
                 properties=member.properties,
             )
             for member in proposal_payload.members
         ]
 
         source_step_ids = _workflow_proposal_source_step_ids(workflow, result)
+        source_query_receipt_ids = ordered_unique(
+            [*result.query_receipt_ids, *proposal_payload.query_receipt_ids]
+        )
         source_trace_ids = [trace.trace_id for trace in result.traces]
         group_result = service_propose_group(
             instance,
@@ -477,6 +483,7 @@ def service_propose_workflow(
             suggested_priority=proposal_payload.suggested_priority,
             source_workflow_name=workflow_name,
             source_workflow_receipt_id=result.receipt.receipt_id,
+            source_query_receipt_ids=source_query_receipt_ids,
             source_trace_ids=source_trace_ids,
             source_step_ids=source_step_ids,
         )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 from cruxible_core.config.property_validation import entity_properties_with_identity
@@ -30,7 +30,7 @@ from cruxible_core.group.types import (
     TrustStatus,
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
-from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.primitives import canonical_json, new_id, ordered_unique
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service.mutation_receipts import MutationReceiptContext, mutation_receipt
@@ -191,6 +191,7 @@ class _ProposalMetadata:
     suggested_priority: str | None
     source_workflow_name: str | None
     source_workflow_receipt_id: str | None
+    source_query_receipt_ids: list[str]
     source_trace_ids: list[str]
     source_step_ids: list[str]
 
@@ -444,6 +445,7 @@ def _group_update_fields(
         "suggested_priority": metadata.suggested_priority,
         "source_workflow_name": metadata.source_workflow_name,
         "source_workflow_receipt_id": metadata.source_workflow_receipt_id,
+        "source_query_receipt_ids": metadata.source_query_receipt_ids,
         "source_trace_ids": metadata.source_trace_ids,
         "source_step_ids": metadata.source_step_ids,
         "resolution_id": None,
@@ -476,6 +478,7 @@ def _new_candidate_group(
         suggested_priority=metadata.suggested_priority,
         source_workflow_name=metadata.source_workflow_name,
         source_workflow_receipt_id=metadata.source_workflow_receipt_id,
+        source_query_receipt_ids=metadata.source_query_receipt_ids,
         source_trace_ids=metadata.source_trace_ids,
         source_step_ids=metadata.source_step_ids,
         created_at=utc_now(),
@@ -686,6 +689,10 @@ def _rewrite_pending_group(
     policy_summary: dict[str, int],
 ) -> ProposeGroupResult:
     changes = _member_changes(old_members, pending_members)
+    metadata = _metadata_with_source_query_receipts(
+        metadata,
+        _source_query_receipt_ids_from_members(pending_members),
+    )
     group = pending_group.model_copy(
         update={
             **_group_update_fields(
@@ -805,10 +812,14 @@ def _create_group_or_rewrite_concurrent(
                     force_review=force_review,
                 )
                 changes = _member_changes(concurrent_members, rewritten_members)
+                rewritten_metadata = _metadata_with_source_query_receipts(
+                    metadata,
+                    _source_query_receipt_ids_from_members(rewritten_members),
+                )
                 rewritten = concurrent_pending.model_copy(
                     update={
                         **_group_update_fields(
-                            metadata,
+                            rewritten_metadata,
                             member_count=len(rewritten_members),
                             review_priority=rewritten_review_priority,
                         ),
@@ -859,6 +870,31 @@ def _create_group_or_rewrite_concurrent(
     return result
 
 
+def _metadata_with_source_query_receipts(
+    metadata: _ProposalMetadata,
+    *receipt_id_groups: list[str],
+) -> _ProposalMetadata:
+    receipt_ids = ordered_unique(
+        [
+            *(receipt_id for group in receipt_id_groups for receipt_id in group),
+            *metadata.source_query_receipt_ids,
+        ]
+    )
+    if receipt_ids == metadata.source_query_receipt_ids:
+        return metadata
+    return replace(metadata, source_query_receipt_ids=receipt_ids)
+
+
+def _source_query_receipt_ids_from_members(members: list[CandidateMember]) -> list[str]:
+    receipt_ids: list[str] = []
+    for member in members:
+        for evidence in member.source_query_evidence:
+            receipt_id = evidence.get("query_receipt_id")
+            if isinstance(receipt_id, str):
+                receipt_ids.append(receipt_id)
+    return ordered_unique(receipt_ids)
+
+
 def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
     return CandidateSignal(
         signal_source=signal.signal_source,
@@ -880,6 +916,7 @@ def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
         to_id=member.to_id,
         relationship_type=member.relationship_type,
         signals=[_candidate_signal_from_input(signal) for signal in member.signals],
+        source_query_evidence=member.source_query_evidence,
         properties=member.properties,
     )
 
@@ -897,6 +934,7 @@ def service_propose_group_inputs(
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
+    source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
 ) -> ProposeGroupResult:
@@ -914,6 +952,7 @@ def service_propose_group_inputs(
         suggested_priority=suggested_priority,
         source_workflow_name=source_workflow_name,
         source_workflow_receipt_id=source_workflow_receipt_id,
+        source_query_receipt_ids=source_query_receipt_ids,
         source_trace_ids=source_trace_ids,
         source_step_ids=source_step_ids,
     )
@@ -932,6 +971,7 @@ def service_propose_group(
     suggested_priority: str | None = None,
     source_workflow_name: str | None = None,
     source_workflow_receipt_id: str | None = None,
+    source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
 ) -> ProposeGroupResult:
@@ -940,6 +980,7 @@ def service_propose_group(
     thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
     signal_sources_used = signal_sources_used or []
+    source_query_receipt_ids = ordered_unique(source_query_receipt_ids or [])
     source_trace_ids = source_trace_ids or []
     source_step_ids = source_step_ids or []
     policy_summary: dict[str, int] = {}
@@ -952,6 +993,7 @@ def service_propose_group(
         suggested_priority=suggested_priority,
         source_workflow_name=source_workflow_name,
         source_workflow_receipt_id=source_workflow_receipt_id,
+        source_query_receipt_ids=source_query_receipt_ids,
         source_trace_ids=source_trace_ids,
         source_step_ids=source_step_ids,
     )

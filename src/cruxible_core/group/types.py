@@ -69,6 +69,7 @@ class CandidateMember(RelationshipInstance):
     """
 
     signals: list[CandidateSignal] = Field(default_factory=list)
+    source_query_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class GroupResolution(BaseModel):
@@ -108,6 +109,7 @@ class CandidateGroup(BaseModel):
     suggested_priority: str | None = None
     source_workflow_name: str | None = None
     source_workflow_receipt_id: str | None = None
+    source_query_receipt_ids: list[str] = Field(default_factory=list)
     source_trace_ids: list[str] = Field(default_factory=list)
     source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None

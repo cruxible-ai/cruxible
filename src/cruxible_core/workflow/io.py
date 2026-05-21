@@ -33,6 +33,7 @@ from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
+from cruxible_core.workflow.step_helpers import attach_query_result_index
 from cruxible_core.workflow.tracing import (
     build_trace,
     persist_trace,
@@ -273,8 +274,11 @@ def execute_query_step(
     )
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
         "results": [
-            dump_query_row(item, include_source=compiled_step.include_source)
-            for item in query_result.results
+            attach_query_result_index(
+                dump_query_row(item, include_source=compiled_step.include_source),
+                index,
+            )
+            for index, item in enumerate(query_result.results)
         ],
         **query_metadata,
         "max_paths": query_result.max_paths,

@@ -38,7 +38,10 @@ from cruxible_core.workflow.proposals import (
     map_signal_batch,
     signal_mapping_snapshot,
 )
-from cruxible_core.workflow.step_helpers import extract_read_metadata, resolve_step_items
+from cruxible_core.workflow.step_helpers import (
+    extract_read_metadata,
+    resolve_step_items,
+)
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.transforms import (
     dedupe_items,
@@ -82,6 +85,7 @@ def execute_workflow(
     *,
     mode: WorkflowExecutionAction = "run",
     persist_receipt: bool = True,
+    persist_query_receipts: bool | None = None,
     persist_traces: bool = True,
 ) -> WorkflowExecutionResult:
     """Execute one compiled workflow plan and return its full runtime result.
@@ -101,6 +105,8 @@ def execute_workflow(
     may only use the executor ``run`` action.
     """
     lock = load_lock(resolve_lock_path(instance))
+    if persist_query_receipts is None:
+        persist_query_receipts = persist_receipt
     plan = compile_workflow(
         config,
         lock,
@@ -159,7 +165,7 @@ def execute_workflow(
                     alias_step_ids,
                     query_receipt_ids,
                     receipt_builder,
-                    persist_receipt=persist_receipt,
+                    persist_receipt=persist_query_receipts,
                 )
                 continue
 

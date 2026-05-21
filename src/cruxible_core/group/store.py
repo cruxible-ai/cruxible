@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
     suggested_priority TEXT,
     source_workflow_name TEXT,
     source_workflow_receipt_id TEXT,
+    source_query_receipt_ids TEXT NOT NULL DEFAULT '[]',
     source_trace_ids TEXT NOT NULL DEFAULT '[]',
     source_step_ids TEXT NOT NULL DEFAULT '[]',
     resolution_id TEXT REFERENCES group_resolutions(resolution_id),
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS candidate_members (
     to_id TEXT NOT NULL,
     relationship_type TEXT NOT NULL,
     signals TEXT NOT NULL DEFAULT '[]',
+    source_query_evidence TEXT NOT NULL DEFAULT '[]',
     properties TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (group_id, from_type, from_id, to_type, to_id, relationship_type)
 );
@@ -113,7 +115,7 @@ class GroupStore(GroupStoreProtocol):
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:
-        columns = {
+        group_columns = {
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
         }
@@ -123,12 +125,23 @@ class GroupStore(GroupStoreProtocol):
             ("pending_version", "INTEGER NOT NULL DEFAULT 1"),
             ("source_workflow_name", "TEXT"),
             ("source_workflow_receipt_id", "TEXT"),
+            ("source_query_receipt_ids", "TEXT NOT NULL DEFAULT '[]'"),
             ("source_trace_ids", "TEXT NOT NULL DEFAULT '[]'"),
             ("source_step_ids", "TEXT NOT NULL DEFAULT '[]'"),
         ]
         for name, ddl in additions:
-            if name not in columns:
+            if name not in group_columns:
                 self._conn.execute(f"ALTER TABLE candidate_groups ADD COLUMN {name} {ddl}")
+
+        member_columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(candidate_members)").fetchall()
+        }
+        if "source_query_evidence" not in member_columns:
+            self._conn.execute(
+                "ALTER TABLE candidate_members ADD COLUMN "
+                "source_query_evidence TEXT NOT NULL DEFAULT '[]'"
+            )
 
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_group_resolutions_signature_action_confirmed "
@@ -253,9 +266,9 @@ class GroupStore(GroupStoreProtocol):
             "(group_id, relationship_type, signature, status, group_kind, thesis_text, "
             "thesis_facts, analysis_state, signal_sources_used, proposed_by, "
             "member_count, pending_version, review_priority, suggested_priority, "
-            "source_workflow_name, source_workflow_receipt_id, source_trace_ids, "
-            "source_step_ids, resolution_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "source_workflow_name, source_workflow_receipt_id, source_query_receipt_ids, "
+            "source_trace_ids, source_step_ids, resolution_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(group_id) DO UPDATE SET "
             "relationship_type = excluded.relationship_type, "
             "signature = excluded.signature, "
@@ -272,6 +285,7 @@ class GroupStore(GroupStoreProtocol):
             "suggested_priority = excluded.suggested_priority, "
             "source_workflow_name = excluded.source_workflow_name, "
             "source_workflow_receipt_id = excluded.source_workflow_receipt_id, "
+            "source_query_receipt_ids = excluded.source_query_receipt_ids, "
             "source_trace_ids = excluded.source_trace_ids, "
             "source_step_ids = excluded.source_step_ids, "
             "resolution_id = excluded.resolution_id, "
@@ -293,6 +307,7 @@ class GroupStore(GroupStoreProtocol):
                 group.suggested_priority,
                 group.source_workflow_name,
                 group.source_workflow_receipt_id,
+                json.dumps(group.source_query_receipt_ids),
                 json.dumps(group.source_trace_ids),
                 json.dumps(group.source_step_ids),
                 group.resolution_id,
@@ -451,6 +466,7 @@ class GroupStore(GroupStoreProtocol):
             suggested_priority=row["suggested_priority"],
             source_workflow_name=row["source_workflow_name"],
             source_workflow_receipt_id=row["source_workflow_receipt_id"],
+            source_query_receipt_ids=json.loads(row["source_query_receipt_ids"]),
             source_trace_ids=json.loads(row["source_trace_ids"]),
             source_step_ids=json.loads(row["source_step_ids"]),
             resolution_id=row["resolution_id"],
@@ -467,11 +483,12 @@ class GroupStore(GroupStoreProtocol):
             signals_json = json.dumps(
                 [s.model_dump(mode="json", exclude_none=True) for s in m.signals]
             )
+            source_query_evidence_json = json.dumps(m.source_query_evidence, sort_keys=True)
             self._conn.execute(
                 "INSERT INTO candidate_members "
                 "(group_id, from_type, from_id, to_type, to_id, relationship_type, "
-                "signals, properties) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "signals, source_query_evidence, properties) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     group_id,
                     m.from_type,
@@ -480,6 +497,7 @@ class GroupStore(GroupStoreProtocol):
                     m.to_id,
                     m.relationship_type,
                     signals_json,
+                    source_query_evidence_json,
                     json.dumps(m.properties),
                 ),
             )
@@ -593,6 +611,7 @@ class GroupStore(GroupStoreProtocol):
             to_id=row["to_id"],
             relationship_type=row["relationship_type"],
             signals=[CandidateSignal(**s) for s in signals_data],
+            source_query_evidence=json.loads(row["source_query_evidence"]),
             properties=json.loads(row["properties"]),
         )
 

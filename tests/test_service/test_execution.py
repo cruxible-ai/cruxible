@@ -9,7 +9,7 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
     service_apply_workflow,
     service_clone_snapshot,
@@ -25,6 +25,215 @@ from cruxible_core.service import (
 )
 from cruxible_core.workflow import get_legacy_lock_path, get_lock_path
 from tests.support import workflow_test_providers
+
+QUERY_EVIDENCE_PROPOSAL_CONFIG_YAML = """\
+version: "1.0"
+name: query_evidence_proposals
+kind: world_model
+
+entity_types:
+  Campaign:
+    properties:
+      campaign_id:
+        type: string
+        primary_key: true
+  Product:
+    properties:
+      sku:
+        type: string
+        primary_key: true
+
+relationships:
+  - name: candidate_product
+    from: Campaign
+    to: Product
+    properties:
+      reason:
+        type: string
+  - name: recommended_for
+    from: Campaign
+    to: Product
+    properties:
+      reason:
+        type: string
+        optional: true
+
+named_queries:
+  candidate_product_relationships:
+    entry_point: Campaign
+    returns: candidate_product
+    result_shape: relationship
+    traversal:
+      - as: candidate
+        relationship: candidate_product
+        direction: outgoing
+  candidate_product_paths:
+    entry_point: Campaign
+    returns: Product
+    result_shape: path
+    traversal:
+      - as: candidate
+        relationship: candidate_product
+        direction: outgoing
+
+contracts:
+  CampaignInput:
+    fields:
+      campaign_id:
+        type: string
+
+workflows:
+  propose_from_relationship_query:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_relationships
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.candidates_query.results
+          from_type: Campaign
+          from_id: $item.from_id
+          to_type: Product
+          to_id: $item.to_id
+          properties:
+            reason: $item.properties.reason
+        as: candidates
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from: []
+          thesis_text: Recommend query-derived products
+          thesis_facts:
+            campaign_id: $input.campaign_id
+            evidence_shape: relationship
+        as: proposal
+    returns: proposal
+  propose_from_path_query:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_paths
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.candidates_query.results
+          from_type: Campaign
+          from_id: $item.path[0].from_id
+          to_type: Product
+          to_id: $item.path[0].to_id
+          properties:
+            reason: $item.path[0].properties.reason
+        as: candidates
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from: []
+          thesis_text: Recommend query-derived products
+          thesis_facts:
+            campaign_id: $input.campaign_id
+            evidence_shape: path
+        as: proposal
+    returns: proposal
+  propose_from_filtered_relationship_query:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_relationships
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: filtered
+        filter_items:
+          items: $steps.candidates_query.results
+          comparisons:
+            - left: $item.to_id
+              op: eq
+              right: SKU-456
+        as: filtered
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.filtered.items
+          from_type: Campaign
+          from_id: $item.from_id
+          to_type: Product
+          to_id: $item.to_id
+          properties:
+            reason: $item.properties.reason
+        as: candidates
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from: []
+          thesis_text: Recommend filtered query-derived products
+          thesis_facts:
+            campaign_id: $input.campaign_id
+            evidence_shape: filtered_relationship
+        as: proposal
+    returns: proposal
+  propose_with_query_signals:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_relationships
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.candidates_query.results
+          from_type: Campaign
+          from_id: $item.from_id
+          to_type: Product
+          to_id: $item.to_id
+          properties:
+            reason: $item.properties.reason
+        as: candidates
+      - id: signal_query
+        query: candidate_product_paths
+        params:
+          campaign_id: $input.campaign_id
+        as: signal_query
+      - id: query_signals
+        map_signals:
+          signal_source: query_signal
+          items: $steps.signal_query.results
+          from_id: $item.path[0].from_id
+          to_id: $item.path[0].to_id
+          evidence: $item.path[0].properties.reason
+          enum:
+            path: path[0].properties.reason
+            map:
+              query evidence: support
+        as: query_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from:
+            - query_signals
+          thesis_text: Recommend query-derived products with query signal
+          thesis_facts:
+            campaign_id: $input.campaign_id
+            evidence_shape: query_signal
+        as: proposal
+    returns: proposal
+"""
 
 
 @pytest.fixture
@@ -73,6 +282,41 @@ def proposal_workflow_instance(
                 properties={"sku": sku, "category": "beverages"},
             )
         )
+    instance.save_graph(graph)
+    return instance
+
+
+@pytest.fixture
+def query_evidence_proposal_instance(tmp_path: Path) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(QUERY_EVIDENCE_PROPOSAL_CONFIG_YAML)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Campaign",
+            entity_id="CMP-1",
+            properties={"campaign_id": "CMP-1"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Product",
+            entity_id="SKU-123",
+            properties={"sku": "SKU-123"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="candidate_product",
+            from_type="Campaign",
+            from_id="CMP-1",
+            to_type="Product",
+            to_id="SKU-123",
+            properties={"reason": "query evidence"},
+        )
+    )
     instance.save_graph(graph)
     return instance
 
@@ -344,6 +588,292 @@ class TestWorkflowExecutionServices:
             "value": "match",
             "matched": "match",
         }
+
+    @pytest.mark.parametrize(
+        ("workflow_name", "row_shape"),
+        [
+            ("propose_from_relationship_query", "relationship"),
+            ("propose_from_path_query", "path"),
+        ],
+    )
+    def test_service_propose_workflow_preserves_query_evidence_on_members(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+        workflow_name: str,
+        row_shape: str,
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            workflow_name,
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is not None
+        assert result.query_receipt_ids
+        assert result.output["query_receipt_ids"] == result.query_receipt_ids
+
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            group = group_store.get_group(result.group_id)
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.source_query_receipt_ids == result.query_receipt_ids
+        assert len(members) == 1
+
+        evidence = members[0].source_query_evidence
+        assert len(evidence) == 1
+        assert evidence[0]["query_receipt_id"] == result.query_receipt_ids[0]
+        assert evidence[0]["row_index"] == 0
+        assert evidence[0]["row_shape"] == row_shape
+        if row_shape == "relationship":
+            assert evidence[0]["relationship"]["relationship_type"] == "candidate_product"
+            assert evidence[0]["relationship"]["from_id"] == "CMP-1"
+            assert evidence[0]["relationship"]["to_id"] == "SKU-123"
+            assert evidence[0]["relationship"]["properties"] == {
+                "reason": "query evidence"
+            }
+        else:
+            assert evidence[0]["path"][0]["alias"] == "candidate"
+            assert evidence[0]["path"][0]["relationship_type"] == "candidate_product"
+            assert evidence[0]["path"][0]["from_id"] == "CMP-1"
+            assert evidence[0]["path"][0]["to_id"] == "SKU-123"
+
+    def test_service_propose_workflow_uses_original_query_row_index_after_filter(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        graph = query_evidence_proposal_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="SKU-456",
+                properties={"sku": "SKU-456"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="candidate_product",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={"reason": "second query evidence"},
+            )
+        )
+        query_evidence_proposal_instance.save_graph(graph)
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_filtered_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is not None
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert len(members) == 1
+        assert members[0].to_id == "SKU-456"
+        evidence = members[0].source_query_evidence
+        assert evidence[0]["query_receipt_id"] == result.query_receipt_ids[0]
+        assert evidence[0]["row_index"] == 1
+        assert evidence[0]["relationship"]["to_id"] == "SKU-456"
+        receipt_store = query_evidence_proposal_instance.get_receipt_store()
+        try:
+            query_receipt = receipt_store.get_receipt(evidence[0]["query_receipt_id"])
+        finally:
+            receipt_store.close()
+        assert query_receipt is not None
+        receipt_row = query_receipt.results[evidence[0]["row_index"]]
+        assert receipt_row["to_id"] == "SKU-456"
+
+    def test_service_propose_workflow_preserves_query_evidence_from_signal_rows(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_with_query_signals",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is not None
+        assert len(result.query_receipt_ids) == 2
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            group = group_store.get_group(result.group_id)
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.source_query_receipt_ids == result.query_receipt_ids
+        assert len(members) == 1
+        assert members[0].signals[0].signal_source == "query_signal"
+        evidence_by_step = {
+            evidence["source_step"]: evidence
+            for evidence in members[0].source_query_evidence
+        }
+        assert set(evidence_by_step) == {"candidates_query", "signal_query"}
+        signal_evidence = evidence_by_step["signal_query"]
+        assert signal_evidence["query_receipt_id"] in result.query_receipt_ids
+        assert signal_evidence["row_shape"] == "path"
+        assert signal_evidence["path"][0]["alias"] == "candidate"
+        assert signal_evidence["path"][0]["relationship_type"] == "candidate_product"
+        receipt_store = query_evidence_proposal_instance.get_receipt_store()
+        try:
+            for evidence in members[0].source_query_evidence:
+                assert receipt_store.get_receipt(evidence["query_receipt_id"]) is not None
+        finally:
+            receipt_store.close()
+
+    def test_retain_missing_preserves_query_receipts_for_retained_members(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        config = query_evidence_proposal_instance.load_config()
+        for step in config.workflows["propose_from_relationship_query"].steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.pending_refresh_mode = "retain_missing"
+        query_evidence_proposal_instance.save_config(config)
+        service_lock(query_evidence_proposal_instance)
+
+        first = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        graph = query_evidence_proposal_instance.load_graph()
+        assert graph.remove_relationship(
+            "Campaign",
+            "CMP-1",
+            "Product",
+            "SKU-123",
+            "candidate_product",
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="SKU-456",
+                properties={"sku": "SKU-456"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="candidate_product",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={"reason": "second query evidence"},
+            )
+        )
+        query_evidence_proposal_instance.save_graph(graph)
+
+        second = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert second.group_id == first.group_id
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            group = group_store.get_group(second.group_id)
+            members = group_store.get_members(second.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        expected_receipt_ids = [*first.query_receipt_ids, *second.query_receipt_ids]
+        assert group.source_query_receipt_ids == expected_receipt_ids
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("CMP-1", "SKU-123"),
+            ("CMP-1", "SKU-456"),
+        }
+        member_receipts = {
+            member.to_id: member.source_query_evidence[0]["query_receipt_id"]
+            for member in members
+        }
+        assert member_receipts == {
+            "SKU-123": first.query_receipt_ids[0],
+            "SKU-456": second.query_receipt_ids[0],
+        }
+
+    def test_replace_rewrite_drops_stale_query_receipts_for_removed_members(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        first = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        graph = query_evidence_proposal_instance.load_graph()
+        assert graph.remove_relationship(
+            "Campaign",
+            "CMP-1",
+            "Product",
+            "SKU-123",
+            "candidate_product",
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="SKU-456",
+                properties={"sku": "SKU-456"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="candidate_product",
+                from_type="Campaign",
+                from_id="CMP-1",
+                to_type="Product",
+                to_id="SKU-456",
+                properties={"reason": "second query evidence"},
+            )
+        )
+        query_evidence_proposal_instance.save_graph(graph)
+
+        second = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert second.group_id == first.group_id
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            group = group_store.get_group(second.group_id)
+            members = group_store.get_members(second.group_id)
+        finally:
+            group_store.close()
+
+        assert group is not None
+        assert group.source_query_receipt_ids == second.query_receipt_ids
+        assert first.query_receipt_ids[0] not in group.source_query_receipt_ids
+        assert {(member.from_id, member.to_id) for member in members} == {
+            ("CMP-1", "SKU-456"),
+        }
+        evidence = members[0].source_query_evidence
+        assert evidence[0]["query_receipt_id"] == second.query_receipt_ids[0]
+        assert evidence[0]["relationship"]["to_id"] == "SKU-456"
 
     def test_service_propose_workflow_honors_retain_missing_pending_refresh_mode(
         self,

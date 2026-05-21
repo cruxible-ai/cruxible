@@ -73,6 +73,39 @@ def attach_source_metadata(
     return output
 
 
+def attach_query_result_index(row: dict[str, Any], index: int) -> dict[str, Any]:
+    """Attach the original query receipt result index to a workflow row."""
+    return WorkflowIndexedRow(row, query_result_index=index)
+
+
+def carry_query_result_index(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    """Preserve query result lineage through transforms that reshape one row."""
+    index = query_result_index(source)
+    if index is None:
+        return target
+    return WorkflowIndexedRow(target, query_result_index=index)
+
+
+def query_result_index(row: Any) -> int | None:
+    """Return a row's original query receipt index when it is known."""
+    if isinstance(row, WorkflowIndexedRow):
+        return row.query_result_index
+    return None
+
+
+class WorkflowIndexedRow(dict):
+    """Workflow row carrying internal lineage outside the public keyspace."""
+
+    def __init__(
+        self,
+        row: dict[str, Any],
+        *,
+        query_result_index: int,
+    ) -> None:
+        super().__init__(row)
+        self.query_result_index = query_result_index
+
+
 def extract_read_metadata(step_output: Any) -> dict[str, Any]:
     """Extract direct or propagated read metadata from a workflow step output."""
     if not isinstance(step_output, dict):

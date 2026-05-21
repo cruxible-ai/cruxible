@@ -29,6 +29,8 @@ from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
 from cruxible_core.workflow import build_lock, compile_workflow, execute_workflow
 
+USER_INDEX_FIELD = "_query_result_index"
+
 
 def _review_metadata(status: str) -> RelationshipMetadata:
     return RelationshipMetadata(
@@ -213,6 +215,9 @@ class TestWorkflowExecutor:
         assert row["entities"][1]["entity_id"] == "SKU-123"
         assert row["path"][0]["alias"] == "recommendation"
         assert row["path"][0]["metadata"]["assertion"]["lifecycle"]["status"] == "active"
+        assert USER_INDEX_FIELD not in json.dumps(result.output)
+        assert USER_INDEX_FIELD not in json.dumps(result.step_outputs)
+        assert USER_INDEX_FIELD not in json.dumps(result.receipt.results)
 
     def test_query_step_passes_relationship_rows_through(
         self,
@@ -476,6 +481,9 @@ class TestWorkflowExecutor:
         assert source_row["values"] == {"sku": "SKU-123"}
         assert source_row["source"]["result"]["entity_id"] == "SKU-123"
         assert source_row["source"]["path"][0]["relationship_type"] == "recommended_for"
+        assert USER_INDEX_FIELD not in json.dumps(result.output)
+        assert USER_INDEX_FIELD not in json.dumps(result.step_outputs)
+        assert USER_INDEX_FIELD not in json.dumps(result.receipt.results)
 
     def test_query_step_includes_query_limit_metadata(
         self,
@@ -579,7 +587,10 @@ class TestWorkflowExecutor:
                     id="shaped",
                     shape_items={
                         "items": "$steps.paths.results",
-                        "fields": {"sku": "$item.result.entity_id"},
+                        "fields": {
+                            "sku": "$item.result.entity_id",
+                            USER_INDEX_FIELD: "user-visible-value",
+                        },
                     },
                     **{"as": "shaped"},
                 ),
@@ -609,7 +620,11 @@ class TestWorkflowExecutor:
             {"campaign_id": "CMP-1"},
         )
 
-        assert result.output["items"] == [{"sku": "SKU-123"}]
+        assert result.output["items"] == [
+            {"sku": "SKU-123", USER_INDEX_FIELD: "user-visible-value"}
+        ]
+        assert result.step_outputs["shaped"]["items"] == result.output["items"]
+        assert result.receipt.results[0]["output"]["items"] == result.output["items"]
         metadata = result.output["source_metadata"]
         assert metadata["source_step"] == "paths"
         assert metadata["source_ref"] == "$steps.paths.results"

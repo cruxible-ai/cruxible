@@ -758,6 +758,7 @@ class GroupMemberInput:
     relationship_type: str
     signals: list[GroupSignalInput] = field(default_factory=list)
     properties: dict[str, Any] = field(default_factory=dict)
+    source_query_evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

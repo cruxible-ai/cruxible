@@ -20,6 +20,7 @@ from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
     MAX_DUPLICATE_EXAMPLES,
     attach_source_metadata,
+    carry_query_result_index,
     merge_read_metadata,
     resolve_step_items,
     source_read_metadata,
@@ -107,6 +108,7 @@ def shape_items(
                 f"Workflow step '{step_id}' shape_items missing required field(s): "
                 f"{', '.join(missing)}"
             )
+        shaped = carry_query_result_index(source_row, shaped)
         output_items.append(shaped)
 
     return attach_source_metadata(
