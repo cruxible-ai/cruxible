@@ -350,6 +350,7 @@ Validation rules:
 - `include.required: true` filters out a primary row when that include has no matches. `required: false` retains the row with `exists: false`, `count: 0`, and empty `items`.
 - `include.many: false` expects at most one match and fails execution if multiple matches are found. Use `many: true` for repeated side context.
 - Include `limit` is per include per primary row. It sets that include's `truncated` flag and is separate from query `limit`, `max_paths`, and `max_paths_per_result`.
+- Include `order_by` refs may use `$edge`, `$source`, `$target`, or `$input`.
 
 Projection refs:
 - All shapes: `$input.<name>`, `$entry.entity_type`, `$entry.entity_id`, `$entry.properties.<name>`, `$entry.metadata.<path>`, `$result.entity_type`, `$result.entity_id`, `$result.properties.<name>`, `$result.metadata.<path>`.

@@ -356,10 +356,10 @@ class QueryIncludeSpec(BaseModel):
         _validate_top_level_query_predicate_scopes(self.where, field_name="include where")
         for order in self.order_by:
             scope, _path = _split_query_ref(order.by)
-            if scope not in {"edge", "source", "target"}:
+            if scope not in {"edge", "source", "target", "input"}:
                 msg = (
                     f"include order_by reference '{order.by}' must use "
-                    "$edge, $source, or $target"
+                    "$edge, $source, $target, or $input"
                 )
                 raise ValueError(msg)
         return self

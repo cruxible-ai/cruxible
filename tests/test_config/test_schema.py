@@ -732,6 +732,23 @@ class TestNamedQuerySchema:
                 },
             )
 
+    def test_include_order_accepts_input_refs(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits", alias="fit")],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "side": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "order_by": [{"by": "$input.priority_order"}],
+                }
+            },
+        )
+
+        assert query.include["side"].order_by[0].by == "$input.priority_order"
+
     def test_projection_rejects_singular_ref_for_many_include(self):
         with pytest.raises(ValidationError, match="targets many include"):
             NamedQuerySchema(
