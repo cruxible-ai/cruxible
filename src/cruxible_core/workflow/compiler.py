@@ -447,6 +447,39 @@ def compile_workflow(
             )
             continue
 
+        if step.assert_not_truncated is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="assert_not_truncated",
+                    workflow_type=workflow_type,
+                    assert_not_truncated_spec=step.assert_not_truncated,
+                )
+            )
+            continue
+
+        if step.assert_count is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="assert_count",
+                    workflow_type=workflow_type,
+                    assert_count_spec=step.assert_count,
+                )
+            )
+            continue
+
+        if step.assert_exists is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="assert_exists",
+                    workflow_type=workflow_type,
+                    assert_exists_spec=step.assert_exists,
+                )
+            )
+            continue
+
         assert step.assert_spec is not None
         compiled_steps.append(
             CompiledPlanStep(

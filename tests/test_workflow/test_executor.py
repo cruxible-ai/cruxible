@@ -1011,6 +1011,555 @@ class TestWorkflowExecutor:
         assert result.output["truncated"] is False
         assert result.read_metadata["any_read_truncated"] is False
 
+    def test_assert_not_truncated_passes_for_complete_read_output(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_complete_products"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                        "limit": 10,
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_products",
+                    assert_not_truncated={"step": "products"},
+                ),
+            ],
+            returns="products",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "guard_complete_products",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.output["truncated"] is False
+        guard_step = next(
+            node
+            for node in result.receipt.nodes
+            if (
+                node.node_type == "plan_step"
+                and node.detail.get("step_id") == "require_complete_products"
+            )
+        )
+        assert guard_step.detail["guard"] == "assert_not_truncated"
+        assert guard_step.detail["step"] == "products"
+        assert guard_step.detail["flags"] == {
+            "truncated": False,
+            "limit_truncated": False,
+            "path_truncated": False,
+        }
+
+    def test_assert_not_truncated_fails_for_truncated_query_output(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            limit=1,
+        )
+        config.workflows["guard_complete_query"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_paths",
+                    assert_not_truncated={"step": "paths"},
+                ),
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="assert_not_truncated step 'require_complete_paths' failed for 'paths'",
+        ):
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "guard_complete_query",
+                {"campaign_id": "CMP-1"},
+            )
+
+        store = proposal_workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        guard_step = next(
+            node
+            for node in receipt.nodes
+            if (
+                node.node_type == "plan_step"
+                and node.detail.get("step_id") == "require_complete_paths"
+            )
+        )
+        assert guard_step.detail["flags"]["truncated"] is True
+        assert guard_step.detail["flags"]["limit_truncated"] is True
+        assert guard_step.detail["truncation_reasons"] == ["limit"]
+        assert receipt.nodes[0].detail["read_metadata"]["any_query_truncated"] is True
+
+    def test_assert_not_truncated_fails_without_read_metadata(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_provider_metadata"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="context",
+                    query="get_promo_context",
+                    params={"sku": "$input.sku"},
+                    **{"as": "context"},
+                ),
+                WorkflowStepSchema(
+                    id="lift",
+                    provider="lift_predictor",
+                    input={
+                        "sku": "$steps.context.results[0].entity_id",
+                        "category": "$steps.context.results[0].properties.category",
+                        "start_date": "$input.start_date",
+                        "end_date": "$input.end_date",
+                    },
+                    **{"as": "lift"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_lift",
+                    assert_not_truncated={"step": "lift"},
+                ),
+            ],
+            returns="lift",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="no read metadata found"):
+            execute_workflow(
+                workflow_instance,
+                workflow_instance.load_config(),
+                "guard_provider_metadata",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
+        store = workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        guard_step = next(
+            node
+            for node in receipt.nodes
+            if (
+                node.node_type == "plan_step"
+                and node.detail.get("step_id") == "require_complete_lift"
+            )
+        )
+        assert guard_step.detail["guard"] == "assert_not_truncated"
+        assert guard_step.detail["metadata_found"] is False
+
+    def test_assert_not_truncated_detects_transform_source_truncation(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            limit=1,
+        )
+        config.workflows["guard_shaped_query"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                ),
+                WorkflowStepSchema(
+                    id="shaped",
+                    shape_items={
+                        "items": "$steps.paths.results",
+                        "fields": {"sku": "$item.result.entity_id"},
+                    },
+                    **{"as": "shaped"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_shaped",
+                    assert_not_truncated={"step": "shaped"},
+                ),
+            ],
+            returns="shaped",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="assert_not_truncated step 'require_complete_shaped' failed for 'shaped'",
+        ):
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "guard_shaped_query",
+                {"campaign_id": "CMP-1"},
+            )
+
+    def test_assert_count_supports_read_and_collection_selectors(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_counts"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="context",
+                    query="get_promo_context",
+                    params={"sku": "$input.sku"},
+                    **{"as": "context"},
+                ),
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="require_returned_context",
+                    assert_count={
+                        "step": "context",
+                        "count": "returned_results",
+                        "op": "gt",
+                        "value": 0,
+                    },
+                ),
+                WorkflowStepSchema(
+                    id="require_total_context",
+                    assert_count={
+                        "step": "context",
+                        "count": "total_results",
+                        "op": "eq",
+                        "value": 1,
+                    },
+                ),
+                WorkflowStepSchema(
+                    id="require_context_results",
+                    assert_count={
+                        "step": "context",
+                        "count": "results",
+                        "op": "eq",
+                        "value": 1,
+                    },
+                ),
+                WorkflowStepSchema(
+                    id="require_product_items",
+                    assert_count={
+                        "step": "products",
+                        "count": "items",
+                        "op": "eq",
+                        "value": 1,
+                    },
+                ),
+            ],
+            returns="products",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "guard_counts",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        count_step = next(
+            node
+            for node in result.receipt.nodes
+            if (
+                node.node_type == "plan_step"
+                and node.detail.get("step_id") == "require_context_results"
+            )
+        )
+        assert count_step.detail["guard"] == "assert_count"
+        assert count_step.detail["actual"] == 1
+        assert count_step.detail["expected"] == 1
+
+    def test_assert_count_failure_uses_clear_message(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_count_failure"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="require_many_products",
+                    assert_count={
+                        "step": "products",
+                        "count": "items",
+                        "op": "gte",
+                        "value": 2,
+                        "message": "expected at least two products",
+                    },
+                ),
+            ],
+            returns="products",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="expected at least two products"):
+            execute_workflow(
+                workflow_instance,
+                workflow_instance.load_config(),
+                "guard_count_failure",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
+    def test_assert_exists_accepts_present_falsey_values(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_exists_falsey"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="shaped",
+                    shape_items={
+                        "items": "$steps.products.items",
+                        "fields": {
+                            "false_value": False,
+                            "zero_value": 0,
+                            "empty_list": [],
+                            "empty_object": {},
+                        },
+                    },
+                    **{"as": "shaped"},
+                ),
+                WorkflowStepSchema(
+                    id="require_false",
+                    assert_exists={"ref": "$steps.shaped.items[0].false_value"},
+                ),
+                WorkflowStepSchema(
+                    id="require_zero",
+                    assert_exists={"ref": "$steps.shaped.items[0].zero_value"},
+                ),
+                WorkflowStepSchema(
+                    id="require_empty_list",
+                    assert_exists={"ref": "$steps.shaped.items[0].empty_list"},
+                ),
+                WorkflowStepSchema(
+                    id="require_empty_object",
+                    assert_exists={"ref": "$steps.shaped.items[0].empty_object"},
+                ),
+            ],
+            returns="shaped",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "guard_exists_falsey",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.output["items"][0] == {
+            "false_value": False,
+            "zero_value": 0,
+            "empty_list": [],
+            "empty_object": {},
+        }
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "$steps.shaped.items[0].missing",
+            "$steps.shaped.items[4].entity_id",
+            "$steps.shaped.items[0].null_value",
+            "$steps.shaped.items[0].empty_string",
+        ],
+    )
+    def test_assert_exists_fails_with_configured_message(
+        self,
+        workflow_instance: CruxibleInstance,
+        ref: str,
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_exists_missing"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="shaped",
+                    shape_items={
+                        "items": "$steps.products.items",
+                        "fields": {
+                            "entity_id": "$item.entity_id",
+                            "null_value": None,
+                            "empty_string": "",
+                        },
+                    },
+                    **{"as": "shaped"},
+                ),
+                WorkflowStepSchema(
+                    id="require_context_value",
+                    assert_exists={
+                        "ref": ref,
+                        "message": "required context value missing",
+                    },
+                ),
+            ],
+            returns="shaped",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="required context value missing"):
+            execute_workflow(
+                workflow_instance,
+                workflow_instance.load_config(),
+                "guard_exists_missing",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
+        store = workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        guard_step = next(
+            node
+            for node in receipt.nodes
+            if (
+                node.node_type == "plan_step"
+                and node.detail.get("step_id") == "require_context_value"
+            )
+        )
+        assert guard_step.detail["guard"] == "assert_exists"
+        assert guard_step.detail["present"] is False
+        assert guard_step.detail["message"] == "required context value missing"
+
     def test_execute_workflow_list_entities_matches_service_list(
         self, workflow_instance: CruxibleInstance
     ) -> None:

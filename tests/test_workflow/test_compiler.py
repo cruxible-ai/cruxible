@@ -105,6 +105,59 @@ class TestWorkflowCompiler:
         assert plan.steps[0].relationship_state_template == "accepted"
         assert plan.steps[0].include_source is True
 
+    def test_compile_workflow_carries_guard_steps(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="complete_context",
+                assert_not_truncated={"step": "context"},
+            ),
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            2,
+            WorkflowStepSchema(
+                id="has_context",
+                assert_count={
+                    "step": "context",
+                    "count": "returned_results",
+                    "op": "gt",
+                    "value": 0,
+                },
+            ),
+        )
+        config.workflows["evaluate_promo"].steps.insert(
+            3,
+            WorkflowStepSchema(
+                id="has_sku",
+                assert_exists={"ref": "$steps.context.results[0].entity_id"},
+            ),
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        plan = compile_workflow(
+            workflow_instance.load_config(),
+            build_lock(workflow_instance.load_config()),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert [step.kind for step in plan.steps[1:4]] == [
+            "assert_not_truncated",
+            "assert_count",
+            "assert_exists",
+        ]
+        assert plan.steps[1].assert_not_truncated_spec is not None
+        assert plan.steps[2].assert_count_spec is not None
+        assert plan.steps[3].assert_exists_spec is not None
+
     def test_compile_workflow_includes_list_entities_step(
         self, workflow_instance: CruxibleInstance
     ) -> None:

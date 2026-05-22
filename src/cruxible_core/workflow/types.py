@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field, model_validator
 from cruxible_core.config.schema import (
     ApplyEntitiesSpec,
     ApplyRelationshipsSpec,
+    AssertCountSpec,
+    AssertExistsSpec,
+    AssertNotTruncatedSpec,
     AssertSpec,
     DedupeItemsSpec,
     FilterItemsSpec,
@@ -104,6 +107,9 @@ class CompiledPlanStep(BaseModel):
     input_template: dict[str, Any] = Field(default_factory=dict)
     input_preview: dict[str, Any] = Field(default_factory=dict)
     assert_spec: AssertSpec | None = None
+    assert_not_truncated_spec: AssertNotTruncatedSpec | None = None
+    assert_count_spec: AssertCountSpec | None = None
+    assert_exists_spec: AssertExistsSpec | None = None
     list_entities_spec: ListEntitiesSpec | None = None
     list_relationships_spec: ListRelationshipsSpec | None = None
     shape_items_spec: ShapeItemsSpec | None = None

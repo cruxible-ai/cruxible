@@ -27,6 +27,9 @@ from cruxible_core.workflow.apply import (
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.io import (
+    execute_assert_count_step,
+    execute_assert_exists_step,
+    execute_assert_not_truncated_step,
     execute_assert_step,
     execute_provider_step,
     execute_query_step,
@@ -538,8 +541,31 @@ def execute_workflow(
                 receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
                 continue
 
-            assert compiled_step.assert_spec is not None
-            execute_assert_step(
+            if compiled_step.kind == "assert":
+                execute_assert_step(
+                    compiled_step,
+                    plan.input_payload,
+                    step_outputs,
+                    receipt_builder,
+                )
+                continue
+            if compiled_step.kind == "assert_not_truncated":
+                execute_assert_not_truncated_step(
+                    compiled_step,
+                    step_outputs,
+                    receipt_builder,
+                )
+                continue
+            if compiled_step.kind == "assert_count":
+                execute_assert_count_step(
+                    compiled_step,
+                    plan.input_payload,
+                    step_outputs,
+                    receipt_builder,
+                )
+                continue
+            assert compiled_step.kind == "assert_exists"
+            execute_assert_exists_step(
                 compiled_step,
                 plan.input_payload,
                 step_outputs,

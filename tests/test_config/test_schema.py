@@ -9,6 +9,9 @@ from cruxible_core.config.loader import load_config_from_string, save_config
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
+    AssertCountSpec,
+    AssertExistsSpec,
+    AssertNotTruncatedSpec,
     AssertSpec,
     BoundsQualityCheck,
     CardinalityQualityCheck,
@@ -1403,6 +1406,82 @@ class TestWorkflowSchema:
         )
         assert step.assert_spec is not None
         assert step.assert_spec.op == "gte"
+
+    def test_guard_step_shapes(self):
+        not_truncated = WorkflowStepSchema(
+            id="complete",
+            assert_not_truncated=AssertNotTruncatedSpec(step="rows"),
+        )
+        count = WorkflowStepSchema(
+            id="count",
+            assert_count=AssertCountSpec(
+                step="rows",
+                count="returned_results",
+                op="gt",
+                value=0,
+            ),
+        )
+        exists = WorkflowStepSchema(
+            id="exists",
+            assert_exists=AssertExistsSpec(ref="$steps.rows.items[0].entity_id"),
+        )
+
+        assert not_truncated.assert_not_truncated is not None
+        assert count.assert_count is not None
+        assert exists.assert_exists is not None
+
+    def test_assert_count_rejects_unknown_count_selector(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            WorkflowStepSchema(
+                id="count",
+                assert_count={
+                    "step": "rows",
+                    "count": "unknown_count",
+                    "op": "gt",
+                    "value": 0,
+                },
+            )
+
+    def test_assert_exists_rejects_literal_ref(self):
+        for ref in ("owner.email", "$steps", "$input.", "$steps."):
+            with pytest.raises(ValidationError):
+                WorkflowStepSchema(
+                    id="exists",
+                    assert_exists={"ref": ref},
+                )
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("as", "guard", "Assert workflow steps may not define 'as'"),
+            ("params", {"x": 1}, "Assert workflow steps may not define 'params'"),
+            ("input", {"x": 1}, "Assert workflow steps may not define 'input'"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "guard",
+        [
+            {"assert_not_truncated": {"step": "rows"}},
+            {
+                "assert_count": {
+                    "step": "rows",
+                    "count": "returned_results",
+                    "op": "gt",
+                    "value": 0,
+                }
+            },
+            {"assert_exists": {"ref": "$steps.rows.items[0].entity_id"}},
+        ],
+    )
+    def test_guard_steps_reject_output_and_io_fields(
+        self,
+        guard: dict[str, object],
+        field: str,
+        value: object,
+        message: str,
+    ):
+        with pytest.raises(ValidationError, match=message):
+            WorkflowStepSchema(id="guard", **guard, **{field: value})
 
     def test_workflow_requires_contract_in(self):
         workflow = WorkflowSchema(

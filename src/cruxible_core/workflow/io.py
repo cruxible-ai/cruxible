@@ -33,7 +33,7 @@ from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.step_helpers import attach_query_result_index
+from cruxible_core.workflow.step_helpers import attach_query_result_index, extract_read_metadata
 from cruxible_core.workflow.tracing import (
     build_trace,
     persist_trace,
@@ -482,3 +482,211 @@ def execute_assert_step(
     )
     if not passed:
         raise QueryExecutionError(compiled_step.assert_spec.message)
+
+
+def execute_assert_not_truncated_step(
+    compiled_step: CompiledPlanStep,
+    step_outputs: dict[str, Any],
+    receipt_builder: ReceiptBuilder,
+) -> None:
+    """Guard that a prior read-derived workflow output is not truncated."""
+    assert compiled_step.assert_not_truncated_spec is not None
+    source_step = compiled_step.assert_not_truncated_spec.step
+    source_output = _get_guard_source_output(compiled_step.step_id, source_step, step_outputs)
+    metadata = extract_read_metadata(source_output)
+    if not metadata:
+        detail = {
+            "guard": "assert_not_truncated",
+            "step": source_step,
+            "metadata_found": False,
+        }
+        step_node = receipt_builder.record_plan_step(
+            compiled_step.step_id,
+            "assert_not_truncated",
+            detail=detail,
+        )
+        receipt_builder.record_validation(
+            passed=False,
+            detail=detail,
+            parent_id=step_node,
+        )
+        raise QueryExecutionError(
+            f"assert_not_truncated step '{compiled_step.step_id}' failed for "
+            f"'{source_step}': no read metadata found"
+        )
+    flags = {
+        "truncated": bool(metadata.get("truncated")),
+        "limit_truncated": bool(metadata.get("limit_truncated")),
+        "path_truncated": bool(metadata.get("path_truncated")),
+    }
+    reasons = [
+        reason
+        for reason in metadata.get("truncation_reasons", [])
+        if isinstance(reason, str)
+    ]
+    active_flags = [name for name, active in flags.items() if active]
+    passed = not active_flags
+    detail = {
+        "guard": "assert_not_truncated",
+        "step": source_step,
+        "metadata_found": True,
+        "flags": flags,
+        "truncation_reasons": reasons,
+    }
+    step_node = receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "assert_not_truncated",
+        detail=detail,
+    )
+    receipt_builder.record_validation(
+        passed=passed,
+        detail=detail,
+        parent_id=step_node,
+    )
+    if not passed:
+        flags_text = ", ".join(f"{flag}=true" for flag in active_flags)
+        reasons_text = f"; reasons: {', '.join(reasons)}" if reasons else ""
+        raise QueryExecutionError(
+            f"assert_not_truncated step '{compiled_step.step_id}' failed for "
+            f"'{source_step}': {flags_text}{reasons_text}"
+        )
+
+
+def execute_assert_count_step(
+    compiled_step: CompiledPlanStep,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    receipt_builder: ReceiptBuilder,
+) -> None:
+    """Guard a count from a prior workflow output."""
+    assert compiled_step.assert_count_spec is not None
+    spec = compiled_step.assert_count_spec
+    source_output = _get_guard_source_output(compiled_step.step_id, spec.step, step_outputs)
+    actual = _resolve_guard_count(compiled_step.step_id, spec.step, source_output, spec.count)
+    expected = resolve_value(spec.value, input_payload, step_outputs)
+    if not isinstance(expected, int) or isinstance(expected, bool):
+        raise QueryExecutionError(
+            f"assert_count step '{compiled_step.step_id}' value must resolve to an integer"
+        )
+    passed = _evaluate_assert(actual, spec.op, expected)
+    message = spec.message or (
+        f"assert_count step '{compiled_step.step_id}' failed: "
+        f"{spec.step}.{spec.count} {spec.op} {expected}"
+    )
+    detail = {
+        "guard": "assert_count",
+        "step": spec.step,
+        "count": spec.count,
+        "actual": actual,
+        "op": spec.op,
+        "expected": expected,
+        "message": message,
+    }
+    step_node = receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "assert_count",
+        detail=detail,
+    )
+    receipt_builder.record_validation(
+        passed=passed,
+        detail=detail,
+        parent_id=step_node,
+    )
+    if not passed:
+        raise QueryExecutionError(message)
+
+
+def execute_assert_exists_step(
+    compiled_step: CompiledPlanStep,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    receipt_builder: ReceiptBuilder,
+) -> None:
+    """Guard that one workflow reference resolves to a present value."""
+    assert compiled_step.assert_exists_spec is not None
+    spec = compiled_step.assert_exists_spec
+    resolved = None
+    resolution_error: str | None = None
+    try:
+        resolved = resolve_value(spec.ref, input_payload, step_outputs)
+    except QueryExecutionError as exc:
+        resolution_error = str(exc)
+    present = resolution_error is None and _value_is_present(resolved)
+    message = spec.message or (
+        f"assert_exists step '{compiled_step.step_id}' failed: "
+        f"reference '{spec.ref}' is required"
+    )
+    detail: dict[str, Any] = {
+        "guard": "assert_exists",
+        "ref": spec.ref,
+        "present": present,
+        "message": message,
+    }
+    if resolution_error is not None:
+        detail["resolution_error"] = resolution_error
+    step_node = receipt_builder.record_plan_step(
+        compiled_step.step_id,
+        "assert_exists",
+        detail=detail,
+    )
+    receipt_builder.record_validation(
+        passed=present,
+        detail=detail,
+        parent_id=step_node,
+    )
+    if not present:
+        raise QueryExecutionError(message)
+
+
+def _get_guard_source_output(
+    guard_step_id: str,
+    source_step: str,
+    step_outputs: dict[str, Any],
+) -> Any:
+    if source_step not in step_outputs:
+        raise QueryExecutionError(
+            f"Workflow guard step '{guard_step_id}' references unknown step output "
+            f"'{source_step}'"
+        )
+    return step_outputs[source_step]
+
+
+def _resolve_guard_count(
+    guard_step_id: str,
+    source_step: str,
+    source_output: Any,
+    selector: str,
+) -> int:
+    if not isinstance(source_output, dict):
+        raise QueryExecutionError(
+            f"assert_count step '{guard_step_id}' source step '{source_step}' "
+            "did not produce an object"
+        )
+    if selector in {"returned_results", "total_results"}:
+        metadata = extract_read_metadata(source_output)
+        value = metadata.get(selector)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise QueryExecutionError(
+                f"assert_count step '{guard_step_id}' could not read count "
+                f"'{selector}' from '{source_step}'"
+            )
+        return value
+    if selector in {"items", "results"}:
+        collection = source_output.get(selector)
+        if not isinstance(collection, list):
+            raise QueryExecutionError(
+                f"assert_count step '{guard_step_id}' expected '{source_step}.{selector}' "
+                "to be a list"
+            )
+        return len(collection)
+    raise QueryExecutionError(
+        f"assert_count step '{guard_step_id}' has unsupported count selector '{selector}'"
+    )
+
+
+def _value_is_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str) and value == "":
+        return False
+    return True

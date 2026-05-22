@@ -1139,6 +1139,8 @@ FilterComparisonOp = Literal[
     "on_or_after",
 ]
 DeduplicationStrategy = Literal["first", "last", "max", "min"]
+CountSelector = Literal["returned_results", "total_results", "items", "results"]
+CountComparisonOp = Literal["eq", "ne", "lt", "lte", "gt", "gte", "==", "!=", "<", "<=", ">", ">="]
 
 
 class AssertSpec(BaseModel):
@@ -1149,6 +1151,47 @@ class AssertSpec(BaseModel):
     right: Any
     message: str
     value_type: PredicateValueType | None = None
+
+
+class AssertNotTruncatedSpec(BaseModel):
+    """Guard that a prior read-derived step output was not truncated."""
+
+    step: str
+
+    model_config = {"extra": "forbid"}
+
+
+class AssertCountSpec(BaseModel):
+    """Guard that a prior step output count satisfies a comparison."""
+
+    step: str
+    count: CountSelector
+    op: CountComparisonOp
+    value: Any
+    message: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class AssertExistsSpec(BaseModel):
+    """Guard that one workflow reference resolves to a present value."""
+
+    ref: str
+    message: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> AssertExistsSpec:
+        if self.ref != "$input" and not (
+            self.ref.startswith("$input.") or self.ref.startswith("$steps.")
+        ):
+            msg = "assert_exists.ref must be a workflow reference"
+            raise ValueError(msg)
+        if self.ref in {"$input.", "$steps."}:
+            msg = "assert_exists.ref must not have an empty path"
+            raise ValueError(msg)
+        return self
 
 
 class ShapeItemsSpec(BaseModel):
@@ -1396,6 +1439,9 @@ StepKind = Literal[
     "query",
     "provider",
     "assert",
+    "assert_not_truncated",
+    "assert_count",
+    "assert_exists",
     "list_entities",
     "list_relationships",
     "shape_items",
@@ -1410,14 +1456,14 @@ StepKind = Literal[
     "apply_entities",
     "apply_relationships",
 ]
-"""The 16 workflow step kinds, grouped into Read/Compute/Build/Write phases."""
+"""The workflow step kinds, grouped into Read/Compute/Build/Write phases."""
 
 
 class WorkflowStepSchema(BaseModel):
     """Single step in a declarative workflow.
 
-    Exactly one step kind must be set per step. The 16 kinds fall into
-    four logical phases:
+    Exactly one step kind must be set per step. The kinds fall into four
+    logical phases:
 
     Phase 1 — Read (pull data in):
         query               Run a named query against the graph.
@@ -1427,6 +1473,10 @@ class WorkflowStepSchema(BaseModel):
     Phase 2 — Compute (transform data):
         provider            Call an external provider (function/model/tool).
         assert              Guard condition; fails the workflow if false.
+        assert_not_truncated
+                            Guard that read-derived context is complete.
+        assert_count        Guard a read/result collection count.
+        assert_exists       Guard one required intermediate reference.
         shape_items         Project, rename, and cast list-shaped data.
         join_items          Indexed inner join over two item sets.
         filter_items        Filter list-shaped data with shared predicates.
@@ -1458,6 +1508,9 @@ class WorkflowStepSchema(BaseModel):
     query: str | None = None
     provider: str | None = None
     assert_spec: AssertSpec | None = Field(alias="assert", default=None)
+    assert_not_truncated: AssertNotTruncatedSpec | None = None
+    assert_count: AssertCountSpec | None = None
+    assert_exists: AssertExistsSpec | None = None
     list_entities: ListEntitiesSpec | None = None
     list_relationships: ListRelationshipsSpec | None = None
     shape_items: ShapeItemsSpec | None = None
@@ -1485,6 +1538,9 @@ class WorkflowStepSchema(BaseModel):
             "query": self.query,
             "provider": self.provider,
             "assert": self.assert_spec,
+            "assert_not_truncated": self.assert_not_truncated,
+            "assert_count": self.assert_count,
+            "assert_exists": self.assert_exists,
             "list_entities": self.list_entities,
             "list_relationships": self.list_relationships,
             "shape_items": self.shape_items,
@@ -1513,12 +1569,19 @@ class WorkflowStepSchema(BaseModel):
             "query": {"require_as": True, "allow_params": True, "allow_input": False},
             "provider": {"require_as": True, "allow_params": False, "allow_input": True},
             "assert": {"require_as": False, "allow_params": False, "allow_input": False},
+            "assert_not_truncated": {
+                "require_as": False,
+                "allow_params": False,
+                "allow_input": False,
+            },
+            "assert_count": {"require_as": False, "allow_params": False, "allow_input": False},
+            "assert_exists": {"require_as": False, "allow_params": False, "allow_input": False},
         }
         policy = step_policies.get(
             step_kind,
             {"require_as": True, "allow_params": False, "allow_input": False},
         )
-        step_label = "Assert" if step_kind == "assert" else step_kind
+        step_label = "Assert" if step_kind.startswith("assert") else step_kind
 
         if policy["require_as"]:
             if self.as_ is None:

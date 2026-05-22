@@ -1078,6 +1078,9 @@ Each step must define exactly one of these operations:
 | `provider` | Call a registered provider | `provider`, `input`, `as` |
 | `query` | Run a named query | `query`, `params`, `as` |
 | `assert` | Guard condition — fail the workflow if not met | `assert: {left, op, right, message}` |
+| `assert_not_truncated` | Guard that read/query context was not truncated | `assert_not_truncated: {step}` |
+| `assert_count` | Guard a read/result collection count | `assert_count: {step, count, op, value}` |
+| `assert_exists` | Guard that one intermediate reference resolves to a present value | `assert_exists: {ref, message?}` |
 | `list_entities` | Read entity rows from current graph state into a workflow payload | `list_entities: {entity_type, property_filter?, limit?}`, `as` |
 | `list_relationships` | Read relationship rows from current graph state into a workflow payload | `list_relationships: {relationship_type, property_filter?, limit?}`, `as` |
 | `shape_items` | Project, rename, require, and cast list-shaped rows | `shape_items: {items, include_input?, rename?, fields?, casts?, required?}`, `as` |
@@ -1122,8 +1125,8 @@ and `truncation_reasons`. Query steps additionally expose `result_shape`,
 ### Guarding Partial Read Context
 
 Agent-facing workflows should fail explicitly when a limited or path-budgeted
-read would make the output incomplete. Use normal `assert` steps against read
-metadata:
+read would make the output incomplete. Use `assert_not_truncated` and
+`assert_count` for common completeness checks:
 
 ```yaml
 workflows:
@@ -1138,18 +1141,15 @@ workflows:
         as: exposed_assets
 
       - id: require_complete_exposure_context
-        assert:
-          left: $steps.exposed_assets.truncated
-          op: eq
-          right: false
-          message: Exposure context was truncated
+        assert_not_truncated:
+          step: exposed_assets
 
       - id: require_some_exposures
-        assert:
-          left: $steps.exposed_assets.returned_results
+        assert_count:
+          step: exposed_assets
+          count: returned_results
           op: gt
-          right: 0
-          message: No exposures found
+          value: 0
 
     returns: exposed_assets
 ```
@@ -1167,12 +1167,26 @@ read metadata:
   as: shaped_exposures
 
 - id: require_complete_shaped_context
-  assert:
-    left: $steps.shaped_exposures.source_metadata.truncated
-    op: eq
-    right: false
-    message: Shaped exposure context was truncated
+  assert_not_truncated:
+    step: shaped_exposures
 ```
+
+Use `assert_exists` for required intermediate context refs where a missing nested
+path should produce an author-controlled message instead of a low-level
+reference-resolution error:
+
+```yaml
+- id: require_first_asset_id
+  assert_exists:
+    ref: $steps.exposures.results[0].values.asset_id
+    message: first exposure must include an asset id
+```
+
+`assert_count.count` supports `returned_results`, `total_results`, `items`, and
+`results`. `assert_exists` treats `null` and empty strings as missing; `false`,
+`0`, empty lists, and empty objects are present values. General `assert` remains
+available for arbitrary comparisons and is equivalent to the longer explicit
+forms of these common checks.
 
 `contract_out` validates the final output shape selected by `returns`. Read
 metadata guards validate whether the workflow had complete enough source

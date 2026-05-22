@@ -1075,6 +1075,43 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.assert_not_truncated is not None:
+                if step.assert_not_truncated.step not in produced_aliases:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': assert_not_truncated step "
+                        f"'{step.assert_not_truncated.step}' is unknown or future"
+                    )
+                continue
+
+            if step.assert_count is not None:
+                if step.assert_count.step not in produced_aliases:
+                    errors.append(
+                        "Workflow "
+                        f"'{workflow_name}' step '{step.id}': assert_count step "
+                        f"'{step.assert_count.step}' is unknown or future"
+                    )
+                for ref in _iter_refs(step.assert_count.value):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                continue
+
+            if step.assert_exists is not None:
+                for ref in _iter_refs(step.assert_exists.ref):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                continue
+
             assert step.assert_spec is not None
             for ref in _iter_refs([step.assert_spec.left, step.assert_spec.right]):
                 _validate_workflow_ref(
