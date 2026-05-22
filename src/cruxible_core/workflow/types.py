@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from cruxible_core.config.schema import (
+    AggregateItemsSpec,
     ApplyEntitiesSpec,
     ApplyRelationshipsSpec,
     AssertCountSpec,
@@ -115,6 +116,7 @@ class CompiledPlanStep(BaseModel):
     shape_items_spec: ShapeItemsSpec | None = None
     join_items_spec: JoinItemsSpec | None = None
     filter_items_spec: FilterItemsSpec | None = None
+    aggregate_items_spec: AggregateItemsSpec | None = None
     dedupe_items_spec: DedupeItemsSpec | None = None
     make_candidates_spec: MakeCandidatesSpec | None = None
     map_signals_spec: MapSignalsSpec | None = None

@@ -847,6 +847,37 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                     produced_aliases.add(step.as_)
                 continue
 
+            if step.aggregate_items is not None:
+                for ref in _iter_refs(step.aggregate_items.items):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                    )
+                for ref in _iter_refs(step.aggregate_items.group_by):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                for ref in _iter_aggregate_measure_refs(step.aggregate_items.measures):
+                    _validate_workflow_ref(
+                        workflow_name,
+                        step.id,
+                        ref,
+                        produced_aliases,
+                        errors,
+                        allow_item=True,
+                    )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
             if step.dedupe_items is not None:
                 for ref in _iter_refs(step.dedupe_items.items):
                     _validate_workflow_ref(
@@ -1217,6 +1248,23 @@ def _iter_refs(value: Any) -> list[str]:
         for item in value:
             refs.extend(_iter_refs(item))
 
+    return refs
+
+
+def _iter_aggregate_measure_refs(measures: Any) -> list[str]:
+    """Collect refs from aggregate_items measure specs."""
+    refs: list[str] = []
+    for measure in measures.values():
+        if measure.count_where is not None:
+            refs.extend(_iter_refs([measure.count_where.left, measure.count_where.right]))
+        if measure.count_distinct is not None:
+            refs.extend(_iter_refs(measure.count_distinct.value))
+        if measure.sum is not None:
+            refs.extend(_iter_refs(measure.sum.value))
+        if measure.min is not None:
+            refs.extend(_iter_refs(measure.min.value))
+        if measure.max is not None:
+            refs.extend(_iter_refs(measure.max.value))
     return refs
 
 

@@ -1268,6 +1268,92 @@ class FilterItemsSpec(BaseModel):
         return self
 
 
+class AggregateValueSpec(BaseModel):
+    """Value expression used by aggregate_items rollup measures."""
+
+    value: Any
+    value_type: PredicateValueType | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class AggregateDistinctSpec(BaseModel):
+    """Value expression used by aggregate_items count_distinct."""
+
+    value: Any
+
+    model_config = {"extra": "forbid"}
+
+
+class AggregateMeasureSpec(BaseModel):
+    """One aggregate_items measure operation."""
+
+    count: bool | None = None
+    count_where: FilterComparisonSpec | None = None
+    count_distinct: AggregateDistinctSpec | None = None
+    sum: AggregateValueSpec | None = None
+    min: AggregateValueSpec | None = None
+    max: AggregateValueSpec | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_one_operation(self) -> AggregateMeasureSpec:
+        operations = {
+            "count": self.count,
+            "count_where": self.count_where,
+            "count_distinct": self.count_distinct,
+            "sum": self.sum,
+            "min": self.min,
+            "max": self.max,
+        }
+        active = [name for name, value in operations.items() if value is not None]
+        if len(active) != 1:
+            msg = "aggregate measure must define exactly one operation"
+            raise ValueError(msg)
+        if self.count is not None and self.count is not True:
+            msg = "aggregate measure count must be true"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def operation(self) -> str:
+        """Return the single configured aggregate operation name."""
+        if self.count is not None:
+            return "count"
+        if self.count_where is not None:
+            return "count_where"
+        if self.count_distinct is not None:
+            return "count_distinct"
+        if self.sum is not None:
+            return "sum"
+        if self.min is not None:
+            return "min"
+        return "max"
+
+
+class AggregateItemsSpec(BaseModel):
+    """Aggregate list-shaped workflow rows into deterministic summary rows."""
+
+    items: Any
+    group_by: dict[str, Any] = Field(default_factory=dict)
+    measures: dict[str, AggregateMeasureSpec]
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> AggregateItemsSpec:
+        if not self.measures:
+            msg = "aggregate_items measures must not be empty"
+            raise ValueError(msg)
+        collisions = set(self.group_by).intersection(self.measures)
+        if collisions:
+            names = ", ".join(sorted(collisions))
+            msg = f"aggregate_items group_by and measures field(s) collide: {names}"
+            raise ValueError(msg)
+        return self
+
+
 class DedupeItemsSpec(BaseModel):
     """Deduplicate list-shaped workflow data by one or more resolved keys."""
 
@@ -1447,6 +1533,7 @@ StepKind = Literal[
     "shape_items",
     "join_items",
     "filter_items",
+    "aggregate_items",
     "dedupe_items",
     "make_candidates",
     "map_signals",
@@ -1480,6 +1567,7 @@ class WorkflowStepSchema(BaseModel):
         shape_items         Project, rename, and cast list-shaped data.
         join_items          Indexed inner join over two item sets.
         filter_items        Filter list-shaped data with shared predicates.
+        aggregate_items     Group list-shaped data into summary rows.
         dedupe_items        Deterministically deduplicate list-shaped data.
 
     Phase 3 — Build (structure results for the graph):
@@ -1516,6 +1604,7 @@ class WorkflowStepSchema(BaseModel):
     shape_items: ShapeItemsSpec | None = None
     join_items: JoinItemsSpec | None = None
     filter_items: FilterItemsSpec | None = None
+    aggregate_items: AggregateItemsSpec | None = None
     dedupe_items: DedupeItemsSpec | None = None
     make_candidates: MakeCandidatesSpec | None = None
     map_signals: MapSignalsSpec | None = None
@@ -1546,6 +1635,7 @@ class WorkflowStepSchema(BaseModel):
             "shape_items": self.shape_items,
             "join_items": self.join_items,
             "filter_items": self.filter_items,
+            "aggregate_items": self.aggregate_items,
             "dedupe_items": self.dedupe_items,
             "make_candidates": self.make_candidates,
             "map_signals": self.map_signals,

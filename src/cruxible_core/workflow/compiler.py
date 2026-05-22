@@ -343,6 +343,18 @@ def compile_workflow(
             )
             continue
 
+        if step.aggregate_items is not None:
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="aggregate_items",
+                    workflow_type=workflow_type,
+                    as_name=step.as_,
+                    aggregate_items_spec=step.aggregate_items,
+                )
+            )
+            continue
+
         if step.dedupe_items is not None:
             compiled_steps.append(
                 CompiledPlanStep(

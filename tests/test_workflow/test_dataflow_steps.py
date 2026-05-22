@@ -465,6 +465,292 @@ class TestWorkflowDataflowSteps:
         assert deduped_metadata["truncated"] is True
         assert deduped_metadata["truncation_reasons"] == ["limit"]
 
+    def test_execute_aggregate_items_grouped_counts_and_ordering(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items:
+                  - owner_id: OWNER-B
+                    asset_id:
+                    priority: low
+                    tags: [dev]
+                  - owner_id: OWNER-A
+                    asset_id: ASSET-1
+                    priority: critical
+                    tags: [prod, api]
+                  - owner_id: OWNER-A
+                    asset_id: ASSET-1
+                    priority: high
+                    tags: [prod, api]
+                group_by:
+                  owner_id: $item.owner_id
+                measures:
+                  exposure_count:
+                    count: true
+                  affected_assets:
+                    count_distinct:
+                      value: $item.asset_id
+                  unique_contexts:
+                    count_distinct:
+                      value:
+                        asset_id: $item.asset_id
+                        tags: $item.tags
+                  critical_count:
+                    count_where:
+                      left: $item.priority
+                      op: eq
+                      right: critical
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["input_count"] == 3
+        assert result.output["group_count"] == 2
+        assert result.output["items"] == [
+            {
+                "owner_id": "OWNER-A",
+                "exposure_count": 2,
+                "affected_assets": 1,
+                "unique_contexts": 1,
+                "critical_count": 1,
+            },
+            {
+                "owner_id": "OWNER-B",
+                "exposure_count": 1,
+                "affected_assets": 0,
+                "unique_contexts": 1,
+                "critical_count": 0,
+            },
+        ]
+
+    def test_execute_aggregate_items_global_count_on_empty_and_non_empty(
+        self, tmp_path: Path
+    ) -> None:
+        non_empty = dataflow_instance(
+            tmp_path / "non_empty",
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items:
+                  - id: A
+                  - id: B
+                measures:
+                  row_count:
+                    count: true
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        non_empty_result = execute_workflow(
+            non_empty,
+            non_empty.load_config(),
+            "dataflow",
+            {},
+        )
+        assert non_empty_result.output["items"] == [{"row_count": 2}]
+
+        empty = dataflow_instance(
+            tmp_path / "empty",
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items: []
+                measures:
+                  row_count:
+                    count: true
+                  max_score:
+                    max:
+                      value: $item.score
+                      value_type: number
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        empty_result = execute_workflow(empty, empty.load_config(), "dataflow", {})
+
+        assert empty_result.output["items"] == [{"row_count": 0, "max_score": None}]
+
+    def test_execute_aggregate_items_rollups_and_typed_coercion(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items:
+                  - owner_id: OWNER-1
+                    score: "1.5"
+                    due_by: "2026-05-18T00:00:00Z"
+                  - owner_id: OWNER-1
+                    score: "2.25"
+                    due_by: "2026-05-17T00:00:00Z"
+                  - owner_id: OWNER-1
+                    score:
+                    due_by:
+                group_by:
+                  owner_id: $item.owner_id
+                measures:
+                  total_score:
+                    sum:
+                      value: $item.score
+                      value_type: number
+                  earliest_due_by:
+                    min:
+                      value: $item.due_by
+                      value_type: datetime
+                  max_score:
+                    max:
+                      value: $item.score
+                      value_type: number
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["items"] == [
+            {
+                "owner_id": "OWNER-1",
+                "total_score": 3.75,
+                "earliest_due_by": "2026-05-17T00:00:00Z",
+                "max_score": "2.25",
+            }
+        ]
+
+    def test_execute_aggregate_items_rejects_invalid_numeric_values(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items:
+                  - score: high
+                measures:
+                  total_score:
+                    sum:
+                      value: $item.score
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        with pytest.raises(QueryExecutionError, match="sum requires numeric values"):
+            execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+    @pytest.mark.parametrize("score", ["nan", "inf"])
+    def test_execute_aggregate_items_rejects_non_finite_typed_sum(
+        self,
+        tmp_path: Path,
+        score: str,
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml=f"""
+            - id: summary
+              aggregate_items:
+                items:
+                  - score: "{score}"
+                measures:
+                  total_score:
+                    sum:
+                      value: $item.score
+                      value_type: number
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        with pytest.raises(QueryExecutionError, match="sum requires finite numeric values"):
+            execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+    def test_execute_aggregate_items_rejects_non_finite_typed_min_max(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: summary
+              aggregate_items:
+                items:
+                  - score: "inf"
+                measures:
+                  max_score:
+                    max:
+                      value: $item.score
+                      value_type: number
+              as: summary
+            """,
+            returns="summary",
+        )
+
+        with pytest.raises(QueryExecutionError, match="min/max requires finite numeric values"):
+            execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+    def test_execute_aggregate_items_preserves_read_metadata_and_receipt_detail(
+        self, tmp_path: Path
+    ) -> None:
+        instance = dataflow_instance(
+            tmp_path,
+            steps_yaml="""
+            - id: rows
+              list_entities:
+                entity_type: Row
+                limit: 1
+              as: rows
+            - id: summary
+              aggregate_items:
+                items: $steps.rows.items
+                measures:
+                  row_count:
+                    count: true
+              as: summary
+            """,
+            returns="summary",
+        )
+        graph = instance.load_graph()
+        for row_id in ("ROW-1", "ROW-2"):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Row",
+                    entity_id=row_id,
+                    properties={"id": row_id},
+                )
+            )
+        instance.save_graph(graph)
+
+        result = execute_workflow(instance, instance.load_config(), "dataflow", {})
+
+        assert result.output["items"] == [{"row_count": 1}]
+        metadata = result.output["source_metadata"]
+        assert metadata["source_step"] == "rows"
+        assert metadata["returned_results"] == 1
+        assert metadata["total_results"] == 2
+        assert metadata["truncated"] is True
+        aggregate_step = next(
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "plan_step"
+            and node.detail.get("step_id") == "summary"
+        )
+        assert aggregate_step.detail["kind"] == "aggregate_items"
+        assert aggregate_step.detail["input_count"] == 1
+        assert aggregate_step.detail["group_count"] == 1
+        assert aggregate_step.detail["measures"] == {"row_count": "count"}
+        assert aggregate_step.detail["source_metadata"]["truncated"] is True
+
     def test_execute_assert_honors_typed_datetime_comparison(
         self, tmp_path: Path
     ) -> None:

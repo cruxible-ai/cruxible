@@ -1691,6 +1691,80 @@ class TestWorkflowSchema:
                 **{"as": "filtered"},
             )
 
+    def test_aggregate_items_step_accepts_grouped_measure_config(self):
+        step = WorkflowStepSchema(
+            id="aggregate",
+            aggregate_items={
+                "items": "$steps.rows.items",
+                "group_by": {"owner_id": "$item.owner_id"},
+                "measures": {
+                    "row_count": {"count": True},
+                    "critical_count": {
+                        "count_where": {
+                            "left": "$item.priority",
+                            "op": "eq",
+                            "right": "critical",
+                        }
+                    },
+                    "asset_count": {"count_distinct": {"value": "$item.asset_id"}},
+                    "max_score": {"max": {"value": "$item.score", "value_type": "number"}},
+                },
+            },
+            **{"as": "aggregate"},
+        )
+
+        assert step.aggregate_items is not None
+        assert step.aggregate_items.measures["row_count"].operation == "count"
+        assert step.aggregate_items.measures["max_score"].operation == "max"
+
+    def test_aggregate_items_requires_alias_and_non_empty_measures(self):
+        with pytest.raises(ValidationError, match="require 'as'"):
+            WorkflowStepSchema(
+                id="aggregate",
+                aggregate_items={
+                    "items": "$steps.rows.items",
+                    "measures": {"row_count": {"count": True}},
+                },
+            )
+
+        with pytest.raises(ValidationError, match="measures must not be empty"):
+            WorkflowStepSchema(
+                id="aggregate",
+                aggregate_items={"items": "$steps.rows.items", "measures": {}},
+                **{"as": "aggregate"},
+            )
+
+    @pytest.mark.parametrize(
+        "measure",
+        [
+            {},
+            {"count": True, "sum": {"value": "$item.score"}},
+            {"count": False},
+        ],
+    )
+    def test_aggregate_items_measure_requires_one_operation(self, measure):
+        with pytest.raises(ValidationError, match="aggregate measure"):
+            WorkflowStepSchema(
+                id="aggregate",
+                aggregate_items={
+                    "items": "$steps.rows.items",
+                    "measures": {"bad": measure},
+                },
+                **{"as": "aggregate"},
+            )
+
+    def test_aggregate_items_rejects_group_measure_field_collision(self):
+        with pytest.raises(ValidationError, match="field\\(s\\) collide"):
+            WorkflowStepSchema(
+                id="aggregate",
+                aggregate_items={
+                    "items": "$steps.rows.items",
+                    "group_by": {"owner_id": "$item.owner_id"},
+                    "measures": {"owner_id": {"count": True}},
+                },
+                **{"as": "aggregate"},
+            )
+
     def test_dedupe_items_requires_keys_and_rank_for_ranked_strategies(self):
         with pytest.raises(ValidationError, match="keys must not be empty"):
             WorkflowStepSchema(

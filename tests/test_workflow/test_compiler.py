@@ -197,6 +197,40 @@ class TestWorkflowCompiler:
         assert plan.steps[1].list_entities_spec is not None
         assert plan.steps[1].list_entities_spec.entity_type == "Product"
 
+    def test_compile_workflow_carries_aggregate_items_step(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["evaluate_promo"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="summary",
+                aggregate_items={
+                    "items": "$steps.context.results",
+                    "measures": {"row_count": {"count": True}},
+                },
+                **{"as": "summary"},
+            ),
+        )
+        config.workflows["evaluate_promo"].returns = "summary"
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        plan = compile_workflow(
+            workflow_instance.load_config(),
+            build_lock(workflow_instance.load_config()),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert plan.steps[1].kind == "aggregate_items"
+        assert plan.steps[1].aggregate_items_spec is not None
+        assert plan.steps[1].aggregate_items_spec.measures["row_count"].operation == "count"
+
     def test_compile_workflow_rejects_bad_input_contract(
         self, workflow_instance: CruxibleInstance
     ) -> None:

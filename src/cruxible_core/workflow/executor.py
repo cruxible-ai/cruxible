@@ -48,6 +48,7 @@ from cruxible_core.workflow.step_helpers import (
 )
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.transforms import (
+    aggregate_items,
     dedupe_items,
     filter_items,
     join_items,
@@ -66,6 +67,7 @@ _WORKFLOW_READ_COUNT_KEYS = (
     "input_count",
     "output_count",
     "filtered_count",
+    "group_count",
     "dropped_count",
     "duplicate_count",
     "left_count",
@@ -304,6 +306,37 @@ def execute_workflow(
                         "input_count": filtered_items["input_count"],
                         "output_count": filtered_items["output_count"],
                         "filtered_count": filtered_items["filtered_count"],
+                    },
+                )
+                continue
+
+            if compiled_step.kind == "aggregate_items":
+                assert compiled_step.aggregate_items_spec is not None
+                aggregated_items = aggregate_items(
+                    compiled_step.step_id,
+                    compiled_step.aggregate_items_spec,
+                    plan.input_payload,
+                    step_outputs,
+                )
+                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
+                    aggregated_items
+                )
+                if compiled_step.as_name is not None:
+                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+                receipt_builder.record_plan_step(
+                    compiled_step.step_id,
+                    "aggregate_items",
+                    detail={
+                        "input_count": aggregated_items["input_count"],
+                        "group_count": aggregated_items["group_count"],
+                        "output_count": aggregated_items["output_count"],
+                        "measures": {
+                            name: measure.operation
+                            for name, measure in (
+                                compiled_step.aggregate_items_spec.measures.items()
+                            )
+                        },
+                        "source_metadata": aggregated_items.get("source_metadata", {}),
                     },
                 )
                 continue

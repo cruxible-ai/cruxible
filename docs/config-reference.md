@@ -1086,6 +1086,7 @@ Each step must define exactly one of these operations:
 | `shape_items` | Project, rename, require, and cast list-shaped rows | `shape_items: {items, include_input?, rename?, fields?, casts?, required?}`, `as` |
 | `join_items` | Indexed inner join over two item sets | `join_items: {left_items, right_items, left_key, right_key, fields}`, `as` |
 | `filter_items` | Filter rows with exact filters and comparisons | `filter_items: {items, where?, comparisons?}`, `as` |
+| `aggregate_items` | Deterministically summarize rows with grouped measures | `aggregate_items: {items, group_by?, measures}`, `as` |
 | `dedupe_items` | Deterministically deduplicate rows | `dedupe_items: {items, keys, strategy?, rank?}`, `as` |
 | `make_entities` | Build an entity set from list data | `make_entities: {entity_type, items, entity_id, properties}`, `as` |
 | `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
@@ -1113,6 +1114,7 @@ Steps reference data from prior steps and the current item in list iterations:
 - `shape_items` returns `{items, input_count, output_count, dropped_count, drop_examples}`.
 - `join_items` returns `{items, left_count, right_count, skipped_right_count, matched_left_count, output_count}`.
 - `filter_items` returns `{items, input_count, output_count, filtered_count}`.
+- `aggregate_items` returns `{items, input_count, group_count, output_count}`.
 - `dedupe_items` returns `{items, input_count, output_count, duplicate_count, duplicate_examples}`.
 
 Read steps also expose consistent completeness metadata: `total_results`,
@@ -1211,6 +1213,50 @@ preserves left-row order with right-match order for one-to-many fanout.
 predicates. `where` reads top-level item keys and may use literals or `$input.*`
 refs only. Comparisons may use normal workflow refs, including `$item`,
 `$input`, and prior `$steps`.
+
+`aggregate_items` groups already-materialized rows and computes deterministic
+summary rows. Omit `group_by` for one global aggregate row; global aggregates
+return one row even when the input is empty, so downstream steps can rely on a
+stable summary object. Supported measures are `count`, `count_where`,
+`count_distinct`, `sum`, `min`, and `max`. `count_distinct` ignores `null`
+values and uses canonical JSON identity for structured values. `sum`, `min`,
+and `max` can declare `value_type` (`number`, `date`, `datetime`, etc.) to use
+the shared typed comparison/coercion rules. Aggregation preserves source
+truncation metadata when it summarizes read/query-derived rows.
+
+Grouped count example:
+
+```yaml
+- id: exposure_counts
+  aggregate_items:
+    items: $steps.exposures.results
+    group_by:
+      priority: $item.values.priority
+    measures:
+      exposure_count:
+        count: true
+      affected_assets:
+        count_distinct:
+          value: $item.values.asset_id
+      critical_count:
+        count_where:
+          left: $item.values.priority
+          op: eq
+          right: critical
+  as: exposure_counts
+```
+
+Global count example:
+
+```yaml
+- id: exposure_total
+  aggregate_items:
+    items: $steps.exposures.results
+    measures:
+      exposure_count:
+        count: true
+  as: exposure_total
+```
 
 `dedupe_items` requires one or more keys and supports `first`, `last`, `max`,
 and `min`. Ranked strategies require `rank`; missing ranks lose to present

@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any
+from typing import Any, cast
 
 from cruxible_core.config.schema import (
+    AggregateItemsSpec,
+    AggregateMeasureSpec,
+    AggregateValueSpec,
     DedupeItemsSpec,
     FilterItemsSpec,
     JoinItemsSpec,
     ShapeItemsSpec,
 )
 from cruxible_core.errors import QueryExecutionError
-from cruxible_core.predicate import evaluate_typed_comparison
+from cruxible_core.predicate import (
+    PredicateCoercionError,
+    coerce_predicate_value,
+    evaluate_typed_comparison,
+)
 from cruxible_core.primitives import canonical_json
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
@@ -25,6 +32,8 @@ from cruxible_core.workflow.step_helpers import (
     resolve_step_items,
     source_read_metadata,
 )
+
+_NUMERIC_AGGREGATE_VALUE_TYPES = {"int", "integer", "float", "number"}
 
 
 def shape_items(
@@ -312,6 +321,66 @@ def filter_items(
     )
 
 
+def aggregate_items(
+    step_id: str,
+    spec: AggregateItemsSpec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Aggregate list-shaped workflow rows into deterministic summary rows."""
+    items = resolve_step_items(spec.items, input_payload, step_outputs)
+    source_metadata = source_read_metadata(spec.items, step_outputs)
+    groups: dict[str, dict[str, Any]] = {}
+    group_names = list(spec.group_by)
+
+    if not spec.group_by:
+        groups[_stable_json_key({})] = {"fields": {}, "items": []}
+
+    for item in items:
+        item_row = _ensure_item_mapping(step_id, "aggregate_items", item)
+        group_fields = {
+            field_name: resolve_value(
+                template,
+                input_payload,
+                step_outputs,
+                item_payload=item_row,
+                allow_item=True,
+            )
+            for field_name, template in spec.group_by.items()
+        }
+        group_key = _stable_json_key(group_fields)
+        group = groups.setdefault(group_key, {"fields": group_fields, "items": []})
+        group["items"].append(item_row)
+
+    output_items: list[dict[str, Any]] = []
+    for group in sorted(
+        groups.values(),
+        key=lambda entry: _aggregate_group_sort_key(entry["fields"], group_names),
+    ):
+        group_rows = group["items"]
+        output_row = dict(group["fields"])
+        for measure_name, measure in spec.measures.items():
+            output_row[measure_name] = _evaluate_aggregate_measure(
+                step_id,
+                measure_name,
+                measure,
+                group_rows,
+                input_payload,
+                step_outputs,
+            )
+        output_items.append(output_row)
+
+    return attach_source_metadata(
+        {
+            "items": output_items,
+            "input_count": len(items),
+            "group_count": len(output_items),
+            "output_count": len(output_items),
+        },
+        source_metadata,
+    )
+
+
 def dedupe_items(
     step_id: str,
     spec: DedupeItemsSpec,
@@ -427,6 +496,277 @@ def dedupe_items(
         },
         source_metadata,
     )
+
+
+def _evaluate_aggregate_measure(
+    step_id: str,
+    measure_name: str,
+    measure: AggregateMeasureSpec,
+    group_rows: list[dict[str, Any]],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> Any:
+    """Evaluate one aggregate measure for one group."""
+    if measure.count is not None:
+        return len(group_rows)
+    if measure.count_where is not None:
+        return _aggregate_count_where(
+            step_id,
+            measure_name,
+            measure,
+            group_rows,
+            input_payload,
+            step_outputs,
+        )
+    if measure.count_distinct is not None:
+        distinct_values: set[str] = set()
+        for row in group_rows:
+            value = resolve_value(
+                measure.count_distinct.value,
+                input_payload,
+                step_outputs,
+                item_payload=row,
+                allow_item=True,
+            )
+            if value is not None:
+                distinct_values.add(_stable_json_key(value))
+        return len(distinct_values)
+    if measure.sum is not None:
+        return _aggregate_sum(
+            step_id,
+            measure_name,
+            measure.sum,
+            group_rows,
+            input_payload,
+            step_outputs,
+        )
+    if measure.min is not None:
+        return _aggregate_min_max(
+            step_id,
+            measure_name,
+            measure.min,
+            group_rows,
+            input_payload,
+            step_outputs,
+            strategy="min",
+        )
+    assert measure.max is not None
+    return _aggregate_min_max(
+        step_id,
+        measure_name,
+        measure.max,
+        group_rows,
+        input_payload,
+        step_outputs,
+        strategy="max",
+    )
+
+
+def _aggregate_count_where(
+    step_id: str,
+    measure_name: str,
+    measure: AggregateMeasureSpec,
+    group_rows: list[dict[str, Any]],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> int:
+    assert measure.count_where is not None
+    count = 0
+    for row in group_rows:
+        left = resolve_value(
+            measure.count_where.left,
+            input_payload,
+            step_outputs,
+            item_payload=row,
+            allow_item=True,
+        )
+        right = resolve_value(
+            measure.count_where.right,
+            input_payload,
+            step_outputs,
+            item_payload=row,
+            allow_item=True,
+        )
+        try:
+            matched = evaluate_typed_comparison(
+                left,
+                measure.count_where.op,
+                right,
+                value_type=measure.count_where.value_type,
+            )
+        except ValueError as exc:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' aggregate_items measure "
+                f"'{measure_name}' has unsupported comparison op "
+                f"'{measure.count_where.op}'"
+            ) from exc
+        if matched:
+            count += 1
+    return count
+
+
+def _aggregate_sum(
+    step_id: str,
+    measure_name: str,
+    spec: AggregateValueSpec,
+    group_rows: list[dict[str, Any]],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+) -> int | float:
+    total: int | float = 0
+    for row in group_rows:
+        value = _resolve_aggregate_value(
+            spec,
+            input_payload,
+            step_outputs,
+            row,
+        )
+        if value is None:
+            continue
+        numeric = _coerce_aggregate_sum_value(step_id, measure_name, spec, value)
+        total += numeric
+    return total
+
+
+def _aggregate_min_max(
+    step_id: str,
+    measure_name: str,
+    spec: AggregateValueSpec,
+    group_rows: list[dict[str, Any]],
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    *,
+    strategy: str,
+) -> Any:
+    selected_value: Any = None
+    selected_key: Any = None
+    selected = False
+    for row in group_rows:
+        value = _resolve_aggregate_value(spec, input_payload, step_outputs, row)
+        if value is None:
+            continue
+        key = _coerce_aggregate_order_value(step_id, measure_name, spec, value)
+        if not selected:
+            selected_value = value
+            selected_key = key
+            selected = True
+            continue
+        try:
+            should_replace = key < selected_key if strategy == "min" else key > selected_key
+        except TypeError as exc:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' aggregate_items measure "
+                f"'{measure_name}' values are incomparable"
+            ) from exc
+        if should_replace:
+            selected_value = value
+            selected_key = key
+    return selected_value if selected else None
+
+
+def _resolve_aggregate_value(
+    spec: AggregateValueSpec,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    row: dict[str, Any],
+) -> Any:
+    return resolve_value(
+        spec.value,
+        input_payload,
+        step_outputs,
+        item_payload=row,
+        allow_item=True,
+    )
+
+
+def _coerce_aggregate_sum_value(
+    step_id: str,
+    measure_name: str,
+    spec: AggregateValueSpec,
+    value: Any,
+) -> int | float:
+    if spec.value_type is not None:
+        if spec.value_type not in _NUMERIC_AGGREGATE_VALUE_TYPES:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' aggregate_items measure "
+                f"'{measure_name}' sum value_type must be numeric"
+            )
+        try:
+            coerced = coerce_predicate_value(value, spec.value_type)
+        except PredicateCoercionError as exc:
+            raise QueryExecutionError(
+                f"Workflow step '{step_id}' aggregate_items measure "
+                f"'{measure_name}' could not coerce value {value!r} "
+                f"as {spec.value_type}"
+            ) from exc
+        return _ensure_finite_aggregate_number(step_id, measure_name, "sum", coerced)
+    return _ensure_finite_aggregate_number(step_id, measure_name, "sum", value)
+
+
+def _ensure_finite_aggregate_number(
+    step_id: str,
+    measure_name: str,
+    operation: str,
+    value: Any,
+) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' aggregate_items measure "
+            f"'{measure_name}' {operation} requires numeric values"
+        )
+    if not math.isfinite(float(value)):
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' aggregate_items measure "
+            f"'{measure_name}' {operation} requires finite numeric values"
+        )
+    return cast("int | float", value)
+
+
+def _coerce_aggregate_order_value(
+    step_id: str,
+    measure_name: str,
+    spec: AggregateValueSpec,
+    value: Any,
+) -> Any:
+    if spec.value_type is None:
+        return value
+    try:
+        coerced = coerce_predicate_value(value, spec.value_type)
+    except PredicateCoercionError as exc:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' aggregate_items measure "
+            f"'{measure_name}' could not coerce value {value!r} "
+            f"as {spec.value_type}"
+        ) from exc
+    if spec.value_type in _NUMERIC_AGGREGATE_VALUE_TYPES:
+        return _ensure_finite_aggregate_number(
+            step_id,
+            measure_name,
+            "min/max",
+            coerced,
+        )
+    return coerced
+
+
+def _aggregate_group_sort_key(
+    group_fields: dict[str, Any],
+    group_names: list[str],
+) -> tuple[str, ...]:
+    return tuple(_stable_json_key(group_fields[name]) for name in group_names)
+
+
+def _stable_json_key(value: Any) -> str:
+    try:
+        return canonical_json(value)
+    except (TypeError, ValueError):
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+            default=str,
+        )
 
 
 def _ensure_item_mapping(
