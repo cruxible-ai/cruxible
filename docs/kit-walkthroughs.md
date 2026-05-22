@@ -201,7 +201,7 @@ cruxible group resolve \
 
 ```bash
 cruxible query \
-  --query candidate_assets_for_vulnerability \
+  --query vulnerability_asset_context \
   --param cve_id=CVE-2020-1472
 ```
 

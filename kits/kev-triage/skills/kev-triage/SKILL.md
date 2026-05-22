@@ -57,7 +57,7 @@ in queue and blast-radius context. Typical examples:
 
 ```
 cruxible query --query owner_patch_queue --param owner_id=<owner>
-cruxible query --query service_blast_radius --param cve_id=<cve_id>
+cruxible query --query vulnerability_asset_context --param cve_id=<cve_id>
 ```
 
 ## Agent-mode constraints
@@ -123,7 +123,7 @@ does not approve or resolve governed proposals directly.
    cruxible query --query incident_history_for_product --param product_id=<product>
    cruxible query --query open_findings_for_asset --param asset_id=<asset>
    cruxible query --query prior_exploitation_context --param cve_id=<cve>
-   cruxible query --query asset_remediation_context --param asset_id=<asset>
+   cruxible query --query vulnerability_asset_context --param cve_id=<cve>
    ```
 
 4. Before treating any query output as complete or final, check whether the
@@ -446,19 +446,14 @@ there.
 
 | When you need... | Default query |
 |---|---|
-| Candidate assets by product/CVE linkage | `query --query candidate_assets_for_vulnerability --param cve_id=<cve>` |
-| Accepted exposed assets for a CVE | `query --query exposed_assets_for_vulnerability --param cve_id=<cve>` |
+| Asset context for a CVE, including candidate, exposure, remediation, owner, service, exception, and control state | `query --query vulnerability_asset_context --param cve_id=<cve>` |
 | Patch queue for an owner | `query --query owner_patch_queue --param owner_id=<owner>` |
-| Services hit by a CVE | `query --query service_blast_radius --param cve_id=<cve>` |
+| Asset context for a product, including product mapping and related exposure state | `query --query product_asset_context --param product_id=<product>` |
+| Vendor service impact | `query --query vendor_service_impact --param vendor_id=<vendor>` |
 | Has this product ever been exploited? | `query --query incident_history_for_product --param product_id=<product>` |
-| Prior classifications for a class | `query --query vulnerabilities_for_class --param class_id=<class>` |
-| Controls mapped to a class | `query --query controls_for_vulnerability_class --param class_id=<class>` |
+| Vulnerability class context and mapped controls | `query --query vulnerability_class_context --param class_id=<class>` |
 | What open findings for this asset? | `query --query open_findings_for_asset --param asset_id=<asset>` |
 | Prior post-mortem for this CVE | `query --query prior_exploitation_context --param cve_id=<cve>` |
-| All exceptions on an asset | `query --query asset_exception_context --param asset_id=<asset>` |
-| All controls on an asset | `query --query asset_control_context --param asset_id=<asset>` |
-| What remediation state exists on this asset? | `query --query asset_remediation_context --param asset_id=<asset>` |
-| Which assets were explicitly remediated for this CVE? | `query --query remediated_assets_for_vulnerability --param cve_id=<cve>` |
 
 ## When to stop and ask
 

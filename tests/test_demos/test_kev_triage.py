@@ -44,6 +44,13 @@ _matching_module = load_kit_provider_module(
 def _query_entity_ids(rows: list[object]) -> set[str]:
     ids: set[str] = set()
     for row in rows:
+        values = getattr(row, "values", None)
+        if isinstance(values, dict):
+            for key in ("entity_id", "cve_id", "asset_id", "product_id"):
+                if key in values:
+                    ids.add(values[key])
+                    break
+            continue
         entity = getattr(row, "result", row)
         entity_id = getattr(entity, "entity_id")
         ids.add(entity_id)
@@ -379,7 +386,6 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
             "asset_id": "ASSET-1",
             "cve_id": "CVE-2021-0001",
             "priority": "high",
-            "due_by": "72h",
             "rationale": payload["items"][0]["rationale"],
             "product_id": "",
             "installed_version": "",
@@ -390,6 +396,47 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
             "control_verdict": "unsure",
         }
     ]
+
+
+def test_assess_asset_exposure_critical_when_no_active_controls() -> None:
+    payload = assess_asset_exposure(
+        {
+            "affected_edges": [
+                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
+            ],
+            "assets": [
+                {
+                    "entity_id": "ASSET-1",
+                    "properties": {
+                        "hostname": "prod-web-01",
+                        "criticality": "critical",
+                        "environment": "production",
+                        "internet_exposed": True,
+                    },
+                },
+            ],
+            "asset_control_edges": [],
+            "controls": [],
+        },
+        _provider_context(None),
+    )
+
+    assert payload["items"] == [
+        {
+            "asset_id": "ASSET-1",
+            "cve_id": "CVE-2021-0001",
+            "priority": "critical",
+            "rationale": payload["items"][0]["rationale"],
+            "product_id": "",
+            "installed_version": "",
+            "affected_rationale": "",
+            "evidence_source": "",
+            "affected_verdict": "support",
+            "exploitability_verdict": "support",
+            "control_verdict": "support",
+        }
+    ]
+    assert "due_by" not in payload["items"][0]
 
 
 def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
@@ -471,41 +518,21 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     )
     product_id = product_edge["to_id"]
 
-    kev_assets = service_query(instance, "kev_assets", {"cve_id": affected_cve_id})
+    vulnerability_asset_context = service_query(
+        instance,
+        "vulnerability_asset_context",
+        {"cve_id": affected_cve_id},
+    )
     owner_patch_queue = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    service_blast_radius = service_query(
+    product_asset_context = service_query(
         instance,
-        "service_blast_radius",
-        {"cve_id": affected_cve_id},
-    )
-    product_kev_exposure = service_query(
-        instance,
-        "product_kev_exposure",
-        {"product_id": product_id},
-    )
-    candidate_assets = service_query(
-        instance,
-        "candidate_assets_for_vulnerability",
-        {"cve_id": affected_cve_id},
-    )
-    exposed_assets = service_query(
-        instance,
-        "exposed_assets_for_vulnerability",
-        {"cve_id": affected_cve_id},
-    )
-    exposed_assets_for_product = service_query(
-        instance,
-        "exposed_assets_for_product",
+        "product_asset_context",
         {"product_id": product_id},
     )
 
-    assert kev_assets.total_results > 0
+    assert vulnerability_asset_context.total_results > 0
     assert owner_patch_queue.total_results > 0
-    assert service_blast_radius.total_results > 0
-    assert product_kev_exposure.total_results > 0
-    assert candidate_assets.total_results > 0
-    assert exposed_assets.total_results > 0
-    assert exposed_assets_for_product.total_results > 0
+    assert product_asset_context.total_results > 0
 
     _approve_workflow_group_with_input(
         instance,
@@ -536,14 +563,9 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
             ]
         },
     )
-    vulnerabilities_for_class = service_query(
+    vulnerability_class_context = service_query(
         instance,
-        "vulnerabilities_for_class",
-        {"class_id": "path_traversal"},
-    )
-    controls_for_class = service_query(
-        instance,
-        "controls_for_vulnerability_class",
+        "vulnerability_class_context",
         {"class_id": "path_traversal"},
     )
     control_coverage_gap = service_query(
@@ -552,8 +574,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         {"control_id": "CTRL-1"},
     )
 
-    assert vulnerabilities_for_class.total_results > 0
-    assert controls_for_class.total_results > 0
+    assert vulnerability_class_context.total_results > 0
     assert control_coverage_gap.total_results > 0
 
 

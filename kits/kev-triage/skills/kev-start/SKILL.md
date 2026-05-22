@@ -130,8 +130,8 @@ Use this step to decide which milestone already exists:
 - Proposal queue already populated
 
 If the remembered instance's query surface does not look like the KEV kit
-(for example it does not include queries such as `kev_assets`,
-`owner_patch_queue`, and `service_blast_radius`), do not try to resume it.
+(for example it does not include queries such as `vulnerability_asset_context`,
+`owner_patch_queue`, and `product_asset_context`), do not try to resume it.
 Treat that as "wrong instance selected" and create or select a KEV instance in
 Step 4 instead.
 

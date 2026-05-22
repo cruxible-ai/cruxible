@@ -1527,7 +1527,7 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
     query = app_client.post(
         f"/api/v1/{instance_id}/query",
         json={
-            "query_name": "exposed_assets_for_vulnerability",
+            "query_name": "vulnerability_asset_context",
             "params": {"cve_id": edge["to_id"]},
         },
     )

@@ -66,40 +66,84 @@ relationships:
 
 named_queries:
   vulnerability_products:
-    description: Starting from a vulnerability, find affected products.
+    description: Starting from a vulnerability, return affected products with reference edge evidence.
     entry_point: Vulnerability
     returns: Product
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: vulnerability_affects_product
+      - as: affected_product
+        relationship: vulnerability_affects_product
         direction: outgoing
+    order_by:
+      - by: $result.properties.vendor_id
+        direction: asc
+      - by: $result.properties.product_name
+        direction: asc
+      - by: $result.entity_id
+        direction: asc
 
   product_vulnerabilities:
-    description: Starting from a product, find vulnerabilities that affect it.
+    description: Starting from a product, return KEV vulnerabilities that affect it.
     entry_point: Product
     returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: vulnerability_affects_product
+      - as: affected_by
+        relationship: vulnerability_affects_product
         direction: incoming
+    order_by:
+      - by: $result.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $result.entity_id
+        direction: asc
 
   vendor_products:
-    description: Starting from a vendor, find products published by that vendor.
+    description: Starting from a vendor, return products published by that vendor.
     entry_point: Vendor
     returns: Product
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: product_from_vendor
+      - as: vendor_product
+        relationship: product_from_vendor
         direction: incoming
+    order_by:
+      - by: $result.properties.product_name
+        direction: asc
+      - by: $result.entity_id
+        direction: asc
 
   vendor_vulnerabilities:
     description: >
-      Starting from a vendor, find all vulnerabilities across that
-      vendor's products.
+      Starting from a vendor, return vulnerabilities across that vendor's
+      products, preserving the product evidence path.
     entry_point: Vendor
     returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 1000
+    max_paths_per_result: 20
     traversal:
-      - relationship: product_from_vendor
+      - as: vendor_product
+        relationship: product_from_vendor
         direction: incoming
-      - relationship: vulnerability_affects_product
+      - as: affected_product
+        relationship: vulnerability_affects_product
         direction: incoming
+    order_by:
+      - by: $result.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $result.properties.epss_score
+        direction: desc
+      - by: $result.entity_id
+        direction: asc
 
 quality_checks:
   - name: no_empty_affected_version_objects

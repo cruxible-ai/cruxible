@@ -251,7 +251,6 @@ flowchart LR
   query_entity_Asset["Asset"]
   query_entity_BusinessService["Business Service"]
   query_entity_CompensatingControl["Compensating Control"]
-  query_entity_Exception["Exception"]
   query_entity_Finding["Finding"]
   query_entity_Incident["Incident"]
   query_entity_Owner["Owner"]
@@ -259,13 +258,9 @@ flowchart LR
   query_entity_Vendor["Vendor"]
   query_entity_Vulnerability["Vulnerability"]
   query_entity_VulnerabilityClass["Vulnerability Class"]
-  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Exception,query_entity_Finding,query_entity_Incident,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
-  query_entity_Asset --> query_entity_CompensatingControl
-  query_entity_Asset --> query_entity_Exception
+  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Finding,query_entity_Incident,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
   query_entity_Asset --> query_entity_Finding
-  query_entity_Asset --> query_entity_Vulnerability
   query_entity_CompensatingControl --> query_entity_BusinessService
-  query_entity_Incident --> query_entity_Finding
   query_entity_Owner --> query_entity_Vulnerability
   query_entity_Product --> query_entity_Asset
   query_entity_Product --> query_entity_Incident
@@ -274,10 +269,8 @@ flowchart LR
   query_entity_Vendor --> query_entity_Product
   query_entity_Vendor --> query_entity_Vulnerability
   query_entity_Vulnerability --> query_entity_Asset
-  query_entity_Vulnerability --> query_entity_BusinessService
   query_entity_Vulnerability --> query_entity_Finding
   query_entity_Vulnerability --> query_entity_Product
-  query_entity_VulnerabilityClass --> query_entity_CompensatingControl
   query_entity_VulnerabilityClass --> query_entity_Vulnerability
 ```
 <!-- CRUXIBLE:END query-map -->
@@ -292,66 +285,51 @@ relationship.
 <!-- CRUXIBLE:BEGIN query-catalog -->
 ### Asset
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Asset Control Context | Compensating Control | Asset Has Control (Outgoing) | Starting from an asset, find compensating controls currently attached to it. |
-| Asset Exception Context | Exception | Asset Has Exception (Outgoing) | Starting from an asset, find exception records currently attached to it. |
-| Asset Remediation Context | Vulnerability | Asset Remediated Vulnerability (Outgoing) | Starting from an asset, find vulnerabilities that have been explicitly marked remediated for that asset. |
-| Open Findings For Asset | Finding | Incident Involved Asset (Incoming) -> Finding From Incident (Incoming) | Starting from an asset, find open findings from incidents that involved this asset. Filters out remediated findings. Answers: "What unresolved root causes exist for this asset?" |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Open Findings For Asset | Finding | live | Incident Involved Asset (Incoming) -> Finding From Incident (Incoming) | Starting from an asset, find open findings from incidents that involved this asset. Filters out remediated findings. Answers: "What unresolved root causes exist for this asset?" |
 
 ### Compensating Control
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services that would lose coverage if this control were disabled or invalidated. Traces from control through mitigated vulnerability classes to exposed vulnerabilities and dependent services. |
-
-### Incident
-
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Finding Status For Incident | Finding | Finding From Incident (Incoming) | Starting from an incident, find all findings. Answers: "Are all root causes from this incident addressed?" |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services that would lose coverage if this control were disabled or invalidated. Traces from control through mitigated vulnerability classes to exposed vulnerabilities and dependent services. |
 
 ### Owner
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Owner Patch Queue | Vulnerability | Asset Owned By (Incoming) -> Asset Exposed To Vulnerability (Outgoing) | Starting from an owner, find exposed vulnerabilities across the owner's assets. |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Exposed To Vulnerability (Outgoing) | Starting from an owner, return approved asset-vulnerability exposures across the owner's assets, decorated with service, exception, control, patch-window, and remediation context for prioritization. |
 
 ### Product
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Exposed Assets For Product | Asset | Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) | Starting from a product, find assets currently accepted as exposed through vulnerabilities affecting that product. |
-| Incident History For Product | Incident | Vulnerability Affects Product (Incoming) -> Incident Exploited Vulnerability (Incoming) | Starting from a product, find incidents where vulnerabilities affecting this product were exploited. Answers: "Has this product been exploited before in our environment?" |
-| Product Kev Exposure | Asset | Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) | Compatibility alias for exposed_assets_for_product. |
-| Product Vulnerabilities | Vulnerability | Vulnerability Affects Product (Incoming) | Starting from a product, find vulnerabilities that affect it. |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Incident History For Product | Incident | live | Vulnerability Affects Product (Incoming) -> Incident Exploited Vulnerability (Incoming) | Starting from a product, find incidents where vulnerabilities affecting this product were exploited. Answers: "Has this product been exploited before in our environment?" |
+| Product Asset Context | Asset | reviewable | Asset Runs Product (Incoming) | Starting from a reference product, return assets that run that product, with product-mapping evidence and side context for affected vulnerabilities, exposure state, owners, services, exceptions, controls, and patch windows. |
+| Product Vulnerabilities | Vulnerability | live | Vulnerability Affects Product (Incoming) | Starting from a product, return KEV vulnerabilities that affect it. |
 
 ### Vendor
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Vendor Products | Product | Product From Vendor (Incoming) | Starting from a vendor, find products published by that vendor. |
-| Vendor Service Impact | Business Service | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, confirmed vulnerable assets, and service dependencies to find business services in the blast radius. This is the question you ask when a vendor discloses a breach or a critical supply-chain vulnerability. |
-| Vendor Vulnerabilities | Vulnerability | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, find all vulnerabilities across that vendor's products. |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
+| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, confirmed vulnerable assets, and service dependencies to find business services in the blast radius. This is the question you ask when a vendor discloses a breach or a critical supply-chain vulnerability. |
+| Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Candidate Assets For Vulnerability | Asset | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, find internal assets that run a product affected by that vulnerability. This is a candidate impact surface derived from product mappings, not accepted exposure state. |
-| Exposed Assets For Vulnerability | Asset | Asset Exposed To Vulnerability (Incoming) | Starting from a vulnerability, find assets with accepted exposure state for that vulnerability. |
-| Kev Assets | Asset | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Compatibility alias for candidate_assets_for_vulnerability. Prefer candidate_assets_for_vulnerability or exposed_assets_for_vulnerability in new decision workflows. |
-| Prior Exploitation Context | Finding | Incident Exploited Vulnerability (Incoming) -> Finding From Incident (Incoming) | Starting from a vulnerability, find incidents where it was exploited and the findings from those investigations. Answers: "What did we learn last time this CVE was exploited?" |
-| Remediated Assets For Vulnerability | Asset | Asset Remediated Vulnerability (Incoming) | Starting from a vulnerability, find assets that have explicit remediation state recorded for it. |
-| Service Blast Radius | Business Service | Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vulnerability, find business services with accepted exposed dependent assets. |
-| Vulnerability Products | Product | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, find affected products. |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Prior Exploitation Context | Finding | live | Incident Exploited Vulnerability (Incoming) -> Finding From Incident (Incoming) | Starting from a vulnerability, find incidents where it was exploited and the findings from those investigations. Answers: "What did we learn last time this CVE was exploited?" |
+| Vulnerability Asset Context | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
+| Vulnerability Products | Product | live | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, return affected products with reference edge evidence. |
 
 ### Vulnerability Class
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Controls For Vulnerability Class | Compensating Control | Control Mitigates Class (Incoming) | Starting from a vulnerability class, find compensating controls governed as mitigating that class. |
-| Vulnerabilities For Class | Vulnerability | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, find vulnerabilities that have been governed into that class. Useful context for future agent classification proposals. |
+| Query | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- |
+| Vulnerability Class Context | Vulnerability | live | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return governed vulnerabilities in the class and include the compensating controls mapped to that class. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Schema Reference
@@ -539,9 +517,9 @@ No configured constraints.
 
 #### Receipt-Anchored
 
-##### `kev_assets_query`
+##### `vulnerability_asset_context_query`
 - Version: `1`
-- Target: Query `kev_assets`
+- Target: Query `vulnerability_asset_context`
 - Outcome codes:
   - `false_positive_result` (`graph_fix`): Query returned an asset that is not actually affected.
   - `missing_results` (`graph_fix`): A known-affected asset was not returned by the query.
@@ -634,4 +612,3 @@ informed by organizational history.
 | `incident_history_for_product` | Product ← vulnerability_affects_product ← incident_exploited_vulnerability | "Has this product been exploited before?" |
 | `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status = open) | "What open findings still need action for this asset?" |
 | `prior_exploitation_context` | Vulnerability ← incident_exploited_vulnerability → finding_from_incident | "What did we learn last time this CVE was exploited?" |
-| `finding_status_for_incident` | Incident ← finding_from_incident | "Are all findings from this incident remediated?" |

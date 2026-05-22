@@ -113,13 +113,11 @@ def assess_asset_exposure(
 
         control_verdict = "support" if not active_controls else "unsure"
         priority = _derive_exposure_priority(asset, exploitability_verdict, control_verdict)
-        due_by = _priority_due_by(priority)
         rationale = _build_exposure_rationale(asset, active_controls, exploitability_verdict)
         rows_by_pair[(asset_id, cve_id)] = {
             "asset_id": asset_id,
             "cve_id": cve_id,
             "priority": priority,
-            "due_by": due_by,
             "rationale": rationale,
             "product_id": _first_non_empty(item.get("product_id"), properties.get("product_id"))
             or "",
@@ -281,18 +279,10 @@ def _derive_exposure_priority(
 ) -> str:
     criticality = _first_non_empty(asset.get("criticality")) or ""
     if exploitability_verdict == "support" and control_verdict == "support":
-        return "urgent" if criticality == "critical" else "high"
+        return "critical" if criticality == "critical" else "high"
     if criticality in {"critical", "high"}:
         return "high"
     return "medium"
-
-
-def _priority_due_by(priority: str) -> str:
-    return {
-        "urgent": "24h",
-        "high": "72h",
-        "medium": "7d",
-    }.get(priority, "14d")
 
 
 def _build_exposure_rationale(

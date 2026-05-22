@@ -175,6 +175,10 @@ enums:
   asset_status:
     description: Lifecycle state for tracked assets.
     values: [active, retired, decommissioned]
+  criticality:
+    description: Shared rank from lowest to highest.
+    values: [low, medium, high, critical]
+    ordered: low_to_high
 
 entity_types:
   Asset:
@@ -185,6 +189,12 @@ entity_types:
 
 Enum values must be non-empty and unique. With `extends`, overlays may add new
 enum names but may not redefine or extend upstream enum vocabularies.
+
+`ordered: low_to_high` marks a shared enum as semantically ranked. The order of
+`values` is the rank order from lowest to highest. Query `order_by` clauses can
+reference ordered enums with `enum_ref` to sort by rank instead of lexical string
+order; `direction: asc` means low-to-high and `direction: desc` means
+high-to-low.
 
 ---
 
@@ -320,7 +330,7 @@ named_queries:
 | `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, `pending`, or `reviewable` |
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
 | `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
-| `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), and optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`). |
+| `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`), and optional ordered `enum_ref`. |
 | `include` | dict | no | `{}` | One-hop side-context includes keyed by alias. Includes decorate each primary row without advancing traversal or fanning out primary rows. |
 | `limit` | int | no | `null` | Query-level output cap applied after traversal, dedupe, path budgets, ordering, and before projection. Result metadata reports pre-limit `total_results`, effective `limit`, and `limit_truncated`. |
 | `max_paths` | int | no | `null` | Traversal-time retained-path frontier budget. It caps retained path states for each traversal step, limiting memory and receipt growth. It is not a total candidate-evaluation budget. |
@@ -337,6 +347,8 @@ Validation rules:
 - `max_paths` is the retained-path frontier safety control. Once reached for a traversal step, the engine stops retaining/enqueuing more path states and avoids recording traversal receipts for the skipped frontier. Candidates that fail filters before any path is retained can still be evaluated; use a future candidate/work budget if total edge evaluation needs a separate cap.
 - `max_paths_per_result` is a result-time evidence cap. It trims retained paths per final result entity after traversal, when result identity is known. It is distinct from `limit`: `max_paths_per_result` controls evidence fanout per result, while `limit` controls how many ordered rows are returned.
 - `order_by` runs after traversal, dedupe, and path budgets, before `limit`.
+- `order_by.value_type` and `order_by.enum_ref` are mutually exclusive.
+- `order_by.enum_ref` must reference a top-level enum with `ordered: low_to_high`.
 - Path budget truncation is reported separately with `path_truncated`, `retained_path_count`, and `truncation_reasons`.
 - `path_truncated` means traversal was cut short by a path budget before the engine could prove completeness. It does not guarantee that every skipped frontier item would have produced a returned row.
 - `total_path_count` is populated only when traversal completes. If traversal-time `max_paths` cuts exploration short, `total_path_count` is `null` because the full possible path count was intentionally not computed.
@@ -379,12 +391,15 @@ named_queries:
       asset_id: $result.entity_id
       hostname: $result.properties.hostname
       exposure_edge_key: $path.exposure.edge.edge_key
-      due_by: $path.exposure.edge.properties.due_by
+      priority: $path.exposure.edge.properties.priority
       review_status: $path.exposure.edge.metadata.assertion.review.status
     order_by:
-      - by: $path.exposure.edge.properties.due_by
-        direction: asc
-        value_type: date
+      - by: $result.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
       - by: $result.entity_id
         direction: asc
     max_paths: 500
@@ -396,16 +411,24 @@ Include example:
 
 ```yaml
 named_queries:
-  vulnerability_exposure_context:
+  vulnerability_asset_context:
     entry_point: Vulnerability
     returns: Asset
     result_shape: path
     relationship_state: reviewable
     traversal:
-      - as: exposure
-        relationship: asset_exposed_to_vulnerability
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: outgoing
+      - as: installed_product
+        relationship: asset_runs_product
         direction: incoming
     include:
+      exposure:
+        from: $result
+        relationship: asset_exposed_to_vulnerability
+        direction: outgoing
+        many: true
       owner:
         from: $result
         relationship: asset_owned_by
@@ -424,14 +447,6 @@ named_queries:
         where:
           target.properties.status:
             in: [active, approved]
-    select:
-      vulnerability_id: $entry.entity_id
-      asset_id: $result.entity_id
-      exposure_edge_key: $path.exposure.edge.edge_key
-      owner_id: $include.owner.target.entity_id
-      service_count: $include.services.count
-      services: $include.services.items
-      has_exception: $include.exceptions.exists
 ```
 
 ### TraversalStep
@@ -1237,7 +1252,7 @@ relationships:
           role: advisory
 
 named_queries:
-  kev_assets:
+  affected_assets_for_vulnerability:
     description: Find internal assets accepted as affected by a vulnerability.
     entry_point: Vulnerability
     returns: Asset

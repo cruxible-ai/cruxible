@@ -9,6 +9,33 @@ description: >
   controls, and the accepted judgment relationships that link public
   vulnerabilities to internal operational impact.
 
+# ─── Shared enum vocabularies ────────────────────────────────────────
+
+enums:
+  criticality:
+    values: [low, medium, high, critical]
+    ordered: low_to_high
+    description: Shared low-to-critical rank for materiality, severity, and priority.
+  asset_environment:
+    values: [production, staging, corporate]
+    description: Operational environment where an asset runs.
+  service_tier:
+    values: [tier-2, tier-1]
+    ordered: low_to_high
+    description: Business service criticality tier.
+  patch_freeze_status:
+    values: [none, partial_freeze]
+    description: Change-freeze state for a patch window.
+  incident_status:
+    values: [open, investigating, resolved, closed]
+    description: Incident lifecycle state.
+  finding_status:
+    values: [open, remediated, accepted_risk]
+    description: Post-incident finding lifecycle state.
+  remediation_type:
+    values: [patch, mitigation, exception, product_mapping_changed, reference_changed, not_affected]
+    description: Closure mechanism for an asset-vulnerability pair.
+
 # ─── Local: internal entity types ─────────────────────────────────────
 
 entity_types:
@@ -18,8 +45,8 @@ entity_types:
       asset_id: {primary_key: true}
       hostname: {indexed: true}
       asset_type: {}
-      criticality: {}
-      environment: {}
+      criticality: {enum_ref: criticality}
+      environment: {enum_ref: asset_environment}
       internet_exposed:
         type: bool
 
@@ -28,7 +55,7 @@ entity_types:
     properties:
       service_id: {primary_key: true}
       name: {indexed: true}
-      tier: {}
+      tier: {enum_ref: service_tier}
 
   Owner:
     description: Team or person responsible for an asset or service.
@@ -71,17 +98,15 @@ entity_types:
       patch_window_id: {primary_key: true}
       cadence: {}
       next_window_at: {}
-      freeze_status: {}
+      freeze_status: {enum_ref: patch_freeze_status}
 
   Incident:
     description: A security event from a SIEM, PagerDuty, or manual report.
     properties:
       incident_id: {primary_key: true}
       title: {indexed: true}
-      severity:
-        enum: [critical, high, medium, low]
-      status:
-        enum: [open, investigating, resolved, closed]
+      severity: {enum_ref: criticality}
+      status: {enum_ref: incident_status}
       occurred_at:
         type: date
       resolved_at:
@@ -96,8 +121,7 @@ entity_types:
       title: {indexed: true}
       category: {}
       detail: {}
-      status:
-        enum: [open, remediated, accepted_risk]
+      status: {enum_ref: finding_status}
       remediation_action: {}
       remediated_at:
         type: date
@@ -161,8 +185,7 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      priority: {}
-      due_by: {}
+      priority: {enum_ref: criticality}
       rationale: {}
       product_id: {}
       installed_version: {}
@@ -226,7 +249,7 @@ relationships:
     from: Asset
     to: Vulnerability
     properties:
-      remediation_type: {}
+      remediation_type: {enum_ref: remediation_type}
       verified_at: {}
       evidence_source: {}
       ticket_id: {}
@@ -294,91 +317,266 @@ relationships:
 # ─── Named queries (local-specific, traverse across both layers) ──────
 
 named_queries:
-  candidate_assets_for_vulnerability:
+  vulnerability_asset_context:
     description: >
-      Starting from a vulnerability, find internal assets that run a
-      product affected by that vulnerability. This is a candidate impact
-      surface derived from product mappings, not accepted exposure state.
+      Starting from a vulnerability, return internal assets that run affected
+      products, with the relationship evidence needed to tell whether each
+      asset is only a candidate, has pending or accepted exposure state,
+      has remediation state, or is covered by operational context such as
+      owners, services, exceptions, controls, and patch windows.
     entry_point: Vulnerability
     returns: Asset
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 1000
+    max_paths_per_result: 10
     traversal:
-      - relationship: vulnerability_affects_product
+      - as: affected_product
+        relationship: vulnerability_affects_product
         direction: outgoing
-      - relationship: asset_runs_product
+      - as: installed_product
+        relationship: asset_runs_product
         direction: incoming
-
-  kev_assets:
-    description: >
-      Compatibility alias for candidate_assets_for_vulnerability. Prefer
-      candidate_assets_for_vulnerability or exposed_assets_for_vulnerability
-      in new decision workflows.
-    entry_point: Vulnerability
-    returns: Asset
-    traversal:
-      - relationship: vulnerability_affects_product
+    include:
+      owners:
+        from: $result
+        relationship: asset_owned_by
         direction: outgoing
-      - relationship: asset_runs_product
+        many: true
+        limit: 5
+      services:
+        from: $result
+        relationship: service_depends_on_asset
         direction: incoming
+        many: true
+        limit: 10
+        order_by:
+          - by: $source.properties.tier
+            direction: asc
+            enum_ref: service_tier
+          - by: $source.properties.name
+            direction: asc
+      approved_exceptions:
+        from: $result
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $result
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+        order_by:
+          - by: $target.properties.status
+            direction: asc
+          - by: $target.properties.name
+            direction: asc
+      patch_windows:
+        from: $result
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+      exposure:
+        from: $result
+        relationship: asset_exposed_to_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.metadata.assertion.review.status
+            direction: desc
+          - by: $edge.properties.priority
+            direction: desc
+            enum_ref: criticality
+      remediation:
+        from: $result
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
+      vulnerability_exceptions:
+        from: $result
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+    order_by:
+      - by: $result.properties.environment
+        direction: asc
+      - by: $result.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $result.properties.hostname
+        direction: asc
 
-  exposed_assets_for_vulnerability:
+  product_asset_context:
     description: >
-      Starting from a vulnerability, find assets with accepted exposure
-      state for that vulnerability.
-    entry_point: Vulnerability
+      Starting from a reference product, return assets that run that product,
+      with product-mapping evidence and side context for affected
+      vulnerabilities, exposure state, owners, services, exceptions, controls,
+      and patch windows.
+    entry_point: Product
     returns: Asset
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 500
     traversal:
-      - relationship: asset_exposed_to_vulnerability
+      - as: installed_product
+        relationship: asset_runs_product
         direction: incoming
-
-  service_blast_radius:
-    description: >
-      Starting from a vulnerability, find business services with accepted
-      exposed dependent assets.
-    entry_point: Vulnerability
-    returns: BusinessService
-    traversal:
-      - relationship: asset_exposed_to_vulnerability
+    include:
+      owners:
+        from: $result
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      services:
+        from: $result
+        relationship: service_depends_on_asset
         direction: incoming
-      - relationship: service_depends_on_asset
-        direction: incoming
+        many: true
+        limit: 10
+      approved_exceptions:
+        from: $result
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $result
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $result
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+      relevant_exposures:
+        from: $result
+        relationship: asset_exposed_to_vulnerability
+        direction: outgoing
+        many: true
+        limit: 20
+        where:
+          edge.properties.product_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.metadata.assertion.review.status
+            direction: desc
+          - by: $edge.properties.priority
+            direction: desc
+            enum_ref: criticality
+          - by: $target.entity_id
+            direction: asc
+    order_by:
+      - by: $result.properties.hostname
+        direction: asc
 
   owner_patch_queue:
     description: >
-      Starting from an owner, find exposed vulnerabilities across the owner's
-      assets.
+      Starting from an owner, return approved asset-vulnerability exposures
+      across the owner's assets, decorated with service, exception, control,
+      patch-window, and remediation context for prioritization.
     entry_point: Owner
     returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 1000
+    max_paths_per_result: 20
     traversal:
-      - relationship: asset_owned_by
+      - as: owned_asset
+        relationship: asset_owned_by
         direction: incoming
-      - relationship: asset_exposed_to_vulnerability
+      - as: exposure
+        relationship: asset_exposed_to_vulnerability
         direction: outgoing
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
         exclude_if_related:
           - relationship: asset_remediated_vulnerability
             direction: outgoing
-
-  exposed_assets_for_product:
-    description: >
-      Starting from a product, find assets currently accepted as exposed
-      through vulnerabilities affecting that product.
-    entry_point: Product
-    returns: Asset
-    traversal:
-      - relationship: vulnerability_affects_product
+    include:
+      services:
+        from: $path.owned_asset.source
+        relationship: service_depends_on_asset
         direction: incoming
-      - relationship: asset_exposed_to_vulnerability
-        direction: incoming
-
-  product_kev_exposure:
-    description: >
-      Compatibility alias for exposed_assets_for_product.
-    entry_point: Product
-    returns: Asset
-    traversal:
-      - relationship: vulnerability_affects_product
-        direction: incoming
-      - relationship: asset_exposed_to_vulnerability
-        direction: incoming
+        many: true
+        limit: 10
+        order_by:
+          - by: $source.properties.tier
+            direction: asc
+            enum_ref: service_tier
+          - by: $source.properties.name
+            direction: asc
+      approved_exceptions:
+        from: $path.owned_asset.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $path.owned_asset.source
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $path.owned_asset.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+    order_by:
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
+      - by: $path.owned_asset.source.properties.hostname
+        direction: asc
 
   vendor_service_impact:
     description: >
@@ -388,15 +586,61 @@ named_queries:
       discloses a breach or a critical supply-chain vulnerability.
     entry_point: Vendor
     returns: BusinessService
+    result_shape: path
+    dedupe: path
+    max_paths: 2000
+    max_paths_per_result: 20
     traversal:
-      - relationship: product_from_vendor
+      - as: vendor_product
+        relationship: product_from_vendor
         direction: incoming
-      - relationship: vulnerability_affects_product
+      - as: affected_product
+        relationship: vulnerability_affects_product
         direction: incoming
-      - relationship: asset_exposed_to_vulnerability
+      - as: exposure
+        relationship: asset_exposed_to_vulnerability
         direction: incoming
-      - relationship: service_depends_on_asset
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: service_dependency
+        relationship: service_depends_on_asset
         direction: incoming
+    include:
+      owners:
+        from: $path.exposure.source
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      approved_exceptions:
+        from: $path.exposure.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $path.exposure.source
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $path.exposure.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+    order_by:
+      - by: $result.properties.tier
+        direction: asc
+        enum_ref: service_tier
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
 
   control_coverage_gap:
     description: >
@@ -406,74 +650,91 @@ named_queries:
       vulnerabilities and dependent services.
     entry_point: CompensatingControl
     returns: BusinessService
+    result_shape: path
+    dedupe: path
+    max_paths: 2000
+    max_paths_per_result: 20
     traversal:
-      - relationship: control_mitigates_class
+      - as: mitigated_class
+        relationship: control_mitigates_class
         direction: outgoing
-      - relationship: vulnerability_classified_as
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: classified_vulnerability
+        relationship: vulnerability_classified_as
         direction: incoming
-      - relationship: asset_exposed_to_vulnerability
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: exposure
+        relationship: asset_exposed_to_vulnerability
         direction: incoming
-      - relationship: service_depends_on_asset
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: service_dependency
+        relationship: service_depends_on_asset
         direction: incoming
+    include:
+      owners:
+        from: $path.exposure.source
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      approved_exceptions:
+        from: $path.exposure.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      patch_windows:
+        from: $path.exposure.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+    order_by:
+      - by: $result.properties.tier
+        direction: asc
+        enum_ref: service_tier
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
 
-  vulnerabilities_for_class:
+  vulnerability_class_context:
     description: >
-      Starting from a vulnerability class, find vulnerabilities that have
-      been governed into that class. Useful context for future agent
-      classification proposals.
+      Starting from a vulnerability class, return governed vulnerabilities
+      in the class and include the compensating controls mapped to that class.
     entry_point: VulnerabilityClass
     returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: vulnerability_classified_as
+      - as: classification
+        relationship: vulnerability_classified_as
         direction: incoming
-
-  controls_for_vulnerability_class:
-    description: >
-      Starting from a vulnerability class, find compensating controls
-      governed as mitigating that class.
-    entry_point: VulnerabilityClass
-    returns: CompensatingControl
-    traversal:
-      - relationship: control_mitigates_class
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+    include:
+      controls:
+        from: $entry
+        relationship: control_mitigates_class
         direction: incoming
-
-  asset_exception_context:
-    description: >
-      Starting from an asset, find exception records currently attached to it.
-    entry_point: Asset
-    returns: Exception
-    traversal:
-      - relationship: asset_has_exception
-        direction: outgoing
-
-  asset_control_context:
-    description: >
-      Starting from an asset, find compensating controls currently attached to it.
-    entry_point: Asset
-    returns: CompensatingControl
-    traversal:
-      - relationship: asset_has_control
-        direction: outgoing
-
-  asset_remediation_context:
-    description: >
-      Starting from an asset, find vulnerabilities that have been explicitly
-      marked remediated for that asset.
-    entry_point: Asset
-    returns: Vulnerability
-    traversal:
-      - relationship: asset_remediated_vulnerability
-        direction: outgoing
-
-  remediated_assets_for_vulnerability:
-    description: >
-      Starting from a vulnerability, find assets that have explicit remediation
-      state recorded for it.
-    entry_point: Vulnerability
-    returns: Asset
-    traversal:
-      - relationship: asset_remediated_vulnerability
-        direction: incoming
+        many: true
+        limit: 20
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+    order_by:
+      - by: $result.entity_id
+        direction: asc
 
   incident_history_for_product:
     description: >
@@ -482,11 +743,42 @@ named_queries:
       been exploited before in our environment?"
     entry_point: Product
     returns: Incident
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: vulnerability_affects_product
+      - as: affected_by
+        relationship: vulnerability_affects_product
         direction: incoming
-      - relationship: incident_exploited_vulnerability
+      - as: exploited_vulnerability
+        relationship: incident_exploited_vulnerability
         direction: incoming
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+    include:
+      incident_owners:
+        from: $result
+        relationship: incident_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      involved_assets:
+        from: $result
+        relationship: incident_involved_asset
+        direction: outgoing
+        many: true
+        limit: 20
+      exploited_vulnerabilities:
+        from: $result
+        relationship: incident_exploited_vulnerability
+        direction: outgoing
+        many: true
+        limit: 20
+    order_by:
+      - by: $result.properties.occurred_at
+        direction: desc
+        value_type: date
 
   open_findings_for_asset:
     description: >
@@ -495,13 +787,41 @@ named_queries:
       "What unresolved root causes exist for this asset?"
     entry_point: Asset
     returns: Finding
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: incident_involved_asset
+      - as: asset_incident
+        relationship: incident_involved_asset
         direction: incoming
-      - relationship: finding_from_incident
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: incident_finding
+        relationship: finding_from_incident
         direction: incoming
         target_filter:
           status: open
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+    include:
+      incident_owners:
+        from: $path.asset_incident.source
+        relationship: incident_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      exploited_vulnerabilities:
+        from: $path.asset_incident.source
+        relationship: incident_exploited_vulnerability
+        direction: outgoing
+        many: true
+        limit: 20
+    order_by:
+      - by: $path.asset_incident.source.properties.occurred_at
+        direction: desc
+        value_type: date
 
   prior_exploitation_context:
     description: >
@@ -510,21 +830,39 @@ named_queries:
       learn last time this CVE was exploited?"
     entry_point: Vulnerability
     returns: Finding
+    result_shape: path
+    dedupe: path
+    max_paths: 500
     traversal:
-      - relationship: incident_exploited_vulnerability
+      - as: exploited_in_incident
+        relationship: incident_exploited_vulnerability
         direction: incoming
-      - relationship: finding_from_incident
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+      - as: incident_finding
+        relationship: finding_from_incident
         direction: incoming
-
-  finding_status_for_incident:
-    description: >
-      Starting from an incident, find all findings. Answers: "Are all
-      root causes from this incident addressed?"
-    entry_point: Incident
-    returns: Finding
-    traversal:
-      - relationship: finding_from_incident
-        direction: incoming
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+    include:
+      incident_owners:
+        from: $path.exploited_in_incident.source
+        relationship: incident_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      involved_assets:
+        from: $path.exploited_in_incident.source
+        relationship: incident_involved_asset
+        direction: outgoing
+        many: true
+        limit: 20
+    order_by:
+      - by: $path.exploited_in_incident.source.properties.occurred_at
+        direction: desc
+        value_type: date
 
 # ─── Constraints ──────────────────────────────────────────────────────
 
@@ -1058,7 +1396,6 @@ workflows:
           to_id: $item.cve_id
           properties:
             priority: $item.priority
-            due_by: $item.due_by
             rationale: $item.rationale
             product_id: $item.product_id
             installed_version: $item.installed_version
@@ -1551,10 +1888,10 @@ outcome_profiles:
 
   # Receipt-anchored: did this query surface give a good answer?
 
-  kev_assets_query:
+  vulnerability_asset_context_query:
     anchor_type: receipt
     surface_type: query
-    surface_name: kev_assets
+    surface_name: vulnerability_asset_context
     version: 1
     outcome_codes:
       missing_results:
