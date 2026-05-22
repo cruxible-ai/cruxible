@@ -1060,8 +1060,14 @@ workflows:
 | `description` | string | no | `null` | What this workflow does |
 | `type` | `utility`, `canonical`, `proposal`, or `decision_support` | no | `utility` | Workflow contract for execution and agent-facing lifecycle |
 | `contract_in` | string or inline ContractSchema | **yes** | — | Workflow input contract reference. May be config-defined, built-in (`cruxible.*`), or an inline contract object. |
+| `contract_out` | string or inline ContractSchema | no | `null` | Optional final output contract reference. Validates only the payload selected by `returns` after all workflow steps have run. |
 | `steps` | list[WorkflowStepSchema] | **yes** | — | Ordered list of steps |
 | `returns` | string | **yes** | — | ID of the step whose output is the workflow result |
+
+`contract_out` is an agent-facing boundary check over the assembled workflow
+output. It does not validate every provider, query, transform, or intermediate
+step output; those steps keep their own validation rules. Omit `contract_out` to
+preserve the current unvalidated final-output behavior.
 
 ### Workflow Step Types
 

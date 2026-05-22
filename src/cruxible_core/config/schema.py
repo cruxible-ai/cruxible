@@ -1553,6 +1553,7 @@ class WorkflowSchema(BaseModel):
     description: str | None = None
     type: WorkflowType = "utility"
     contract_in: ContractReference = "cruxible.EmptyInput"
+    contract_out: ContractReference | None = None
     steps: list[WorkflowStepSchema]
     returns: str
 
@@ -1819,19 +1820,25 @@ def _iter_config_properties(config: CoreConfig) -> list[tuple[str, PropertySchem
         for field_name, prop in contract_schema.fields.items():
             properties.append((f"contracts.{contract_name}.fields.{field_name}", prop))
     for provider_name, provider in config.providers.items():
-        for direction, contract_ref in (
+        for direction, provider_contract_ref in (
             ("contract_in", provider.contract_in),
             ("contract_out", provider.contract_out),
         ):
-            if isinstance(contract_ref, ContractSchema):
-                for field_name, prop in contract_ref.fields.items():
+            if isinstance(provider_contract_ref, ContractSchema):
+                for field_name, prop in provider_contract_ref.fields.items():
                     properties.append(
                         (f"providers.{provider_name}.{direction}.fields.{field_name}", prop)
                     )
     for workflow_name, workflow in config.workflows.items():
-        if isinstance(workflow.contract_in, ContractSchema):
-            for field_name, prop in workflow.contract_in.fields.items():
-                properties.append(
-                    (f"workflows.{workflow_name}.contract_in.fields.{field_name}", prop)
-                )
+        for direction, workflow_contract_ref in (
+            ("contract_in", workflow.contract_in),
+            ("contract_out", workflow.contract_out),
+        ):
+            if workflow_contract_ref is None:
+                continue
+            if isinstance(workflow_contract_ref, ContractSchema):
+                for field_name, prop in workflow_contract_ref.fields.items():
+                    properties.append(
+                        (f"workflows.{workflow_name}.{direction}.fields.{field_name}", prop)
+                    )
     return properties

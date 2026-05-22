@@ -656,6 +656,15 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 f"'{workflow_name}': contract_in '{_contract_label(workflow.contract_in)}' "
                 "not found in contracts"
             )
+        if workflow.contract_out is not None and not _contract_exists(
+            config,
+            workflow.contract_out,
+        ):
+            errors.append(
+                "Workflow "
+                f"'{workflow_name}': contract_out '{_contract_label(workflow.contract_out)}' "
+                "not found in contracts"
+            )
 
         produced_aliases: set[str] = set()
         produced_signal_sources: dict[str, tuple[str, str]] = {}

@@ -1419,6 +1419,51 @@ class TestWorkflowSchema:
         )
         assert workflow.contract_in == "PromoInput"
 
+    def test_workflow_accepts_optional_contract_out(self):
+        workflow = WorkflowSchema(
+            contract_in="PromoInput",
+            contract_out="PromoOutput",
+            steps=[
+                WorkflowStepSchema(
+                    id="context",
+                    query="get_context",
+                    params={"sku": "$input.sku"},
+                    **{"as": "context"},
+                )
+            ],
+            returns="context",
+        )
+
+        assert workflow.contract_out == "PromoOutput"
+
+    def test_validate_config_rejects_unknown_workflow_contract_out(self):
+        config = CoreConfig(
+            name="workflow_contracts",
+            entity_types={
+                "Product": EntityTypeSchema(
+                    properties={"sku": PropertySchema(type="string", primary_key=True)}
+                )
+            },
+            contracts={"PromoInput": ContractSchema(fields={})},
+            workflows={
+                "list_products": WorkflowSchema(
+                    contract_in="PromoInput",
+                    contract_out="MissingOutput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="products",
+                            list_entities={"entity_type": "Product"},
+                            **{"as": "products"},
+                        )
+                    ],
+                    returns="products",
+                )
+            },
+        )
+
+        with pytest.raises(ConfigError, match="contract_out 'MissingOutput' not found"):
+            validate_config(config)
+
     @pytest.mark.parametrize(
         "workflow_type",
         ["utility", "canonical", "decision_support", "proposal"],

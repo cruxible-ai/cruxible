@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError
+from cruxible_core.config.schema import CoreConfig, WorkflowSchema
+from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
@@ -25,6 +25,7 @@ from cruxible_core.workflow.apply import (
     make_relationship_set,
 )
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
+from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.io import (
     execute_assert_step,
     execute_provider_step,
@@ -546,6 +547,12 @@ def execute_workflow(
             )
 
         output = step_outputs[plan.returns]
+        output = _validate_workflow_output_contract(
+            config,
+            workflow_name,
+            workflow,
+            output,
+        )
         read_metadata = _aggregate_workflow_read_metadata(
             plan,
             step_outputs,
@@ -600,6 +607,28 @@ def execute_workflow(
         step_outputs=step_outputs,
         alias_step_ids=alias_step_ids,
         step_trace_ids=step_trace_ids,
+    )
+
+
+def _validate_workflow_output_contract(
+    config: CoreConfig,
+    workflow_name: str,
+    workflow: WorkflowSchema,
+    output: Any,
+) -> Any:
+    """Validate final workflow output against optional workflow contract_out."""
+    if workflow.contract_out is None:
+        return output
+    if not isinstance(output, dict):
+        raise QueryExecutionError(
+            f"Workflow '{workflow_name}' output failed contract: expected dict output"
+        )
+    return validate_contract_payload(
+        config,
+        workflow.contract_out,
+        output,
+        subject=f"Workflow '{workflow_name}' output",
+        error_factory=query_execution_error,
     )
 
 

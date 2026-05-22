@@ -129,6 +129,7 @@ class CompiledPlan(BaseModel):
 
     workflow: str
     contract_in: str
+    contract_out: str | None = None
     config_digest: str
     lock_digest: str | None = None
     workflow_type: WorkflowType = "utility"

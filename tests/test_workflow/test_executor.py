@@ -15,6 +15,7 @@ from tests.support.workflow_helpers import (
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.schema import (
+    ContractSchema,
     NamedQuerySchema,
     PropertySchema,
     RelationshipSchema,
@@ -988,6 +989,65 @@ class TestWorkflowExecutor:
         ]
         assert any(step.detail.get("status") == "error" for step in provider_steps)
 
+    def test_execute_workflow_validates_matching_contract_out(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["evaluate_promo"].contract_out = "MarginResult"
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.output["decision"] == "approve"
+
+    def test_execute_workflow_rejects_contract_out_mismatch_before_success_receipt(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.contracts["AgentOutput"] = ContractSchema(
+            fields={"decision_frame": PropertySchema(type="json")}
+        )
+        config.workflows["evaluate_promo"].contract_out = "AgentOutput"
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="Workflow 'evaluate_promo' output"):
+            execute_workflow(
+                workflow_instance,
+                workflow_instance.load_config(),
+                "evaluate_promo",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
+        store = workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        assert receipt.results[0]["output"] is None
+        assert "Workflow 'evaluate_promo' output failed contract 'AgentOutput'" in (
+            receipt.results[0]["error"]
+        )
+        assert "missing required field 'decision_frame'" in receipt.results[0]["error"]
+        assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
+
     def test_compile_workflow_rejects_missing_required_json_schema_field(
         self,
         tmp_path: Path,
@@ -1415,6 +1475,38 @@ class TestWorkflowExecutor:
         assert applied.receipt.workflow_mode == "apply"
         assert applied.receipt.head_snapshot_id == applied.head_snapshot_id
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_canonical_apply_validates_contract_out_before_commit(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.contracts["ReferenceOutput"] = ContractSchema(
+            fields={"decision_frame": PropertySchema(type="json")}
+        )
+        config.workflows["build_reference"].contract_out = "ReferenceOutput"
+        canonical_workflow_instance.save_config(config)
+        write_lock_for_instance(canonical_workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="Workflow 'build_reference' output"):
+            execute_workflow(
+                canonical_workflow_instance,
+                canonical_workflow_instance.load_config(),
+                "build_reference",
+                {},
+                mode="apply",
+            )
+
+        assert canonical_workflow_instance.load_graph().list_entities("Vendor") == []
+        store = canonical_workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        assert receipt.workflow_mode == "apply"
+        assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
 
     def test_canonical_workflow_tabular_shape_ingest_parity(self, tmp_path: Path) -> None:
         bundle_dir = tmp_path / "bundle"
