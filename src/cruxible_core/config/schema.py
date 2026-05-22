@@ -56,6 +56,7 @@ class EnumSchema(BaseModel):
     """Shared enum vocabulary referenced by property schemas."""
 
     values: list[str]
+    ordered: Literal["low_to_high"] | None = None
     description: str | None = None
 
     @model_validator(mode="after")
@@ -312,6 +313,7 @@ class QueryOrderSpec(BaseModel):
     by: str
     direction: Literal["asc", "desc"] = "asc"
     value_type: PredicateValueType | None = None
+    enum_ref: str | None = None
 
     @field_validator("by")
     @classmethod
@@ -319,6 +321,19 @@ class QueryOrderSpec(BaseModel):
         if not value.startswith("$") or len(value) == 1:
             raise ValueError("order_by.by must be a query reference like $result.entity_id")
         return value
+
+    @field_validator("enum_ref")
+    @classmethod
+    def validate_enum_ref(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("order_by.enum_ref must be a non-empty string")
+        return value
+
+    @model_validator(mode="after")
+    def validate_order_value_mode(self) -> QueryOrderSpec:
+        if self.value_type is not None and self.enum_ref is not None:
+            raise ValueError("order_by.value_type and order_by.enum_ref are mutually exclusive")
+        return self
 
 
 class QueryIncludeSpec(BaseModel):
@@ -1689,6 +1704,40 @@ class CoreConfig(BaseModel):
                             )
                             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def validate_query_order_enum_refs(self) -> CoreConfig:
+        """Check that query ordering enum refs target declared ordered enums."""
+        for query_name, query in self.named_queries.items():
+            for index, order in enumerate(query.order_by):
+                self._validate_order_enum_ref(
+                    order,
+                    f"Named query '{query_name}' order_by[{index}]",
+                )
+            for include_alias, include in query.include.items():
+                for index, order in enumerate(include.order_by):
+                    self._validate_order_enum_ref(
+                        order,
+                        (
+                            f"Named query '{query_name}' include '{include_alias}' "
+                            f"order_by[{index}]"
+                        ),
+                    )
+        return self
+
+    def _validate_order_enum_ref(self, order: QueryOrderSpec, location: str) -> None:
+        if order.enum_ref is None:
+            return
+        enum_schema = self.enums.get(order.enum_ref)
+        if enum_schema is None:
+            msg = f"{location} references unknown enum_ref '{order.enum_ref}'"
+            raise ValueError(msg)
+        if enum_schema.ordered != "low_to_high":
+            msg = (
+                f"{location} references enum_ref '{order.enum_ref}', "
+                "but that enum is not ordered"
+            )
+            raise ValueError(msg)
 
     @model_validator(mode="after")
     def validate_relationship_query_returns(self) -> CoreConfig:

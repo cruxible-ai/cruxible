@@ -30,9 +30,7 @@ from cruxible_core.errors import (
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.predicate import (
     COMPARISON_SYMBOL_PATTERN,
-    PredicateCoercionError,
     PredicateValueType,
-    coerce_predicate_value,
     evaluate_typed_comparison,
 )
 from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
@@ -50,6 +48,7 @@ from cruxible_core.query.predicates import (
 )
 from cruxible_core.query.projection import (
     QueryRowContext,
+    coerce_query_order_value,
     compare_order_values,
     compare_sort_keys,
     project_query_row,
@@ -277,6 +276,7 @@ def execute_query(
         result_contexts,
         query_schema.order_by,
         params,
+        config=config,
     )
     total_results = len(result_contexts)
     limited_contexts = (
@@ -1295,7 +1295,7 @@ def _evaluate_include(
             )
         )
 
-    ordered_items = _sort_include_items(items, spec.order_by, params)
+    ordered_items = _sort_include_items(items, spec.order_by, params, config)
     count = len(ordered_items)
     if not spec.many and count > 1:
         raise QueryExecutionError(
@@ -1394,14 +1394,15 @@ def _sort_include_items(
     items: list[QueryIncludeItem],
     order_by: list[QueryOrderSpec],
     params: dict[str, Any],
+    config: CoreConfig,
 ) -> list[QueryIncludeItem]:
     if not order_by:
         return sorted(items, key=_include_item_identity)
 
     def compare(left: QueryIncludeItem, right: QueryIncludeItem) -> int:
         for order in order_by:
-            left_value = _resolve_include_order_value(order, left, params)
-            right_value = _resolve_include_order_value(order, right, params)
+            left_value = _resolve_include_order_value(order, left, params, config)
+            right_value = _resolve_include_order_value(order, right, params, config)
             if left_value is None and right_value is None:
                 continue
             if left_value is None:
@@ -1420,17 +1421,10 @@ def _resolve_include_order_value(
     order: QueryOrderSpec,
     item: QueryIncludeItem,
     params: dict[str, Any],
+    config: CoreConfig,
 ) -> Any:
     value = _resolve_include_order_ref(order.by, item, params)
-    if value is None or order.value_type is None:
-        return value
-    try:
-        return coerce_predicate_value(value, order.value_type)
-    except PredicateCoercionError as exc:
-        raise QueryExecutionError(
-            f"Invalid {exc.value_type} include order_by value for "
-            f"'{order.by}': {exc.value!r}"
-        ) from exc
+    return coerce_query_order_value(value, order, config, label=order.by)
 
 
 def _resolve_include_order_ref(

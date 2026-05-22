@@ -9,6 +9,7 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
     EntityTypeSchema,
+    EnumSchema,
     NamedQuerySchema,
     PropertySchema,
     RelationshipSchema,
@@ -2260,6 +2261,85 @@ class TestProjectionOrderingAndLimit:
 
         assert _terminal_ids(result.results) == ["BP-5678", "BP-1234"]
 
+    def test_order_by_ordered_enum_asc_and_desc(self, config, graph):
+        config.enums["priority"] = EnumSchema(
+            values=["low", "medium", "high", "critical"],
+            ordered="low_to_high",
+        )
+        config.entity_types["Part"].properties["priority"] = PropertySchema(
+            enum_ref="priority"
+        )
+        graph.update_entity_properties("Part", "BP-1234", {"priority": "low"})
+        graph.update_entity_properties("Part", "BP-5678", {"priority": "critical"})
+
+        config.named_queries["enum_ordered_fit_paths"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[
+                {
+                    "by": "$result.properties.priority",
+                    "direction": "asc",
+                    "enum_ref": "priority",
+                },
+            ],
+        )
+
+        asc = execute_query(
+            config,
+            graph,
+            "enum_ordered_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+        config.named_queries["enum_ordered_fit_paths"].order_by[0].direction = "desc"
+        desc = execute_query(
+            config,
+            graph,
+            "enum_ordered_fit_paths",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert _terminal_ids(asc.results) == ["BP-1234", "BP-5678"]
+        assert _terminal_ids(desc.results) == ["BP-5678", "BP-1234"]
+
+    def test_order_by_ordered_enum_rejects_unknown_runtime_value(self, config, graph):
+        config.enums["priority"] = EnumSchema(
+            values=["low", "medium", "high", "critical"],
+            ordered="low_to_high",
+        )
+        graph.update_entity_properties("Part", "BP-1234", {"priority": "urgent"})
+        graph.update_entity_properties("Part", "BP-5678", {"priority": "low"})
+        config.named_queries["bad_enum_order"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"verified": True},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            order_by=[
+                {
+                    "by": "$result.properties.priority",
+                    "enum_ref": "priority",
+                },
+            ],
+        )
+
+        with pytest.raises(QueryExecutionError, match="Invalid ordered enum value"):
+            execute_query(config, graph, "bad_enum_order", {"vehicle_id": "V-CIVIC"})
+
     def test_invalid_typed_order_value_fails(self, config, graph):
         graph.update_relationship_state(
             "Part",
@@ -2372,6 +2452,59 @@ class TestQueryIncludes:
             "include_summary" in node.detail
             for node in result.receipt.nodes
         )
+
+    def test_include_order_by_ordered_enum(self, config, graph):
+        config.enums["priority"] = EnumSchema(
+            values=["low", "medium", "high", "critical"],
+            ordered="low_to_high",
+        )
+        config.entity_types["Part"].properties["priority"] = PropertySchema(
+            enum_ref="priority"
+        )
+        graph.update_entity_properties("Part", "BP-5678", {"priority": "low"})
+        graph.update_entity_properties("Part", "BP-9999", {"priority": "critical"})
+        config.named_queries["part_with_ordered_replacements"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "order_by": [
+                        {
+                            "by": "$source.properties.priority",
+                            "direction": "desc",
+                            "enum_ref": "priority",
+                        }
+                    ],
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "part_with_ordered_replacements",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [item.source.entity_id for item in row.includes["replacements"].items] == [
+            "BP-9999",
+            "BP-5678",
+        ]
 
     def test_optional_include_without_match_retains_row(self, config, graph):
         config.named_queries["part_with_optional_blocks"] = NamedQuerySchema(

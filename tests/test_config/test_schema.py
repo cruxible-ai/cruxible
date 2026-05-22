@@ -130,6 +130,15 @@ class TestEnumSchema:
         enum = EnumSchema(values=["active", "retired"], description="Lifecycle")
         assert enum.values == ["active", "retired"]
 
+    def test_ordered_enum_low_to_high(self):
+        enum = EnumSchema(values=["low", "medium", "high"], ordered="low_to_high")
+
+        assert enum.ordered == "low_to_high"
+
+    def test_ordered_enum_rejects_boolean(self):
+        with pytest.raises(ValidationError):
+            EnumSchema(values=["low", "high"], ordered=True)
+
     def test_rejects_empty_enum(self):
         with pytest.raises(ValidationError, match="must not be empty"):
             EnumSchema(values=[])
@@ -869,6 +878,30 @@ class TestNamedQuerySchema:
                 order_by=[{"by": "result.entity_id"}],
             )
 
+    def test_order_by_rejects_value_type_and_enum_ref(self):
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                order_by=[
+                    {
+                        "by": "$result.properties.priority",
+                        "value_type": "string",
+                        "enum_ref": "priority",
+                    }
+                ],
+            )
+
+    def test_order_by_rejects_blank_enum_ref(self):
+        with pytest.raises(ValidationError, match="enum_ref"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                order_by=[{"by": "$result.properties.priority", "enum_ref": " "}],
+            )
+
     def test_limit_rejects_negative_values(self):
         with pytest.raises(ValidationError):
             NamedQuerySchema(
@@ -994,6 +1027,128 @@ class TestCoreConfigQueryValidation:
             relationships=[],
         )
         assert config.entity_types["Thing"].properties["status"].enum_ref == "status"
+
+    def test_query_order_by_accepts_ordered_enum_ref(self):
+        config = CoreConfig(
+            name="test",
+            enums={
+                "priority": EnumSchema(
+                    values=["low", "medium", "high"],
+                    ordered="low_to_high",
+                )
+            },
+            entity_types={
+                "Vehicle": EntityTypeSchema(
+                    properties={"vehicle_id": PropertySchema(primary_key=True)}
+                ),
+                "Part": EntityTypeSchema(
+                    properties={"part_number": PropertySchema(primary_key=True)}
+                ),
+            },
+            relationships=[
+                RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+            ],
+            named_queries={
+                "ordered": NamedQuerySchema(
+                    entry_point="Vehicle",
+                    traversal=[TraversalStep(relationship="fits", direction="incoming")],
+                    returns="list[Part]",
+                    order_by=[
+                        {
+                            "by": "$result.properties.priority",
+                            "enum_ref": "priority",
+                        }
+                    ],
+                    include={
+                        "side": {
+                            "from": "$result",
+                            "relationship": "fits",
+                            "direction": "outgoing",
+                            "order_by": [
+                                {
+                                    "by": "$edge.properties.priority",
+                                    "enum_ref": "priority",
+                                }
+                            ],
+                        }
+                    },
+                )
+            },
+        )
+
+        assert config.named_queries["ordered"].order_by[0].enum_ref == "priority"
+
+    def test_query_order_by_rejects_unknown_enum_ref(self):
+        with pytest.raises(ValidationError, match="unknown enum_ref 'priority'"):
+            CoreConfig(
+                name="test",
+                entity_types={
+                    "Vehicle": EntityTypeSchema(
+                        properties={"vehicle_id": PropertySchema(primary_key=True)}
+                    ),
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+                ],
+                named_queries={
+                    "ordered": NamedQuerySchema(
+                        entry_point="Vehicle",
+                        traversal=[
+                            TraversalStep(relationship="fits", direction="incoming")
+                        ],
+                        returns="list[Part]",
+                        order_by=[
+                            {
+                                "by": "$result.properties.priority",
+                                "enum_ref": "priority",
+                            }
+                        ],
+                    )
+                },
+            )
+
+    def test_query_order_by_rejects_unordered_enum_ref(self):
+        with pytest.raises(ValidationError, match="enum is not ordered"):
+            CoreConfig(
+                name="test",
+                enums={"priority": EnumSchema(values=["low", "high"])},
+                entity_types={
+                    "Vehicle": EntityTypeSchema(
+                        properties={"vehicle_id": PropertySchema(primary_key=True)}
+                    ),
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(name="fits", from_entity="Part", to_entity="Vehicle")
+                ],
+                named_queries={
+                    "ordered": NamedQuerySchema(
+                        entry_point="Vehicle",
+                        traversal=[
+                            TraversalStep(relationship="fits", direction="incoming")
+                        ],
+                        returns="list[Part]",
+                        include={
+                            "side": {
+                                "from": "$result",
+                                "relationship": "fits",
+                                "direction": "outgoing",
+                                "order_by": [
+                                    {
+                                        "by": "$edge.properties.priority",
+                                        "enum_ref": "priority",
+                                    }
+                                ],
+                            }
+                        },
+                    )
+                },
+            )
 
     def test_accepts_nested_json_schema_enum_ref(self):
         config = load_config_from_string(

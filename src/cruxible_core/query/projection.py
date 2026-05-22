@@ -23,7 +23,7 @@ from cruxible_core.query.types import (
 )
 
 if TYPE_CHECKING:
-    from cruxible_core.config.schema import QueryOrderSpec
+    from cruxible_core.config.schema import CoreConfig, QueryOrderSpec
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,8 @@ def sort_query_row_contexts(
     contexts: Sequence[QueryRowContext],
     order_by: Sequence[QueryOrderSpec],
     params: dict[str, Any],
+    *,
+    config: CoreConfig | None = None,
 ) -> list[QueryRowContext]:
     """Sort query row contexts by explicit order specs plus stable identity."""
     if not order_by:
@@ -66,8 +68,8 @@ def sort_query_row_contexts(
 
     def compare(left: QueryRowContext, right: QueryRowContext) -> int:
         for order in order_by:
-            left_value = _resolve_order_value(order, left, params)
-            right_value = _resolve_order_value(order, right, params)
+            left_value = _resolve_order_value(order, left, params, config=config)
+            right_value = _resolve_order_value(order, right, params, config=config)
             if left_value is None and right_value is None:
                 continue
             if left_value is None:
@@ -166,20 +168,52 @@ def _resolve_projection_value(
     return value
 
 
-def _resolve_order_value(
+def coerce_query_order_value(
+    value: Any,
     order: QueryOrderSpec,
-    context: QueryRowContext,
-    params: dict[str, Any],
+    config: CoreConfig | None,
+    *,
+    label: str,
 ) -> Any:
-    value = resolve_query_row_ref(order.by, context, params)
-    if value is None or order.value_type is None:
+    """Coerce one resolved order value according to an order spec."""
+    if value is None:
+        return None
+    if order.enum_ref is not None:
+        if config is None:
+            raise QueryExecutionError(
+                f"Cannot use enum_ref '{order.enum_ref}' for '{label}' without config"
+            )
+        enum_schema = config.enums.get(order.enum_ref)
+        if enum_schema is None or enum_schema.ordered != "low_to_high":
+            raise QueryExecutionError(
+                f"Order reference '{label}' uses unordered or unknown enum_ref "
+                f"'{order.enum_ref}'"
+            )
+        if value not in enum_schema.values:
+            raise QueryExecutionError(
+                f"Invalid ordered enum value for '{label}': {value!r} is not in "
+                f"enum_ref '{order.enum_ref}'"
+            )
+        return enum_schema.values.index(value)
+    if order.value_type is None:
         return value
     try:
         return coerce_predicate_value(value, order.value_type)
     except PredicateCoercionError as exc:
         raise QueryExecutionError(
-            f"Invalid {exc.value_type} order_by value for '{order.by}': {exc.value!r}"
+            f"Invalid {exc.value_type} order_by value for '{label}': {exc.value!r}"
         ) from exc
+
+
+def _resolve_order_value(
+    order: QueryOrderSpec,
+    context: QueryRowContext,
+    params: dict[str, Any],
+    *,
+    config: CoreConfig | None,
+) -> Any:
+    value = resolve_query_row_ref(order.by, context, params)
+    return coerce_query_order_value(value, order, config, label=order.by)
 
 
 def compare_order_values(left: Any, right: Any) -> int:
@@ -337,6 +371,7 @@ def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...],
 
 __all__ = [
     "QueryRowContext",
+    "coerce_query_order_value",
     "compare_order_values",
     "compare_sort_keys",
     "fallback_sort_key",
