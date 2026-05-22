@@ -266,6 +266,26 @@ class QueryPredicateSpec(StructuredPredicateSpec):
         return self
 
 
+def _validate_top_level_query_predicate_scopes(
+    predicates: QueryPredicateSpec | None,
+    *,
+    field_name: str,
+) -> None:
+    from cruxible_core.query.predicates import QUERY_PREDICATE_SCOPES
+
+    if predicates is None:
+        return
+    for path in predicates.root:
+        scope = path.split(".", 1)[0]
+        if scope not in QUERY_PREDICATE_SCOPES:
+            allowed = ", ".join(sorted(QUERY_PREDICATE_SCOPES))
+            msg = (
+                f"top-level {field_name} predicate path '{path}' must start "
+                f"with one of: {allowed}"
+            )
+            raise ValueError(msg)
+
+
 class RelatedPredicateSpec(BaseModel):
     """Predicate-backed related-edge existence check for a traversal candidate."""
 
@@ -299,6 +319,50 @@ class QueryOrderSpec(BaseModel):
         if not value.startswith("$") or len(value) == 1:
             raise ValueError("order_by.by must be a query reference like $result.entity_id")
         return value
+
+
+class QueryIncludeSpec(BaseModel):
+    """One-hop side context attached to each primary named-query row."""
+
+    from_: str = Field(alias="from")
+    relationship: str
+    direction: Literal["incoming", "outgoing"] = "outgoing"
+    many: bool = False
+    required: bool = False
+    limit: int | None = Field(default=None, ge=0)
+    where: QueryPredicateSpec | None = None
+    where_related: list[RelatedPredicateSpec] = Field(default_factory=list)
+    where_not_related: list[RelatedPredicateSpec] = Field(default_factory=list)
+    order_by: list[QueryOrderSpec] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("from_")
+    @classmethod
+    def validate_from_ref(cls, value: str) -> str:
+        if not value.startswith("$") or len(value) == 1:
+            raise ValueError("include from must be an entity reference like $result")
+        return value
+
+    @field_validator("relationship")
+    @classmethod
+    def validate_relationship_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("relationship must be a non-empty string")
+        return value
+
+    @model_validator(mode="after")
+    def validate_include_shape(self) -> QueryIncludeSpec:
+        _validate_top_level_query_predicate_scopes(self.where, field_name="include where")
+        for order in self.order_by:
+            scope, _path = _split_query_ref(order.by)
+            if scope not in {"edge", "source", "target"}:
+                msg = (
+                    f"include order_by reference '{order.by}' must use "
+                    "$edge, $source, or $target"
+                )
+                raise ValueError(msg)
+        return self
 
 
 def _collect_query_refs(value: Any) -> list[str]:
@@ -374,16 +438,7 @@ class TraversalStep(BaseModel):
 
     @model_validator(mode="after")
     def validate_where_scope(self) -> TraversalStep:
-        from cruxible_core.query.predicates import QUERY_PREDICATE_SCOPES
-
-        if self.where is None:
-            return self
-        for path in self.where.root:
-            scope = path.split(".", 1)[0]
-            if scope not in QUERY_PREDICATE_SCOPES:
-                allowed = ", ".join(sorted(QUERY_PREDICATE_SCOPES))
-                msg = f"top-level where predicate path '{path}' must start with one of: {allowed}"
-                raise ValueError(msg)
+        _validate_top_level_query_predicate_scopes(self.where, field_name="where")
         return self
 
     @field_validator("alias")
@@ -419,6 +474,7 @@ class NamedQuerySchema(BaseModel):
     allow_relationship_state_override: bool = False
     select: dict[str, Any] | None = None
     order_by: list[QueryOrderSpec] = Field(default_factory=list)
+    include: dict[str, QueryIncludeSpec] = Field(default_factory=dict)
     limit: int | None = Field(default=None, ge=0)
     max_paths: int | None = Field(default=None, gt=0)
     max_paths_per_result: int | None = Field(default=None, gt=0)
@@ -431,7 +487,22 @@ class NamedQuerySchema(BaseModel):
             duplicate_str = ", ".join(duplicate_aliases)
             msg = f"duplicate traversal aliases: {duplicate_str}"
             raise ValueError(msg)
-        self._validate_projection_and_order_refs(set(aliases))
+        alias_set = set(aliases)
+        include_aliases = set(self.include)
+        invalid_include_aliases = sorted(
+            alias for alias in include_aliases if _PATH_TOKEN_RE.fullmatch(alias) is None
+        )
+        if invalid_include_aliases:
+            invalid = ", ".join(invalid_include_aliases)
+            raise ValueError(f"include aliases must match [\\w-]+: {invalid}")
+        collisions = sorted(alias_set & include_aliases)
+        if collisions:
+            collision_str = ", ".join(collisions)
+            raise ValueError(
+                f"include aliases must not collide with traversal aliases: {collision_str}"
+            )
+        self._validate_include_refs(alias_set)
+        self._validate_projection_and_order_refs(alias_set)
         if "dedupe" not in self.model_fields_set:
             self.dedupe = "entity" if self.result_shape == "entity" else "path"
         has_non_required_step = any(not step.required for step in self.traversal)
@@ -445,6 +516,9 @@ class NamedQuerySchema(BaseModel):
             self.max_paths is not None or self.max_paths_per_result is not None
         ):
             msg = "path budgets require result_shape 'path' or 'relationship'"
+            raise ValueError(msg)
+        if self.result_shape == "entity" and self.include:
+            msg = "include requires result_shape 'path' or 'relationship'"
             raise ValueError(msg)
         if self.result_shape == "relationship":
             if not self.traversal:
@@ -475,12 +549,45 @@ class NamedQuerySchema(BaseModel):
                 raise ValueError(msg)
         return self
 
+    def _validate_include_refs(self, aliases: set[str]) -> None:
+        for alias, include in self.include.items():
+            ref = include.from_
+            if not ref.startswith("$"):
+                raise ValueError(f"include '{alias}' from reference '{ref}' must start with '$'")
+            scope, sep, path = ref[1:].partition(".")
+            if scope in {"entry", "result"}:
+                if sep or path:
+                    raise ValueError(
+                        f"include '{alias}' from reference '{ref}' must be exactly ${scope}"
+                    )
+                continue
+            if not sep or not path:
+                raise ValueError(f"invalid include from reference '{ref}'")
+            if scope != "path":
+                raise ValueError(
+                    f"include '{alias}' from reference '{ref}' must use $entry, "
+                    "$result, or $path.<alias>.source|target"
+                )
+            parts = path.split(".")
+            if len(parts) != 2 or parts[1] not in {"source", "target"}:
+                raise ValueError(
+                    f"include '{alias}' from reference '{ref}' must use "
+                    "$path.<alias>.source or $path.<alias>.target"
+                )
+            path_alias = parts[0]
+            if path_alias not in aliases:
+                raise ValueError(
+                    f"include '{alias}' from reference '{ref}' uses unknown "
+                    f"traversal alias '{path_alias}'"
+                )
+
     def _validate_projection_and_order_refs(self, aliases: set[str]) -> None:
         allowed_scopes = {
             "input",
             "entry",
             "result",
             "path",
+            "include",
             "relationship",
             "from_entity",
             "to_entity",
@@ -507,8 +614,27 @@ class NamedQuerySchema(BaseModel):
                     raise ValueError(
                         f"path reference '{ref}' uses unknown traversal alias '{alias}'"
                     )
+            if scope == "include":
+                include_alias, _, include_path = path.partition(".")
+                if not include_alias:
+                    raise ValueError(f"include reference '{ref}' must include an include alias")
+                include = self.include.get(include_alias)
+                if include is None:
+                    raise ValueError(
+                        f"include reference '{ref}' uses unknown include alias '{include_alias}'"
+                    )
+                if include.many and include_path.split(".", 1)[0] in {
+                    "edge",
+                    "source",
+                    "target",
+                }:
+                    raise ValueError(
+                        f"include reference '{ref}' targets many include '{include_alias}'; "
+                        f"use $include.{include_alias}.items, count, or existence"
+                    )
             if self.result_shape == "entity" and scope in {
                 "path",
+                "include",
                 "relationship",
                 "from_entity",
                 "to_entity",
@@ -1522,6 +1648,25 @@ class CoreConfig(BaseModel):
         """Check that related-edge predicate specs use declared canonical relationships."""
         declared_relationships = {rel.name for rel in self.relationships}
         for query_name, query in self.named_queries.items():
+            for include_alias, include in query.include.items():
+                if self.resolve_relationship_reference(include.relationship) is None:
+                    msg = (
+                        f"Named query '{query_name}' include '{include_alias}' "
+                        f"references unknown relationship '{include.relationship}'"
+                    )
+                    raise ValueError(msg)
+                for field_name, related_specs in (
+                    ("where_related", include.where_related),
+                    ("where_not_related", include.where_not_related),
+                ):
+                    for related in related_specs:
+                        if related.relationship not in declared_relationships:
+                            msg = (
+                                f"Named query '{query_name}' include '{include_alias}' "
+                                f"references unknown relationship '{related.relationship}' "
+                                f"in {field_name}"
+                            )
+                            raise ValueError(msg)
             for step_index, step in enumerate(query.traversal):
                 for exclusion in step.exclude_if_related:
                     if exclusion.relationship not in declared_relationships:

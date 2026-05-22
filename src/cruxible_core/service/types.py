@@ -221,6 +221,7 @@ class QueryDefinitionServiceResult:
     allow_relationship_state_override: bool = False
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = field(default_factory=list)
+    include: dict[str, dict[str, Any]] = field(default_factory=dict)
     limit: int | None = None
     max_paths: int | None = None
     max_paths_per_result: int | None = None

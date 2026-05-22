@@ -321,6 +321,7 @@ named_queries:
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
 | `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
 | `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), and optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`). |
+| `include` | dict | no | `{}` | One-hop side-context includes keyed by alias. Includes decorate each primary row without advancing traversal or fanning out primary rows. |
 | `limit` | int | no | `null` | Query-level output cap applied after traversal, dedupe, path budgets, ordering, and before projection. Result metadata reports pre-limit `total_results`, effective `limit`, and `limit_truncated`. |
 | `max_paths` | int | no | `null` | Traversal-time retained-path frontier budget. It caps retained path states for each traversal step, limiting memory and receipt growth. It is not a total candidate-evaluation budget. |
 | `max_paths_per_result` | int | no | `null` | Post-traversal final retained-path-per-result cap applied after traversal/dedupe, before ordering and `limit`. It does not bound traversal work. |
@@ -344,11 +345,17 @@ Validation rules:
 - Missing order values sort last, with stable graph-identity tie-breakers added automatically.
 - Query-level `limit` is part of the named query contract. Runtime/API caller limits are only a caller-facing response cap.
 - Projected query receipts retain source path/relationship evidence. User-facing projected results intentionally omit that source payload by default.
+- `include` aliases must not collide with traversal aliases. Include anchors support `$entry`, `$result`, `$path.<alias>.source`, and `$path.<alias>.target`.
+- Includes are one-hop side context. They do not advance the traversal frontier and do not fan out primary rows.
+- `include.required: true` filters out a primary row when that include has no matches. `required: false` retains the row with `exists: false`, `count: 0`, and empty `items`.
+- `include.many: false` expects at most one match and fails execution if multiple matches are found. Use `many: true` for repeated side context.
+- Include `limit` is per include per primary row. It sets that include's `truncated` flag and is separate from query `limit`, `max_paths`, and `max_paths_per_result`.
 
 Projection refs:
 - All shapes: `$input.<name>`, `$entry.entity_type`, `$entry.entity_id`, `$entry.properties.<name>`, `$entry.metadata.<path>`, `$result.entity_type`, `$result.entity_id`, `$result.properties.<name>`, `$result.metadata.<path>`.
 - `result_shape: path`: `$path.<alias>.edge.*`, `$path.<alias>.source.*`, and `$path.<alias>.target.*`. Path refs require a traversal `as` alias.
 - `result_shape: relationship`: `$relationship.*`, `$from_entity.*`, and `$to_entity.*`.
+- Include refs: `$include.<alias>.exists`, `$include.<alias>.count`, `$include.<alias>.truncated`, `$include.<alias>.items`. Singular includes also support `$include.<alias>.edge.*`, `$include.<alias>.source.*`, and `$include.<alias>.target.*`; `many: true` includes require selecting `items`, `count`, or existence flags.
 
 Projection and ordering example:
 
@@ -382,6 +389,48 @@ named_queries:
     max_paths: 500
     max_paths_per_result: 20
     limit: 50
+```
+
+Include example:
+
+```yaml
+named_queries:
+  vulnerability_exposure_context:
+    entry_point: Vulnerability
+    returns: Asset
+    result_shape: path
+    relationship_state: reviewable
+    traversal:
+      - as: exposure
+        relationship: asset_exposed_to_vulnerability
+        direction: incoming
+    include:
+      owner:
+        from: $result
+        relationship: asset_owned_by
+        direction: outgoing
+      services:
+        from: $result
+        relationship: service_depends_on_asset
+        direction: incoming
+        many: true
+        limit: 10
+      exceptions:
+        from: $result
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        where:
+          target.properties.status:
+            in: [active, approved]
+    select:
+      vulnerability_id: $entry.entity_id
+      asset_id: $result.entity_id
+      exposure_edge_key: $path.exposure.edge.edge_key
+      owner_id: $include.owner.target.entity_id
+      service_count: $include.services.count
+      services: $include.services.items
+      has_exception: $include.exceptions.exists
 ```
 
 ### TraversalStep

@@ -2322,6 +2322,416 @@ class TestProjectionOrderingAndLimit:
         assert result_node.detail["truncated"] is True
 
 
+class TestQueryIncludes:
+    def test_include_from_result_attaches_many_side_context_with_limit(
+        self, config, graph
+    ):
+        config.named_queries["part_with_replacements"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "limit": 1,
+                    "order_by": [
+                        {"by": "$edge.properties.confidence", "direction": "desc"}
+                    ],
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "part_with_replacements",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        include = row.includes["replacements"]
+        assert include.exists is True
+        assert include.count == 2
+        assert include.truncated is True
+        assert include.limit == 1
+        assert [item.source.entity_id for item in include.items] == ["BP-5678"]
+        assert result.receipt is not None
+        assert any(
+            "include_summary" in node.detail
+            for node in result.receipt.nodes
+        )
+
+    def test_optional_include_without_match_retains_row(self, config, graph):
+        config.named_queries["part_with_optional_blocks"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "blocks": {
+                    "from": "$result",
+                    "relationship": "blocked",
+                    "direction": "outgoing",
+                    "many": True,
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "part_with_optional_blocks",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        include = row.includes["blocks"]
+        assert include.exists is False
+        assert include.count == 0
+        assert include.items == []
+
+    def test_required_include_filters_row_without_match(self, config, graph):
+        config.named_queries["part_requiring_blocks"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "blocks": {
+                    "from": "$result",
+                    "relationship": "blocked",
+                    "direction": "outgoing",
+                    "required": True,
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "part_requiring_blocks",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.results == []
+
+    def test_singular_include_errors_on_multiple_matches(self, config, graph):
+        config.named_queries["ambiguous_replacement"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacement": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                }
+            },
+        )
+
+        with pytest.raises(QueryExecutionError, match="set many: true"):
+            execute_query(
+                config,
+                graph,
+                "ambiguous_replacement",
+                {"vehicle_id": "V-CIVIC"},
+            )
+
+    def test_singular_include_where_and_projection_refs(self, config, graph):
+        config.named_queries["projected_replacement"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacement": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "where": {"edge.properties.confidence": {"gte": 0.8}},
+                },
+                "no_match": {
+                    "from": "$result",
+                    "relationship": "blocked",
+                    "direction": "outgoing",
+                },
+            },
+            select={
+                "has_replacement": "$include.replacement.exists",
+                "replacement_count": "$include.replacement.count",
+                "replacement_part": "$include.replacement.source.entity_id",
+                "replacement_confidence": "$include.replacement.edge.properties.confidence",
+                "missing_block_target": "$include.no_match.target.entity_id",
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "projected_replacement",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values == {
+            "has_replacement": True,
+            "replacement_count": 1,
+            "replacement_part": "BP-5678",
+            "replacement_confidence": 0.85,
+            "missing_block_target": None,
+        }
+        assert isinstance(row.source, QueryPathRow)
+        assert "replacement" in row.source.includes
+
+    def test_include_from_entry_and_path_alias_anchors(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="vehicle_blocks_part",
+                from_type="Vehicle",
+                from_id="V-CIVIC",
+                to_type="Part",
+                to_id="BP-9999",
+            )
+        )
+        config.named_queries["path_anchor_includes"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "entry_block": {
+                    "from": "$entry",
+                    "relationship": "vehicle_blocks_part",
+                    "direction": "outgoing",
+                },
+                "source_replacements": {
+                    "from": "$path.fit.source",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                },
+                "target_blocks": {
+                    "from": "$path.fit.target",
+                    "relationship": "vehicle_blocks_part",
+                    "direction": "outgoing",
+                },
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "path_anchor_includes",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert row.includes["entry_block"].items[0].target.entity_id == "BP-9999"
+        assert row.includes["source_replacements"].count == 2
+        assert row.includes["target_blocks"].items[0].target.entity_id == "BP-9999"
+
+    def test_many_include_items_projection_is_allowed(self, config, graph):
+        config.named_queries["many_include_items"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                }
+            },
+            select={
+                "count": "$include.replacements.count",
+                "items": "$include.replacements.items",
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "many_include_items",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values["count"] == 2
+        assert len(row.values["items"]) == 2
+
+    def test_include_related_predicates_match_from_candidate_anchor(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="blocked",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Part",
+                to_id="BP-9999",
+            )
+        )
+        config.named_queries["related_include_filters"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "has_block": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "where_related": [
+                        {
+                            "relationship": "blocked",
+                            "direction": "outgoing",
+                            "target": {"entity_id": {"eq": "BP-9999"}},
+                        }
+                    ],
+                },
+                "no_block": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "where_not_related": [
+                        {
+                            "relationship": "blocked",
+                            "direction": "outgoing",
+                            "target": {"entity_id": {"eq": "BP-9999"}},
+                        }
+                    ],
+                },
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "related_include_filters",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [item.source.entity_id for item in row.includes["has_block"].items] == [
+            "BP-5678"
+        ]
+        assert [item.source.entity_id for item in row.includes["no_block"].items] == [
+            "BP-9999"
+        ]
+
+    def test_include_relationship_state_uses_parent_query_visibility(self, config, graph):
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Part",
+            "BP-1234",
+            "replaces",
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending")
+                )
+            ),
+        )
+        config.named_queries["live_include_replacements"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "live_include_replacements",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [item.source.entity_id for item in row.includes["replacements"].items] == [
+            "BP-9999"
+        ]
+
+
 class TestOperationalQueryControls:
     def test_non_required_step_without_match_preserves_path_row(self, config, graph):
         config.named_queries["fit_with_optional_replacement"] = NamedQuerySchema(

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import cmp_to_key
 from typing import TYPE_CHECKING, Any
 
 from cruxible_core.config.property_validation import (
@@ -29,7 +30,9 @@ from cruxible_core.errors import (
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.predicate import (
     COMPARISON_SYMBOL_PATTERN,
+    PredicateCoercionError,
     PredicateValueType,
+    coerce_predicate_value,
     evaluate_typed_comparison,
 )
 from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
@@ -38,12 +41,17 @@ from cruxible_core.query.predicates import (
     build_predicate_context,
     evaluate_query_predicates,
     evaluate_related_predicate,
+    is_missing_path,
     iter_step_relationships,
     query_filter_summary,
     related_edge_exists,
+    resolve_path,
+    segment_endpoint_entities,
 )
 from cruxible_core.query.projection import (
     QueryRowContext,
+    compare_order_values,
+    compare_sort_keys,
     project_query_row,
     sort_query_row_contexts,
     stable_row_identity,
@@ -51,6 +59,8 @@ from cruxible_core.query.projection import (
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import (
     BaseQueryRow,
+    QueryIncludeItem,
+    QueryIncludeResult,
     QueryPathRow,
     QueryPathSegment,
     QueryRelationshipRow,
@@ -65,6 +75,8 @@ if TYPE_CHECKING:
     from cruxible_core.config.schema import (
         CoreConfig,
         NamedQuerySchema,
+        QueryIncludeSpec,
+        QueryOrderSpec,
         TraversalStep,
     )
     from cruxible_core.graph.entity_graph import EntityGraph
@@ -119,6 +131,14 @@ class _TraversalBudgetState:
 def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
     """Backward-compatible alias for the shared exact-match helper."""
     return matches_exact_filter(entity_props, filter_spec)
+
+
+def _query_include_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]:
+    """Return config-level include summaries for receipt root metadata."""
+    return [
+        {"alias": alias, **include.model_dump(mode="python", by_alias=True, exclude_none=True)}
+        for alias, include in query_schema.include.items()
+    ]
 
 
 def execute_query(
@@ -181,6 +201,7 @@ def execute_query(
             "limit": query_schema.limit,
             "max_paths": query_schema.max_paths,
             "max_paths_per_result": query_schema.max_paths_per_result,
+            "include": _query_include_summary(query_schema),
         },
     )
 
@@ -236,6 +257,15 @@ def execute_query(
             result_contexts,
             expected_entity_type=declared_entity_return_type,
         )
+    result_contexts = _apply_includes(
+        config,
+        graph,
+        query_schema,
+        result_contexts,
+        params,
+        relationship_state=effective_options.relationship_state,
+        builder=builder,
+    )
     budget_result = _apply_path_budgets(
         result_contexts,
         max_paths_per_result=query_schema.max_paths_per_result,
@@ -1111,6 +1141,341 @@ def _build_result_contexts(
             )
         )
     return contexts
+
+
+def _apply_includes(
+    config: CoreConfig,
+    graph: EntityGraph,
+    query_schema: NamedQuerySchema,
+    contexts: list[QueryRowContext],
+    params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState,
+    builder: ReceiptBuilder | None,
+) -> list[QueryRowContext]:
+    """Attach one-hop include side context to base query row contexts."""
+    if not query_schema.include:
+        return contexts
+
+    retained: list[QueryRowContext] = []
+    summaries: dict[str, dict[str, Any]] = {
+        alias: {
+            "alias": alias,
+            "from": spec.from_,
+            "relationship": spec.relationship,
+            "direction": spec.direction,
+            "many": spec.many,
+            "required": spec.required,
+            "limit": spec.limit,
+            "relationship_state": relationship_state,
+            "rows_evaluated": 0,
+            "rows_with_matches": 0,
+            "total_matches": 0,
+            "truncated_rows": 0,
+        }
+        for alias, spec in query_schema.include.items()
+    }
+
+    for context in contexts:
+        includes: dict[str, QueryIncludeResult] = {}
+        drop_row = False
+        for alias, spec in query_schema.include.items():
+            result = _evaluate_include(
+                config,
+                graph,
+                alias,
+                spec,
+                context,
+                params,
+                relationship_state=relationship_state,
+            )
+            summary = summaries[alias]
+            summary["rows_evaluated"] += 1
+            summary["total_matches"] += result.count
+            if result.exists:
+                summary["rows_with_matches"] += 1
+            if result.truncated:
+                summary["truncated_rows"] += 1
+            includes[alias] = result
+            if spec.required and not result.exists:
+                drop_row = True
+                break
+        if drop_row:
+            continue
+        retained.append(_context_with_includes(context, includes))
+
+    if builder is not None:
+        builder.record_validation(
+            passed=True,
+            detail={"include_summary": list(summaries.values())},
+        )
+    return retained
+
+
+def _evaluate_include(
+    config: CoreConfig,
+    graph: EntityGraph,
+    alias: str,
+    spec: QueryIncludeSpec,
+    context: QueryRowContext,
+    params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState,
+) -> QueryIncludeResult:
+    anchor = _resolve_include_anchor(alias, spec.from_, context)
+    if anchor is None:
+        return QueryIncludeResult(
+            alias=alias,
+            many=spec.many,
+            limit=spec.limit,
+        )
+    resolved = config.resolve_relationship_reference(spec.relationship)
+    if resolved is None:
+        raise RelationshipNotFoundError(spec.relationship)
+    relationship_schema, is_reverse = resolved
+    direction = _flip_relationship_direction(spec.direction) if is_reverse else spec.direction
+    relationships = sorted(
+        iter_step_relationships(
+            graph,
+            anchor,
+            relationship_type=relationship_schema.name,
+            direction=direction,
+            alias=alias,
+        ),
+        key=_relationship_candidate_identity,
+    )
+    items: list[QueryIncludeItem] = []
+    for neighbor, segment, _relative_direction in relationships:
+        if not relationship_matches_query_state(segment.metadata, relationship_state):
+            continue
+        predicate_context = build_predicate_context(
+            entry=context.entry,
+            current=anchor,
+            candidate=neighbor,
+            segment=segment,
+        )
+        if spec.where is not None and not evaluate_query_predicates(
+            config,
+            spec.where,
+            predicate_context,
+            params,
+        ):
+            continue
+        if spec.where_related and not all(
+            evaluate_related_predicate(
+                graph,
+                related,
+                predicate_context,
+                params,
+                config=config,
+                relationship_state=relationship_state,
+            )
+            for related in spec.where_related
+        ):
+            continue
+        if spec.where_not_related and any(
+            evaluate_related_predicate(
+                graph,
+                related,
+                predicate_context,
+                params,
+                config=config,
+                relationship_state=relationship_state,
+            )
+            for related in spec.where_not_related
+        ):
+            continue
+
+        source, target = segment_endpoint_entities(anchor, neighbor, segment)
+        items.append(
+            QueryIncludeItem(
+                edge=segment,
+                source=entity_with_identity_properties(config, source),
+                target=entity_with_identity_properties(config, target),
+            )
+        )
+
+    ordered_items = _sort_include_items(items, spec.order_by, params)
+    count = len(ordered_items)
+    if not spec.many and count > 1:
+        raise QueryExecutionError(
+            f"Include '{alias}' matched {count} relationships; set many: true "
+            "or narrow the include predicates"
+        )
+    returned_items = (
+        ordered_items[: spec.limit]
+        if spec.limit is not None
+        else ordered_items
+    )
+    return QueryIncludeResult(
+        alias=alias,
+        many=spec.many,
+        exists=count > 0,
+        count=count,
+        limit=spec.limit,
+        truncated=spec.limit is not None and count > spec.limit,
+        items=returned_items,
+    )
+
+
+def _context_with_includes(
+    context: QueryRowContext,
+    includes: dict[str, QueryIncludeResult],
+) -> QueryRowContext:
+    row = context.row
+    if isinstance(row, QueryPathRow | QueryRelationshipRow):
+        row = row.model_copy(update={"includes": includes})
+    return replace(context, row=row, includes=includes)
+
+
+def _resolve_include_anchor(
+    alias: str,
+    ref: str,
+    context: QueryRowContext,
+) -> EntityInstance | None:
+    if ref == "$entry":
+        return context.entry
+    if ref == "$result":
+        return context.result
+    if not ref.startswith("$path."):
+        raise QueryExecutionError(
+            f"Include '{alias}' from reference '{ref}' must use $entry, $result, "
+            "or $path.<alias>.source|target"
+        )
+    parts = ref[1:].split(".")
+    if len(parts) != 3 or parts[2] not in {"source", "target"}:
+        raise QueryExecutionError(
+            f"Include '{alias}' from reference '{ref}' must use "
+            "$path.<alias>.source or $path.<alias>.target"
+        )
+    path_alias = parts[1]
+    segment = _path_segment_by_alias(
+        path_alias,
+        context.path,
+        optional_path_aliases=context.optional_path_aliases,
+    )
+    if segment is None:
+        return None
+    if parts[2] == "source":
+        return _find_context_entity(context, segment.from_type, segment.from_id)
+    return _find_context_entity(context, segment.to_type, segment.to_id)
+
+
+def _find_context_entity(
+    context: QueryRowContext,
+    entity_type: str,
+    entity_id: str,
+) -> EntityInstance:
+    for entity in context.entities:
+        if entity.entity_type == entity_type and entity.entity_id == entity_id:
+            return entity
+    raise QueryExecutionError(
+        f"Include anchor path references missing entity {entity_type}:{entity_id}"
+    )
+
+
+def _path_segment_by_alias(
+    alias: str,
+    path: tuple[QueryPathSegment, ...],
+    *,
+    optional_path_aliases: frozenset[str],
+) -> QueryPathSegment | None:
+    matches = [segment for segment in path if segment.alias == alias]
+    if not matches:
+        if alias in optional_path_aliases:
+            return None
+        raise QueryExecutionError(f"Unknown path alias '{alias}' in include anchor")
+    if len(matches) > 1:
+        raise QueryExecutionError(f"Duplicate path alias '{alias}' in query result path")
+    return matches[0]
+
+
+def _sort_include_items(
+    items: list[QueryIncludeItem],
+    order_by: list[QueryOrderSpec],
+    params: dict[str, Any],
+) -> list[QueryIncludeItem]:
+    if not order_by:
+        return sorted(items, key=_include_item_identity)
+
+    def compare(left: QueryIncludeItem, right: QueryIncludeItem) -> int:
+        for order in order_by:
+            left_value = _resolve_include_order_value(order, left, params)
+            right_value = _resolve_include_order_value(order, right, params)
+            if left_value is None and right_value is None:
+                continue
+            if left_value is None:
+                return 1
+            if right_value is None:
+                return -1
+            result = compare_order_values(left_value, right_value)
+            if result != 0:
+                return -result if order.direction == "desc" else result
+        return compare_sort_keys(_include_item_identity(left), _include_item_identity(right))
+
+    return sorted(items, key=cmp_to_key(compare))
+
+
+def _resolve_include_order_value(
+    order: QueryOrderSpec,
+    item: QueryIncludeItem,
+    params: dict[str, Any],
+) -> Any:
+    value = _resolve_include_order_ref(order.by, item, params)
+    if value is None or order.value_type is None:
+        return value
+    try:
+        return coerce_predicate_value(value, order.value_type)
+    except PredicateCoercionError as exc:
+        raise QueryExecutionError(
+            f"Invalid {exc.value_type} include order_by value for "
+            f"'{order.by}': {exc.value!r}"
+        ) from exc
+
+
+def _resolve_include_order_ref(
+    ref: str,
+    item: QueryIncludeItem,
+    params: dict[str, Any],
+) -> Any:
+    if not ref.startswith("$"):
+        raise QueryExecutionError(f"Include order reference '{ref}' must start with '$'")
+    scope, sep, raw_path = ref[1:].partition(".")
+    if not sep or not raw_path:
+        raise QueryExecutionError(f"Invalid include order reference '{ref}'")
+    if scope == "input":
+        value = resolve_path(params, raw_path.split("."))
+        if is_missing_path(value):
+            raise QueryExecutionError(f"Missing query input reference '{ref}'")
+        return value
+    if scope == "edge":
+        base: Any = item.edge
+    elif scope == "source":
+        base = item.source
+    elif scope == "target":
+        base = item.target
+    else:
+        raise QueryExecutionError(
+            f"Include order reference '{ref}' must use $edge, $source, or $target"
+        )
+    value = resolve_path(base, raw_path.split("."))
+    return None if is_missing_path(value) else value
+
+
+def _include_item_identity(item: QueryIncludeItem) -> tuple[Any, ...]:
+    return (
+        item.edge.relationship_type,
+        item.edge.from_type,
+        item.edge.from_id,
+        item.edge.to_type,
+        item.edge.to_id,
+        item.edge.edge_key is None,
+        item.edge.edge_key if item.edge.edge_key is not None else -1,
+        item.source.entity_type,
+        item.source.entity_id,
+        item.target.entity_type,
+        item.target.entity_id,
+    )
 
 
 def _optional_path_aliases(query_schema: NamedQuerySchema) -> frozenset[str]:

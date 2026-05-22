@@ -9,6 +9,7 @@ from cruxible_core.service import (
     service_explain_receipt,
     service_export_edges,
     service_inspect_view,
+    service_list_queries,
     service_query,
     service_render_wiki,
 )
@@ -96,6 +97,57 @@ def test_service_describe_query_infers_required_input_refs(
         "sort_token",
         "vehicle_id",
     ]
+
+
+def test_service_query_definition_exposes_include_contract(
+    populated_instance: CruxibleInstance,
+) -> None:
+    config = populated_instance.load_config()
+    config.named_queries["parts_with_include"] = NamedQuerySchema(
+        entry_point="Vehicle",
+        traversal=[
+            TraversalStep(
+                relationship="fits",
+                direction="incoming",
+                alias="fit",
+            )
+        ],
+        returns="list[Part]",
+        include={
+            "vehicle_fitments": {
+                "from": "$entry",
+                "relationship": "fits",
+                "direction": "incoming",
+                "many": True,
+                "limit": 5,
+            }
+        },
+    )
+    populated_instance.save_config(config)
+
+    described = service_describe_query(populated_instance, "parts_with_include")
+    listed = next(
+        query
+        for query in service_list_queries(populated_instance)
+        if query.name == "parts_with_include"
+    )
+
+    expected_include = {
+        "vehicle_fitments": {
+            "from": "$entry",
+            "relationship": "fits",
+            "direction": "incoming",
+            "many": True,
+            "required": False,
+            "limit": 5,
+            "where_related": [],
+            "where_not_related": [],
+            "order_by": [],
+        }
+    }
+    assert described.include == expected_include
+    assert listed.include == expected_include
+    assert "from_" not in described.include["vehicle_fitments"]
 
 
 def test_service_render_wiki_returns_page_payloads(

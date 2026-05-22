@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cmp_to_key
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +16,7 @@ from cruxible_core.query.predicates import is_missing_path, resolve_path
 from cruxible_core.query.types import (
     BaseQueryRow,
     ProjectedQueryRow,
+    QueryIncludeResult,
     QueryPathRow,
     QueryPathSegment,
     QueryRelationshipRow,
@@ -36,6 +37,7 @@ class QueryRowContext:
     path: tuple[QueryPathSegment, ...]
     parent_id: str | None = None
     optional_path_aliases: frozenset[str] = frozenset()
+    includes: dict[str, QueryIncludeResult] = field(default_factory=dict)
 
 
 def project_query_row(
@@ -72,10 +74,10 @@ def sort_query_row_contexts(
                 return 1
             if right_value is None:
                 return -1
-            result = _compare_order_values(left_value, right_value)
+            result = compare_order_values(left_value, right_value)
             if result != 0:
                 return -result if order.direction == "desc" else result
-        return _compare_sort_keys(stable_row_identity(left), stable_row_identity(right))
+        return compare_sort_keys(stable_row_identity(left), stable_row_identity(right))
 
     return sorted(contexts, key=cmp_to_key(compare))
 
@@ -98,6 +100,8 @@ def resolve_query_row_ref(
         return _optional_path(ref, context.result, path)
     if scope == "path":
         return _resolve_path_ref(ref, path, context)
+    if scope == "include":
+        return _resolve_include_ref(ref, path, context)
     if scope == "relationship":
         if not isinstance(context.row, QueryRelationshipRow):
             raise QueryExecutionError(
@@ -178,7 +182,8 @@ def _resolve_order_value(
         ) from exc
 
 
-def _compare_order_values(left: Any, right: Any) -> int:
+def compare_order_values(left: Any, right: Any) -> int:
+    """Compare query ordering values with deterministic fallback behavior."""
     try:
         if left < right:
             return -1
@@ -186,10 +191,11 @@ def _compare_order_values(left: Any, right: Any) -> int:
             return 1
         return 0
     except TypeError:
-        return _compare_sort_keys(_fallback_sort_key(left), _fallback_sort_key(right))
+        return compare_sort_keys(fallback_sort_key(left), fallback_sort_key(right))
 
 
-def _compare_sort_keys(left: tuple[Any, ...], right: tuple[Any, ...]) -> int:
+def compare_sort_keys(left: tuple[Any, ...], right: tuple[Any, ...]) -> int:
+    """Compare stable tuple sort keys."""
     if left < right:
         return -1
     if left > right:
@@ -197,7 +203,8 @@ def _compare_sort_keys(left: tuple[Any, ...], right: tuple[Any, ...]) -> int:
     return 0
 
 
-def _fallback_sort_key(value: Any) -> tuple[str, str]:
+def fallback_sort_key(value: Any) -> tuple[str, str]:
+    """Return a deterministic key for values that cannot be directly compared."""
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     return (type(value).__name__, str(value))
@@ -232,6 +239,39 @@ def _resolve_path_ref(
     raise QueryExecutionError(
         f"Path query reference '{ref}' must use edge, source, or target after alias"
     )
+
+
+def _resolve_include_ref(
+    ref: str,
+    path: list[str],
+    context: QueryRowContext,
+) -> Any:
+    if not path:
+        raise QueryExecutionError(f"Include query reference '{ref}' must include an alias")
+    alias, *field_path = path
+    include = context.includes.get(alias)
+    if include is None:
+        raise QueryExecutionError(f"Unknown include alias '{alias}' in query reference '{ref}'")
+    if not field_path:
+        return include.model_dump(mode="python")
+
+    section, *rest = field_path
+    if section in {"alias", "many", "exists", "count", "limit", "truncated", "items"}:
+        return _optional_path(ref, include, field_path)
+    if section not in {"edge", "source", "target"}:
+        raise QueryExecutionError(
+            f"Include query reference '{ref}' must use exists, count, truncated, "
+            "items, edge, source, or target after alias"
+        )
+    if include.many:
+        raise QueryExecutionError(
+            f"Include query reference '{ref}' targets a many include; select "
+            f"$include.{alias}.items, count, or existence instead"
+        )
+    if not include.items:
+        return None
+    item = include.items[0]
+    return _optional_path(ref, getattr(item, section), rest)
 
 
 def _path_segment_by_alias(
@@ -297,6 +337,9 @@ def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...],
 
 __all__ = [
     "QueryRowContext",
+    "compare_order_values",
+    "compare_sort_keys",
+    "fallback_sort_key",
     "project_query_row",
     "resolve_query_row_ref",
     "sort_query_row_contexts",

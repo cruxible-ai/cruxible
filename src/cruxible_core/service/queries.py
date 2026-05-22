@@ -698,6 +698,18 @@ def _infer_query_required_params(
         params.update(_input_params_from_value(query_schema.select))
     for order in query_schema.order_by:
         params.update(_input_params_from_value(order.by))
+    for include in query_schema.include.values():
+        params.update(_input_params_from_value(include.from_))
+        if include.where is not None:
+            params.update(_input_params_from_value(include.where.root))
+        for related in [*include.where_related, *include.where_not_related]:
+            params.update(
+                _input_params_from_value(
+                    related.model_dump(mode="python", exclude_none=True)
+                )
+            )
+        for order in include.order_by:
+            params.update(_input_params_from_value(order.by))
     for step in query_schema.traversal:
         if step.where is not None:
             params.update(_input_params_from_value(step.where.root))
@@ -761,6 +773,14 @@ def _query_definition(
             order.model_dump(mode="json", exclude_none=True)
             for order in query_schema.order_by
         ],
+        include={
+            alias: include.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+            )
+            for alias, include in query_schema.include.items()
+        },
         limit=query_schema.limit,
         max_paths=query_schema.max_paths,
         max_paths_per_result=query_schema.max_paths_per_result,

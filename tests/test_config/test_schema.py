@@ -643,6 +643,112 @@ class TestNamedQuerySchema:
         assert query.max_paths == 500
         assert query.max_paths_per_result == 20
 
+    def test_accepts_include_block(self):
+        query = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "limit": 10,
+                    "where": {"edge.properties.confidence": {"gte": 0.8}},
+                    "order_by": [
+                        {
+                            "by": "$edge.properties.confidence",
+                            "direction": "desc",
+                        }
+                    ],
+                }
+            },
+            select={
+                "part_id": "$result.entity_id",
+                "replacement_count": "$include.replacements.count",
+            },
+        )
+
+        assert query.include["replacements"].from_ == "$result"
+        assert query.include["replacements"].many is True
+
+    def test_include_rejects_unknown_path_alias_anchor(self):
+        with pytest.raises(ValidationError, match="unknown traversal alias 'missing'"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="path",
+                include={
+                    "side": {
+                        "from": "$path.missing.source",
+                        "relationship": "replaces",
+                    }
+                },
+            )
+
+    def test_include_alias_collision_rejected(self):
+        with pytest.raises(ValidationError, match="include aliases must not collide"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="path",
+                include={"fit": {"from": "$result", "relationship": "replaces"}},
+            )
+
+    def test_include_rejects_entity_shape(self):
+        with pytest.raises(ValidationError, match="include requires result_shape"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits")],
+                returns="list[Part]",
+                result_shape="entity",
+                select={"part_id": "$result.entity_id"},
+                include={"side": {"from": "$result", "relationship": "replaces"}},
+            )
+
+    def test_include_order_rejects_query_row_scopes(self):
+        with pytest.raises(ValidationError, match="include order_by reference"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="path",
+                include={
+                    "side": {
+                        "from": "$result",
+                        "relationship": "replaces",
+                        "order_by": [{"by": "$result.entity_id"}],
+                    }
+                },
+            )
+
+    def test_projection_rejects_singular_ref_for_many_include(self):
+        with pytest.raises(ValidationError, match="targets many include"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", alias="fit")],
+                returns="list[Part]",
+                result_shape="path",
+                include={
+                    "side": {
+                        "from": "$result",
+                        "relationship": "replaces",
+                        "many": True,
+                    }
+                },
+                select={"bad": "$include.side.target.entity_id"},
+            )
+
     def test_required_false_defaults_and_is_accepted_for_path_shape(self):
         query = NamedQuerySchema(
             entry_point="Vehicle",

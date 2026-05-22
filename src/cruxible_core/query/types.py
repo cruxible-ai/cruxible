@@ -17,6 +17,26 @@ class QueryPathSegment(RelationshipInstance):
     alias: str | None = None
 
 
+class QueryIncludeItem(BaseModel):
+    """One included one-hop side-context relationship."""
+
+    edge: QueryPathSegment
+    source: EntityInstance
+    target: EntityInstance
+
+
+class QueryIncludeResult(BaseModel):
+    """Side-context attached to a primary query row."""
+
+    alias: str
+    many: bool = False
+    exists: bool = False
+    count: int = 0
+    limit: int | None = None
+    truncated: bool = False
+    items: list[QueryIncludeItem] = Field(default_factory=list)
+
+
 class QueryPathRow(BaseModel):
     """Path-shaped query result with full entity payloads and relationship evidence."""
 
@@ -24,6 +44,7 @@ class QueryPathRow(BaseModel):
     result: EntityInstance
     entities: list[EntityInstance]
     path: list[QueryPathSegment]
+    includes: dict[str, QueryIncludeResult] = Field(default_factory=dict)
 
 
 class QueryRelationshipRow(RelationshipInstance):
@@ -32,6 +53,7 @@ class QueryRelationshipRow(RelationshipInstance):
     entry: EntityInstance
     from_entity: EntityInstance | None = None
     to_entity: EntityInstance | None = None
+    includes: dict[str, QueryIncludeResult] = Field(default_factory=dict)
 
 
 BaseQueryRow = EntityInstance | QueryPathRow | QueryRelationshipRow
@@ -93,6 +115,8 @@ __all__ = [
     "BaseQueryRow",
     "ProjectedQueryRow",
     "QueryDedupe",
+    "QueryIncludeItem",
+    "QueryIncludeResult",
     "QueryPathRow",
     "QueryRelationshipState",
     "QueryPathSegment",

@@ -106,6 +106,7 @@ def _query_definition_payload(query: Any) -> dict[str, Any]:
         ),
         "select": getattr(query, "select", None),
         "order_by": list(getattr(query, "order_by", [])),
+        "include": dict(getattr(query, "include", {})),
         "limit": getattr(query, "limit", None),
         "max_paths": getattr(query, "max_paths", None),
         "max_paths_per_result": getattr(query, "max_paths_per_result", None),
