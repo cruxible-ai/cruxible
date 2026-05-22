@@ -583,6 +583,8 @@ def execute_workflow(
             result_mode=result_mode,
             error=exc,
             results_recorded=results_recorded,
+            step_outputs=step_outputs,
+            query_receipt_ids=query_receipt_ids,
         )
         if persist_receipt:
             persist_workflow_receipt(instance, failed_receipt)
@@ -667,18 +669,25 @@ def _build_failed_workflow_receipt(
     result_mode: WorkflowResultMode,
     error: BaseException,
     results_recorded: bool,
+    step_outputs: dict[str, Any] | None = None,
+    query_receipt_ids: list[str] | None = None,
 ) -> Receipt:
     """Finalize an uncommitted workflow receipt for execution failures."""
     failure_results = [{"output": None, "error": str(error)}]
     if not results_recorded:
         receipt_builder.record_results(failure_results)
     receipt = receipt_builder.build(results=failure_results)
+    read_metadata = (
+        _aggregate_workflow_read_metadata(plan, step_outputs, query_receipt_ids or [])
+        if step_outputs is not None
+        else _empty_workflow_read_metadata(query_receipt_ids or [])
+    )
     _annotate_workflow_receipt(
         receipt,
         plan=plan,
         result_mode=result_mode,
         apply_digest=None,
-        read_metadata=_empty_workflow_read_metadata([]),
+        read_metadata=read_metadata,
         error=error,
     )
     return receipt

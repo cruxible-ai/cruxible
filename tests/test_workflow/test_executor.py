@@ -660,6 +660,198 @@ class TestWorkflowExecutor:
         }
         receipt_metadata = result.receipt.nodes[0].detail["read_metadata"]
         assert receipt_metadata == read_metadata
+        query_step = read_metadata["read_steps"][0]
+        assert query_step["step_id"] == "paths"
+        assert query_step["metadata"]["receipt_id"] == result.query_receipt_ids[0]
+        assert query_step["metadata"]["truncated"] is True
+        assert query_step["metadata"]["limit_truncated"] is True
+        assert query_step["metadata"]["path_truncated"] is False
+        assert query_step["metadata"]["truncation_reasons"] == ["limit"]
+        assert query_step["metadata"]["returned_results"] == 1
+        assert query_step["metadata"]["total_results"] == 2
+
+    def test_assert_can_guard_truncated_query_metadata(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            limit=1,
+        )
+        config.workflows["guard_complete_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_context",
+                    **{
+                        "assert": {
+                            "left": "$steps.paths.truncated",
+                            "op": "eq",
+                            "right": False,
+                            "message": "Recommendation context was truncated",
+                        }
+                    },
+                ),
+            ],
+            returns="paths",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        with pytest.raises(QueryExecutionError, match="Recommendation context was truncated"):
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "guard_complete_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+        store = proposal_workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        read_metadata = receipt.nodes[0].detail["read_metadata"]
+        assert read_metadata["any_read_truncated"] is True
+        assert read_metadata["any_query_truncated"] is True
+        assert read_metadata["truncation_reasons"] == ["limit"]
+        assert len(read_metadata["query_receipt_ids"]) == 1
+        assert read_metadata["read_steps"][0]["step_id"] == "paths"
+        assert read_metadata["read_steps"][0]["metadata"]["receipt_id"] == (
+            read_metadata["query_receipt_ids"][0]
+        )
+        assert read_metadata["read_steps"][0]["metadata"]["truncated"] is True
+        assert read_metadata["read_steps"][0]["metadata"]["limit_truncated"] is True
+        assert read_metadata["read_steps"][0]["metadata"]["path_truncated"] is False
+        assert read_metadata["read_steps"][0]["metadata"]["returned_results"] == 1
+        assert read_metadata["read_steps"][0]["metadata"]["total_results"] == 2
+
+    def test_assert_can_guard_transform_source_truncation(
+        self,
+        proposal_workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = proposal_workflow_instance.load_config()
+        config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            entry_point="Campaign",
+            traversal=[
+                TraversalStep(
+                    relationship="recommended_for",
+                    direction="outgoing",
+                    alias="recommendation",
+                )
+            ],
+            returns="list[Product]",
+            result_shape="path",
+            dedupe="path",
+            limit=1,
+        )
+        config.workflows["guard_shaped_recommendations"] = WorkflowSchema(
+            contract_in="CampaignInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="paths",
+                    query="limited_recommendation_paths",
+                    params={"campaign_id": "$input.campaign_id"},
+                    **{"as": "paths"},
+                ),
+                WorkflowStepSchema(
+                    id="shaped",
+                    shape_items={
+                        "items": "$steps.paths.results",
+                        "fields": {"sku": "$item.result.entity_id"},
+                    },
+                    **{"as": "shaped"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_shaped_context",
+                    **{
+                        "assert": {
+                            "left": "$steps.shaped.source_metadata.truncated",
+                            "op": "eq",
+                            "right": False,
+                            "message": "Shaped recommendation context was truncated",
+                        }
+                    },
+                ),
+            ],
+            returns="shaped",
+        )
+        proposal_workflow_instance.save_config(config)
+        graph = proposal_workflow_instance.load_graph()
+        for sku in ("SKU-123", "SKU-456"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"reason": "catalog"},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        with pytest.raises(
+            QueryExecutionError,
+            match="Shaped recommendation context was truncated",
+        ):
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "guard_shaped_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+        store = proposal_workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        read_metadata = receipt.nodes[0].detail["read_metadata"]
+        assert read_metadata["any_read_truncated"] is True
+        assert [step["step_id"] for step in read_metadata["read_steps"]] == [
+            "paths",
+            "shaped",
+        ]
+        shaped_step = read_metadata["read_steps"][1]
+        assert shaped_step["source_step"] == "paths"
+        assert shaped_step["metadata"]["truncated"] is True
+        assert shaped_step["metadata"]["truncation_reasons"] == ["limit"]
 
     def test_execute_workflow_list_entities_step_returns_items(
         self, workflow_instance: CruxibleInstance
@@ -759,6 +951,65 @@ class TestWorkflowExecutor:
         assert products["limit_truncated"] is True
         assert products["path_truncated"] is False
         assert products["truncation_reasons"] == ["limit"]
+
+    def test_assert_can_guard_complete_list_metadata_and_count(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.workflows["guard_product_reads"] = WorkflowSchema(
+            contract_in="PromoInput",
+            steps=[
+                WorkflowStepSchema(
+                    id="products",
+                    list_entities={
+                        "entity_type": "Product",
+                        "property_filter": {"sku": "$input.sku"},
+                        "limit": 10,
+                    },
+                    **{"as": "products"},
+                ),
+                WorkflowStepSchema(
+                    id="require_complete_products",
+                    **{
+                        "assert": {
+                            "left": "$steps.products.truncated",
+                            "op": "eq",
+                            "right": False,
+                            "message": "Product read was truncated",
+                        }
+                    },
+                ),
+                WorkflowStepSchema(
+                    id="require_some_products",
+                    **{
+                        "assert": {
+                            "left": "$steps.products.returned_results",
+                            "op": "gt",
+                            "right": 0,
+                            "message": "No products found",
+                        }
+                    },
+                ),
+            ],
+            returns="products",
+        )
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        result = execute_workflow(
+            workflow_instance,
+            workflow_instance.load_config(),
+            "guard_product_reads",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        assert result.output["returned_results"] == 1
+        assert result.output["truncated"] is False
+        assert result.read_metadata["any_read_truncated"] is False
 
     def test_execute_workflow_list_entities_matches_service_list(
         self, workflow_instance: CruxibleInstance

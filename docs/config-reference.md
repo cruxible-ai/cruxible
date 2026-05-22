@@ -1112,6 +1112,72 @@ Steps reference data from prior steps and the current item in list iterations:
 - `filter_items` returns `{items, input_count, output_count, filtered_count}`.
 - `dedupe_items` returns `{items, input_count, output_count, duplicate_count, duplicate_examples}`.
 
+Read steps also expose consistent completeness metadata: `total_results`,
+`returned_results`, `limit`, `truncated`, `limit_truncated`, `path_truncated`,
+and `truncation_reasons`. Query steps additionally expose `result_shape`,
+`dedupe`, `relationship_state`, `policy_summary`, and the child query
+`receipt_id`. Transform steps that consume read output preserve that metadata in
+`source_metadata`.
+
+### Guarding Partial Read Context
+
+Agent-facing workflows should fail explicitly when a limited or path-budgeted
+read would make the output incomplete. Use normal `assert` steps against read
+metadata:
+
+```yaml
+workflows:
+  exposure_context:
+    contract_in: ExposureInput
+    contract_out: ExposureContext
+    steps:
+      - id: exposed_assets
+        query: exposed_assets_for_vulnerability
+        params:
+          vulnerability_id: $input.vulnerability_id
+        as: exposed_assets
+
+      - id: require_complete_exposure_context
+        assert:
+          left: $steps.exposed_assets.truncated
+          op: eq
+          right: false
+          message: Exposure context was truncated
+
+      - id: require_some_exposures
+        assert:
+          left: $steps.exposed_assets.returned_results
+          op: gt
+          right: 0
+          message: No exposures found
+
+    returns: exposed_assets
+```
+
+The same pattern works after shaping or filtering because transforms preserve
+read metadata:
+
+```yaml
+- id: shaped_exposures
+  shape_items:
+    items: $steps.exposed_assets.results
+    fields:
+      asset_id: $item.values.asset_id
+      priority: $item.values.priority
+  as: shaped_exposures
+
+- id: require_complete_shaped_context
+  assert:
+    left: $steps.shaped_exposures.source_metadata.truncated
+    op: eq
+    right: false
+    message: Shaped exposure context was truncated
+```
+
+`contract_out` validates the final output shape selected by `returns`. Read
+metadata guards validate whether the workflow had complete enough source
+context to support that output.
+
 ### Dataflow Steps
 
 Use dataflow steps for deterministic row mechanics that should be visible in
