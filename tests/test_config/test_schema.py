@@ -1824,6 +1824,34 @@ class TestWorkflowSchema:
         assert step.propose_relationship_group is not None
         assert step.propose_relationship_group.pending_refresh_mode == "retain_missing"
 
+    def test_propose_relationship_group_step_accepts_on_empty_complete(self):
+        step = WorkflowStepSchema(
+            id="proposal",
+            propose_relationship_group={
+                "relationship_type": "recommended_for",
+                "candidates_from": "candidates",
+                "signals_from": [],
+                "on_empty": "complete",
+            },
+            **{"as": "proposal"},
+        )
+
+        assert step.propose_relationship_group is not None
+        assert step.propose_relationship_group.on_empty == "complete"
+
+    def test_propose_relationship_group_step_rejects_unknown_on_empty(self):
+        with pytest.raises(ValidationError):
+            WorkflowStepSchema(
+                id="proposal",
+                propose_relationship_group={
+                    "relationship_type": "recommended_for",
+                    "candidates_from": "candidates",
+                    "signals_from": [],
+                    "on_empty": "skip",
+                },
+                **{"as": "proposal"},
+            )
+
     def test_workflow_rejects_removed_proposal_output(self):
         with pytest.raises(ValidationError, match="proposal_output"):
             WorkflowSchema(

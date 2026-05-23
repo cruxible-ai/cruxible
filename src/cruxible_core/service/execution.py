@@ -451,6 +451,67 @@ def service_propose_workflow(
                 f"Workflow '{workflow_name}' must return a relationship proposal artifact"
             ) from exc
         relationship_type = proposal_payload.relationship_type
+        if proposal_payload.status == "no_candidates":
+            no_group_result = ProposeGroupResult(
+                group_id=None,
+                signature="",
+                status="no_candidates",
+                review_priority="normal",
+                member_count=0,
+                prior_resolution=None,
+                suppressed=False,
+                suppressed_members=[],
+                policy_summary={},
+                receipt_id=None,
+            )
+            proposal_receipt = _finalize_proposal_receipt(
+                result.receipt,
+                head_snapshot_id=result.head_snapshot_id,
+                group_result=no_group_result,
+            )
+            _save_workflow_receipt(instance, proposal_receipt)
+            service_result = ProposeWorkflowResult(
+                workflow=result.workflow,
+                output=result.output,
+                receipt_id=proposal_receipt.receipt_id,
+                group_id=None,
+                group_status="no_candidates",
+                review_priority="normal",
+                mode=result.mode,
+                workflow_type=result.workflow_type,
+                suppressed=False,
+                suppressed_members=[],
+                query_receipt_ids=result.query_receipt_ids,
+                read_metadata=result.read_metadata,
+                trace_ids=[trace.trace_id for trace in result.traces],
+                prior_resolution=None,
+                policy_summary={},
+                receipt=proposal_receipt,
+                traces=result.traces,
+            )
+            record_decision_event_for_context(
+                instance,
+                context,
+                command=f"workflow_propose:{workflow_name}",
+                status="success",
+                input_payload=input_event,
+                output_payload={
+                    "output": service_result.output,
+                    "mode": service_result.mode,
+                    "workflow_type": service_result.workflow_type,
+                    "group_id": service_result.group_id,
+                    "group_status": service_result.group_status,
+                },
+                receipt_id=service_result.receipt_id,
+                trace_ids=service_result.trace_ids,
+                head_snapshot_id=(
+                    service_result.receipt.head_snapshot_id
+                    if service_result.receipt
+                    else None
+                ),
+                started_at=started_at,
+            )
+            return service_result
         members = [
             CandidateMember(
                 from_type=member.from_type,

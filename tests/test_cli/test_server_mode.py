@@ -1805,6 +1805,57 @@ def test_propose_json_includes_suppressed_members(
     ]
 
 
+def test_propose_json_includes_no_candidates_status(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("campaign_id: CMP-1\n")
+
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            assert instance_id == "inst_123"
+            assert workflow_name == "wf"
+            assert input_payload == {"campaign_id": "CMP-1"}
+            return contracts.WorkflowProposeResult(
+                workflow="wf",
+                output={
+                    "status": "no_candidates",
+                    "candidate_count": 0,
+                    "group_created": False,
+                },
+                receipt_id="RCP-1",
+                group_id=None,
+                group_status="no_candidates",
+                review_priority="normal",
+                trace_ids=[],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "propose",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["group_id"] is None
+    assert payload["status"] == "no_candidates"
+    assert payload["output"]["group_created"] is False
+
+
 def test_propose_human_output_prints_suppressed_members(
     monkeypatch,
     runner: CliRunner,
@@ -1859,6 +1910,46 @@ def test_propose_human_output_prints_suppressed_members(
     assert "Workflow wf produced no reviewable group." in result.output
     assert "Suppressed members: 1" in result.output
     assert "Campaign:CMP-1 -[recommended_for]-> Product:SKU-123" in result.output
+
+
+def test_propose_human_output_prints_no_candidates_status(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    input_path = tmp_path / "input.yaml"
+    input_path.write_text("campaign_id: CMP-1\n")
+
+    class StubClient:
+        def propose_workflow(self, instance_id, *, workflow_name, input_payload=None):
+            return contracts.WorkflowProposeResult(
+                workflow=workflow_name,
+                output={"status": "no_candidates", "group_created": False},
+                receipt_id="RCP-1",
+                group_id=None,
+                group_status="no_candidates",
+                review_priority="normal",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "propose",
+            "--workflow",
+            "wf",
+            "--input-file",
+            str(input_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Workflow wf completed with no candidates." in result.output
+    assert "No candidate group was created." in result.output
 
 
 def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(

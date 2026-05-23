@@ -530,10 +530,20 @@ def build_relationship_group_proposal(
             )
             _append_member_query_evidence(member, signal.source_query_evidence)
 
+    candidate_count = len(members_by_pair)
+    if candidate_count == 0 and spec.on_empty != "complete":
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' propose_relationship_group produced no candidates"
+        )
+
     return RelationshipGroupProposalArtifact.model_validate(
         {
             "relationship_type": relationship_type,
             "members": [member.model_dump(mode="python") for member in members_by_pair.values()],
+            "status": "no_candidates" if candidate_count == 0 else "ready",
+            "candidate_count": candidate_count,
+            "on_empty": spec.on_empty,
+            "group_created": False if candidate_count == 0 else None,
             "thesis_text": resolve_value(
                 spec.thesis_text,
                 input_payload,

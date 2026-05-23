@@ -1015,6 +1015,62 @@ class TestWorkflowExecutionServices:
                 {"campaign_id": "CMP-1"},
             )
 
+    def test_service_propose_workflow_empty_candidates_strict_by_default(
+        self, query_evidence_proposal_instance: CruxibleInstance
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        with pytest.raises(QueryExecutionError, match="produced no candidates"):
+            service_propose_workflow(
+                query_evidence_proposal_instance,
+                "propose_from_filtered_relationship_query",
+                {"campaign_id": "CMP-1"},
+            )
+
+    def test_service_propose_workflow_completes_empty_candidates_when_allowed(
+        self, query_evidence_proposal_instance: CruxibleInstance
+    ) -> None:
+        config = query_evidence_proposal_instance.load_config()
+        proposal_step = config.workflows[
+            "propose_from_filtered_relationship_query"
+        ].steps[-1]
+        assert proposal_step.propose_relationship_group is not None
+        proposal_step.propose_relationship_group.on_empty = "complete"
+        query_evidence_proposal_instance.save_config(config)
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_filtered_relationship_query",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is None
+        assert result.group_status == "no_candidates"
+        assert result.review_priority == "normal"
+        assert result.output["status"] == "no_candidates"
+        assert result.output["candidate_count"] == 0
+        assert result.output["on_empty"] == "complete"
+        assert result.output["group_created"] is False
+        assert result.receipt is not None
+        assert result.receipt.committed is False
+        assert result.receipt.nodes[0].detail["group_status"] == "no_candidates"
+        proposal_step_node = next(
+            node
+            for node in result.receipt.nodes
+            if node.node_type == "plan_step"
+            and node.detail.get("step_id") == "proposal"
+        )
+        assert proposal_step_node.detail["candidate_count"] == 0
+        assert proposal_step_node.detail["group_created"] is False
+        assert proposal_step_node.detail["on_empty"] == "complete"
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            groups = group_store.list_groups()
+        finally:
+            group_store.close()
+        assert groups == []
+
     def test_snapshot_create_list_and_overlay(
         self, proposal_workflow_instance: CruxibleInstance, tmp_path: Path
     ) -> None:

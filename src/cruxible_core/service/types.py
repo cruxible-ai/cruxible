@@ -652,7 +652,7 @@ class ProposeWorkflowResult:
     output: Any
     receipt_id: str
     group_id: str | None
-    group_status: GroupStatus | Literal["suppressed"]
+    group_status: GroupStatus | Literal["suppressed", "no_candidates"]
     review_priority: ReviewPriority
     mode: WorkflowResultMode = "proposal"
     workflow_type: WorkflowType = "proposal"
@@ -733,7 +733,7 @@ class WorldPullApplyResult:
 class ProposeGroupResult:
     group_id: str | None
     signature: str
-    status: GroupStatus | Literal["suppressed"]
+    status: GroupStatus | Literal["suppressed", "no_candidates"]
     review_priority: ReviewPriority
     member_count: int
     prior_resolution: GroupResolution | None

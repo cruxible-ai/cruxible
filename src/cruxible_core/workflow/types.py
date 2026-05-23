@@ -226,6 +226,10 @@ class RelationshipGroupProposalArtifact(BaseModel):
 
     relationship_type: str
     members: list[CandidateMember]
+    status: Literal["ready", "no_candidates"] = "ready"
+    candidate_count: int = 0
+    on_empty: Literal["complete"] | None = None
+    group_created: bool | None = None
     thesis_text: str = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"

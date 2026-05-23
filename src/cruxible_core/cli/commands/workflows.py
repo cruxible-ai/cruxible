@@ -677,6 +677,15 @@ def propose_cmd(
         })
         return
 
+    if result.group_status == "no_candidates":
+        click.echo(f"Workflow {result.workflow} completed with no candidates.")
+        click.echo("No candidate group was created.")
+        click.echo(f"Receipt ID: {result.receipt_id}")
+        if result.trace_ids:
+            click.echo(f"Trace IDs: {', '.join(result.trace_ids)}")
+        click.echo(json.dumps(result.output, indent=2, sort_keys=True))
+        return
+
     if result.group_id is None or result.suppressed:
         click.echo(f"Workflow {result.workflow} produced no reviewable group.")
         click.echo(

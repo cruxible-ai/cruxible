@@ -453,6 +453,10 @@ def execute_workflow(
                             compiled_step.propose_relationship_group_spec.signals_from
                         ),
                         "member_count": len(proposal.members),
+                        "candidate_count": proposal.candidate_count,
+                        "on_empty": proposal.on_empty,
+                        "group_created": proposal.group_created,
+                        "status": proposal.status,
                         "signal_sources_used": proposal.signal_sources_used,
                     },
                 )

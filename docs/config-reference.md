@@ -1094,7 +1094,7 @@ Each step must define exactly one of these operations:
 | `apply_relationships` | Apply a built relationship set to graph state | `apply_relationships: {relationships_from}`, `as` |
 | `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
 | `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, score/enum}`, `as` |
-| `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from}`, `as` |
+| `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from, on_empty?}`, `as` |
 
 ### Step Reference Syntax
 
@@ -1276,6 +1276,23 @@ For `type: proposal` workflows that produce governed proposals (fuzzy matching, 
 3. **`propose_relationship_group`** — assemble candidates + signals into a group proposal
 
 The group then enters the resolution lifecycle (auto-resolve or manual review) based on the relationship's `proposal_policy` config.
+
+`propose_relationship_group` is strict by default: if `candidates_from` resolves
+to an empty candidate set, the workflow fails. Set `on_empty: complete` only when
+"no candidates" is a valid terminal outcome for that workflow. In that case no
+candidate group is created, the workflow succeeds with `status: no_candidates`,
+and the workflow receipt records `group_created: false`.
+
+```yaml
+- id: proposal
+  propose_relationship_group:
+    relationship_type: asset_remediated_vulnerability
+    candidates_from: candidates
+    signals_from: [remediation_signals]
+    on_empty: complete
+    thesis_text: Close stale exposure edges
+  as: proposal
+```
 
 **map_signals mapping modes** (exactly one required):
 

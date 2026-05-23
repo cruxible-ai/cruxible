@@ -1450,6 +1450,7 @@ class ProposeRelationshipGroupSpec(BaseModel):
     relationship_type: str
     candidates_from: str
     signals_from: list[str]
+    on_empty: Literal["complete"] | None = None
     thesis_text: Any = ""
     thesis_facts: dict[str, Any] = Field(default_factory=dict)
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
