@@ -364,6 +364,12 @@ Validation rules:
 - Include `limit` is per include per primary row. It sets that include's `truncated` flag and is separate from query `limit`, `max_paths`, and `max_paths_per_result`.
 - Include `order_by` refs may use `$edge`, `$source`, `$target`, or `$input`.
 
+Relationship state modes:
+- `live` includes active relationships whose review state is neither `pending` nor `rejected`. This includes deterministic/unreviewed state and approved state.
+- `accepted` includes active relationships whose review status is `approved`.
+- `pending` includes active relationships whose review status is `pending`.
+- `reviewable` includes `live` relationships plus pending relationships. Use this for triage/context queries where an agent should see both accepted state and still-reviewable proposals in one evidence path.
+
 Projection refs:
 - All shapes: `$input.<name>`, `$entry.entity_type`, `$entry.entity_id`, `$entry.properties.<name>`, `$entry.metadata.<path>`, `$result.entity_type`, `$result.entity_id`, `$result.properties.<name>`, `$result.metadata.<path>`.
 - `result_shape: path`: `$path.<alias>.edge.*`, `$path.<alias>.source.*`, and `$path.<alias>.target.*`. Path refs require a traversal `as` alias.
@@ -449,6 +455,11 @@ named_queries:
             in: [active, approved]
 ```
 
+This returns the primary vulnerability-to-asset path once per row, with the
+configured owner, service, exposure, and exception context attached under the
+row's `includes` map. Include context can also be selected with
+`$include.<alias>...` projection refs.
+
 ### TraversalStep
 
 Each step in the traversal sequence:
@@ -480,13 +491,10 @@ preserved and `$result` remains the prior current entity.
 
 Use `required: false` for optional successor, replacement, or follow-on paths.
 Do not use it when the desired shape is "return this same asset, but attach
-owner/service/control facts as additional row context." For that workflow, use
-the named query to return the primary operational set and evidence path, then
-inspect the returned entity and nearby relationships with read tools.
-
-Future consideration: add attached related context for named queries if
-workflows repeatedly need single-row projections containing non-advancing
-neighbor facts.
+owner/service/control facts as additional row context." Use `include` for that:
+it attaches bounded one-hop side context to each primary result row without
+changing the traversal result or fanning out rows. Use read tools for ad hoc
+context that is not worth baking into the named query contract.
 
 **Direction semantics:**
 - `outgoing`: Follow edges from entry point (source -> target)

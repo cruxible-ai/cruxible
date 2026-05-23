@@ -589,14 +589,14 @@ happened last time — which assets were hit, what the root cause was, what
 findings are still open. The priority isn't just CVSS × EPSS anymore; it's
 informed by organizational history.
 
-### Proposed entity types
+### Configured entity types
 
 | Entity | Properties | Source |
 |---|---|---|
 | `Incident` | incident_id (PK), title, severity, status (open/investigating/resolved/closed), occurred_at, resolved_at, source, summary | PagerDuty export, SIEM, manual |
 | `Finding` | finding_id (PK), title, category, detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
 
-### Proposed relationships
+### Configured relationships
 
 | Relationship | From → To | Governed? | How it's created |
 |---|---|---|---|
@@ -605,7 +605,7 @@ informed by organizational history.
 | `incident_exploited_vulnerability` | Incident → Vulnerability | Yes | Agent reads post-mortem, proposes CVE attribution |
 | `finding_from_incident` | Finding → Incident | Yes | Agent extracts findings from post-mortem |
 
-### Proposed named queries
+### Configured named queries
 
 | Query | Traversal | What it answers |
 |---|---|---|

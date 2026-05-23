@@ -126,11 +126,10 @@ returns a receipt that explains the traversal path and evidence used.
 
 Agents should use named queries as the stable read API for downstream work
 instead of spelunking graph storage. Named queries package a stable primary
-traversal and evidence path; they do not yet attach independent,
-non-advancing neighbor context to the same result row. For richer triage, an
-agent should run a named query for the primary operational set, then inspect
-the returned entity, neighboring relationships, lineage, receipts, or
-feedback targets with read tools.
+traversal and evidence path, and can attach bounded one-hop side context with
+`include` when related facts such as owners, services, exceptions, controls, or
+patch windows are part of the query contract. Use read tools for ad hoc context
+that is not stable enough to belong in the named query surface.
 
 ## Receipts, Traces, And Decision Records
 

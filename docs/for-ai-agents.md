@@ -154,10 +154,13 @@ MCP:
 cruxible_propose_workflow(instance_id, "propose_asset_exposure")
 ```
 
-If the workflow produces no reviewable group, inspect suppressed members and
-prerequisite state. In KEV triage, for example, asset exposure proposals depend
-on accepted asset-product mappings and public vulnerability-product reference
-state.
+If no group is created, check the workflow output status first. Some proposal
+workflows intentionally complete without creating a group when there are no
+candidates; those return `status: no_candidates` and `group_created: false`.
+Treat that as a terminal "nothing to review" outcome, not as a failed proposal.
+For other no-group outcomes, inspect suppressed members and prerequisite state.
+In KEV triage, for example, asset exposure proposals depend on accepted
+asset-product mappings and public vulnerability-product reference state.
 
 ## Recipe: Inspect A Pending Group
 

@@ -71,10 +71,17 @@ named_queries:
   asset_owner:
     entry_point: Asset
     returns: Owner
+    result_shape: path
     traversal:
       - relationship: asset_owned_by
         direction: outgoing
 ```
+
+For operational queries, keep the traversal focused on the primary question and
+use `include` for bounded side context that should travel with each result row,
+such as owners, services, controls, exceptions, or patch windows. Use
+`required: false` only for optional follow-on traversal where a matched neighbor
+should become the next `$result`.
 
 ### 3. Add A Provider Only For Source Adaptation
 
@@ -176,7 +183,9 @@ For KEV-style workflows, the path is:
 source artifact
   -> parse/shape/filter/join/dedupe
   -> domain evidence provider if needed
-  -> proposal members with support/unsure/contradict signals
+  -> make_candidates
+  -> map_signals with support/unsure/contradict evidence
+  -> propose_relationship_group
   -> candidate group
   -> human or agent-assisted resolution
 ```
