@@ -54,6 +54,51 @@ class TestPropertySchema:
         assert prop.type == "string"
         assert prop.optional is False
 
+    @pytest.mark.parametrize(
+        "type_name",
+        [
+            "string",
+            "int",
+            "integer",
+            "float",
+            "number",
+            "bool",
+            "date",
+            "datetime",
+            "json",
+        ],
+    )
+    def test_accepts_supported_property_types(self, type_name: str):
+        prop = PropertySchema(type=type_name)
+        assert prop.type == type_name
+
+    def test_rejects_unsupported_property_type(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            PropertySchema(type="unsupported")
+
+    def test_rejects_unsupported_property_type_during_config_load(self):
+        with pytest.raises(ConfigError, match="Config validation failed") as exc_info:
+            load_config_from_string(
+                """
+version: "1.0"
+name: invalid_property_type
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+      status:
+        type: unsupported
+relationships: []
+"""
+            )
+
+        assert any(
+            "properties → status → type" in error and "'json'" in error
+            for error in exc_info.value.errors
+        )
+
     def test_required_alias_sets_optional_false(self):
         prop = PropertySchema(required=True)
         assert prop.optional is False

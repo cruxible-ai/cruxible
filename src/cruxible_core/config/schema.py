@@ -46,6 +46,17 @@ _OUTCOME_PATH_PATTERN = (
 )
 
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
+PropertyType = Literal[
+    "string",
+    "int",
+    "integer",
+    "float",
+    "number",
+    "bool",
+    "date",
+    "datetime",
+    "json",
+]
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -81,7 +92,7 @@ class PropertySchema(BaseModel):
     ``ContractSchema`` validation.
     """
 
-    type: str = "string"  # string, int, float, bool, date, datetime
+    type: PropertyType = "string"
     primary_key: bool = False
     indexed: bool = False
     optional: bool = False
