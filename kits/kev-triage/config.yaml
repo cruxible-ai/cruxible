@@ -16,6 +16,9 @@ enums:
     values: [low, medium, high, critical]
     ordered: low_to_high
     description: Shared low-to-critical rank for materiality, severity, and priority.
+  asset_type:
+    values: [server, laptop]
+    description: Asset form factor from CMDB or inventory.
   asset_environment:
     values: [production, staging, corporate]
     description: Operational environment where an asset runs.
@@ -23,6 +26,21 @@ enums:
     values: [tier-2, tier-1]
     ordered: low_to_high
     description: Business service criticality tier.
+  control_type:
+    values: [waf, endpoint_detection, network_acl]
+    description: Security control implementation category.
+  control_status:
+    values: [active, inactive]
+    description: Operational status for a security control.
+  attack_vector:
+    values: [network, adjacent, local, physical]
+    description: Operational attack vector bucket for vulnerability classes.
+  exception_status:
+    values: [approved, expired, revoked]
+    description: Lifecycle status for a patch or remediation exception.
+  patch_cadence:
+    values: [weekly, biweekly, monthly]
+    description: Normal cadence for an operational patch window.
   patch_freeze_status:
     values: [none, partial_freeze]
     description: Change-freeze state for a patch window.
@@ -44,7 +62,7 @@ entity_types:
     properties:
       asset_id: {primary_key: true}
       hostname: {indexed: true}
-      asset_type: {}
+      asset_type: {enum_ref: asset_type}
       criticality: {enum_ref: criticality}
       environment: {enum_ref: asset_environment}
       internet_exposed:
@@ -70,8 +88,8 @@ entity_types:
     properties:
       control_id: {primary_key: true}
       name: {}
-      control_type: {}
-      status: {}
+      control_type: {enum_ref: control_type}
+      status: {enum_ref: control_status}
 
   VulnerabilityClass:
     description: >
@@ -82,22 +100,22 @@ entity_types:
       class_id: {primary_key: true}
       name: {indexed: true}
       description: {}
-      attack_vector: {}
+      attack_vector: {enum_ref: attack_vector}
 
   Exception:
     description: Approved patch or remediation exception.
     properties:
       exception_id: {primary_key: true}
       reason: {}
-      review_due_at: {}
-      status: {}
+      review_due_at: {type: date}
+      status: {enum_ref: exception_status}
 
   PatchWindow:
     description: Operational patching schedule or change window.
     properties:
       patch_window_id: {primary_key: true}
-      cadence: {}
-      next_window_at: {}
+      cadence: {enum_ref: patch_cadence}
+      next_window_at: {type: datetime}
       freeze_status: {enum_ref: patch_freeze_status}
 
   Incident:
@@ -209,7 +227,7 @@ relationships:
     to: Vulnerability
     properties:
       exception_id: {}
-      review_due_at: {}
+      review_due_at: {type: date}
       rationale: {}
     proposal_policy:
       signals:
@@ -237,7 +255,7 @@ relationships:
     to: VulnerabilityClass
     properties:
       validation_basis: {}
-      expires_at: {}
+      expires_at: {type: date}
     proposal_policy:
       signals:
         control_effectiveness:
@@ -250,7 +268,7 @@ relationships:
     to: Vulnerability
     properties:
       remediation_type: {enum_ref: remediation_type}
-      verified_at: {}
+      verified_at: {type: date}
       evidence_source: {}
       ticket_id: {}
       rationale: {}
@@ -901,6 +919,24 @@ quality_checks:
 # ─── Contracts ────────────────────────────────────────────────────────
 
 contracts:
+  RelationshipGroupProposalArtifact:
+    description: Proposal artifact emitted by a propose_relationship_group workflow step.
+    fields:
+      relationship_type: {type: string}
+      members: {type: json}
+      status: {type: string}
+      candidate_count: {type: int}
+      on_empty: {type: string, optional: true}
+      group_created: {type: bool, optional: true}
+      thesis_text: {type: string}
+      thesis_facts: {type: json}
+      pending_refresh_mode: {type: string}
+      analysis_state: {type: json}
+      signal_sources_used: {type: json}
+      query_receipt_ids: {type: json}
+      suggested_priority: {type: string, optional: true}
+      proposed_by: {type: string}
+
   LocalSeedData:
     description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
     fields:
@@ -1074,6 +1110,7 @@ providers:
 workflows:
   build_local_state:
     type: canonical
+    contract_out: ApplyRelationshipPreview
     description: >
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference
@@ -1286,6 +1323,7 @@ workflows:
 
   propose_asset_products:
     type: proposal
+    contract_out: RelationshipGroupProposalArtifact
     description: >
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
@@ -1299,12 +1337,37 @@ workflows:
         list_entities:
           entity_type: Product
         as: reference_products
+      - id: require_complete_reference_products
+        assert_not_truncated:
+          step: reference_products
+      - id: require_reference_products
+        assert_count:
+          step: reference_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset-product proposal requires reference Product entities.
       - id: matches
         provider: match_software_to_products
         input:
           inventory_items: $steps.inventory.items
           reference_products: $steps.reference_products.items
         as: matches
+      - id: match_summary
+        aggregate_items:
+          items: $steps.matches.items
+          group_by:
+            verdict: $item.verdict
+          measures:
+            match_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            matched_products:
+              count_distinct:
+                value: $item.product_id
+        as: match_summary
       - id: candidates
         make_candidates:
           relationship_type: asset_runs_product
@@ -1341,12 +1404,15 @@ workflows:
             rule_id: cmdb_inventory_fuzzy_product_match
             rule_version: 1
             source: cmdb_inventory
+          analysis_state:
+            match_summary: $steps.match_summary.items
           proposed_by: agent
         as: proposal
     returns: proposal
 
   propose_asset_exposure:
     type: proposal
+    contract_out: RelationshipGroupProposalArtifact
     description: >
       Derive affected asset-vulnerability candidates from approved
       asset-product mappings, then propose the asset exposure edges that
@@ -1356,10 +1422,30 @@ workflows:
         list_relationships:
           relationship_type: asset_runs_product
         as: asset_products
+      - id: require_complete_asset_products
+        assert_not_truncated:
+          step: asset_products
+      - id: require_asset_products
+        assert_count:
+          step: asset_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires accepted asset-product mappings.
       - id: vulnerability_products
         list_relationships:
           relationship_type: vulnerability_affects_product
         as: vulnerability_products
+      - id: require_complete_vulnerability_products
+        assert_not_truncated:
+          step: vulnerability_products
+      - id: require_vulnerability_products
+        assert_count:
+          step: vulnerability_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires reference vulnerability-product edges.
       - id: affected_assessments
         provider: assess_asset_affected
         input:
@@ -1370,14 +1456,30 @@ workflows:
         list_entities:
           entity_type: Asset
         as: assets
+      - id: require_complete_assets
+        assert_not_truncated:
+          step: assets
+      - id: require_assets
+        assert_count:
+          step: assets
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires local Asset entities.
       - id: asset_controls
         list_relationships:
           relationship_type: asset_has_control
         as: asset_controls
+      - id: require_complete_asset_controls
+        assert_not_truncated:
+          step: asset_controls
       - id: controls
         list_entities:
           entity_type: CompensatingControl
         as: controls
+      - id: require_complete_controls
+        assert_not_truncated:
+          step: controls
       - id: assessments
         provider: assess_asset_exposure
         input:
@@ -1386,6 +1488,31 @@ workflows:
           asset_control_edges: $steps.asset_controls.items
           controls: $steps.controls.items
         as: assessments
+      - id: exposure_summary
+        aggregate_items:
+          items: $steps.assessments.items
+          group_by:
+            priority: $item.priority
+          measures:
+            exposure_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+            direct_exploitability_support:
+              count_where:
+                left: $item.exploitability_verdict
+                op: eq
+                right: support
+            no_effective_control_support:
+              count_where:
+                left: $item.control_verdict
+                op: eq
+                right: support
+        as: exposure_summary
       - id: candidates
         make_candidates:
           relationship_type: asset_exposed_to_vulnerability
@@ -1456,6 +1583,8 @@ workflows:
             rule_id: exposure_assessment_from_version_posture_and_controls
             rule_version: 1
             source: kev_reference_asset_posture_and_controls
+          analysis_state:
+            exposure_summary: $steps.exposure_summary.items
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1467,7 +1596,21 @@ workflows:
       agent after reviewing the available VulnerabilityClass buckets and
       prior classification examples.
     contract_in: VulnerabilityClassificationProposalInput
+    contract_out: RelationshipGroupProposalArtifact
     steps:
+      - id: classification_summary
+        aggregate_items:
+          items: $input.items
+          group_by:
+            verdict: $item.verdict
+            class_id: $item.class_id
+          measures:
+            proposal_count:
+              count: true
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+        as: classification_summary
       - id: candidates
         make_candidates:
           relationship_type: vulnerability_classified_as
@@ -1506,6 +1649,8 @@ workflows:
             rule_id: agent_vulnerability_classification
             rule_version: 1
             source: agent_review
+          analysis_state:
+            classification_summary: $steps.classification_summary.items
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -1517,7 +1662,21 @@ workflows:
       a vulnerability class. This is the stock onboarding path and may be
       tuned to the user's control evidence model.
     contract_in: ControlMitigatesClassProposalInput
+    contract_out: RelationshipGroupProposalArtifact
     steps:
+      - id: mitigation_summary
+        aggregate_items:
+          items: $input.items
+          group_by:
+            verdict: $item.verdict
+            class_id: $item.class_id
+          measures:
+            proposal_count:
+              count: true
+            controls:
+              count_distinct:
+                value: $item.control_id
+        as: mitigation_summary
       - id: candidates
         make_candidates:
           relationship_type: control_mitigates_class
@@ -1555,12 +1714,15 @@ workflows:
             rule_id: agent_control_class_mitigation
             rule_version: 1
             source: control_review
+          analysis_state:
+            mitigation_summary: $steps.mitigation_summary.items
           proposed_by: agent
         as: proposal
     returns: proposal
 
   propose_exposure_reconciliation:
     type: proposal
+    contract_out: RelationshipGroupProposalArtifact
     description: >
       After a KEV reference refresh or product-mapping refresh, derive the
       current affected candidate set through Asset -> Product <- Vulnerability
@@ -1571,10 +1733,16 @@ workflows:
         list_relationships:
           relationship_type: asset_runs_product
         as: asset_products
+      - id: require_complete_reconciliation_asset_products
+        assert_not_truncated:
+          step: asset_products
       - id: vulnerability_products
         list_relationships:
           relationship_type: vulnerability_affects_product
         as: vulnerability_products
+      - id: require_complete_reconciliation_vulnerability_products
+        assert_not_truncated:
+          step: vulnerability_products
       - id: affected_assessments
         provider: assess_asset_affected
         input:
@@ -1585,10 +1753,16 @@ workflows:
         list_relationships:
           relationship_type: asset_exposed_to_vulnerability
         as: accepted_exposures
+      - id: require_complete_accepted_exposures
+        assert_not_truncated:
+          step: accepted_exposures
       - id: remediated_edges
         list_relationships:
           relationship_type: asset_remediated_vulnerability
         as: remediated_edges
+      - id: require_complete_remediated_edges
+        assert_not_truncated:
+          step: remediated_edges
       - id: reconciliation
         provider: assess_exposure_reconciliation
         input:
@@ -1598,6 +1772,21 @@ workflows:
           vulnerability_product_edges: $steps.vulnerability_products.items
           remediated_edges: $steps.remediated_edges.items
         as: reconciliation
+      - id: reconciliation_summary
+        aggregate_items:
+          items: $steps.reconciliation.items
+          group_by:
+            remediation_type: $item.remediation_type
+          measures:
+            closure_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+        as: reconciliation_summary
       - id: candidates
         make_candidates:
           relationship_type: asset_remediated_vulnerability
@@ -1630,6 +1819,7 @@ workflows:
           relationship_type: asset_remediated_vulnerability
           candidates_from: candidates
           signals_from: [remediation_signals]
+          on_empty: complete
           pending_refresh_mode: retain_missing
           thesis_text: >
             Accepted exposure edges no longer supported by current
@@ -1638,6 +1828,8 @@ workflows:
             rule_id: exposure_reconciliation_from_product_reference_path
             rule_version: 1
             source: kev_reference_refresh
+          analysis_state:
+            reconciliation_summary: $steps.reconciliation_summary.items
           proposed_by: agent
         as: proposal
     returns: proposal

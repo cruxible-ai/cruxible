@@ -32,8 +32,8 @@ entity_types:
       description: {}
       cvss_score: {type: number}
       epss_score: {type: number}
-      kev_due_date: {}
-      known_ransomware_use: {}
+      kev_due_date: {type: date}
+      known_ransomware_use: {enum: [Known, Unknown]}
 
 relationships:
   - name: product_from_vendor
@@ -179,6 +179,18 @@ quality_checks:
     min_count: 1
     max_count: 1
 
+contracts:
+  ApplyRelationshipPreview:
+    description: Preview summary emitted by an apply_relationships workflow step.
+    fields:
+      relationship_type: {type: string}
+      create_count: {type: int}
+      update_count: {type: int}
+      noop_count: {type: int}
+      duplicate_input_count: {type: int}
+      conflicting_duplicate_count: {type: int}
+      duplicate_examples: {type: json}
+
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -213,6 +225,7 @@ providers:
 workflows:
   build_public_kev_reference:
     type: canonical
+    contract_out: ApplyRelationshipPreview
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.
@@ -234,6 +247,13 @@ workflows:
           files: $steps.raw_tables.files
           diagnostics: $steps.raw_tables.diagnostics
         as: rows
+      - id: require_reference_rows
+        assert_count:
+          step: rows
+          count: items
+          op: gt
+          value: 0
+          message: Public KEV reference normalization produced no rows.
       - id: vendors
         make_entities:
           entity_type: Vendor
