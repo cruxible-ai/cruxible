@@ -58,6 +58,14 @@ def _build_local_seed_data(tables: dict[str, list[dict[str, Any]]]) -> dict[str,
     payload = {key: [dict(row) for row in rows] for key, rows in tables.items()}
     for row in payload["assets"]:
         row["internet_exposed"] = _parse_bool(row.get("internet_exposed"))
+    for row in payload["patch_windows"]:
+        for field in (
+            "emergency_patch_allowed",
+            "outage_allowed",
+            "testing_required",
+            "rollback_required",
+        ):
+            row[field] = _parse_bool(row.get(field))
     return payload
 
 

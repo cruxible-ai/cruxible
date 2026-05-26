@@ -188,8 +188,17 @@ def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
     payload = normalize_public_kev_reference(parsed, _provider_context(None))
 
     assert payload["items"]
-    assert payload["items"][0]["cve_id"].startswith("CVE-")
-    assert payload["items"][0]["product_id"]
+    row = payload["items"][0]
+    assert row["cve_id"].startswith("CVE-")
+    assert row["product_id"]
+    assert row["vulnerability_name"]
+    assert row["date_added_to_kev"]
+    assert row["required_action"]
+    assert row["epss_percentile"] is not None
+    assert isinstance(row["cwes"], list)
+    assert row["source"]
+    assert row["vulnerable"] is True
+    assert row["evidence_refs"]
 
 
 def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
@@ -237,16 +246,21 @@ def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
         _provider_context(None),
     )
 
-    assert payload["items"] == [
-        {
-            "asset_id": "ASSET-1",
-            "product_id": "apache__http_server",
-            "installed_version": "2.4.49",
-            "evidence_source": "scanner-b",
-            "match_confidence": payload["items"][0]["match_confidence"],
-            "verdict": "support",
-        },
-    ]
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["asset_id"] == "ASSET-1"
+    assert item["product_id"] == "apache__http_server"
+    assert item["observed_software_name"] == "Apache HTTP Server"
+    assert item["observed_vendor"] == "Apache"
+    assert item["installed_version"] == "2.4.49"
+    assert item["inventory_source"] == "scanner-b"
+    assert item["last_seen_at"] == "2026-03-21"
+    assert item["evidence_source"] == "scanner-b"
+    assert item["match_confidence"] == payload["items"][0]["match_confidence"]
+    assert item["match_basis"]
+    assert item["evidence_refs"][0]["source"] == "scanner-b"
+    assert item["rationale"] == item["match_basis"]
+    assert item["verdict"] == "support"
 
 
 def test_match_software_to_products_accepts_entity_shaped_reference_products() -> None:
@@ -281,16 +295,17 @@ def test_match_software_to_products_accepts_entity_shaped_reference_products() -
         _provider_context(None),
     )
 
-    assert payload["items"] == [
-        {
-            "asset_id": "ASSET-1",
-            "product_id": "apache__http_server",
-            "installed_version": "2.4.49",
-            "evidence_source": "scanner-a",
-            "match_confidence": payload["items"][0]["match_confidence"],
-            "verdict": "support",
-        }
-    ]
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["asset_id"] == "ASSET-1"
+    assert item["product_id"] == "apache__http_server"
+    assert item["observed_software_name"] == "Apache HTTP Server"
+    assert item["observed_vendor"] == "Apache"
+    assert item["installed_version"] == "2.4.49"
+    assert item["evidence_source"] == "scanner-a"
+    assert item["match_confidence"] == payload["items"][0]["match_confidence"]
+    assert item["evidence_refs"][0]["source"] == "scanner-a"
+    assert item["verdict"] == "support"
 
 
 def test_assess_asset_affected_uses_version_ranges() -> None:
@@ -339,6 +354,7 @@ def test_assess_asset_affected_uses_version_ranges() -> None:
             "source": "qualys",
             "rationale": payload["items"][0]["rationale"],
             "verdict": "support",
+            "evidence_refs": [],
         }
     ]
 
@@ -385,12 +401,17 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
         {
             "asset_id": "ASSET-1",
             "cve_id": "CVE-2021-0001",
+            "status": "exposed",
             "priority": "high",
             "rationale": payload["items"][0]["rationale"],
             "product_id": "",
             "installed_version": "",
+            "affected_basis": "",
             "affected_rationale": "",
+            "exposure_basis": payload["items"][0]["exposure_basis"],
+            "control_basis": payload["items"][0]["control_basis"],
             "evidence_source": "",
+            "evidence_refs": [],
             "affected_verdict": "support",
             "exploitability_verdict": "support",
             "control_verdict": "unsure",
@@ -425,12 +446,17 @@ def test_assess_asset_exposure_critical_when_no_active_controls() -> None:
         {
             "asset_id": "ASSET-1",
             "cve_id": "CVE-2021-0001",
+            "status": "exposed",
             "priority": "critical",
             "rationale": payload["items"][0]["rationale"],
             "product_id": "",
             "installed_version": "",
+            "affected_basis": "",
             "affected_rationale": "",
+            "exposure_basis": payload["items"][0]["exposure_basis"],
+            "control_basis": payload["items"][0]["control_basis"],
             "evidence_source": "",
+            "evidence_refs": [],
             "affected_verdict": "support",
             "exploitability_verdict": "support",
             "control_verdict": "support",
@@ -465,6 +491,12 @@ def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
             "cve_id": "CVE-2021-0001",
             "remediation_type": "reference_changed",
             "evidence_source": "kev_reference_reconciliation",
+            "evidence_refs": [
+                {
+                    "source": "kev_reference_reconciliation",
+                    "source_record_id": "ASSET-1:CVE-2021-0001",
+                }
+            ],
             "rationale": payload["items"][0]["rationale"],
             "verdict": "support",
         }
@@ -494,17 +526,41 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert graph.edge_count("asset_owned_by") == _csv_row_count(
         KEV_KIT_DIR / "data" / "seed" / "asset_owned_by.csv"
     )
+    relationship_names = {
+        relationship.name for relationship in instance.load_config().relationships
+    }
+    assert "asset_vulnerability_posture" in relationship_names
+    assert "asset_exposed_to_vulnerability" not in relationship_names
     assert graph.edge_count("asset_runs_product") > 0
-    assert graph.edge_count("asset_exposed_to_vulnerability") > 0
+    assert graph.edge_count("asset_vulnerability_posture") > 0
     assert graph.edge_count("asset_remediated_vulnerability") == 0
 
-    exposure_edge = graph.list_edges("asset_exposed_to_vulnerability")[0]
+    exposure_edge = graph.list_edges("asset_vulnerability_posture")[0]
 
     affected_asset_id = exposure_edge["from_id"]
     affected_cve_id = exposure_edge["to_id"]
     assert exposure_edge["properties"]["product_id"]
     assert exposure_edge["properties"]["installed_version"]
-    assert exposure_edge["properties"]["affected_rationale"]
+    assert exposure_edge["properties"]["status"] == "exposed"
+    assert exposure_edge["properties"]["affected_basis"]
+    assert exposure_edge["properties"]["exposure_basis"]
+    assert exposure_edge["properties"]["control_basis"]
+    assert exposure_edge["properties"]["evidence_refs"]
+    vulnerability = graph.get_entity("Vulnerability", affected_cve_id)
+    assert vulnerability is not None
+    assert vulnerability.properties["vulnerability_name"]
+    assert vulnerability.properties["date_added_to_kev"]
+    assert vulnerability.properties["required_action"]
+    assert isinstance(vulnerability.properties["cwes"], list)
+    reference_edge = next(
+        edge
+        for edge in graph.list_edges("vulnerability_affects_product")
+        if edge["from_id"] == affected_cve_id
+        and edge["to_id"] == exposure_edge["properties"]["product_id"]
+    )
+    assert reference_edge["properties"]["source"]
+    assert reference_edge["properties"]["vulnerable"] is True
+    assert reference_edge["properties"]["evidence_refs"]
     owner_edge = next(
         edge
         for edge in graph.list_edges("asset_owned_by")
@@ -517,6 +573,10 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         if edge["from_id"] == affected_asset_id
     )
     product_id = product_edge["to_id"]
+    assert product_edge["properties"]["observed_software_name"]
+    assert product_edge["properties"]["installed_version"]
+    assert product_edge["properties"]["match_basis"]
+    assert product_edge["properties"]["evidence_refs"]
 
     vulnerability_asset_context = service_query(
         instance,
@@ -557,7 +617,16 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
                 {
                     "control_id": "CTRL-1",
                     "class_id": "path_traversal",
+                    "effect": "blocks",
                     "validation_basis": "Test control coverage traversal",
+                    "verified_at": "2026-04-01",
+                    "expires_at": "2026-10-01",
+                    "evidence_refs": [
+                        {
+                            "source": "control_review",
+                            "source_record_id": "CTRL-1:path_traversal",
+                        }
+                    ],
                     "verdict": "support",
                 }
             ]
@@ -576,6 +645,21 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
 
     assert vulnerability_class_context.total_results > 0
     assert control_coverage_gap.total_results > 0
+    graph_after_control_review = instance.load_graph()
+    control_mitigation_edge = next(
+        edge
+        for edge in graph_after_control_review.list_edges("control_mitigates_class")
+        if edge["from_id"] == "CTRL-1" and edge["to_id"] == "path_traversal"
+    )
+    assert control_mitigation_edge["properties"]["effect"] == "blocks"
+    assert control_mitigation_edge["properties"]["verified_at"] == "2026-04-01"
+    assert control_mitigation_edge["properties"]["expires_at"] == "2026-10-01"
+    assert control_mitigation_edge["properties"]["evidence_refs"] == [
+        {
+            "source": "control_review",
+            "source_record_id": "CTRL-1:path_traversal",
+        }
+    ]
 
 
 def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
@@ -598,7 +682,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     }
     owner_vuln_counts: dict[tuple[str, str], int] = {}
     unique_pair: tuple[str, str, str] | None = None
-    for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+    for edge in graph.list_edges("asset_vulnerability_posture"):
         if (edge["from_id"], edge["to_id"]) in remediated_pairs:
             continue
         owner_id = asset_to_owner.get(edge["from_id"])
@@ -606,7 +690,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
             continue
         key = (owner_id, edge["to_id"])
         owner_vuln_counts[key] = owner_vuln_counts.get(key, 0) + 1
-    for edge in graph.list_edges("asset_exposed_to_vulnerability"):
+    for edge in graph.list_edges("asset_vulnerability_posture"):
         if (edge["from_id"], edge["to_id"]) in remediated_pairs:
             continue
         owner_id = asset_to_owner.get(edge["from_id"])
@@ -645,6 +729,182 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
 
     assert cve_id not in after_ids
     assert after.total_results == before.total_results - 1
+
+
+def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_local_state")
+    _approve_workflow_group(instance, "propose_asset_products")
+    _approve_workflow_group(instance, "propose_asset_exposure")
+
+    graph = instance.load_graph()
+    asset_to_owner = {
+        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
+    }
+    assert asset_to_owner
+    asset_id, owner_id = sorted(asset_to_owner.items())[0]
+
+    before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    before_ids = _query_entity_ids(before.results)
+    remediated_pairs = {
+        (edge["from_id"], edge["to_id"])
+        for edge in graph.list_edges("asset_remediated_vulnerability")
+    }
+    candidate_cve = next(
+        (
+            vulnerability.entity_id
+            for vulnerability in sorted(
+                graph.list_entities("Vulnerability"),
+                key=lambda entity: entity.entity_id,
+            )
+            if vulnerability.entity_id not in before_ids
+            and (asset_id, vulnerability.entity_id) not in remediated_pairs
+        ),
+        None,
+    )
+    assert candidate_cve is not None
+
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_vulnerability_posture",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=candidate_cve,
+            properties={
+                "status": "not_affected",
+                "priority": "low",
+                "product_id": "test-product",
+                "installed_version": "",
+                "affected_basis": "Regression test non-actionable posture.",
+                "exposure_basis": "Regression test non-actionable posture.",
+                "control_basis": "Regression test non-actionable posture.",
+                "evidence_source": "test",
+                "evidence_refs": [],
+                "rationale": "Approved posture rows that are not exposed stay out of queues.",
+            },
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="approved", source="human")
+                )
+            ),
+        )
+    )
+    instance.save_graph(graph)
+
+    after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+
+    assert candidate_cve not in _query_entity_ids(after.results)
+    assert after.total_results == before.total_results
+
+
+def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_local_state")
+    _approve_workflow_group(instance, "propose_asset_products")
+    _approve_workflow_group(instance, "propose_asset_exposure")
+
+    graph = instance.load_graph()
+    asset_to_owner = {
+        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
+    }
+    owner_vuln_counts: dict[tuple[str, str], int] = {}
+    unique_pair: tuple[str, str, str] | None = None
+    for edge in graph.list_edges("asset_vulnerability_posture"):
+        owner_id = asset_to_owner.get(edge["from_id"])
+        if owner_id is None:
+            continue
+        key = (owner_id, edge["to_id"])
+        owner_vuln_counts[key] = owner_vuln_counts.get(key, 0) + 1
+    for edge in graph.list_edges("asset_vulnerability_posture"):
+        owner_id = asset_to_owner.get(edge["from_id"])
+        if owner_id is None:
+            continue
+        key = (owner_id, edge["to_id"])
+        if owner_vuln_counts.get(key) == 1:
+            unique_pair = (edge["from_id"], edge["to_id"], owner_id)
+            break
+
+    assert unique_pair is not None
+    asset_id, cve_id, owner_id = unique_pair
+
+    before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    before_ids = _query_entity_ids(before.results)
+    assert cve_id in before_ids
+
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_patch_exception_for",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={
+                "exception_id": "EXC-2026-TEST",
+                "review_due_at": "2026-05-03",
+                "scope_basis": "Regression test scoped exception.",
+                "rationale": "Approved scoped exception suppresses patch queue action.",
+                "evidence_source": "test",
+                "evidence_refs": [
+                    {
+                        "source": "test",
+                        "source_record_id": f"{asset_id}:{cve_id}:exception",
+                    }
+                ],
+            },
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="approved", source="human")
+                )
+            ),
+        )
+    )
+    instance.save_graph(graph)
+
+    after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    after_ids = _query_entity_ids(after.results)
+
+    assert cve_id not in after_ids
+    assert after.total_results == before.total_results - 1
+
+
+def test_exposure_reconciliation_no_candidates_completes_without_group(
+    tmp_path: Path,
+) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_local_state")
+    _approve_workflow_group(instance, "propose_asset_products")
+    _approve_workflow_group(instance, "propose_asset_exposure")
+
+    proposed = service_propose_workflow(instance, "propose_exposure_reconciliation", {})
+
+    assert proposed.group_id is None
+    assert proposed.group_status == "no_candidates"
+    assert proposed.output["status"] == "no_candidates"
+    assert proposed.output["candidate_count"] == 0
+    assert proposed.output["group_created"] is False
+    assert proposed.receipt is not None
+    assert proposed.receipt.committed is False
+    group_store = instance.get_group_store()
+    try:
+        groups = group_store.list_groups(
+            relationship_type="asset_remediated_vulnerability"
+        )
+    finally:
+        group_store.close()
+    assert groups == []
 
 
 def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -> None:

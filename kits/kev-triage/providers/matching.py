@@ -62,9 +62,22 @@ def match_software_to_products(
         row = {
             "asset_id": pair[0],
             "product_id": pair[1],
+            "observed_software_name": _first_non_empty(item.get("software_name")) or "",
+            "observed_vendor": _first_non_empty(item.get("vendor")) or "",
             "installed_version": _first_non_empty(item.get("version")) or "",
+            "inventory_source": _first_non_empty(item.get("evidence_source")) or "",
+            "last_seen_at": _first_non_empty(item.get("last_seen")) or "",
             "evidence_source": _first_non_empty(item.get("evidence_source")) or "",
             "match_confidence": round(best_score, 4),
+            "match_basis": _match_basis(item, best_product, best_score),
+            "evidence_refs": [
+                {
+                    "source": _first_non_empty(item.get("evidence_source")) or "software_inventory",
+                    "source_record_id": _inventory_source_record_id(item),
+                    "observed_at": _first_non_empty(item.get("last_seen")) or "",
+                }
+            ],
+            "rationale": _match_basis(item, best_product, best_score),
             "verdict": _score_to_verdict(best_score),
             "_last_seen": _first_non_empty(item.get("last_seen")) or "",
         }
@@ -208,6 +221,27 @@ def _score_to_verdict(score: float) -> str:
     if score >= 0.5:
         return "unsure"
     return "contradict"
+
+
+def _match_basis(
+    inventory_row: dict[str, Any],
+    product_row: dict[str, Any],
+    score: float,
+) -> str:
+    software_name = _first_non_empty(inventory_row.get("software_name")) or "observed software"
+    product_name = _first_non_empty(product_row.get("product_name")) or "reference product"
+    vendor = _first_non_empty(inventory_row.get("vendor")) or "unknown vendor"
+    return (
+        f"{software_name} from {vendor} matched {product_name} "
+        f"with confidence {score:.2f}"
+    )
+
+
+def _inventory_source_record_id(inventory_row: dict[str, Any]) -> str:
+    asset_id = _first_non_empty(inventory_row.get("asset_id")) or "unknown-asset"
+    software_name = _first_non_empty(inventory_row.get("software_name")) or "unknown-software"
+    version = _first_non_empty(inventory_row.get("version")) or "unknown-version"
+    return f"{asset_id}:{software_name}:{version}"
 
 
 def _reference_product_sort_key(product: dict[str, Any]) -> tuple[str, str, str, str]:

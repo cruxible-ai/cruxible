@@ -44,6 +44,7 @@ def assess_asset_affected(
 
         installed_version = _first_non_empty(properties.get("installed_version")) or ""
         source = _first_non_empty(properties.get("evidence_source")) or "asset_runs_product"
+        evidence_refs = _evidence_refs(properties)
         for vulnerability_edge in vulnerability_edges_by_product.get(product_id, []):
             cve_id = _edge_from_id(vulnerability_edge)
             if not cve_id:
@@ -65,6 +66,10 @@ def assess_asset_affected(
                 "source": source,
                 "rationale": rationale,
                 "verdict": verdict,
+                "evidence_refs": _merge_evidence_refs(
+                    evidence_refs,
+                    _evidence_refs(vulnerability_properties),
+                ),
             }
             key = (asset_id, cve_id)
             current = rows_by_pair.get(key)
@@ -114,9 +119,17 @@ def assess_asset_exposure(
         control_verdict = "support" if not active_controls else "unsure"
         priority = _derive_exposure_priority(asset, exploitability_verdict, control_verdict)
         rationale = _build_exposure_rationale(asset, active_controls, exploitability_verdict)
+        affected_basis = _first_non_empty(
+            item.get("rationale"),
+            properties.get("rationale"),
+            properties.get("affected_basis"),
+        ) or ""
+        exposure_basis = rationale
+        control_basis = _build_control_basis(active_controls, control_verdict)
         rows_by_pair[(asset_id, cve_id)] = {
             "asset_id": asset_id,
             "cve_id": cve_id,
+            "status": "exposed",
             "priority": priority,
             "rationale": rationale,
             "product_id": _first_non_empty(item.get("product_id"), properties.get("product_id"))
@@ -126,13 +139,16 @@ def assess_asset_exposure(
                 properties.get("installed_version"),
             )
             or "",
-            "affected_rationale": _first_non_empty(
-                item.get("rationale"),
-                properties.get("rationale"),
-            )
-            or "",
+            "affected_basis": affected_basis,
+            "affected_rationale": affected_basis,
+            "exposure_basis": exposure_basis,
+            "control_basis": control_basis,
             "evidence_source": _first_non_empty(item.get("source"), properties.get("source"))
             or "",
+            "evidence_refs": _merge_evidence_refs(
+                _evidence_refs(item),
+                _evidence_refs(properties),
+            ),
             "affected_verdict": _first_non_empty(item.get("verdict"), properties.get("verdict"))
             or "support",
             "exploitability_verdict": exploitability_verdict,
@@ -186,6 +202,8 @@ def assess_exposure_reconciliation(
             continue
 
         properties = _edge_properties(edge)
+        if _first_non_empty(properties.get("status")) not in {None, "", "exposed"}:
+            continue
         product_id = _first_non_empty(properties.get("product_id")) or ""
         remediation_type = _stale_exposure_remediation_type(
             asset_id,
@@ -200,6 +218,15 @@ def assess_exposure_reconciliation(
                 "cve_id": cve_id,
                 "remediation_type": remediation_type,
                 "evidence_source": "kev_reference_reconciliation",
+                "evidence_refs": _merge_evidence_refs(
+                    _evidence_refs(properties),
+                    [
+                        {
+                            "source": "kev_reference_reconciliation",
+                            "source_record_id": f"{asset_id}:{cve_id}",
+                        }
+                    ],
+                ),
                 "rationale": _stale_exposure_rationale(
                     asset_id,
                     cve_id,
@@ -306,3 +333,42 @@ def _build_exposure_rationale(
         )
     )
     return f"{hostname} is {exposure_clause}; active controls require review: {control_names}"
+
+
+def _build_control_basis(active_controls: list[dict[str, Any]], control_verdict: str) -> str:
+    if not active_controls:
+        return "No active compensating controls were attached to this asset."
+    control_names = ", ".join(
+        sorted(
+            _first_non_empty(control.get("name")) or "unknown control"
+            for control in active_controls
+        )
+    )
+    return (
+        "Active controls require review before claiming mitigation: "
+        f"{control_names} ({control_verdict})."
+    )
+
+
+def _evidence_refs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    refs = payload.get("evidence_refs")
+    if isinstance(refs, list):
+        return [dict(ref) for ref in refs if isinstance(ref, dict)]
+    return []
+
+
+def _merge_evidence_refs(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for group in groups:
+        for ref in group:
+            key = (
+                str(ref.get("source", "")),
+                str(ref.get("source_record_id", "")),
+                str(ref.get("criteria", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(ref)
+    return merged

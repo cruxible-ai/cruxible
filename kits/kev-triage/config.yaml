@@ -32,6 +32,12 @@ enums:
   control_status:
     values: [active, inactive]
     description: Operational status for a security control.
+  control_effect:
+    values: [blocks, reduces, detects, compensates]
+    description: How a control affects a vulnerability class.
+  vulnerability_posture_status:
+    values: [exposed, mitigated, not_affected, unknown]
+    description: Current accepted posture for an asset-vulnerability pair.
   attack_vector:
     values: [network, adjacent, local, physical]
     description: Operational attack vector bucket for vulnerability classes.
@@ -117,6 +123,11 @@ entity_types:
       cadence: {enum_ref: patch_cadence}
       next_window_at: {type: datetime}
       freeze_status: {enum_ref: patch_freeze_status}
+      emergency_patch_allowed: {type: bool}
+      outage_allowed: {type: bool}
+      testing_required: {type: bool}
+      rollback_required: {type: bool}
+      owner_id: {}
 
   Incident:
     description: A security event from a SIEM, PagerDuty, or manual report.
@@ -187,8 +198,16 @@ relationships:
     from: Asset
     to: Product
     properties:
+      observed_software_name: {}
+      observed_vendor: {}
       installed_version: {}
+      inventory_source: {}
+      last_seen_at: {type: date}
+      match_confidence: {type: number}
+      match_basis: {}
       evidence_source: {}
+      evidence_refs: {type: json}
+      rationale: {}
     proposal_policy:
       signals:
         software_product_match:
@@ -196,19 +215,25 @@ relationships:
           always_review_on_unsure: true
       auto_resolve_when: all_support
 
-  - name: asset_exposed_to_vulnerability
+  - name: asset_vulnerability_posture
     description: >
-      Accepted judgment that an asset runs an affected product version and
-      is materially exposed enough to drive action.
+      Accepted current-truth judgment for an asset-vulnerability pair. The
+      status records whether the asset is exposed, mitigated, not affected,
+      or still unknown; exposed rows drive action queues.
     from: Asset
     to: Vulnerability
     properties:
+      status: {enum_ref: vulnerability_posture_status}
       priority: {enum_ref: criticality}
-      rationale: {}
       product_id: {}
       installed_version: {}
-      affected_rationale: {}
+      affected_basis: {}
+      exposure_basis: {}
+      control_basis: {}
       evidence_source: {}
+      evidence_refs: {type: json}
+      review_due_at: {type: date, optional: true}
+      rationale: {}
     proposal_policy:
       signals:
         product_version_evidence:
@@ -222,13 +247,19 @@ relationships:
           always_review_on_unsure: true
 
   - name: asset_patch_exception_for
-    description: Accepted judgment that an exception currently waives remediation for a vulnerability on an asset.
+    description: >
+      Accepted judgment that a specific asset-vulnerability pair is covered
+      by an approved exception. The broader asset_has_exception edge only
+      says the asset has an exception.
     from: Asset
     to: Vulnerability
     properties:
       exception_id: {}
       review_due_at: {type: date}
+      scope_basis: {}
       rationale: {}
+      evidence_source: {}
+      evidence_refs: {type: json}
     proposal_policy:
       signals:
         policy_review:
@@ -254,8 +285,11 @@ relationships:
     from: CompensatingControl
     to: VulnerabilityClass
     properties:
+      effect: {enum_ref: control_effect, optional: true}
       validation_basis: {}
-      expires_at: {type: date}
+      verified_at: {type: date, optional: true}
+      expires_at: {type: date, optional: true}
+      evidence_refs: {type: json, optional: true}
     proposal_policy:
       signals:
         control_effectiveness:
@@ -263,14 +297,18 @@ relationships:
           always_review_on_unsure: true
 
   - name: asset_remediated_vulnerability
-    description: Accepted judgment that an asset-vulnerability pair has been remediated or otherwise verified closed.
+    description: >
+      Verification or closure fact for an asset-vulnerability pair after
+      remediation, mitigation, exception approval, product mapping change,
+      or reference update. It is not a general remediation history log.
     from: Asset
     to: Vulnerability
     properties:
       remediation_type: {enum_ref: remediation_type}
-      verified_at: {type: date}
+      verified_at: {type: date, optional: true}
       evidence_source: {}
-      ticket_id: {}
+      evidence_refs: {type: json, optional: true}
+      ticket_id: {optional: true}
       rationale: {}
     proposal_policy:
       signals:
@@ -406,13 +444,15 @@ named_queries:
             direction: asc
       exposure:
         from: $result
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: outgoing
         many: true
         limit: 5
         where:
           target.entity_id:
             eq: $entry.entity_id
+          edge.properties.status:
+            eq: exposed
         order_by:
           - by: $edge.metadata.assertion.review.status
             direction: desc
@@ -509,13 +549,15 @@ named_queries:
             direction: asc
       relevant_exposures:
         from: $result
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: outgoing
         many: true
         limit: 20
         where:
           edge.properties.product_id:
             eq: $entry.entity_id
+          edge.properties.status:
+            eq: exposed
         order_by:
           - by: $edge.metadata.assertion.review.status
             direction: desc
@@ -531,8 +573,9 @@ named_queries:
   owner_patch_queue:
     description: >
       Starting from an owner, return approved asset-vulnerability exposures
-      across the owner's assets, decorated with service, exception, control,
-      patch-window, and remediation context for prioritization.
+      across the owner's assets, excluding pairs already closed or covered by
+      a scoped exception, and decorated with service, broad exception, control,
+      and patch-window context for prioritization.
     entry_point: Owner
     returns: Vulnerability
     result_shape: path
@@ -544,13 +587,17 @@ named_queries:
         relationship: asset_owned_by
         direction: incoming
       - as: exposure
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: outgoing
         where:
           edge.metadata.assertion.review.status:
             eq: approved
+          edge.properties.status:
+            eq: exposed
         exclude_if_related:
           - relationship: asset_remediated_vulnerability
+            direction: outgoing
+          - relationship: asset_patch_exception_for
             direction: outgoing
     include:
       services:
@@ -616,11 +663,13 @@ named_queries:
         relationship: vulnerability_affects_product
         direction: incoming
       - as: exposure
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: incoming
         where:
           edge.metadata.assertion.review.status:
             eq: approved
+          edge.properties.status:
+            eq: exposed
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -686,11 +735,13 @@ named_queries:
           edge.metadata.assertion.review.status:
             eq: approved
       - as: exposure
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: incoming
         where:
           edge.metadata.assertion.review.status:
             eq: approved
+          edge.properties.status:
+            eq: exposed
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -1021,7 +1072,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:774b1b868538903194302b58fdaa073f677ccc7b2b385e0693fb8dcd0ee6083a
+    sha256: sha256:e84a0601c44b1509e65a1336bb4bae5f54e1ef97f63650fb738df5b566feb0e1
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
@@ -1221,6 +1272,11 @@ workflows:
             cadence: $item.cadence
             next_window_at: $item.next_window_at
             freeze_status: $item.freeze_status
+            emergency_patch_allowed: $item.emergency_patch_allowed
+            outage_allowed: $item.outage_allowed
+            testing_required: $item.testing_required
+            rollback_required: $item.rollback_required
+            owner_id: $item.owner_id
         as: patch_windows
 
       # --- Relationships ---
@@ -1377,8 +1433,16 @@ workflows:
           to_type: Product
           to_id: $item.product_id
           properties:
+            observed_software_name: $item.observed_software_name
+            observed_vendor: $item.observed_vendor
             installed_version: $item.installed_version
+            inventory_source: $item.inventory_source
+            last_seen_at: $item.last_seen_at
+            match_confidence: $item.match_confidence
+            match_basis: $item.match_basis
             evidence_source: $item.evidence_source
+            evidence_refs: $item.evidence_refs
+            rationale: $item.rationale
         as: candidates
       - id: signals
         map_signals:
@@ -1515,19 +1579,23 @@ workflows:
         as: exposure_summary
       - id: candidates
         make_candidates:
-          relationship_type: asset_exposed_to_vulnerability
+          relationship_type: asset_vulnerability_posture
           items: $steps.assessments.items
           from_type: Asset
           from_id: $item.asset_id
           to_type: Vulnerability
           to_id: $item.cve_id
           properties:
+            status: $item.status
             priority: $item.priority
-            rationale: $item.rationale
             product_id: $item.product_id
             installed_version: $item.installed_version
-            affected_rationale: $item.affected_rationale
+            affected_basis: $item.affected_basis
+            exposure_basis: $item.exposure_basis
+            control_basis: $item.control_basis
             evidence_source: $item.evidence_source
+            evidence_refs: $item.evidence_refs
+            rationale: $item.rationale
         as: candidates
       - id: version_signals
         map_signals:
@@ -1535,7 +1603,7 @@ workflows:
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
-          evidence: $item.affected_rationale
+          evidence: $item.affected_basis
           enum:
             path: affected_verdict
             map:
@@ -1573,7 +1641,7 @@ workflows:
         as: control_signals
       - id: proposal
         propose_relationship_group:
-          relationship_type: asset_exposed_to_vulnerability
+          relationship_type: asset_vulnerability_posture
           candidates_from: candidates
           signals_from: [version_signals, exploitability_signals, control_signals]
           thesis_text: >
@@ -1686,7 +1754,11 @@ workflows:
           to_type: VulnerabilityClass
           to_id: $item.class_id
           properties:
+            effect: $item.effect
             validation_basis: $item.validation_basis
+            verified_at: $item.verified_at
+            expires_at: $item.expires_at
+            evidence_refs: $item.evidence_refs
         as: candidates
       - id: control_signals
         map_signals:
@@ -1751,7 +1823,7 @@ workflows:
         as: affected_assessments
       - id: accepted_exposures
         list_relationships:
-          relationship_type: asset_exposed_to_vulnerability
+          relationship_type: asset_vulnerability_posture
         as: accepted_exposures
       - id: require_complete_accepted_exposures
         assert_not_truncated:
@@ -1798,6 +1870,7 @@ workflows:
           properties:
             remediation_type: $item.remediation_type
             evidence_source: $item.evidence_source
+            evidence_refs: $item.evidence_refs
             rationale: $item.rationale
         as: candidates
       - id: remediation_signals
@@ -1857,7 +1930,7 @@ feedback_profiles:
       hostname: FROM.hostname
       evidence_source: EDGE.evidence_source
 
-  asset_exposed_to_vulnerability:
+  asset_vulnerability_posture:
     version: 1
     reason_codes:
       version_not_in_range:
@@ -2027,9 +2100,9 @@ outcome_profiles:
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
 
-  asset_exposed_resolution:
+  asset_vulnerability_posture_resolution:
     anchor_type: resolution
-    relationship_type: asset_exposed_to_vulnerability
+    relationship_type: asset_vulnerability_posture
     version: 1
     outcome_codes:
       overestimated_exposure:

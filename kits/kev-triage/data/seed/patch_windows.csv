@@ -1,4 +1,4 @@
-patch_window_id,cadence,next_window_at,freeze_status
-PW-1,weekly,2026-04-18T02:00:00Z,none
-PW-2,biweekly,2026-04-24T03:00:00Z,none
-PW-3,monthly,2026-05-02T01:00:00Z,partial_freeze
+patch_window_id,cadence,next_window_at,freeze_status,emergency_patch_allowed,outage_allowed,testing_required,rollback_required,owner_id
+PW-1,weekly,2026-04-18T02:00:00Z,none,true,true,true,true,OWNER-2
+PW-2,biweekly,2026-04-24T03:00:00Z,none,true,false,true,true,OWNER-3
+PW-3,monthly,2026-05-02T01:00:00Z,partial_freeze,false,false,true,true,OWNER-4
