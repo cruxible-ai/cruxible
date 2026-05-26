@@ -432,9 +432,12 @@ named_queries:
     include:
       exposure:
         from: $result
-        relationship: asset_exposed_to_vulnerability
+        relationship: asset_vulnerability_posture
         direction: outgoing
         many: true
+        where:
+          edge.properties.status:
+            eq: exposed
       owner:
         from: $result
         relationship: asset_owned_by
@@ -507,12 +510,12 @@ context that is not worth baking into the named query contract.
 named_queries:
   pending_exposures:
     entry_point: Vulnerability
-    returns: asset_exposed_to_vulnerability
+    returns: asset_vulnerability_posture
     result_shape: relationship
     relationship_state: pending
     allow_relationship_state_override: true
     traversal:
-      - relationship: asset_exposed_to_vulnerability
+      - relationship: asset_vulnerability_posture
         direction: incoming
         as: exposure
         where:

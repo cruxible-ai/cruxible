@@ -1519,7 +1519,7 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
 
     exposure_edges = app_client.get(
         f"/api/v1/{instance_id}/list/edges",
-        params={"relationship_type": "asset_exposed_to_vulnerability", "limit": 5},
+        params={"relationship_type": "asset_vulnerability_posture", "limit": 5},
     )
     assert exposure_edges.status_code == 200
     edge = exposure_edges.json()["items"][0]

@@ -67,7 +67,7 @@ flowchart LR
   entity_Vulnerability -- "Vulnerability Affects Product" --> entity_Product
 
   %% Governed proposal/review relationships
-  entity_Asset -. "Asset Exposed To Vulnerability" .-> entity_Vulnerability
+  entity_Asset -. "Asset Vulnerability Posture" .-> entity_Vulnerability
   entity_Asset -. "Asset Patch Exception For" .-> entity_Vulnerability
   entity_Asset -. "Asset Remediated Vulnerability" .-> entity_Vulnerability
   entity_Asset -. "Asset Runs Product" .-> entity_Product
@@ -100,7 +100,7 @@ flowchart LR
 
   workflow_pipeline_build_local_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
-  workflow_pipeline_propose_asset_exposure["3. Asset Exposed To Vulnerability<br/>Governed proposal"]
+  workflow_pipeline_propose_asset_exposure["3. Asset Vulnerability Posture<br/>Governed proposal"]
   workflow_pipeline_propose_control_mitigates_class["4. Control Mitigates Class<br/>Governed proposal"]
   workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
   workflow_pipeline_propose_vulnerability_classification["6. Vulnerability Classified As<br/>Governed proposal"]
@@ -153,7 +153,7 @@ flowchart LR
 - Relationship context: Asset Has Control, Asset Runs Product, Vulnerability Affects Product
 
 **Result**
-- Proposed relationships: Asset Exposed To Vulnerability
+- Proposed relationships: Asset Vulnerability Posture
 
 **Provider source**
 - Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
@@ -177,7 +177,7 @@ flowchart LR
 **Role:** Governed proposal
 
 **Input context**
-- Relationship context: Asset Exposed To Vulnerability, Asset Remediated Vulnerability, Asset Runs Product, Vulnerability Affects Product
+- Relationship context: Asset Vulnerability Posture, Asset Remediated Vulnerability, Asset Runs Product, Vulnerability Affects Product
 
 **Result**
 - Proposed relationships: Asset Remediated Vulnerability
@@ -208,7 +208,7 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Asset Exposed To Vulnerability | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Exposed Resolution |
+| Asset Vulnerability Posture | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Vulnerability Posture Resolution |
 | Asset Patch Exception For | Asset -> Vulnerability | Agent/manual group propose | Policy Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Asset Remediated Vulnerability | Asset -> Vulnerability | Workflow: Propose Exposure Reconciliation | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
 | Asset Runs Product | Asset -> Product | Workflow: Propose Asset Products | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
@@ -228,11 +228,11 @@ above is the source of truth for required/advisory signal labels.
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 | Signal Source | Role | Review Unsure | Used By | Notes |
 | --- | --- | --- | --- | --- |
-| `control_effectiveness` | required | yes | Asset Exposed To Vulnerability, Control Mitigates Class | - |
-| `exploitability_signal` | required | yes | Asset Exposed To Vulnerability | - |
+| `control_effectiveness` | required | yes | Asset Vulnerability Posture, Control Mitigates Class | - |
+| `exploitability_signal` | required | yes | Asset Vulnerability Posture | - |
 | `incident_attribution` | required | no | Finding From Incident, Incident Exploited Vulnerability, Incident Involved Asset, Incident Owned By | - |
 | `policy_review` | required | no | Asset Patch Exception For | - |
-| `product_version_evidence` | required | yes | Asset Exposed To Vulnerability | - |
+| `product_version_evidence` | required | yes | Asset Vulnerability Posture | - |
 | `remediation_verification` | required | yes | Asset Remediated Vulnerability | - |
 | `software_product_match` | required | yes | Asset Runs Product | - |
 | `vulnerability_classification` | required | yes | Vulnerability Classified As | - |
@@ -293,13 +293,13 @@ relationship.
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services that would lose coverage if this control were disabled or invalidated. Traces from control through mitigated vulnerability classes to exposed vulnerabilities and dependent services. |
+| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services that would lose coverage if this control were disabled or invalidated. Traces from control through mitigated vulnerability classes to exposed vulnerabilities and dependent services. |
 
 ### Owner
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Exposed To Vulnerability (Outgoing) | Starting from an owner, return approved asset-vulnerability exposures across the owner's assets, decorated with service, exception, control, patch-window, and remediation context for prioritization. |
+| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Vulnerability Posture (Outgoing) | Starting from an owner, return approved exposed asset-vulnerability pairs across the owner's assets, excluding pairs already closed or covered by a scoped exception, with service, control, patch-window, and broad exception context for prioritization. |
 
 ### Product
 
@@ -314,7 +314,7 @@ relationship.
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
 | Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
-| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Exposed To Vulnerability (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, confirmed vulnerable assets, and service dependencies to find business services in the blast radius. This is the question you ask when a vendor discloses a breach or a critical supply-chain vulnerability. |
+| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, confirmed vulnerable assets, and service dependencies to find business services in the blast radius. This is the question you ask when a vendor discloses a breach or a critical supply-chain vulnerability. |
 | Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
@@ -377,7 +377,7 @@ No configured constraints.
 <!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
 
-#### `asset_exposed_to_vulnerability`
+#### `asset_vulnerability_posture`
 - Version: `1`
 - Reason codes:
   - `control_mitigates` (`decision_policy`): A compensating control effectively blocks this exploit path.
@@ -478,9 +478,9 @@ No configured constraints.
 
 #### Resolution-Anchored
 
-##### `asset_exposed_resolution`
+##### `asset_vulnerability_posture_resolution`
 - Version: `1`
-- Target: Relationship `asset_exposed_to_vulnerability`
+- Target: Relationship `asset_vulnerability_posture`
 - Outcome codes:
   - `overestimated_exposure` (`trust_adjustment`): Control was effective but was not credited during resolution.
   - `underestimated_exposure` (`require_review`): An attack path was missed during exposure assessment.

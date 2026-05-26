@@ -111,7 +111,7 @@ does not approve or resolve governed proposals directly.
    that variant instead. Each stage produces governed groups that enter the
    review queue.
 
-3. For each new `asset_exposed_to_vulnerability` candidate, query the
+3. For each new `asset_vulnerability_posture` candidate, query the
    relevant context surfaces for:
    - prior exploitation history on the product
    - open findings on the asset
@@ -321,14 +321,19 @@ asset, with an approver, rationale, and review date.
    ```
 
 2. Propose `asset_patch_exception_for` linking the asset to the CVE being
-   waived, with `exception_id` in edge properties:
+   waived, with scoped exception evidence in edge properties:
    ```
    cruxible group propose \
      --relationship asset_patch_exception_for \
      --members '[{"from_type":"Asset","from_id":"ASSET-5",
                    "to_type":"Vulnerability","to_id":"CVE-2024-38475",
                    "relationship_type":"asset_patch_exception_for",
-                   "properties":{"exception_id":"EXC-2026-001"},
+                   "properties":{"exception_id":"EXC-2026-001",
+                                 "review_due_at":"2026-05-03",
+                                 "scope_basis":"Exception covers ASSET-5 Apache remediation for CVE-2024-38475 only",
+                                 "rationale":"Billing freeze approval delays this specific patch",
+                                 "evidence_source":"change_ticket",
+                                 "evidence_refs":[{"source":"servicenow","source_record_id":"CHG-40123"}]},
                    "signals":[{"signal_source":"policy_review","signal":"support",
                                 "evidence":"Approved by CFO per change ticket CHG-40123"}]}]' \
      --thesis "Billing asset ASSET-5 has an approved month-end freeze for CVE-2024-38475; review 2026-05-03" \
@@ -360,6 +365,11 @@ materially blocks a specific CVE class.
      --members '[{"from_type":"CompensatingControl","from_id":"CTRL-1",
                    "to_type":"VulnerabilityClass","to_id":"path_traversal",
                    "relationship_type":"control_mitigates_class",
+                   "properties":{"effect":"blocks",
+                                 "validation_basis":"WAF rule set 941xx blocks path traversal payloads",
+                                 "verified_at":"2025-10-15",
+                                 "expires_at":"2026-04-15",
+                                 "evidence_refs":[{"source":"waf_test","source_record_id":"CTRL-1-941xx-2025-10-15"}]},
                    "signals":[{"signal_source":"control_effectiveness","signal":"support",
                                 "evidence":"WAF rule set 941xx blocks path traversal payloads; tested 2025-10-15"}]}]' \
      --thesis "Edge WAF ruleset 941xx blocks path traversal exploit strings" \
@@ -392,6 +402,7 @@ asset-vulnerability pair is now closed.
                    "properties":{"remediation_type":"patch",
                                  "verified_at":"2026-04-22",
                                  "evidence_source":"scanner",
+                                 "evidence_refs":[{"source":"scanner","source_record_id":"scan-2026-04-22-ASSET-8-CVE-2020-14882"}],
                                  "ticket_id":"CHG-40123"},
                    "signals":[{"signal_source":"remediation_verification","signal":"support",
                                 "evidence":"Post-patch scan no longer detects WebLogic admin console bypass"}]}]' \
@@ -499,7 +510,7 @@ Every governed relationship the agent can propose:
 | Relationship | From → To | Required signal source |
 |---|---|---|
 | `asset_runs_product` | Asset → Product | `software_product_match` |
-| `asset_exposed_to_vulnerability` | Asset → Vulnerability | `product_version_evidence` + `exploitability_signal` + `control_effectiveness` |
+| `asset_vulnerability_posture` | Asset → Vulnerability | `product_version_evidence` + `exploitability_signal` + `control_effectiveness` |
 | `asset_patch_exception_for` | Asset → Vulnerability | `policy_review` |
 | `vulnerability_classified_as` | Vulnerability → VulnerabilityClass | `vulnerability_classification` |
 | `control_mitigates_class` | CompensatingControl → VulnerabilityClass | `control_effectiveness` |
@@ -509,7 +520,7 @@ Every governed relationship the agent can propose:
 | `incident_exploited_vulnerability` | Incident → Vulnerability | `incident_attribution` |
 | `finding_from_incident` | Finding → Incident | `incident_attribution` |
 
-`asset_runs_product`, `asset_exposed_to_vulnerability`, and
+`asset_runs_product`, `asset_vulnerability_posture`, and
 `asset_remediated_vulnerability` closure proposals are typically produced by
 batch workflows. Classifications and control-class mitigation proposals can be
 produced by agent-called workflows with explicit input. Incident, finding,
