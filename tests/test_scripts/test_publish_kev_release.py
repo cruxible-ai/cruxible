@@ -88,6 +88,25 @@ def test_publish_kev_release_file_transport_end_to_end(
             {
                 "cve": {
                     "id": "CVE-2026-0001",
+                    "lastModified": "2026-03-01T12:00:00.000",
+                    "vulnStatus": "Analyzed",
+                    "cisaRequiredAction": "Apply updates per vendor instructions.",
+                    "cisaVulnerabilityName": "Acme Widget Remote Code Execution Vulnerability",
+                    "weaknesses": [
+                        {
+                            "description": [
+                                {"lang": "en", "value": "CWE-94"},
+                            ]
+                        }
+                    ],
+                    "metrics": {
+                        "cvssMetricV31": [
+                            {
+                                "cvssData": {"baseScore": 9.8},
+                                "baseSeverity": "CRITICAL",
+                            }
+                        ]
+                    },
                     "configurations": [
                         {
                             "nodes": [
@@ -96,6 +115,7 @@ def test_publish_kev_release_file_transport_end_to_end(
                                         {
                                             "vulnerable": True,
                                             "criteria": "cpe:2.3:a:acme:widget:*:*:*:*:*:*:*:*",
+                                            "matchCriteriaId": "MATCH-1",
                                             "versionEndExcluding": "2.0.0",
                                         }
                                     ]
@@ -134,6 +154,20 @@ def test_publish_kev_release_file_transport_end_to_end(
     graph = EntityGraph.from_dict(graph_payload)
     assert graph.entity_count() == 3
     assert graph.edge_count() == 2
+    vulnerability = graph.get_entity("Vulnerability", "CVE-2026-0001")
+    assert vulnerability is not None
+    assert vulnerability.properties["vulnerability_name"] == (
+        "Acme Widget Remote Code Execution Vulnerability"
+    )
+    assert vulnerability.properties["cvss_severity"] == "CRITICAL"
+    assert vulnerability.properties["epss_percentile"] is None
+    assert vulnerability.properties["cwes"] == ["CWE-94"]
+    edge = graph.list_edges("vulnerability_affects_product")[0]
+    assert edge["properties"]["source"] == "nvd"
+    assert edge["properties"]["vulnerable"] is True
+    assert edge["properties"]["affected_versions"]
+    assert edge["properties"]["source_last_modified_at"].startswith("2026-03-01T12:00:00")
+    assert edge["properties"]["evidence_refs"][0]["match_criteria_id"] == "MATCH-1"
 
 
 def _load_publish_script() -> ModuleType:

@@ -29,11 +29,17 @@ entity_types:
     description: Public vulnerability record from CISA KEV catalog.
     properties:
       cve_id: {primary_key: true}
+      vulnerability_name: {optional: true}
       description: {}
-      cvss_score: {type: number}
-      epss_score: {type: number}
-      kev_due_date: {type: date}
-      known_ransomware_use: {enum: [Known, Unknown]}
+      date_added_to_kev: {type: date, optional: true}
+      kev_due_date: {type: date, optional: true}
+      required_action: {optional: true}
+      known_ransomware_use: {enum: [Known, Unknown], optional: true}
+      cvss_score: {type: number, optional: true}
+      cvss_severity: {optional: true}
+      epss_score: {type: number, optional: true}
+      epss_percentile: {type: number, optional: true}
+      cwes: {type: json, optional: true}
 
 relationships:
   - name: product_from_vendor
@@ -48,6 +54,11 @@ relationships:
     from: Vulnerability
     to: Product
     properties:
+      source: {}
+      source_record_id: {}
+      cpe_part: {optional: true}
+      cpe_vendor: {optional: true}
+      cpe_product: {optional: true}
       affected_versions:
         type: json
         description: >
@@ -62,7 +73,13 @@ relationships:
               version_end_including: {type: string}
               version_end_excluding: {type: string}
               fixed_version: {type: string}
-      fixed_version: {}
+      fixed_version: {optional: true}
+      default_status: {optional: true}
+      vulnerable: {type: bool}
+      version_logic: {optional: true}
+      source_last_modified_at: {type: datetime, optional: true}
+      evidence_refs: {type: json}
+      rationale: {}
 
 named_queries:
   vulnerability_products:
@@ -284,11 +301,17 @@ workflows:
           entity_id: $item.cve_id
           properties:
             cve_id: $item.cve_id
+            vulnerability_name: $item.vulnerability_name
             description: $item.description
-            cvss_score: $item.cvss_score
-            epss_score: $item.epss_score
+            date_added_to_kev: $item.date_added_to_kev
             kev_due_date: $item.kev_due_date
+            required_action: $item.required_action
             known_ransomware_use: $item.known_ransomware_use
+            cvss_score: $item.cvss_score
+            cvss_severity: $item.cvss_severity
+            epss_score: $item.epss_score
+            epss_percentile: $item.epss_percentile
+            cwes: $item.cwes
         as: vulnerabilities
       - id: product_vendor
         make_relationships:
@@ -308,8 +331,19 @@ workflows:
           to_type: Product
           to_id: $item.product_id
           properties:
+            source: $item.source
+            source_record_id: $item.source_record_id
+            cpe_part: $item.cpe_part
+            cpe_vendor: $item.cpe_vendor
+            cpe_product: $item.cpe_product
             affected_versions: $item.affected_versions
             fixed_version: $item.fixed_version
+            default_status: $item.default_status
+            vulnerable: $item.vulnerable
+            version_logic: $item.version_logic
+            source_last_modified_at: $item.source_last_modified_at
+            evidence_refs: $item.evidence_refs
+            rationale: $item.rationale
         as: vulnerability_product
       - id: apply_vendors
         apply_entities:
