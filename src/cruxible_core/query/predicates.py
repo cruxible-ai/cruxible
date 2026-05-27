@@ -51,6 +51,9 @@ class PredicateContext:
     current: EntityInstance
     candidate: EntityInstance
     entry: EntityInstance
+    path: tuple[QueryPathSegment, ...] = ()
+    entities: tuple[EntityInstance, ...] = ()
+    optional_path_aliases: frozenset[str] = frozenset()
 
 
 def iter_step_relationships(
@@ -101,6 +104,9 @@ def build_predicate_context(
     current: EntityInstance,
     candidate: EntityInstance,
     segment: QueryPathSegment,
+    path: tuple[QueryPathSegment, ...] = (),
+    entities: tuple[EntityInstance, ...] = (),
+    optional_path_aliases: frozenset[str] = frozenset(),
 ) -> PredicateContext:
     """Build a predicate context for one traversal candidate."""
     source, target = segment_endpoint_entities(current, candidate, segment)
@@ -111,6 +117,9 @@ def build_predicate_context(
         current=current,
         candidate=candidate,
         entry=entry,
+        path=path,
+        entities=entities,
+        optional_path_aliases=optional_path_aliases,
     )
 
 
@@ -276,6 +285,9 @@ def _build_related_context(
         current=original_context.current,
         candidate=original_context.candidate,
         entry=original_context.entry,
+        path=original_context.path,
+        entities=original_context.entities,
+        optional_path_aliases=original_context.optional_path_aliases,
     )
 
 
@@ -369,7 +381,65 @@ def _resolve_predicate_ref(
         if value is _MISSING:
             raise QueryExecutionError(f"Missing predicate reference '{ref}'")
         return value
+    if prefix == "path":
+        return _resolve_path_predicate_ref(ref, context, path)
     raise QueryExecutionError(f"Unsupported predicate reference '{ref}'")
+
+
+def _resolve_path_predicate_ref(
+    ref: str,
+    context: PredicateContext,
+    raw_path: str,
+) -> Any:
+    parts = raw_path.split(".")
+    if len(parts) < 2 or parts[1] not in {"edge", "source", "target"}:
+        raise QueryExecutionError(
+            f"Predicate reference '{ref}' must use $path.<alias>.edge|source|target"
+        )
+    alias, scope = parts[0], parts[1]
+    segment = _predicate_path_segment(context, alias, ref)
+    if segment is None:
+        return _MISSING
+    if scope == "edge":
+        base: Any = segment
+    elif scope == "source":
+        base = _predicate_path_entity(context, segment.from_type, segment.from_id, ref)
+    else:
+        base = _predicate_path_entity(context, segment.to_type, segment.to_id, ref)
+    value = resolve_path(base, parts[2:])
+    if value is _MISSING:
+        raise QueryExecutionError(f"Missing predicate reference '{ref}'")
+    return value
+
+
+def _predicate_path_segment(
+    context: PredicateContext,
+    alias: str,
+    ref: str,
+) -> QueryPathSegment | None:
+    matches = [segment for segment in context.path if segment.alias == alias]
+    if not matches:
+        if alias in context.optional_path_aliases:
+            return None
+        raise QueryExecutionError(f"Unknown path alias '{alias}' in predicate reference '{ref}'")
+    if len(matches) > 1:
+        raise QueryExecutionError(f"Duplicate path alias '{alias}' in predicate reference '{ref}'")
+    return matches[0]
+
+
+def _predicate_path_entity(
+    context: PredicateContext,
+    entity_type: str,
+    entity_id: str,
+    ref: str,
+) -> EntityInstance:
+    for entity in context.entities:
+        if entity.entity_type == entity_type and entity.entity_id == entity_id:
+            return entity
+    raise QueryExecutionError(
+        f"Predicate reference '{ref}' points to missing path entity "
+        f"{entity_type}:{entity_id}"
+    )
 
 
 def resolve_path(value: Any, parts: list[str]) -> Any:

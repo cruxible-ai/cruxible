@@ -771,6 +771,173 @@ class TestMultiStepQuery:
         assert parent.entity_id == "V-CIVIC"
         assert parent.detail["from_entity_id"] == "BP-5678"
 
+    def test_traversal_where_can_reference_prior_path_alias(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+    ):
+        config.named_queries["path_ref_in_traversal_where"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship="replaces",
+                    direction="incoming",
+                    filter={"direction": ["equivalent", "upgrade"]},
+                    alias="replacement",
+                ),
+                TraversalStep(
+                    relationship="fits",
+                    direction="outgoing",
+                    where={
+                        "current.entity_id": {
+                            "eq": "$path.replacement.source.entity_id"
+                        }
+                    },
+                ),
+            ],
+            returns="list[Vehicle]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "path_ref_in_traversal_where",
+            {"part_number": "BP-1234"},
+        )
+
+        assert [row.result.entity_id for row in result.results] == ["V-CIVIC"]
+
+    def test_traversal_where_rejects_unknown_path_alias(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+    ):
+        config.named_queries["unknown_path_ref_in_traversal_where"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship="replaces",
+                    direction="incoming",
+                    alias="replacement",
+                ),
+                TraversalStep(
+                    relationship="fits",
+                    direction="outgoing",
+                    where={
+                        "current.entity_id": {
+                            "eq": "$path.missing.source.entity_id"
+                        }
+                    },
+                ),
+            ],
+            returns="list[Vehicle]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        with pytest.raises(QueryExecutionError, match="Unknown path alias 'missing'"):
+            execute_query(
+                config,
+                graph,
+                "unknown_path_ref_in_traversal_where",
+                {"part_number": "BP-1234"},
+            )
+
+    def test_absent_optional_path_alias_ref_makes_predicate_fail(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+    ):
+        config.named_queries["missing_optional_path_ref_in_traversal_where"] = (
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[
+                    TraversalStep(
+                        relationship="blocked",
+                        direction="outgoing",
+                        required=False,
+                        alias="optional_block",
+                    ),
+                    TraversalStep(
+                        relationship="fits",
+                        direction="incoming",
+                        where={
+                            "candidate.entity_id": {
+                                "eq": "$path.optional_block.target.entity_id"
+                            }
+                        },
+                    ),
+                ],
+                returns="list[Part]",
+                result_shape="path",
+                dedupe="path",
+            )
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "missing_optional_path_ref_in_traversal_where",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        assert result.results == []
+
+    def test_traversal_related_predicate_can_reference_prior_path_alias(
+        self,
+        config: CoreConfig,
+        graph: EntityGraph,
+    ):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="vehicle_blocks_part",
+                from_type="Vehicle",
+                from_id="V-CIVIC",
+                to_type="Part",
+                to_id="BP-5678",
+            )
+        )
+        config.named_queries["path_ref_in_traversal_related"] = NamedQuerySchema(
+            entry_point="Part",
+            traversal=[
+                TraversalStep(
+                    relationship="replaces",
+                    direction="incoming",
+                    filter={"direction": ["equivalent", "upgrade"]},
+                    alias="replacement",
+                ),
+                TraversalStep(
+                    relationship="fits",
+                    direction="outgoing",
+                    where_related=[
+                        {
+                            "relationship": "vehicle_blocks_part",
+                            "direction": "outgoing",
+                            "target": {
+                                "entity_id": {
+                                    "eq": "$path.replacement.source.entity_id"
+                                }
+                            },
+                        }
+                    ],
+                ),
+            ],
+            returns="list[Vehicle]",
+            result_shape="path",
+            dedupe="path",
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "path_ref_in_traversal_related",
+            {"part_number": "BP-1234"},
+        )
+
+        assert [row.result.entity_id for row in result.results] == ["V-CIVIC"]
+
 
 class TestRelatedEdgeExclusions:
     def test_candidate_kept_when_related_edge_does_not_exist(
@@ -2452,6 +2619,103 @@ class TestQueryIncludes:
             "include_summary" in node.detail
             for node in result.receipt.nodes
         )
+
+    def test_include_where_can_reference_path_alias(self, config, graph):
+        config.named_queries["include_where_path_ref"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "where": {
+                        "target.entity_id": {"eq": "$path.fit.source.entity_id"}
+                    },
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "include_where_path_ref",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [item.source.entity_id for item in row.includes["replacements"].items] == [
+            "BP-5678",
+            "BP-9999",
+        ]
+
+    def test_include_related_predicate_can_reference_path_alias(self, config, graph):
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="blocked",
+                from_type="Part",
+                from_id="BP-5678",
+                to_type="Part",
+                to_id="BP-1234",
+            )
+        )
+        config.named_queries["include_related_path_ref"] = NamedQuerySchema(
+            entry_point="Vehicle",
+            traversal=[
+                TraversalStep(
+                    relationship="fits",
+                    direction="incoming",
+                    filter={"confidence": 0.95},
+                    alias="fit",
+                )
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            include={
+                "has_block_to_fit_source": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "where_related": [
+                        {
+                            "relationship": "blocked",
+                            "direction": "outgoing",
+                            "target": {
+                                "entity_id": {
+                                    "eq": "$path.fit.source.entity_id"
+                                }
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "include_related_path_ref",
+            {"vehicle_id": "V-CIVIC"},
+        )
+
+        row = result.results[0]
+        assert isinstance(row, QueryPathRow)
+        assert [
+            item.source.entity_id
+            for item in row.includes["has_block_to_fit_source"].items
+        ] == ["BP-5678"]
 
     def test_include_order_by_ordered_enum(self, config, graph):
         config.enums["priority"] = EnumSchema(

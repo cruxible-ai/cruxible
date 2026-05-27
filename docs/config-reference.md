@@ -534,7 +534,36 @@ named_queries:
                 eq: $entry.entity_id
 ```
 
-Supported structured predicate operators are `eq`, `ne`, `in`, `not_in`, `lt`, `lte`, `gt`, `gte`, and `exists`. Predicate values may reference query inputs with `$input.<name>` and graph context values such as `$entry.entity_id`.
+Supported structured predicate operators are `eq`, `ne`, `in`, `not_in`, `lt`, `lte`, `gt`, `gte`, and `exists`. Predicate values may reference:
+
+- `$input.<field>`
+- `$entry.<field>`
+- `$current.<field>`
+- `$candidate.<field>`
+- `$edge.<field>`
+- `$source.<field>`
+- `$target.<field>`
+- `$path.<alias>.edge.<field>`
+- `$path.<alias>.source.<field>`
+- `$path.<alias>.target.<field>`
+
+Use `$path` references when filtering an include or predicate against an
+already-retained traversal path. Unknown path aliases fail unless the alias
+belongs to an absent `required: false` traversal segment, where the missing
+path behaves like a missing value and ordinary predicates fail. `$path`
+references target existing traversal aliases, not include aliases.
+
+```yaml
+include:
+  remediations:
+    from: $path.exposure.source
+    relationship: asset_remediated_vulnerability
+    direction: outgoing
+    many: true
+    where:
+      target.entity_id:
+        eq: $path.exposure.target.entity_id
+```
 
 ---
 

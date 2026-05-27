@@ -1831,6 +1831,8 @@ class CoreConfig(BaseModel):
         for query_name, query in self.named_queries.items():
             for include_alias, include in query.include.items():
                 if self.resolve_relationship_reference(include.relationship) is None:
+                    if self.extends is not None:
+                        continue
                     msg = (
                         f"Named query '{query_name}' include '{include_alias}' "
                         f"references unknown relationship '{include.relationship}'"
@@ -1842,6 +1844,8 @@ class CoreConfig(BaseModel):
                 ):
                     for related in related_specs:
                         if related.relationship not in declared_relationships:
+                            if self.extends is not None:
+                                continue
                             msg = (
                                 f"Named query '{query_name}' include '{include_alias}' "
                                 f"references unknown relationship '{related.relationship}' "
@@ -1851,6 +1855,8 @@ class CoreConfig(BaseModel):
             for step_index, step in enumerate(query.traversal):
                 for exclusion in step.exclude_if_related:
                     if exclusion.relationship not in declared_relationships:
+                        if self.extends is not None:
+                            continue
                         msg = (
                             f"Named query '{query_name}' traversal step {step_index} "
                             f"references unknown relationship '{exclusion.relationship}' "
@@ -1863,6 +1869,8 @@ class CoreConfig(BaseModel):
                 ):
                     for related in related_specs:
                         if related.relationship not in declared_relationships:
+                            if self.extends is not None:
+                                continue
                             msg = (
                                 f"Named query '{query_name}' traversal step {step_index} "
                                 f"references unknown relationship '{related.relationship}' "

@@ -185,6 +185,7 @@ def execute_query(
         result_shape=effective_options.result_shape,
         dedupe=effective_options.dedupe,
     )
+    optional_path_aliases = _optional_path_aliases(query_schema)
 
     builder = ReceiptBuilder(
         query_name=query_name,
@@ -239,6 +240,7 @@ def execute_query(
             traversal_budget=traversal_budget,
             step_index=step_index,
             policy_summary=policy_summary,
+            optional_path_aliases=optional_path_aliases,
             builder=builder,
         )
         steps_executed += 1
@@ -248,7 +250,7 @@ def execute_query(
         config,
         result_states,
         effective_options.result_shape,
-        optional_path_aliases=_optional_path_aliases(query_schema),
+        optional_path_aliases=optional_path_aliases,
     )
     if declared_entity_return_type is not None:
         _validate_result_context_return_types(
@@ -576,6 +578,7 @@ def _execute_step(
     traversal_budget: _TraversalBudgetState,
     step_index: int,
     policy_summary: dict[str, int],
+    optional_path_aliases: frozenset[str],
     *,
     builder: ReceiptBuilder | None = None,
 ) -> list[_TraversalState]:
@@ -746,6 +749,9 @@ def _execute_step(
                     current=entity,
                     candidate=neighbor,
                     segment=segment,
+                    path=state.path,
+                    entities=state.entities,
+                    optional_path_aliases=optional_path_aliases,
                 )
                 if step.where is not None:
                     passed = evaluate_query_predicates(
@@ -1253,6 +1259,9 @@ def _evaluate_include(
             current=anchor,
             candidate=neighbor,
             segment=segment,
+            path=context.path,
+            entities=context.entities,
+            optional_path_aliases=context.optional_path_aliases,
         )
         if spec.where is not None and not evaluate_query_predicates(
             config,
