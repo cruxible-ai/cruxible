@@ -22,10 +22,6 @@ enums:
   asset_environment:
     values: [production, staging, corporate]
     description: Operational environment where an asset runs.
-  service_tier:
-    values: [tier-2, tier-1]
-    ordered: low_to_high
-    description: Business service criticality tier.
   control_type:
     values: [waf, endpoint_detection, network_acl]
     description: Security control implementation category.
@@ -79,7 +75,7 @@ entity_types:
     properties:
       service_id: {primary_key: true}
       name: {indexed: true}
-      tier: {enum_ref: service_tier}
+      criticality: {enum_ref: criticality}
 
   Owner:
     description: Team or person responsible for an asset or service.
@@ -408,9 +404,9 @@ named_queries:
         many: true
         limit: 10
         order_by:
-          - by: $source.properties.tier
+          - by: $source.properties.criticality
             direction: asc
-            enum_ref: service_tier
+            enum_ref: criticality
           - by: $source.properties.name
             direction: asc
       approved_exceptions:
@@ -622,9 +618,9 @@ named_queries:
         many: true
         limit: 10
         order_by:
-          - by: $source.properties.tier
+          - by: $source.properties.criticality
             direction: asc
-            enum_ref: service_tier
+            enum_ref: criticality
           - by: $source.properties.name
             direction: asc
       approved_exceptions:
@@ -742,9 +738,9 @@ named_queries:
             direction: desc
             value_type: date
     order_by:
-      - by: $result.properties.tier
+      - by: $result.properties.criticality
         direction: asc
-        enum_ref: service_tier
+        enum_ref: criticality
       - by: $path.exposure.edge.properties.priority
         direction: desc
         enum_ref: criticality
@@ -834,9 +830,9 @@ named_queries:
             direction: desc
             value_type: date
     order_by:
-      - by: $result.properties.tier
+      - by: $result.properties.criticality
         direction: asc
-        enum_ref: service_tier
+        enum_ref: criticality
       - by: $path.exposure.edge.properties.priority
         direction: desc
         enum_ref: criticality
@@ -1140,7 +1136,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:e84a0601c44b1509e65a1336bb4bae5f54e1ef97f63650fb738df5b566feb0e1
+    sha256: sha256:97aa0e4f8296eed5657d53a14208f3351394f06aeb7123e8db9ad414320f31ac
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
@@ -1283,7 +1279,7 @@ workflows:
           properties:
             service_id: $item.service_id
             name: $item.name
-            tier: $item.tier
+            criticality: $item.criticality
         as: services
       - id: owners
         make_entities:

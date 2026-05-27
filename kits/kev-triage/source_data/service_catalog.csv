@@ -1,4 +1,4 @@
-service_id,name,tier,owner_id,customer_facing
-SVC-1,Billing,tier-1,OWNER-4,true
-SVC-2,Customer Portal,tier-1,OWNER-2,true
-SVC-3,Partner API,tier-2,OWNER-3,true
+service_id,name,criticality,owner_id,customer_facing
+SVC-1,Billing,critical,OWNER-4,true
+SVC-2,Customer Portal,critical,OWNER-2,true
+SVC-3,Partner API,high,OWNER-3,true

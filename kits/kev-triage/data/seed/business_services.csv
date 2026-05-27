@@ -1,4 +1,4 @@
-service_id,name,tier
-SVC-1,Billing,tier-1
-SVC-2,Customer Portal,tier-1
-SVC-3,Partner API,tier-2
+service_id,name,criticality
+SVC-1,Billing,critical
+SVC-2,Customer Portal,critical
+SVC-3,Partner API,high

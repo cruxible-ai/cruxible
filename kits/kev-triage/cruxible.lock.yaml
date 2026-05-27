@@ -1,12 +1,12 @@
 version: '1'
-config_digest: sha256:5fd466a16093cb638d02b5d35f013020d3989887549fe0b1ed6efd352fe06ae7
-lock_digest: sha256:3783362bc680b8aa11eb3f265343a258d2593acce01346514b9e4eccade2f9df
-generated_at: 2026-05-27 18:42:31.334395+00:00
+config_digest: sha256:5a59336a48050da57deb5657ccca249eb0b986d33a175b21965027fa13c83cc2
+lock_digest: sha256:f8a50c053d8b37e0122ea2689b23f1895b93594af52bbe5dfdca24e36a1851f1
+generated_at: 2026-05-27 19:39:57.233602+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:e84a0601c44b1509e65a1336bb4bae5f54e1ef97f63650fb738df5b566feb0e1
+    sha256: sha256:97aa0e4f8296eed5657d53a14208f3351394f06aeb7123e8db9ad414320f31ac
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational
         system exports, and review material for governed proposals.
