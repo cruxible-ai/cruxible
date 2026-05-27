@@ -70,6 +70,13 @@ This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
   not an agent action.
 - `cruxible add-entity` is allowed. Creating `Incident` / `Finding` /
   `Exception` / `CompensatingControl` records is expected agent work.
+- Do not assign numeric confidence properties on governed relationship
+  proposals. Relationship confidence is represented by declared tri-state
+  signal-source evidence: `support`, `unsure`, or `contradict`. Put the reason
+  in `evidence`, `match_basis`, `rationale`, or thesis facts instead.
+- If a workflow provider exposes an internal numeric match score, treat it
+  only as an input that the workflow maps into a tri-state signal. Do not copy
+  scores into proposal member properties or accepted graph relationships.
 
 If a command fails with `PermissionDeniedError: ... disabled in agent mode`,
 do not retry or try to bypass. Surface the error to the user and stop.

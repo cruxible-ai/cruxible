@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:5a59336a48050da57deb5657ccca249eb0b986d33a175b21965027fa13c83cc2
-lock_digest: sha256:f8a50c053d8b37e0122ea2689b23f1895b93594af52bbe5dfdca24e36a1851f1
-generated_at: 2026-05-27 19:39:57.233602+00:00
+config_digest: sha256:c0502cc21bcdc485bca36d2bf1a8e0fdd53a95bfc1a0751d292a2b7e48553e7a
+lock_digest: sha256:e66883405bf316954edfb6807e432fcdd21938a85a9abecdad579a8858818ca0
+generated_at: 2026-05-27 19:46:57.433874+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -23,7 +23,7 @@ providers:
   normalize_local_seed_tables:
     version: 1.0.0
     ref: kit://providers/seed.py::normalize_local_seed_tables
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false
@@ -32,7 +32,7 @@ providers:
   load_software_inventory:
     version: 1.0.0
     ref: kit://providers/seed.py::load_software_inventory
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false
@@ -41,7 +41,7 @@ providers:
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false
@@ -49,7 +49,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false
@@ -57,7 +57,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false
@@ -65,7 +65,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_sha256: sha256:0c569134ba79d6753906899e5d97bb3c091d42589be366e307dee33671136648
+    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
     runtime: python
     deterministic: true
     side_effects: false

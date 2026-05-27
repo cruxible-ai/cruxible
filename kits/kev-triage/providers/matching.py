@@ -67,7 +67,7 @@ def match_software_to_products(
             "inventory_source": _first_non_empty(item.get("evidence_source")) or "",
             "last_seen_at": _first_non_empty(item.get("last_seen")) or "",
             "evidence_source": _first_non_empty(item.get("evidence_source")) or "",
-            "match_confidence": round(best_score, 4),
+            "match_score": round(best_score, 4),
             "match_basis": _match_basis(item, best_product, best_score),
             "evidence_refs": [
                 evidence_ref(
@@ -242,7 +242,7 @@ def _match_basis(
     vendor = _first_non_empty(inventory_row.get("vendor")) or "unknown vendor"
     return (
         f"{software_name} from {vendor} matched {product_name} "
-        f"with confidence {score:.2f}"
+        f"with match score {score:.2f}"
     )
 
 
@@ -264,7 +264,7 @@ def _reference_product_sort_key(product: dict[str, Any]) -> tuple[str, str, str,
 
 def _match_row_sort_key(row: dict[str, Any]) -> tuple[float, str, str]:
     return (
-        float(row.get("match_confidence", 0.0)),
+        float(row.get("match_score", 0.0)),
         str(row.get("_last_seen", "")),
         str(row.get("installed_version", "")),
     )

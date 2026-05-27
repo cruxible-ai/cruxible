@@ -199,7 +199,6 @@ relationships:
       installed_version: {}
       inventory_source: {}
       last_seen_at: {type: date}
-      match_confidence: {type: number}
       match_basis: {}
       evidence_source: {}
       evidence_refs: {type: json}
@@ -1181,7 +1180,7 @@ providers:
     description: >
       Fuzzy match software inventory rows against reference-layer
       products using CPE name similarity and vendor matching. Returns
-      match results with confidence scores and verdicts.
+      match results with deterministic match scores and verdicts.
     contract_in: SoftwareMatchInput
     contract_out: SoftwareMatchResults
     ref: kit://providers/matching.py::match_software_to_products
@@ -1470,7 +1469,6 @@ workflows:
             installed_version: $item.installed_version
             inventory_source: $item.inventory_source
             last_seen_at: $item.last_seen_at
-            match_confidence: $item.match_confidence
             match_basis: $item.match_basis
             evidence_source: $item.evidence_source
             evidence_refs: $item.evidence_refs
@@ -1484,7 +1482,7 @@ workflows:
           to_id: $item.product_id
           evidence: $item.evidence_source
           score:
-            path: match_confidence
+            path: match_score
             support_gte: 0.8
             unsure_gte: 0.5
         as: signals

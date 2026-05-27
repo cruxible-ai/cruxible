@@ -274,7 +274,7 @@ def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
     assert item["inventory_source"] == "scanner-b"
     assert item["last_seen_at"] == "2026-03-21"
     assert item["evidence_source"] == "scanner-b"
-    assert item["match_confidence"] == payload["items"][0]["match_confidence"]
+    assert item["match_score"] == payload["items"][0]["match_score"]
     assert item["match_basis"]
     assert item["evidence_refs"][0]["source"] == "scanner-b"
     assert item["rationale"] == item["match_basis"]
@@ -321,7 +321,7 @@ def test_match_software_to_products_accepts_entity_shaped_reference_products() -
     assert item["observed_vendor"] == "Apache"
     assert item["installed_version"] == "2.4.49"
     assert item["evidence_source"] == "scanner-a"
-    assert item["match_confidence"] == payload["items"][0]["match_confidence"]
+    assert item["match_score"] == payload["items"][0]["match_score"]
     assert item["evidence_refs"][0]["source"] == "scanner-a"
     assert item["verdict"] == "support"
 

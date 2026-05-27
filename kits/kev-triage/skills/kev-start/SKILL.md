@@ -354,9 +354,15 @@ inspect the resulting group and summarize:
 - member count
 - thesis / purpose of the stage
 - a few representative members
-- anything notable about signals, confidence, or scope
+- anything notable about tri-state signals, evidence, or scope
 
 Do **not** force per-member narration unless the user asks for it.
+Do **not** add or ask users to approve numeric confidence properties on
+governed relationships. This kit represents confidence through declared
+tri-state signals (`support`, `unsure`, `contradict`) plus evidence text and
+thesis facts. Internal provider match scores are only workflow inputs for
+signal mapping; they should not appear in proposal properties or accepted graph
+relationships.
 
 In **fast onboarding**, stop and ask before approving if any of these happen:
 
