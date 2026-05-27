@@ -547,6 +547,21 @@ named_queries:
         order_by:
           - by: $target.properties.next_window_at
             direction: asc
+      affected_vulnerabilities:
+        from: $entry
+        relationship: vulnerability_affects_product
+        direction: incoming
+        many: true
+        limit: 20
+        order_by:
+          - by: $source.properties.kev_due_date
+            direction: asc
+            value_type: date
+          - by: $source.properties.epss_score
+            direction: desc
+            value_type: number
+          - by: $source.entity_id
+            direction: asc
       relevant_exposures:
         from: $result
         relationship: asset_vulnerability_posture
@@ -645,10 +660,11 @@ named_queries:
 
   vendor_service_impact:
     description: >
-      Starting from a vendor, trace through affected products, confirmed
-      vulnerable assets, and service dependencies to find business services
-      in the blast radius. This is the question you ask when a vendor
-      discloses a breach or a critical supply-chain vulnerability.
+      Starting from a vendor, trace through affected products, approved
+      asset-vulnerability posture, and service dependencies to find business
+      services in the blast radius. This broad investigation query keeps
+      remediated and exception-covered context visible so agents can triage
+      from the first result instead of treating it as a strict action queue.
     entry_point: Vendor
     returns: BusinessService
     result_shape: path
@@ -668,8 +684,6 @@ named_queries:
         where:
           edge.metadata.assertion.review.status:
             eq: approved
-          edge.properties.status:
-            eq: exposed
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -701,6 +715,32 @@ named_queries:
         direction: outgoing
         many: true
         limit: 5
+      scoped_exceptions:
+        from: $path.exposure.source
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+      remediations:
+        from: $path.exposure.source
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
     order_by:
       - by: $result.properties.tier
         direction: asc
@@ -712,9 +752,11 @@ named_queries:
   control_coverage_gap:
     description: >
       Starting from a compensating control, find the business services
-      that would lose coverage if this control were disabled or invalidated.
-      Traces from control through mitigated vulnerability classes to exposed
-      vulnerabilities and dependent services.
+      with asset-vulnerability posture tied to classes this control covers.
+      This broad investigation query exposes the mitigation effect for agent
+      interpretation: blocks/compensates are stronger mitigation coverage,
+      reduces is risk-reduction coverage, and detects is monitoring rather
+      than blocking mitigation.
     entry_point: CompensatingControl
     returns: BusinessService
     result_shape: path
@@ -740,8 +782,6 @@ named_queries:
         where:
           edge.metadata.assertion.review.status:
             eq: approved
-          edge.properties.status:
-            eq: exposed
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -767,6 +807,32 @@ named_queries:
         direction: outgoing
         many: true
         limit: 5
+      scoped_exceptions:
+        from: $path.exposure.source
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+      remediations:
+        from: $path.exposure.source
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
     order_by:
       - by: $result.properties.tier
         direction: asc
@@ -1038,6 +1104,8 @@ contracts:
       assets: {type: json}
       asset_control_edges: {type: json}
       controls: {type: json}
+      vulnerability_classification_edges: {type: json, optional: true}
+      control_mitigation_edges: {type: json, optional: true}
 
   AssetExposureAssessmentResults:
     description: Candidate asset exposure judgments with exploitability and control signals.
@@ -1544,6 +1612,20 @@ workflows:
       - id: require_complete_controls
         assert_not_truncated:
           step: controls
+      - id: vulnerability_classifications
+        list_relationships:
+          relationship_type: vulnerability_classified_as
+        as: vulnerability_classifications
+      - id: require_complete_vulnerability_classifications
+        assert_not_truncated:
+          step: vulnerability_classifications
+      - id: control_mitigations
+        list_relationships:
+          relationship_type: control_mitigates_class
+        as: control_mitigations
+      - id: require_complete_control_mitigations
+        assert_not_truncated:
+          step: control_mitigations
       - id: assessments
         provider: assess_asset_exposure
         input:
@@ -1551,6 +1633,8 @@ workflows:
           assets: $steps.assets.items
           asset_control_edges: $steps.asset_controls.items
           controls: $steps.controls.items
+          vulnerability_classification_edges: $steps.vulnerability_classifications.items
+          control_mitigation_edges: $steps.control_mitigations.items
         as: assessments
       - id: exposure_summary
         aggregate_items:
@@ -1571,7 +1655,7 @@ workflows:
                 left: $item.exploitability_verdict
                 op: eq
                 right: support
-            no_effective_control_support:
+            control_signal_support:
               count_where:
                 left: $item.control_verdict
                 op: eq

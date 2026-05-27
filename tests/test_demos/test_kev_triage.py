@@ -55,6 +55,24 @@ def _query_entity_ids(rows: list[object]) -> set[str]:
         entity_id = getattr(entity, "entity_id")
         ids.add(entity_id)
     return ids
+
+
+def _row_path_segment(row: object, alias: str) -> object:
+    for segment in getattr(row, "path", ()):
+        if getattr(segment, "alias", None) == alias:
+            return segment
+    raise AssertionError(f"missing path segment {alias}")
+
+
+def _include_result(row: object, alias: str) -> object:
+    includes = getattr(row, "includes", {})
+    include = includes.get(alias)
+    assert include is not None, f"missing include {alias}"
+    return include
+
+
+def _include_items(row: object, alias: str) -> list[object]:
+    return list(getattr(_include_result(row, alias), "items", []))
 _assessment_module = load_kit_provider_module(
     KEV_KIT_DIR / "providers" / "assessment.py",
     KEV_KIT_DIR,
@@ -415,6 +433,8 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
             "affected_verdict": "support",
             "exploitability_verdict": "support",
             "control_verdict": "unsure",
+            "control_exposure_verdict": "unsure",
+            "control_effect": "",
         }
     ]
 
@@ -460,9 +480,191 @@ def test_assess_asset_exposure_critical_when_no_active_controls() -> None:
             "affected_verdict": "support",
             "exploitability_verdict": "support",
             "control_verdict": "support",
+            "control_exposure_verdict": "support",
+            "control_effect": "",
         }
     ]
     assert "due_by" not in payload["items"][0]
+
+
+def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
+    def run_with(effect: str, *, class_match: bool = True) -> dict[str, object]:
+        return assess_asset_exposure(
+            {
+                "affected_edges": [
+                    {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
+                ],
+                "assets": [
+                    {
+                        "entity_id": "ASSET-1",
+                        "properties": {
+                            "hostname": "prod-web-01",
+                            "criticality": "critical",
+                            "environment": "production",
+                            "internet_exposed": True,
+                        },
+                    },
+                ],
+                "asset_control_edges": [
+                    {"from_id": "ASSET-1", "to_id": "CTRL-1", "properties": {}}
+                ],
+                "controls": [
+                    {
+                        "entity_id": "CTRL-1",
+                        "properties": {"name": "WAF", "status": "active"},
+                    }
+                ],
+                "vulnerability_classification_edges": [
+                    {
+                        "from_id": "CVE-2021-0001",
+                        "to_id": "path_traversal",
+                        "properties": {},
+                    }
+                ],
+                "control_mitigation_edges": [
+                    {
+                        "from_id": "CTRL-1",
+                        "to_id": "path_traversal" if class_match else "deserialization",
+                        "properties": {
+                            "effect": effect,
+                            "validation_basis": f"{effect} regression",
+                        },
+                    }
+                ],
+            },
+            _provider_context(None),
+        )["items"][0]
+
+    for effect in ("blocks", "compensates"):
+        item = run_with(effect)
+        assert item["status"] == "mitigated"
+        assert item["priority"] == "medium"
+        assert item["control_verdict"] == "support"
+        assert item["control_exposure_verdict"] == "contradict"
+        assert item["control_effect"] == effect
+        assert effect in str(item["control_basis"])
+
+    reduced = run_with("reduces")
+    assert reduced["status"] == "exposed"
+    assert reduced["priority"] == "high"
+    assert reduced["control_verdict"] == "support"
+    assert reduced["control_exposure_verdict"] == "support"
+    assert reduced["control_effect"] == "reduces"
+    assert "reduces" in str(reduced["control_basis"])
+
+    detected = run_with("detects")
+    assert detected["status"] == "exposed"
+    assert detected["priority"] == "critical"
+    assert detected["control_verdict"] == "support"
+    assert detected["control_exposure_verdict"] == "support"
+    assert detected["control_effect"] == "detects"
+    assert "detects" in str(detected["control_basis"])
+
+    unmatched = run_with("blocks", class_match=False)
+    assert unmatched["status"] == "exposed"
+    assert unmatched["priority"] == "high"
+    assert unmatched["control_verdict"] == "unsure"
+    assert unmatched["control_exposure_verdict"] == "unsure"
+    assert unmatched["control_effect"] == ""
+    assert "require review" in str(unmatched["control_basis"])
+
+
+def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
+    tmp_path: Path,
+) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_local_state")
+    _approve_workflow_group(instance, "propose_asset_products")
+
+    graph = instance.load_graph()
+    active_controls = {
+        control.entity_id
+        for control in graph.list_entities("CompensatingControl")
+        if control.properties.get("status") == "active"
+    }
+    affected = assess_asset_affected(
+        {
+            "asset_product_edges": graph.list_edges("asset_runs_product"),
+            "vulnerability_product_edges": graph.list_edges("vulnerability_affects_product"),
+        },
+        _provider_context(None),
+    )["items"]
+    affected_cves_by_asset: dict[str, list[str]] = {}
+    for item in affected:
+        affected_cves_by_asset.setdefault(item["asset_id"], []).append(item["cve_id"])
+
+    selected: tuple[str, str, str] | None = None
+    for edge in sorted(
+        graph.list_edges("asset_has_control"),
+        key=lambda item: (item["from_id"], item["to_id"]),
+    ):
+        if edge["to_id"] not in active_controls:
+            continue
+        cve_ids = sorted(affected_cves_by_asset.get(edge["from_id"], []))
+        if cve_ids:
+            selected = (edge["from_id"], edge["to_id"], cve_ids[0])
+            break
+
+    assert selected is not None
+    asset_id, control_id, cve_id = selected
+    class_id = "path_traversal"
+
+    _approve_workflow_group_with_input(
+        instance,
+        "propose_vulnerability_classification",
+        {
+            "items": [
+                {
+                    "cve_id": cve_id,
+                    "class_id": class_id,
+                    "basis": "Regression classification for mitigated posture signal.",
+                    "source": "test",
+                    "verdict": "support",
+                }
+            ]
+        },
+    )
+    _approve_workflow_group_with_input(
+        instance,
+        "propose_control_mitigates_class",
+        {
+            "items": [
+                {
+                    "control_id": control_id,
+                    "class_id": class_id,
+                    "effect": "blocks",
+                    "validation_basis": "Regression control coverage.",
+                    "verified_at": "2026-04-01",
+                    "expires_at": "2026-10-01",
+                    "evidence_refs": [],
+                    "verdict": "support",
+                }
+            ]
+        },
+    )
+
+    proposed = service_propose_workflow(instance, "propose_asset_exposure", {})
+    assert proposed.group_id is not None
+    group_store = instance.get_group_store()
+    try:
+        group = group_store.get_group(proposed.group_id)
+        members = group_store.get_members(proposed.group_id)
+    finally:
+        group_store.close()
+
+    assert group is not None
+    assert group.review_priority == "review"
+    member = next(
+        item for item in members if item.from_id == asset_id and item.to_id == cve_id
+    )
+    assert member.properties["status"] == "mitigated"
+    assert member.properties["priority"] == "medium"
+    signals = {signal.signal_source: signal.signal for signal in member.signals}
+    assert signals["control_effectiveness"] == "support"
 
 
 def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
@@ -514,6 +716,19 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     _apply_canonical_workflow(instance, "build_local_state")
 
     _approve_workflow_group(instance, "propose_asset_products")
+    pre_exposure_graph = instance.load_graph()
+    pre_exposure_product_id = pre_exposure_graph.list_edges("asset_runs_product")[0]["to_id"]
+    pre_exposure_context = service_query(
+        instance,
+        "product_asset_context",
+        {"product_id": pre_exposure_product_id},
+    )
+    assert pre_exposure_context.total_results > 0
+    assert any(
+        getattr(_include_result(row, "affected_vulnerabilities"), "count") > 0
+        for row in pre_exposure_context.results
+    )
+
     _approve_workflow_group(instance, "propose_asset_exposure")
 
     graph = instance.load_graph()
@@ -645,6 +860,11 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
 
     assert vulnerability_class_context.total_results > 0
     assert control_coverage_gap.total_results > 0
+    assert any(
+        getattr(_row_path_segment(row, "mitigated_class"), "properties", {}).get("effect")
+        == "blocks"
+        for row in control_coverage_gap.results
+    )
     graph_after_control_review = instance.load_graph()
     control_mitigation_edge = next(
         edge
@@ -676,12 +896,18 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     asset_to_owner = {
         edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
     }
+    assets_with_services = {
+        edge["to_id"] for edge in graph.list_edges("service_depends_on_asset")
+    }
+    product_to_vendor = {
+        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("product_from_vendor")
+    }
     remediated_pairs = {
         (edge["from_id"], edge["to_id"])
         for edge in graph.list_edges("asset_remediated_vulnerability")
     }
     owner_vuln_counts: dict[tuple[str, str], int] = {}
-    unique_pair: tuple[str, str, str] | None = None
+    unique_pair: tuple[str, str, str, str] | None = None
     for edge in graph.list_edges("asset_vulnerability_posture"):
         if (edge["from_id"], edge["to_id"]) in remediated_pairs:
             continue
@@ -696,13 +922,17 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
         owner_id = asset_to_owner.get(edge["from_id"])
         if owner_id is None:
             continue
+        product_id = edge["properties"].get("product_id")
+        vendor_id = product_to_vendor.get(product_id)
+        if edge["from_id"] not in assets_with_services or vendor_id is None:
+            continue
         key = (owner_id, edge["to_id"])
         if owner_vuln_counts.get(key) == 1:
-            unique_pair = (edge["from_id"], edge["to_id"], owner_id)
+            unique_pair = (edge["from_id"], edge["to_id"], owner_id, vendor_id)
             break
 
     assert unique_pair is not None
-    asset_id, cve_id, owner_id = unique_pair
+    asset_id, cve_id, owner_id, vendor_id = unique_pair
 
     before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
     before_ids = _query_entity_ids(before.results)
@@ -715,6 +945,35 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
             from_id=asset_id,
             to_type="Vulnerability",
             to_id=cve_id,
+            properties={
+                "remediation_type": "patched",
+                "verified_at": "2026-05-04",
+                "evidence_source": "test",
+                "evidence_refs": [],
+                "rationale": "Regression test closure context.",
+            },
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="approved", source="human")
+                )
+            ),
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_patch_exception_for",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={
+                "exception_id": "EXC-2026-REMEDIATED-PAIR",
+                "review_due_at": "2026-05-07",
+                "scope_basis": "Regression test scoped exception context.",
+                "rationale": "Regression test scoped exception context.",
+                "evidence_source": "test",
+                "evidence_refs": [],
+            },
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="approved", source="human")
@@ -729,6 +988,18 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
 
     assert cve_id not in after_ids
     assert after.total_results == before.total_results - 1
+
+    vendor_context = service_query(instance, "vendor_service_impact", {"vendor_id": vendor_id})
+    context_row = next(
+        row
+        for row in vendor_context.results
+        if getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
+        and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
+    )
+    assert any(item.edge.to_id == cve_id for item in _include_items(context_row, "remediations"))
+    assert any(
+        item.edge.to_id == cve_id for item in _include_items(context_row, "scoped_exceptions")
+    )
 
 
 def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> None:

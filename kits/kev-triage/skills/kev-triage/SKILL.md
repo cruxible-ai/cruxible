@@ -458,13 +458,21 @@ there.
 | When you need... | Default query |
 |---|---|
 | Asset context for a CVE, including candidate, exposure, remediation, owner, service, exception, and control state | `query --query vulnerability_asset_context --param cve_id=<cve>` |
-| Patch queue for an owner | `query --query owner_patch_queue --param owner_id=<owner>` |
-| Asset context for a product, including product mapping and related exposure state | `query --query product_asset_context --param product_id=<product>` |
-| Vendor service impact | `query --query vendor_service_impact --param vendor_id=<vendor>` |
+| Strict action queue for an owner; excludes closed and scoped-exception pairs | `query --query owner_patch_queue --param owner_id=<owner>` |
+| Asset context for a product, including product mapping, public affected vulnerabilities, and related posture state | `query --query product_asset_context --param product_id=<product>` |
+| Broad vendor service-impact investigation with closure and exception context | `query --query vendor_service_impact --param vendor_id=<vendor>` |
+| Broad control coverage investigation; inspect `control_mitigates_class.effect` on the path | `query --query control_coverage_gap --param control_id=<control>` |
 | Has this product ever been exploited? | `query --query incident_history_for_product --param product_id=<product>` |
 | Vulnerability class context and mapped controls | `query --query vulnerability_class_context --param class_id=<class>` |
 | What open findings for this asset? | `query --query open_findings_for_asset --param asset_id=<asset>` |
 | Prior post-mortem for this CVE | `query --query prior_exploitation_context --param cve_id=<cve>` |
+
+Use `owner_patch_queue` when the user wants action. Use
+`vendor_service_impact` or `control_coverage_gap` when the user wants blast
+radius or coverage investigation; those queries intentionally keep remediation,
+scoped exception, and control context visible. For controls, treat
+`blocks`/`compensates` as stronger mitigation coverage, `reduces` as risk
+reduction, and `detects` as monitoring rather than blocking mitigation.
 
 ## When to stop and ask
 

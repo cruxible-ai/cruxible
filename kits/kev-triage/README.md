@@ -293,7 +293,7 @@ relationship.
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services that would lose coverage if this control were disabled or invalidated. Traces from control through mitigated vulnerability classes to exposed vulnerabilities and dependent services. |
+| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Broad investigation surface for services tied to classes this control covers. Inspect `control_mitigates_class.effect`: `blocks`/`compensates` are stronger mitigation coverage, `reduces` is risk reduction, and `detects` is monitoring rather than blocking mitigation. |
 
 ### Owner
 
@@ -314,7 +314,7 @@ relationship.
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
 | Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
-| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, confirmed vulnerable assets, and service dependencies to find business services in the blast radius. This is the question you ask when a vendor discloses a breach or a critical supply-chain vulnerability. |
+| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Broad investigation surface for vendor blast radius. It keeps closure, scoped exception, and control context visible so agents can triage from the first query result instead of treating it as a strict action queue. |
 | Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
@@ -331,6 +331,14 @@ relationship.
 | --- | --- | --- | --- | --- |
 | Vulnerability Class Context | Vulnerability | live | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return governed vulnerabilities in the class and include the compensating controls mapped to that class. |
 <!-- CRUXIBLE:END query-catalog -->
+
+`owner_patch_queue` is the strict action queue: it returns approved exposed
+posture and excludes pairs already closed or covered by a scoped exception.
+`vendor_service_impact` and `control_coverage_gap` are broader investigation
+surfaces. They intentionally keep remediated, exception-covered, and
+non-exposed posture context available so agents can explain the state rather
+than losing rows too early. `product_asset_context` also includes public
+affected-vulnerability context for the product before local posture rows exist.
 
 ## Schema Reference
 
