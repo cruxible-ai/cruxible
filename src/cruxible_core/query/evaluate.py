@@ -612,6 +612,13 @@ def _check_quality_rules(
             _run_bounds_quality_check(graph, check, findings, quality_summary)
         elif kind == "cardinality":
             _run_cardinality_quality_check(graph, check, findings, quality_summary)
+        elif kind == "relationship_property_consistency":
+            _run_relationship_property_consistency_quality_check(
+                graph,
+                check,
+                findings,
+                quality_summary,
+            )
 
 
 def _run_property_quality_check(
@@ -862,6 +869,120 @@ def _run_cardinality_quality_check(
                     "max_count": check.max_count,
                 },
             )
+
+
+def _run_relationship_property_consistency_quality_check(
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    for entity in graph.list_entities(check.entity_type):
+        source_has_property = check.source_property in entity.properties
+        source_value = entity.properties.get(check.source_property)
+        if not source_has_property or _is_empty_value(source_value):
+            if check.allow_missing_source:
+                continue
+            _append_quality_finding(
+                findings,
+                quality_summary,
+                check,
+                message=(
+                    f"Quality check '{check.name}' failed for "
+                    f"{entity.entity_type}:{entity.entity_id}"
+                ),
+                detail={
+                    "reason": "missing_source_property",
+                    "entity_type": entity.entity_type,
+                    "entity_id": entity.entity_id,
+                    "relationship_type": check.relationship_type,
+                    "direction": check.direction,
+                    "source_property": check.source_property,
+                    "target_property": check.target_property or "entity_id",
+                    "actual_value": source_value,
+                    "expected_value": None,
+                },
+            )
+            continue
+
+        for related in graph.get_neighbor_relationships(
+            entity.entity_type,
+            entity.entity_id,
+            relationship_type=check.relationship_type,
+            direction=check.direction,
+        ):
+            target = related.get("entity")
+            if target is None:
+                continue
+            if check.target_property is None or check.target_property == "entity_id":
+                expected_value = target.entity_id
+                target_property = "entity_id"
+            else:
+                target_property = check.target_property
+                target_properties = target.properties
+                if check.target_property not in target_properties:
+                    _append_relationship_property_consistency_finding(
+                        check,
+                        findings,
+                        quality_summary,
+                        entity=entity,
+                        target=target,
+                        reason="missing_target_property",
+                        actual_value=source_value,
+                        expected_value=None,
+                        target_property=target_property,
+                    )
+                    continue
+                expected_value = target_properties.get(check.target_property)
+
+            if source_value != expected_value:
+                _append_relationship_property_consistency_finding(
+                    check,
+                    findings,
+                    quality_summary,
+                    entity=entity,
+                    target=target,
+                    reason="property_mismatch",
+                    actual_value=source_value,
+                    expected_value=expected_value,
+                    target_property=target_property,
+                )
+
+
+def _append_relationship_property_consistency_finding(
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+    *,
+    entity: Any,
+    target: Any,
+    reason: str,
+    actual_value: Any,
+    expected_value: Any,
+    target_property: str,
+) -> None:
+    _append_quality_finding(
+        findings,
+        quality_summary,
+        check,
+        message=(
+            f"Quality check '{check.name}' failed for "
+            f"{entity.entity_type}:{entity.entity_id}"
+        ),
+        detail={
+            "reason": reason,
+            "entity_type": entity.entity_type,
+            "entity_id": entity.entity_id,
+            "relationship_type": check.relationship_type,
+            "direction": check.direction,
+            "source_property": check.source_property,
+            "target_entity_type": target.entity_type,
+            "target_entity_id": target.entity_id,
+            "target_property": target_property,
+            "actual_value": actual_value,
+            "expected_value": expected_value,
+        },
+    )
 
 
 def _iter_quality_targets(graph: EntityGraph, check: Any) -> list[dict[str, Any]]:

@@ -12,6 +12,7 @@ from cruxible_core.config.schema import (
     PropertyQualityCheck,
     PropertySchema,
     ProposalPolicySchema,
+    RelationshipPropertyConsistencyQualityCheck,
     RelationshipSchema,
     SignalPolicySchema,
     UniquenessQualityCheck,
@@ -845,6 +846,214 @@ class TestQualityChecks:
         assert len(quality) == 1
         assert quality[0].detail["entity_id"] == "P1"
         assert report.quality_summary["parts_need_fitment"] == 1
+
+    def test_relationship_property_consistency_passes_when_values_match(self):
+        config = _minimal_config(
+            entity_types={
+                "Vendor": EntityTypeSchema(
+                    properties={
+                        "vendor_id": PropertySchema(type="string", primary_key=True),
+                        "name": PropertySchema(type="string"),
+                    }
+                ),
+                "Product": EntityTypeSchema(
+                    properties={
+                        "product_id": PropertySchema(type="string", primary_key=True),
+                        "vendor_id": PropertySchema(type="string"),
+                        "vendor_name": PropertySchema(type="string", optional=True),
+                    }
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="product_from_vendor",
+                    from_entity="Product",
+                    to_entity="Vendor",
+                )
+            ],
+            quality_checks=[
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="vendor_id_matches",
+                    entity_type="Product",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="vendor_id",
+                    target_property="vendor_id",
+                    severity="error",
+                ),
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="vendor_name_matches",
+                    entity_type="Product",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="vendor_name",
+                    target_property="name",
+                    allow_missing_source=True,
+                ),
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vendor",
+                entity_id="vendor-acme",
+                properties={"vendor_id": "vendor-acme", "name": "Acme"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="product-widget",
+                properties={"vendor_id": "vendor-acme", "vendor_name": "Acme"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="product_from_vendor",
+                from_type="Product",
+                from_id="product-widget",
+                to_type="Vendor",
+                to_id="vendor-acme",
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert quality == []
+        assert report.quality_summary["vendor_id_matches"] == 0
+        assert report.quality_summary["vendor_name_matches"] == 0
+
+    def test_relationship_property_consistency_reports_vendor_id_mismatch(self):
+        config = _minimal_config(
+            entity_types={
+                "Vendor": EntityTypeSchema(
+                    properties={"vendor_id": PropertySchema(type="string", primary_key=True)}
+                ),
+                "Product": EntityTypeSchema(
+                    properties={
+                        "product_id": PropertySchema(type="string", primary_key=True),
+                        "vendor_id": PropertySchema(type="string"),
+                    }
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="product_from_vendor",
+                    from_entity="Product",
+                    to_entity="Vendor",
+                )
+            ],
+            quality_checks=[
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="vendor_id_matches",
+                    entity_type="Product",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="vendor_id",
+                    target_property="entity_id",
+                    severity="error",
+                )
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Vendor", entity_id="vendor-acme", properties={})
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="product-widget",
+                properties={"vendor_id": "vendor-other"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="product_from_vendor",
+                from_type="Product",
+                from_id="product-widget",
+                to_type="Vendor",
+                to_id="vendor-acme",
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].severity == "error"
+        assert quality[0].detail["source_property"] == "vendor_id"
+        assert quality[0].detail["target_property"] == "entity_id"
+        assert quality[0].detail["actual_value"] == "vendor-other"
+        assert quality[0].detail["expected_value"] == "vendor-acme"
+
+    def test_relationship_property_consistency_reports_vendor_name_mismatch(self):
+        config = _minimal_config(
+            entity_types={
+                "Vendor": EntityTypeSchema(
+                    properties={
+                        "vendor_id": PropertySchema(type="string", primary_key=True),
+                        "name": PropertySchema(type="string"),
+                    }
+                ),
+                "Product": EntityTypeSchema(
+                    properties={
+                        "product_id": PropertySchema(type="string", primary_key=True),
+                        "vendor_name": PropertySchema(type="string"),
+                    }
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="product_from_vendor",
+                    from_entity="Product",
+                    to_entity="Vendor",
+                )
+            ],
+            quality_checks=[
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="vendor_name_matches",
+                    entity_type="Product",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="vendor_name",
+                    target_property="name",
+                )
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vendor",
+                entity_id="vendor-acme",
+                properties={"vendor_id": "vendor-acme", "name": "Acme"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="product-widget",
+                properties={"vendor_name": "Different"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="product_from_vendor",
+                from_type="Product",
+                from_id="product-widget",
+                to_type="Vendor",
+                to_id="vendor-acme",
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].detail["source_property"] == "vendor_name"
+        assert quality[0].detail["target_property"] == "name"
+        assert quality[0].detail["actual_value"] == "Different"
+        assert quality[0].detail["expected_value"] == "Acme"
 
     def test_no_findings_for_self_referential(self):
         """Config with only Part→Part replaces → no co-member findings."""

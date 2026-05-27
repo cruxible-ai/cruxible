@@ -623,6 +623,54 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                     f"not '{check.entity_type}'"
                 )
 
+        elif kind == "relationship_property_consistency":
+            if check.entity_type not in entity_names:
+                errors.append(
+                    f"Quality check '{check.name}': entity_type "
+                    f"'{check.entity_type}' not defined in entity_types"
+                )
+                continue
+            rel = config.get_relationship(check.relationship_type)
+            if rel is None:
+                errors.append(
+                    f"Quality check '{check.name}': relationship_type "
+                    f"'{check.relationship_type}' not defined in relationships"
+                )
+                continue
+            if check.direction == "outgoing":
+                if rel.from_entity != check.entity_type:
+                    errors.append(
+                        f"Quality check '{check.name}': outgoing consistency on "
+                        f"'{check.relationship_type}' requires entity_type "
+                        f"'{rel.from_entity}', not '{check.entity_type}'"
+                    )
+                    continue
+                target_type = rel.to_entity
+            else:
+                if rel.to_entity != check.entity_type:
+                    errors.append(
+                        f"Quality check '{check.name}': incoming consistency on "
+                        f"'{check.relationship_type}' requires entity_type "
+                        f"'{rel.to_entity}', not '{check.entity_type}'"
+                    )
+                    continue
+                target_type = rel.from_entity
+            source_props = config.entity_types[check.entity_type].properties
+            if check.source_property not in source_props:
+                errors.append(
+                    f"Quality check '{check.name}': source_property "
+                    f"'{check.source_property}' not found on entity type "
+                    f"'{check.entity_type}'"
+                )
+            target_property = check.target_property
+            if target_property is not None and target_property != "entity_id":
+                target_props = config.entity_types[target_type].properties
+                if target_property not in target_props:
+                    errors.append(
+                        f"Quality check '{check.name}': target_property "
+                        f"'{target_property}' not found on entity type '{target_type}'"
+                    )
+
 
 def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
     """Validate top-level kind gating for built world-model features."""
@@ -1102,6 +1150,26 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         f"'{workflow_name}' step '{step.id}': relationships_from alias "
                         f"'{step.apply_relationships.relationships_from}' is unknown or future"
                     )
+                if step.as_ is not None:
+                    produced_aliases.add(step.as_)
+                continue
+
+            if step.apply_all is not None:
+                uses_apply_steps = True
+                for alias in step.apply_all.entities_from:
+                    if alias not in produced_aliases:
+                        errors.append(
+                            "Workflow "
+                            f"'{workflow_name}' step '{step.id}': entities_from alias "
+                            f"'{alias}' is unknown or future"
+                        )
+                for alias in step.apply_all.relationships_from:
+                    if alias not in produced_aliases:
+                        errors.append(
+                            "Workflow "
+                            f"'{workflow_name}' step '{step.id}': relationships_from alias "
+                            f"'{alias}' is unknown or future"
+                        )
                 if step.as_ is not None:
                     produced_aliases.add(step.as_)
                 continue

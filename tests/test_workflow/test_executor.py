@@ -2476,3 +2476,53 @@ workflows:
         rel_preview = result.apply_previews["apply_product_vendor"]
         assert rel_preview["duplicate_input_count"] == 1
         assert rel_preview["conflicting_duplicate_count"] == 0
+
+    def test_apply_all_applies_entities_before_relationships(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        workflow = config.workflows["build_reference"]
+        workflow.steps = [
+            step
+            for step in workflow.steps
+            if step.apply_entities is None and step.apply_relationships is None
+        ]
+        workflow.steps.insert(
+            -1,
+            WorkflowStepSchema(
+                id="apply_reference",
+                apply_all={
+                    "entities_from": ["vendors", "products", "vulnerabilities"],
+                    "relationships_from": ["product_vendor", "vulnerability_product"],
+                },
+                **{"as": "apply_reference"},
+            ),
+        )
+        workflow.returns = "apply_reference"
+        canonical_workflow_instance.save_config(config)
+        write_lock_for_instance(canonical_workflow_instance)
+
+        result = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+            mode="apply",
+        )
+
+        preview = result.apply_previews["apply_reference"]
+        assert preview["entities_from"] == ["vendors", "products", "vulnerabilities"]
+        assert preview["relationships_from"] == ["product_vendor", "vulnerability_product"]
+        assert preview["entity_results"]["products"]["entity_type"] == "Product"
+        assert preview["relationship_results"]["product_vendor"]["relationship_type"] == (
+            "product_from_vendor"
+        )
+        assert preview["create_count"] > 0
+        graph = canonical_workflow_instance.load_graph()
+        assert graph.get_relationship(
+            "Product",
+            "product-acme-widget",
+            "Vendor",
+            "vendor-acme",
+            "product_from_vendor",
+        )

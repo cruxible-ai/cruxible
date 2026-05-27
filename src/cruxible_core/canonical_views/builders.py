@@ -375,6 +375,8 @@ def _workflow_step_kind(step: WorkflowStepSchema) -> str:
         return "apply_entities"
     if step.apply_relationships is not None:
         return "apply_relationships"
+    if step.apply_all is not None:
+        return "apply_all"
     return "unknown"
 
 
@@ -413,6 +415,11 @@ def _workflow_step_summary(
         detail = step.apply_entities.entities_from
     elif step_kind == "apply_relationships" and step.apply_relationships is not None:
         detail = step.apply_relationships.relationships_from
+    elif step_kind == "apply_all" and step.apply_all is not None:
+        detail = (
+            f"{len(step.apply_all.entities_from)} entity set(s), "
+            f"{len(step.apply_all.relationships_from)} relationship set(s)"
+        )
     elif step_kind == "assert" and step.assert_spec is not None:
         detail = f"{step.assert_spec.left} {step.assert_spec.op} {step.assert_spec.right}"
 

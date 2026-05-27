@@ -1053,6 +1053,18 @@ class CardinalityQualityCheck(QualityCheckBase):
         return self
 
 
+class RelationshipPropertyConsistencyQualityCheck(QualityCheckBase):
+    """Check an entity property against a related entity property or id."""
+
+    kind: Literal["relationship_property_consistency"] = "relationship_property_consistency"
+    entity_type: str
+    relationship_type: str
+    direction: Literal["incoming", "outgoing"]
+    source_property: str
+    target_property: str | None = None
+    allow_missing_source: bool = False
+
+
 QualityCheckSchema = Annotated[
     (
         PropertyQualityCheck
@@ -1060,6 +1072,7 @@ QualityCheckSchema = Annotated[
         | UniquenessQualityCheck
         | BoundsQualityCheck
         | CardinalityQualityCheck
+        | RelationshipPropertyConsistencyQualityCheck
     ),
     Field(discriminator="kind"),
 ]
@@ -1513,6 +1526,22 @@ class ApplyRelationshipsSpec(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class ApplyAllSpec(BaseModel):
+    """Apply multiple entity and relationship sets in explicit order."""
+
+    entities_from: list[str] = Field(default_factory=list)
+    relationships_from: list[str] = Field(default_factory=list)
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_inputs(self) -> ApplyAllSpec:
+        if not self.entities_from and not self.relationships_from:
+            msg = "apply_all requires entities_from, relationships_from, or both"
+            raise ValueError(msg)
+        return self
+
+
 class ListEntitiesSpec(BaseModel):
     """List entities from the current graph state inside a workflow."""
 
@@ -1554,6 +1583,7 @@ StepKind = Literal[
     "make_relationships",
     "apply_entities",
     "apply_relationships",
+    "apply_all",
 ]
 """The workflow step kinds, grouped into Read/Compute/Build/Write phases."""
 
@@ -1594,6 +1624,7 @@ class WorkflowStepSchema(BaseModel):
     Phase 4 — Write (mutate the graph, only in ``apply`` mode):
         apply_entities      Write built entities into the graph.
         apply_relationships Write built relationships into the graph.
+        apply_all           Write explicitly listed entity and relationship sets.
 
     Steps reference earlier outputs via ``$steps.<id>`` or ``$item``
     (in list contexts). Typical flows::
@@ -1625,6 +1656,7 @@ class WorkflowStepSchema(BaseModel):
     make_relationships: MakeRelationshipsSpec | None = None
     apply_entities: ApplyEntitiesSpec | None = None
     apply_relationships: ApplyRelationshipsSpec | None = None
+    apply_all: ApplyAllSpec | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     relationship_state: Any | None = None
     include_source: bool = False
@@ -1656,6 +1688,7 @@ class WorkflowStepSchema(BaseModel):
             "make_relationships": self.make_relationships,
             "apply_entities": self.apply_entities,
             "apply_relationships": self.apply_relationships,
+            "apply_all": self.apply_all,
         }
         active_step_kinds = [
             name for name, candidate in step_candidates.items() if candidate is not None

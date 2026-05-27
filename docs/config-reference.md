@@ -610,7 +610,7 @@ RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property
 
 ## quality_checks
 
-Evaluate-time graph quality checks run during `cruxible_evaluate`. Five check kinds are available, distinguished by the `kind` field.
+Evaluate-time graph quality checks run during `cruxible_evaluate`. Six check kinds are available, distinguished by the `kind` field.
 
 ### 1. property
 
@@ -735,6 +735,44 @@ Check per-entity relationship counts in one direction.
 | `direction` | `"incoming"` or `"outgoing"` | Edge direction relative to the entity |
 | `min_count` | int | Optional lower bound |
 | `max_count` | int | Optional upper bound (at least one of min/max required) |
+
+### 6. relationship_property_consistency
+
+Check that an entity property agrees with a related entity reached through a
+specific relationship. Use this when configs intentionally keep denormalized
+inspection fields but still need the canonical relationship to stay aligned.
+
+```yaml
+  - name: product_vendor_id_matches_vendor_edge
+    kind: relationship_property_consistency
+    severity: error
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_id
+    target_property: vendor_id
+    allow_missing_source: false
+
+  - name: product_vendor_name_matches_vendor_edge
+    kind: relationship_property_consistency
+    severity: warning
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_name
+    target_property: name
+    allow_missing_source: true
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | `"relationship_property_consistency"` | |
+| `entity_type` | string | Source entity type to check |
+| `relationship_type` | string | Relationship connecting source to related entity |
+| `direction` | `"incoming"` or `"outgoing"` | Edge direction relative to the source entity |
+| `source_property` | string | Source entity property to compare |
+| `target_property` | string | Related entity property to compare; omit or use `entity_id` to compare against the related entity id |
+| `allow_missing_source` | bool | Skip rows where the source property is absent or empty |
 
 **Common fields across all quality check kinds:**
 
@@ -1132,6 +1170,7 @@ Each step must define exactly one of these operations:
 | `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
 | `apply_relationships` | Apply a built relationship set to graph state | `apply_relationships: {relationships_from}`, `as` |
+| `apply_all` | Apply explicit entity sets, then relationship sets | `apply_all: {entities_from, relationships_from}`, `as` |
 | `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
 | `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, score/enum}`, `as` |
 | `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from, on_empty?}`, `as` |
@@ -1301,6 +1340,30 @@ Global count example:
 `dedupe_items` requires one or more keys and supports `first`, `last`, `max`,
 and `min`. Ranked strategies require `rank`; missing ranks lose to present
 ranks, and ties keep the earlier item.
+
+### apply_all
+
+`apply_all` is a canonical workflow step for reducing repetitive apply
+boilerplate while keeping writes explicit. It applies entity sets first in the
+listed order, then relationship sets in the listed order, reusing the same
+validation and write semantics as `apply_entities` and `apply_relationships`.
+It does not infer "all previous steps"; every source alias must be listed.
+
+```yaml
+- id: apply_local_state
+  apply_all:
+    entities_from:
+      - assets
+      - owners
+      - controls
+    relationships_from:
+      - owned_by_edges
+      - control_edges
+  as: apply_local_state
+```
+
+The output contains `entity_results`, `relationship_results`, top-level
+`create_count`, `update_count`, `noop_count`, and duplicate-input totals.
 
 Common providers and step types have different jobs: step types are
 engine-owned deterministic workflow/dataflow mechanics, while common providers

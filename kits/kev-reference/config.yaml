@@ -196,6 +196,28 @@ quality_checks:
     min_count: 1
     max_count: 1
 
+  - name: product_vendor_id_matches_vendor_edge
+    kind: relationship_property_consistency
+    description: Product.vendor_id should match the linked Vendor identity.
+    severity: error
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_id
+    target_property: vendor_id
+    allow_missing_source: false
+
+  - name: product_vendor_name_matches_vendor_edge
+    kind: relationship_property_consistency
+    description: Product.vendor_name, when present, should match the linked Vendor name.
+    severity: warning
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_name
+    target_property: name
+    allow_missing_source: true
+
 contracts:
   ApplyRelationshipPreview:
     description: Preview summary emitted by an apply_relationships workflow step.
@@ -207,6 +229,18 @@ contracts:
       duplicate_input_count: {type: int}
       conflicting_duplicate_count: {type: int}
       duplicate_examples: {type: json}
+  ApplyAllPreview:
+    description: Preview summary emitted by an apply_all workflow step.
+    fields:
+      entities_from: {type: json}
+      relationships_from: {type: json}
+      entity_results: {type: json}
+      relationship_results: {type: json}
+      create_count: {type: int}
+      update_count: {type: int}
+      noop_count: {type: int}
+      duplicate_input_count: {type: int}
+      conflicting_duplicate_count: {type: int}
 
 artifacts:
   public_kev_bundle:
@@ -242,7 +276,7 @@ providers:
 workflows:
   build_public_kev_reference:
     type: canonical
-    contract_out: ApplyRelationshipPreview
+    contract_out: ApplyAllPreview
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.
@@ -345,24 +379,14 @@ workflows:
             evidence_refs: $item.evidence_refs
             rationale: $item.rationale
         as: vulnerability_product
-      - id: apply_vendors
-        apply_entities:
-          entities_from: vendors
-        as: apply_vendors
-      - id: apply_products
-        apply_entities:
-          entities_from: products
-        as: apply_products
-      - id: apply_vulnerabilities
-        apply_entities:
-          entities_from: vulnerabilities
-        as: apply_vulnerabilities
-      - id: apply_product_vendor
-        apply_relationships:
-          relationships_from: product_vendor
-        as: apply_product_vendor
-      - id: apply_vulnerability_product
-        apply_relationships:
-          relationships_from: vulnerability_product
-        as: apply_vulnerability_product
-    returns: apply_vulnerability_product
+      - id: apply_reference_state
+        apply_all:
+          entities_from:
+            - vendors
+            - products
+            - vulnerabilities
+          relationships_from:
+            - product_vendor
+            - vulnerability_product
+        as: apply_reference_state
+    returns: apply_reference_state

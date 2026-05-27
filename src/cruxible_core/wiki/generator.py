@@ -1685,7 +1685,9 @@ class _WikiGenerator:
     @staticmethod
     def _workflow_has_apply_steps(schema: WorkflowSchema) -> bool:
         return any(
-            step.apply_entities is not None or step.apply_relationships is not None
+            step.apply_entities is not None
+            or step.apply_relationships is not None
+            or step.apply_all is not None
             for step in schema.steps
         )
 
@@ -1778,6 +1780,19 @@ class _WikiGenerator:
                 and step.apply_relationships.relationships_from in relationship_outputs
             )
         }
+        for step in schema.steps:
+            if step.apply_all is None:
+                continue
+            applied_entities.update(
+                entity_outputs[alias]
+                for alias in step.apply_all.entities_from
+                if alias in entity_outputs
+            )
+            applied_relationships.update(
+                relationship_outputs[alias]
+                for alias in step.apply_all.relationships_from
+                if alias in relationship_outputs
+            )
 
         lines: list[str] = []
         if applied_entities:
@@ -1962,6 +1977,8 @@ class _WikiGenerator:
             return "Apply records to world model"
         if step.apply_relationships is not None:
             return "Apply links to world model"
+        if step.apply_all is not None:
+            return "Apply records and links to world model"
         if step.assert_spec is not None:
             return f"Check {step.assert_spec.message}"
         return "Run step"
@@ -2000,6 +2017,10 @@ class _WikiGenerator:
             return step.apply_entities.entities_from
         if step.apply_relationships is not None:
             return step.apply_relationships.relationships_from
+        if step.apply_all is not None:
+            return ", ".join(
+                list(step.apply_all.entities_from) + list(step.apply_all.relationships_from)
+            )
         return "-"
 
     def _workflow_step_produces(self, step: WorkflowStepSchema) -> str:

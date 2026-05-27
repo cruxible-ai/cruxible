@@ -74,6 +74,11 @@ def _quality_check_target_label(check: Any) -> str:
             f"{humanize_label(check.entity_type)} -> "
             f"{humanize_label(check.relationship_type)} ({direction})"
         )
+    if kind == "relationship_property_consistency":
+        return (
+            f"{humanize_label(check.entity_type)}.{check.source_property} -> "
+            f"{humanize_label(check.relationship_type)}"
+        )
     return "-"
 
 
@@ -99,6 +104,8 @@ def _quality_check_rule_label(check: Any) -> str:
         return f"Unique on {code_list(check.properties)}"
     if kind in {"bounds", "cardinality"}:
         return _bounds_rule_label(check.min_count, check.max_count)
+    if kind == "relationship_property_consistency":
+        return f"Matches related `{check.target_property or 'entity_id'}`"
     return "-"
 
 

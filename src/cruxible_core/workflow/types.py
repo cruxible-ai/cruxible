@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from cruxible_core.config.schema import (
     AggregateItemsSpec,
+    ApplyAllSpec,
     ApplyEntitiesSpec,
     ApplyRelationshipsSpec,
     AssertCountSpec,
@@ -125,6 +126,7 @@ class CompiledPlanStep(BaseModel):
     make_relationships_spec: MakeRelationshipsSpec | None = None
     apply_entities_spec: ApplyEntitiesSpec | None = None
     apply_relationships_spec: ApplyRelationshipsSpec | None = None
+    apply_all_spec: ApplyAllSpec | None = None
 
     @property
     def canonical(self) -> bool:

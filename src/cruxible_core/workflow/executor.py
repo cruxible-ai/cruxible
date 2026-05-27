@@ -578,6 +578,55 @@ def execute_workflow(
                 receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
                 continue
 
+            if compiled_step.kind == "apply_all":
+                assert compiled_step.apply_all_spec is not None
+                spec = compiled_step.apply_all_spec
+                step_node = receipt_builder.record_plan_step(
+                    compiled_step.step_id,
+                    "apply_all",
+                    detail={
+                        "entities_from": spec.entities_from,
+                        "relationships_from": spec.relationships_from,
+                    },
+                )
+                entity_results: dict[str, Any] = {}
+                relationship_results: dict[str, Any] = {}
+                for alias in spec.entities_from:
+                    entity_preview = apply_entity_set(
+                        instance,
+                        graph,
+                        compiled_step.step_id,
+                        step_outputs[alias],
+                        receipt_builder,
+                        persist_writes=execution_action == "apply",
+                        parent_id=step_node,
+                    )
+                    entity_results[alias] = entity_preview.model_dump(mode="python")
+                for alias in spec.relationships_from:
+                    relationship_preview = apply_relationship_set(
+                        instance,
+                        graph,
+                        workflow_name,
+                        compiled_step.step_id,
+                        step_outputs[alias],
+                        receipt_builder,
+                        persist_writes=execution_action == "apply",
+                        parent_id=step_node,
+                    )
+                    relationship_results[alias] = relationship_preview.model_dump(mode="python")
+                preview_payload = _apply_all_preview_payload(
+                    spec.entities_from,
+                    spec.relationships_from,
+                    entity_results,
+                    relationship_results,
+                )
+                step_outputs[compiled_step.as_name or compiled_step.step_id] = preview_payload
+                apply_previews[compiled_step.step_id] = preview_payload
+                if compiled_step.as_name is not None:
+                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
+                receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
+                continue
+
             if compiled_step.kind == "assert":
                 execute_assert_step(
                     compiled_step,
@@ -754,6 +803,31 @@ def _build_failed_workflow_receipt(
         error=error,
     )
     return receipt
+
+
+def _apply_all_preview_payload(
+    entities_from: list[str],
+    relationships_from: list[str],
+    entity_results: dict[str, Any],
+    relationship_results: dict[str, Any],
+) -> dict[str, Any]:
+    previews = [entity_results[alias] for alias in entities_from]
+    previews.extend(relationship_results[alias] for alias in relationships_from)
+    return {
+        "entities_from": list(entities_from),
+        "relationships_from": list(relationships_from),
+        "entity_results": entity_results,
+        "relationship_results": relationship_results,
+        "create_count": sum(int(preview.get("create_count", 0)) for preview in previews),
+        "update_count": sum(int(preview.get("update_count", 0)) for preview in previews),
+        "noop_count": sum(int(preview.get("noop_count", 0)) for preview in previews),
+        "duplicate_input_count": sum(
+            int(preview.get("duplicate_input_count", 0)) for preview in previews
+        ),
+        "conflicting_duplicate_count": sum(
+            int(preview.get("conflicting_duplicate_count", 0)) for preview in previews
+        ),
+    }
 
 
 def _aggregate_workflow_read_metadata(

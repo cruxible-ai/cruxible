@@ -355,6 +355,36 @@ class TestWorkflowCompiler:
         assert plan.steps[0].provider_entrypoint_sha256 is not None
         assert "apply_entities" in [step.kind for step in plan.steps]
 
+    def test_compile_workflow_carries_apply_all_step(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        config.workflows["build_reference"].steps.append(
+            WorkflowStepSchema(
+                id="apply_everything",
+                apply_all={
+                    "entities_from": ["vendors", "products"],
+                    "relationships_from": ["product_vendor"],
+                },
+                **{"as": "apply_everything"},
+            )
+        )
+        config.workflows["build_reference"].returns = "apply_everything"
+        canonical_workflow_instance.save_config(config)
+        write_lock_for_instance(canonical_workflow_instance)
+
+        plan = compile_workflow(
+            canonical_workflow_instance.load_config(),
+            build_lock(canonical_workflow_instance.load_config()),
+            "build_reference",
+            {},
+            config_base_path=canonical_workflow_instance.get_config_path().parent,
+        )
+
+        assert plan.steps[-1].kind == "apply_all"
+        assert plan.steps[-1].apply_all_spec is not None
+        assert plan.steps[-1].apply_all_spec.entities_from == ["vendors", "products"]
+
     def test_compile_rejects_apply_steps_in_non_canonical_workflow(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:

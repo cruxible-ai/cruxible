@@ -1229,7 +1229,7 @@ providers:
 workflows:
   build_local_state:
     type: canonical
-    contract_out: ApplyRelationshipPreview
+    contract_out: ApplyAllPreview
     description: >
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference
@@ -1395,55 +1395,24 @@ workflows:
         as: patch_window_edges
 
       # --- Apply ---
-      - id: apply_assets
-        apply_entities:
-          entities_from: assets
-        as: apply_assets
-      - id: apply_services
-        apply_entities:
-          entities_from: services
-        as: apply_services
-      - id: apply_owners
-        apply_entities:
-          entities_from: owners
-        as: apply_owners
-      - id: apply_controls
-        apply_entities:
-          entities_from: controls
-        as: apply_controls
-      - id: apply_vulnerability_classes
-        apply_entities:
-          entities_from: vulnerability_classes
-        as: apply_vulnerability_classes
-      - id: apply_exceptions
-        apply_entities:
-          entities_from: exceptions
-        as: apply_exceptions
-      - id: apply_patch_windows
-        apply_entities:
-          entities_from: patch_windows
-        as: apply_patch_windows
-      - id: apply_svc_asset
-        apply_relationships:
-          relationships_from: svc_asset_edges
-        as: apply_svc_asset
-      - id: apply_owned_by
-        apply_relationships:
-          relationships_from: owned_by_edges
-        as: apply_owned_by
-      - id: apply_controls_edges
-        apply_relationships:
-          relationships_from: control_edges
-        as: apply_controls_edges
-      - id: apply_exception_edges
-        apply_relationships:
-          relationships_from: exception_edges
-        as: apply_exception_edges
-      - id: apply_patch_window_edges
-        apply_relationships:
-          relationships_from: patch_window_edges
-        as: apply_patch_window_edges
-    returns: apply_patch_window_edges
+      - id: apply_local_state
+        apply_all:
+          entities_from:
+            - assets
+            - services
+            - owners
+            - controls
+            - vulnerability_classes
+            - exceptions
+            - patch_windows
+          relationships_from:
+            - svc_asset_edges
+            - owned_by_edges
+            - control_edges
+            - exception_edges
+            - patch_window_edges
+        as: apply_local_state
+    returns: apply_local_state
 
   propose_asset_products:
     type: proposal

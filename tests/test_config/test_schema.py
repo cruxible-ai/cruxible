@@ -28,6 +28,7 @@ from cruxible_core.config.schema import (
     ProviderArtifactSchema,
     ProviderSchema,
     RelatedExclusionSpec,
+    RelationshipPropertyConsistencyQualityCheck,
     RelationshipSchema,
     SignalPolicySchema,
     TraversalStep,
@@ -1426,6 +1427,17 @@ class TestQualityCheckSchema:
                 direction="outgoing",
             )
 
+    def test_relationship_property_consistency_parses(self):
+        check = RelationshipPropertyConsistencyQualityCheck(
+            name="product_vendor_id_matches",
+            entity_type="Product",
+            relationship_type="product_from_vendor",
+            direction="outgoing",
+            source_property="vendor_id",
+            target_property="vendor_id",
+        )
+        assert check.kind == "relationship_property_consistency"
+
 
 class TestWorkflowSchema:
     def test_query_step_requires_alias(self):
@@ -1494,6 +1506,24 @@ class TestWorkflowSchema:
                     id="exists",
                     assert_exists={"ref": ref},
                 )
+
+    def test_apply_all_step_shape(self):
+        step = WorkflowStepSchema(
+            id="apply_all_state",
+            apply_all={
+                "entities_from": ["vendors", "products"],
+                "relationships_from": ["product_vendor"],
+            },
+            **{"as": "apply_all_state"},
+        )
+
+        assert step.apply_all is not None
+        assert step.apply_all.entities_from == ["vendors", "products"]
+        assert step.apply_all.relationships_from == ["product_vendor"]
+
+    def test_apply_all_requires_inputs(self):
+        with pytest.raises(ValidationError, match="apply_all requires"):
+            WorkflowStepSchema(id="apply_all_state", apply_all={}, **{"as": "apply_all_state"})
 
     @pytest.mark.parametrize(
         ("field", "value", "message"),
@@ -2249,6 +2279,7 @@ class TestQualityCheckValidation:
                 "Product": EntityTypeSchema(
                     properties={
                         "product_id": PropertySchema(type="string", primary_key=True),
+                        "vendor_id": PropertySchema(type="string"),
                         "vendor_name": PropertySchema(type="string"),
                     }
                 ),
@@ -2312,6 +2343,38 @@ class TestQualityCheckValidation:
                     relationship_type="product_from_vendor",
                     direction="outgoing",
                     min_count=1,
+                )
+            ]
+        )
+        with pytest.raises(ConfigError, match="requires entity_type 'Product'"):
+            validate_config(config)
+
+    def test_relationship_property_consistency_requires_valid_properties(self):
+        config = self._config(
+            quality_checks=[
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="bad_consistency",
+                    entity_type="Product",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="missing_vendor_id",
+                    target_property="vendor_id",
+                )
+            ]
+        )
+        with pytest.raises(ConfigError, match="source_property 'missing_vendor_id'"):
+            validate_config(config)
+
+    def test_relationship_property_consistency_requires_valid_direction(self):
+        config = self._config(
+            quality_checks=[
+                RelationshipPropertyConsistencyQualityCheck(
+                    name="bad_direction",
+                    entity_type="Vendor",
+                    relationship_type="product_from_vendor",
+                    direction="outgoing",
+                    source_property="vendor_id",
+                    target_property="vendor_id",
                 )
             ]
         )

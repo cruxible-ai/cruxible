@@ -459,6 +459,22 @@ def compile_workflow(
             )
             continue
 
+        if step.apply_all is not None:
+            if not is_canonical:
+                raise ConfigError(
+                    f"Workflow '{workflow_name}' must be type: canonical to use apply_all"
+                )
+            compiled_steps.append(
+                CompiledPlanStep(
+                    step_id=step.id,
+                    kind="apply_all",
+                    workflow_type=workflow_type,
+                    as_name=step.as_,
+                    apply_all_spec=step.apply_all,
+                )
+            )
+            continue
+
         if step.assert_not_truncated is not None:
             compiled_steps.append(
                 CompiledPlanStep(
