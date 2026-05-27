@@ -12,27 +12,20 @@ to `CVE-2020-14882`. Access was contained by restoring the stricter partner
 allowlist, rotating credentials, and rebuilding the middleware image during the
 next approved patch window.
 
-## Candidate graph facts
+## Evidence refs to cite
 
-- Incident entity:
-  `incident_id=INC-2025-003`
-  `title=WebLogic admin console compromise on partner-api-01`
-  `severity=high`
-  `status=resolved`
-  `occurred_at=2026-01-11`
-  `resolved_at=2026-01-12`
-  `source=pagerduty`
-- Proposed `incident_owned_by`:
-  `INC-2025-003 -> OWNER-3`
-- Proposed `incident_involved_asset`:
-  `INC-2025-003 -> ASSET-8`
-  `role=target`
-- Proposed `incident_exploited_vulnerability`:
-  `INC-2025-003 -> CVE-2020-14882`
+- `source=pagerduty`
+- `source_record_id=INC-2025-003`
+- `asset_id=ASSET-8`
+- `cve_id=CVE-2020-14882`
+- `owner_id=OWNER-3`
 
-## Findings to create
+Use this postmortem as supporting evidence for governed proposals such as
+`asset_vulnerability_posture`, `asset_remediated_vulnerability`,
+`asset_patch_exception_for`, and `control_mitigates_class`. Do not create a
+separate graph object for the source report.
 
-### FIND-2025-020
+## Lessons to preserve in evidence
 
 - `title=Temporary partner route expansion exposed WebLogic admin path to a broader source range`
 - `category=exposure_gap`
@@ -45,5 +38,3 @@ next approved patch window.
 - `category=process_gap`
 - `status=open`
 - `remediation_action=Automate post-change credential rotation for externally reachable administrative services`
-
-Both findings should be linked to `INC-2025-003` with `finding_from_incident`.

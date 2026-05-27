@@ -125,6 +125,24 @@ def _composed_kev_config_path(tmp_path: Path) -> Path:
     return config_path
 
 
+def test_kev_config_omits_incident_and_finding_ontology() -> None:
+    config = compose_config_files(
+        base_path=KEV_REFERENCE_KIT_DIR / "config.yaml",
+        overlay_path=KEV_KIT_DIR / "config.yaml",
+    )
+
+    assert "Incident" not in config.entity_types
+    assert "Finding" not in config.entity_types
+    relationship_names = {relationship.name for relationship in config.relationships}
+    assert "incident_owned_by" not in relationship_names
+    assert "incident_involved_asset" not in relationship_names
+    assert "incident_exploited_vulnerability" not in relationship_names
+    assert "finding_from_incident" not in relationship_names
+    assert "incident_history_for_product" not in config.named_queries
+    assert "open_findings_for_asset" not in config.named_queries
+    assert "prior_exploitation_context" not in config.named_queries
+
+
 def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) -> None:
     preview = service_run(instance, workflow_name, {})
     assert preview.mode == "preview"

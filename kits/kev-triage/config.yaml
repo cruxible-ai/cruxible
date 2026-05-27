@@ -46,12 +46,6 @@ enums:
   patch_freeze_status:
     values: [none, partial_freeze]
     description: Change-freeze state for a patch window.
-  incident_status:
-    values: [open, investigating, resolved, closed]
-    description: Incident lifecycle state.
-  finding_status:
-    values: [open, remediated, accepted_risk]
-    description: Post-incident finding lifecycle state.
   remediation_type:
     values: [patch, mitigation, exception, product_mapping_changed, reference_changed, not_affected]
     description: Closure mechanism for an asset-vulnerability pair.
@@ -124,32 +118,6 @@ entity_types:
       testing_required: {type: bool}
       rollback_required: {type: bool}
       owner_id: {}
-
-  Incident:
-    description: A security event from a SIEM, PagerDuty, or manual report.
-    properties:
-      incident_id: {primary_key: true}
-      title: {indexed: true}
-      severity: {enum_ref: criticality}
-      status: {enum_ref: incident_status}
-      occurred_at:
-        type: date
-      resolved_at:
-        type: date
-      source: {}
-      summary: {}
-
-  Finding:
-    description: A root cause or contributing factor identified during incident investigation.
-    properties:
-      finding_id: {primary_key: true}
-      title: {indexed: true}
-      category: {}
-      detail: {}
-      status: {enum_ref: finding_status}
-      remediation_action: {}
-      remediated_at:
-        type: date
 
 # ─── Local: deterministic internal mappings ────────────────────────────
 
@@ -310,60 +278,6 @@ relationships:
         remediation_verification:
           role: required
           always_review_on_unsure: true
-
-# ─── Governed incident relationships ─────────────────────────────────
-#
-# These are proposed by an agent reading incident reports and
-# post-mortems, or by a human via group propose. They go through the
-# same governance flow as vulnerability triage relationships.
-
-  - name: incident_owned_by
-    description: Governed judgment of which team or individual is accountable for investigating and resolving an incident.
-    from: Incident
-    to: Owner
-    properties:
-      rationale: {}
-    proposal_policy:
-      signals:
-        incident_attribution:
-          role: required
-
-  - name: incident_involved_asset
-    description: Governed judgment that an asset was involved in an incident.
-    from: Incident
-    to: Asset
-    properties:
-      role:
-        description: How the asset was involved (target, lateral_movement, staging, etc.)
-      rationale: {}
-    proposal_policy:
-      signals:
-        incident_attribution:
-          role: required
-
-  - name: incident_exploited_vulnerability
-    description: Governed judgment that a specific CVE was exploited during an incident.
-    from: Incident
-    to: Vulnerability
-    properties:
-      evidence:
-        description: Summary of evidence linking this CVE to the incident.
-      rationale: {}
-    proposal_policy:
-      signals:
-        incident_attribution:
-          role: required
-
-  - name: finding_from_incident
-    description: Governed judgment linking a root cause or contributing factor to an incident.
-    from: Finding
-    to: Incident
-    properties:
-      rationale: {}
-    proposal_policy:
-      signals:
-        incident_attribution:
-          role: required
 
 # ─── Named queries (local-specific, traverse across both layers) ──────
 
@@ -866,134 +780,6 @@ named_queries:
       - by: $result.entity_id
         direction: asc
 
-  incident_history_for_product:
-    description: >
-      Starting from a product, find incidents where vulnerabilities
-      affecting this product were exploited. Answers: "Has this product
-      been exploited before in our environment?"
-    entry_point: Product
-    returns: Incident
-    result_shape: path
-    dedupe: path
-    max_paths: 500
-    traversal:
-      - as: affected_by
-        relationship: vulnerability_affects_product
-        direction: incoming
-      - as: exploited_vulnerability
-        relationship: incident_exploited_vulnerability
-        direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
-    include:
-      incident_owners:
-        from: $result
-        relationship: incident_owned_by
-        direction: outgoing
-        many: true
-        limit: 5
-      involved_assets:
-        from: $result
-        relationship: incident_involved_asset
-        direction: outgoing
-        many: true
-        limit: 20
-      exploited_vulnerabilities:
-        from: $result
-        relationship: incident_exploited_vulnerability
-        direction: outgoing
-        many: true
-        limit: 20
-    order_by:
-      - by: $result.properties.occurred_at
-        direction: desc
-        value_type: date
-
-  open_findings_for_asset:
-    description: >
-      Starting from an asset, find open findings from incidents that
-      involved this asset. Filters out remediated findings. Answers:
-      "What unresolved root causes exist for this asset?"
-    entry_point: Asset
-    returns: Finding
-    result_shape: path
-    dedupe: path
-    max_paths: 500
-    traversal:
-      - as: asset_incident
-        relationship: incident_involved_asset
-        direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
-      - as: incident_finding
-        relationship: finding_from_incident
-        direction: incoming
-        target_filter:
-          status: open
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
-    include:
-      incident_owners:
-        from: $path.asset_incident.source
-        relationship: incident_owned_by
-        direction: outgoing
-        many: true
-        limit: 5
-      exploited_vulnerabilities:
-        from: $path.asset_incident.source
-        relationship: incident_exploited_vulnerability
-        direction: outgoing
-        many: true
-        limit: 20
-    order_by:
-      - by: $path.asset_incident.source.properties.occurred_at
-        direction: desc
-        value_type: date
-
-  prior_exploitation_context:
-    description: >
-      Starting from a vulnerability, find incidents where it was exploited
-      and the findings from those investigations. Answers: "What did we
-      learn last time this CVE was exploited?"
-    entry_point: Vulnerability
-    returns: Finding
-    result_shape: path
-    dedupe: path
-    max_paths: 500
-    traversal:
-      - as: exploited_in_incident
-        relationship: incident_exploited_vulnerability
-        direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
-      - as: incident_finding
-        relationship: finding_from_incident
-        direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
-    include:
-      incident_owners:
-        from: $path.exploited_in_incident.source
-        relationship: incident_owned_by
-        direction: outgoing
-        many: true
-        limit: 5
-      involved_assets:
-        from: $path.exploited_in_incident.source
-        relationship: incident_involved_asset
-        direction: outgoing
-        many: true
-        limit: 20
-    order_by:
-      - by: $path.exploited_in_incident.source.properties.occurred_at
-        direction: desc
-        value_type: date
-
 # ─── Constraints ──────────────────────────────────────────────────────
 
 constraints: []
@@ -1135,7 +921,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:97aa0e4f8296eed5657d53a14208f3351394f06aeb7123e8db9ad414320f31ac
+    sha256: sha256:d22398167dc1d1ee58d5826de973eaefeb8af86280acbc07ff87e2f438465cdb
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
@@ -2065,66 +1851,6 @@ feedback_profiles:
       asset: FROM.asset_id
       cve: TO.cve_id
 
-  incident_exploited_vulnerability:
-    version: 1
-    reason_codes:
-      wrong_cve_attribution:
-        description: The CVE was not actually exploited in this incident.
-        remediation_hint: provider_fix
-        required_scope_keys: [cve, incident]
-      correlation_not_causation:
-        description: CVE was present but not the attack vector used.
-        remediation_hint: decision_policy
-        required_scope_keys: [cve]
-    scope_keys:
-      cve: TO.cve_id
-      incident: FROM.incident_id
-
-  incident_involved_asset:
-    version: 1
-    reason_codes:
-      wrong_asset:
-        description: This asset was not actually involved in the incident.
-        remediation_hint: provider_fix
-        required_scope_keys: [hostname, incident]
-      misidentified_role:
-        description: Asset was involved but its role was mischaracterized.
-        remediation_hint: quality_check
-        required_scope_keys: [hostname]
-    scope_keys:
-      hostname: TO.hostname
-      incident: FROM.incident_id
-
-  finding_from_incident:
-    version: 1
-    reason_codes:
-      wrong_root_cause:
-        description: This finding was not actually a root cause of this incident.
-        remediation_hint: decision_policy
-        required_scope_keys: [finding, incident]
-      duplicate_finding:
-        description: This finding duplicates another finding for the same incident.
-        remediation_hint: quality_check
-        required_scope_keys: [finding]
-    scope_keys:
-      finding: FROM.finding_id
-      incident: TO.incident_id
-
-  incident_owned_by:
-    version: 1
-    reason_codes:
-      wrong_team:
-        description: This team is not the correct owner for this incident.
-        remediation_hint: provider_fix
-        required_scope_keys: [owner, incident]
-      ownership_transferred:
-        description: Ownership was transferred to a different team.
-        remediation_hint: quality_check
-        required_scope_keys: [owner]
-    scope_keys:
-      owner: TO.owner_id
-      incident: FROM.incident_id
-
 # ─── Outcome profiles (Loop 2) ───────────────────────────────────────
 
 outcome_profiles:
@@ -2176,22 +1902,6 @@ outcome_profiles:
         required_scope_keys: [relationship_type]
       reopened_after_regression:
         description: The asset later became exposed again after remediation.
-        remediation_hint: require_review
-        required_scope_keys: [relationship_type]
-    scope_keys:
-      relationship_type: RESOLUTION.relationship_type
-
-  incident_attribution_resolution:
-    anchor_type: resolution
-    relationship_type: incident_exploited_vulnerability
-    version: 1
-    outcome_codes:
-      confirmed_exploitation:
-        description: Post-incident analysis confirmed this CVE was the attack vector.
-        remediation_hint: trust_adjustment
-        required_scope_keys: [relationship_type]
-      attribution_incorrect:
-        description: Further investigation showed a different CVE or attack vector was used.
         remediation_hint: require_review
         required_scope_keys: [relationship_type]
     scope_keys:

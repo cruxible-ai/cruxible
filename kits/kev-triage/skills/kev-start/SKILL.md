@@ -198,7 +198,7 @@ Treat the surfaces in three buckets:
 
 2. **Optional workflows / enrichment surfaces**
    These usually depend on secondary inputs such as controls, exceptions,
-   patch windows, incidents, or findings.
+   patch windows, or review-material evidence.
 
    For each optional workflow or governed surface, decide:
    - **Keep** if the user's data covers it
@@ -218,8 +218,8 @@ Treat the surfaces in three buckets:
 
 Once the final supported surface is chosen, verify that any additional
 required inputs for the kept queries and workflows are actually present. This
-is where optional inputs such as exceptions, controls, patch windows,
-incidents, and findings become required if the user chooses to keep the
+is where optional inputs such as exceptions, controls, patch windows, and
+review-material evidence become required if the user chooses to keep the
 queries or workflows that depend on them.
 
 After modifying the final supported surface, rerender the runtime config views
@@ -327,8 +327,8 @@ created. It accepts the current on-disk artifact hash into the workflow lock.
 For the checked-in demo seed data it is safe but not normally necessary.
 
 Narrate: "Local state loaded — X assets, Y owners, Z services, plus whichever
-optional surfaces (controls, exceptions, patch windows, incidents, findings)
-were included to support the kept surface."
+optional surfaces (controls, exceptions, patch windows, review evidence) were
+included to support the kept surface."
 
 ### 7. Walk the proposal chain with review gates
 
@@ -478,8 +478,8 @@ Tell the user concisely:
 
 - The local is live; the proposal chain walked through with reviewer approval
   at each stage
-- To exercise the ongoing daily loop on this local (incident attribution,
-  waiver intake, control reviews, daily triage summary), run `kev-triage`
+- To exercise the ongoing daily loop on this local (waiver intake, control
+  reviews, remediation verification, daily triage summary), run `kev-triage`
   next
 - If they want to keep adapting the kit, the next likely changes are provider
   templates, input-file shapes, workflow params, kept workflows, and named
@@ -530,4 +530,4 @@ not issue further approvals outside that flow.
 
 Once the local data is producing sane proposals, queries, and wiki pages,
 run `kev-triage` on the same instance to exercise the ongoing daily loop and
-the richer incident/outcome story.
+the richer evidence/outcome story.

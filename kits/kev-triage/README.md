@@ -7,7 +7,7 @@ Localable cyber world model for vulnerability and KEV triage.
 - [skills/kev-start/SKILL.md](skills/kev-start/SKILL.md) — adapt the KEV kit
   to your own asset, inventory, and service-mapping data
 - [skills/kev-triage/SKILL.md](skills/kev-triage/SKILL.md) — the packaged
-  daily triage / incident / waiver / control-effectiveness loop
+  daily triage / waiver / remediation / control-effectiveness loop
 
 ## Structure
 
@@ -46,8 +46,6 @@ flowchart LR
   entity_BusinessService["Business Service"]
   entity_CompensatingControl["Compensating Control"]
   entity_Exception["Exception"]
-  entity_Finding["Finding"]
-  entity_Incident["Incident"]
   entity_Owner["Owner"]
   entity_PatchWindow["Patch Window"]
   entity_Product["Product"]
@@ -55,7 +53,7 @@ flowchart LR
   entity_Vulnerability["Vulnerability"]
   entity_VulnerabilityClass["Vulnerability Class"]
   class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_Product,entity_Vendor,entity_Vulnerability canonicalEntity
-  class entity_Finding,entity_Incident,entity_VulnerabilityClass governedEntity
+  class entity_VulnerabilityClass governedEntity
 
   %% Deterministic canonical relationships
   entity_Asset -- "Asset Has Control" --> entity_CompensatingControl
@@ -67,18 +65,14 @@ flowchart LR
   entity_Vulnerability -- "Vulnerability Affects Product" --> entity_Product
 
   %% Governed proposal/review relationships
-  entity_Asset -. "Asset Vulnerability Posture" .-> entity_Vulnerability
   entity_Asset -. "Asset Patch Exception For" .-> entity_Vulnerability
   entity_Asset -. "Asset Remediated Vulnerability" .-> entity_Vulnerability
   entity_Asset -. "Asset Runs Product" .-> entity_Product
+  entity_Asset -. "Asset Vulnerability Posture" .-> entity_Vulnerability
   entity_CompensatingControl -. "Control Mitigates Class" .-> entity_VulnerabilityClass
-  entity_Finding -. "Finding From Incident" .-> entity_Incident
-  entity_Incident -. "Incident Exploited Vulnerability" .-> entity_Vulnerability
-  entity_Incident -. "Incident Involved Asset" .-> entity_Asset
-  entity_Incident -. "Incident Owned By" .-> entity_Owner
   entity_Vulnerability -. "Vulnerability Classified As" .-> entity_VulnerabilityClass
   linkStyle 0,1,2,3,4,5,6 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 7,8,9,10,11,12,13,14,15,16 stroke:#e74c3c,stroke-width:2px
+  linkStyle 7,8,9,10,11,12 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -100,17 +94,17 @@ flowchart LR
 
   workflow_pipeline_build_local_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
-  workflow_pipeline_propose_asset_exposure["3. Asset Vulnerability Posture<br/>Governed proposal"]
-  workflow_pipeline_propose_control_mitigates_class["4. Control Mitigates Class<br/>Governed proposal"]
-  workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
-  workflow_pipeline_propose_vulnerability_classification["6. Vulnerability Classified As<br/>Governed proposal"]
+  workflow_pipeline_propose_control_mitigates_class["3. Control Mitigates Class<br/>Governed proposal"]
+  workflow_pipeline_propose_vulnerability_classification["4. Vulnerability Classified As<br/>Governed proposal"]
+  workflow_pipeline_propose_asset_exposure["5. Asset Vulnerability Posture<br/>Governed proposal"]
+  workflow_pipeline_propose_exposure_reconciliation["6. Asset Remediated Vulnerability<br/>Governed proposal"]
   workflow_pipeline_build_local_state --> workflow_pipeline_propose_asset_products
-  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_asset_exposure
-  workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_control_mitigates_class
-  workflow_pipeline_propose_control_mitigates_class --> workflow_pipeline_propose_exposure_reconciliation
-  workflow_pipeline_propose_exposure_reconciliation --> workflow_pipeline_propose_vulnerability_classification
+  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_control_mitigates_class
+  workflow_pipeline_propose_control_mitigates_class --> workflow_pipeline_propose_vulnerability_classification
+  workflow_pipeline_propose_vulnerability_classification --> workflow_pipeline_propose_asset_exposure
+  workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_exposure_reconciliation
   class workflow_pipeline_build_local_state canonicalWorkflow
-  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_control_mitigates_class,workflow_pipeline_propose_exposure_reconciliation,workflow_pipeline_propose_vulnerability_classification governedWorkflow
+  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_control_mitigates_class,workflow_pipeline_propose_vulnerability_classification,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_exposure_reconciliation governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -144,22 +138,7 @@ flowchart LR
 - Load Software Inventory (Python Function, v1.0.0); source: `kit://providers/seed.py::load_software_inventory`; artifact: Local Seed Bundle
 - Match Software To Products (Python Function, v1.0.0); source: `kit://providers/matching.py::match_software_to_products`
 
-### 3. Propose Asset Exposure
-
-**Role:** Governed proposal
-
-**Input context**
-- Entity context: Asset, Compensating Control
-- Relationship context: Asset Has Control, Asset Runs Product, Vulnerability Affects Product
-
-**Result**
-- Proposed relationships: Asset Vulnerability Posture
-
-**Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
-- Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
-
-### 4. Propose Control Mitigates Class
+### 3. Propose Control Mitigates Class
 
 **Role:** Governed proposal
 
@@ -172,21 +151,7 @@ flowchart LR
 **Provider source**
 - -
 
-### 5. Propose Exposure Reconciliation
-
-**Role:** Governed proposal
-
-**Input context**
-- Relationship context: Asset Vulnerability Posture, Asset Remediated Vulnerability, Asset Runs Product, Vulnerability Affects Product
-
-**Result**
-- Proposed relationships: Asset Remediated Vulnerability
-
-**Provider source**
-- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
-- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_exposure_reconciliation`
-
-### 6. Propose Vulnerability Classification
+### 4. Propose Vulnerability Classification
 
 **Role:** Governed proposal
 
@@ -198,6 +163,35 @@ flowchart LR
 
 **Provider source**
 - -
+
+### 5. Propose Asset Exposure
+
+**Role:** Governed proposal
+
+**Input context**
+- Entity context: Asset, Compensating Control
+- Relationship context: Asset Has Control, Asset Runs Product, Control Mitigates Class, Vulnerability Affects Product, Vulnerability Classified As
+
+**Result**
+- Proposed relationships: Asset Vulnerability Posture
+
+**Provider source**
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
+
+### 6. Propose Exposure Reconciliation
+
+**Role:** Governed proposal
+
+**Input context**
+- Relationship context: Asset Remediated Vulnerability, Asset Runs Product, Asset Vulnerability Posture, Vulnerability Affects Product
+
+**Result**
+- Proposed relationships: Asset Remediated Vulnerability
+
+**Provider source**
+- Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
+- Assess Exposure Reconciliation (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_exposure_reconciliation`
 <!-- CRUXIBLE:END workflow-summary -->
 
 ## Governed Relationships
@@ -208,15 +202,11 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Asset Vulnerability Posture | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Vulnerability Posture Resolution |
 | Asset Patch Exception For | Asset -> Vulnerability | Agent/manual group propose | Policy Review | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Asset Remediated Vulnerability | Asset -> Vulnerability | Workflow: Propose Exposure Reconciliation | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
 | Asset Runs Product | Asset -> Product | Workflow: Propose Asset Products | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
+| Asset Vulnerability Posture | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Vulnerability Posture Resolution |
 | Control Mitigates Class | Compensating Control -> Vulnerability Class | Workflow: Propose Control Mitigates Class | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Finding From Incident | Finding -> Incident | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Incident Exploited Vulnerability | Incident -> Vulnerability | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | Incident Attribution Resolution |
-| Incident Involved Asset | Incident -> Asset | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
-| Incident Owned By | Incident -> Owner | Agent/manual group propose | Incident Attribution | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Vulnerability Classified As | Vulnerability -> Vulnerability Class | Workflow: Propose Vulnerability Classification | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
@@ -230,7 +220,6 @@ above is the source of truth for required/advisory signal labels.
 | --- | --- | --- | --- | --- |
 | `control_effectiveness` | required | yes | Asset Vulnerability Posture, Control Mitigates Class | - |
 | `exploitability_signal` | required | yes | Asset Vulnerability Posture | - |
-| `incident_attribution` | required | no | Finding From Incident, Incident Exploited Vulnerability, Incident Involved Asset, Incident Owned By | - |
 | `policy_review` | required | no | Asset Patch Exception For | - |
 | `product_version_evidence` | required | yes | Asset Vulnerability Posture | - |
 | `remediation_verification` | required | yes | Asset Remediated Vulnerability | - |
@@ -251,25 +240,20 @@ flowchart LR
   query_entity_Asset["Asset"]
   query_entity_BusinessService["Business Service"]
   query_entity_CompensatingControl["Compensating Control"]
-  query_entity_Finding["Finding"]
-  query_entity_Incident["Incident"]
   query_entity_Owner["Owner"]
   query_entity_Product["Product"]
   query_entity_Vendor["Vendor"]
   query_entity_Vulnerability["Vulnerability"]
   query_entity_VulnerabilityClass["Vulnerability Class"]
-  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Finding,query_entity_Incident,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
-  query_entity_Asset --> query_entity_Finding
+  class query_entity_Asset,query_entity_BusinessService,query_entity_CompensatingControl,query_entity_Owner,query_entity_Product,query_entity_Vendor,query_entity_Vulnerability,query_entity_VulnerabilityClass queryEntity
   query_entity_CompensatingControl --> query_entity_BusinessService
   query_entity_Owner --> query_entity_Vulnerability
   query_entity_Product --> query_entity_Asset
-  query_entity_Product --> query_entity_Incident
   query_entity_Product --> query_entity_Vulnerability
   query_entity_Vendor --> query_entity_BusinessService
   query_entity_Vendor --> query_entity_Product
   query_entity_Vendor --> query_entity_Vulnerability
   query_entity_Vulnerability --> query_entity_Asset
-  query_entity_Vulnerability --> query_entity_Finding
   query_entity_Vulnerability --> query_entity_Product
   query_entity_VulnerabilityClass --> query_entity_Vulnerability
 ```
@@ -283,29 +267,22 @@ skill or agent harness, not by turning every useful traversal into a governed
 relationship.
 
 <!-- CRUXIBLE:BEGIN query-catalog -->
-### Asset
-
-| Query | Returns | State | Traversal | Purpose |
-| --- | --- | --- | --- | --- |
-| Open Findings For Asset | Finding | live | Incident Involved Asset (Incoming) -> Finding From Incident (Incoming) | Starting from an asset, find open findings from incidents that involved this asset. Filters out remediated findings. Answers: "What unresolved root causes exist for this asset?" |
-
 ### Compensating Control
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Broad investigation surface for services tied to classes this control covers. Inspect `control_mitigates_class.effect`: `blocks`/`compensates` are stronger mitigation coverage, `reduces` is risk reduction, and `detects` is monitoring rather than blocking mitigation. |
+| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services with asset-vulnerability posture tied to classes this control covers. This broad investigation query exposes the mitigation effect for agent interpretation: blocks/compensates are stronger mitigation coverage, reduces is risk-reduction coverage, and detects is monitoring rather than blocking mitigation. |
 
 ### Owner
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Vulnerability Posture (Outgoing) | Starting from an owner, return approved exposed asset-vulnerability pairs across the owner's assets, excluding pairs already closed or covered by a scoped exception, with service, control, patch-window, and broad exception context for prioritization. |
+| Owner Patch Queue | Vulnerability | live | Asset Owned By (Incoming) -> Asset Vulnerability Posture (Outgoing) | Starting from an owner, return approved asset-vulnerability exposures across the owner's assets, excluding pairs already closed or covered by a scoped exception, and decorated with service, broad exception, control, and patch-window context for prioritization. |
 
 ### Product
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Incident History For Product | Incident | live | Vulnerability Affects Product (Incoming) -> Incident Exploited Vulnerability (Incoming) | Starting from a product, find incidents where vulnerabilities affecting this product were exploited. Answers: "Has this product been exploited before in our environment?" |
 | Product Asset Context | Asset | reviewable | Asset Runs Product (Incoming) | Starting from a reference product, return assets that run that product, with product-mapping evidence and side context for affected vulnerabilities, exposure state, owners, services, exceptions, controls, and patch windows. |
 | Product Vulnerabilities | Vulnerability | live | Vulnerability Affects Product (Incoming) | Starting from a product, return KEV vulnerabilities that affect it. |
 
@@ -314,14 +291,13 @@ relationship.
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
 | Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
-| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Broad investigation surface for vendor blast radius. It keeps closure, scoped exception, and control context visible so agents can triage from the first query result instead of treating it as a strict action queue. |
+| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, approved asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps remediated and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
 | Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Prior Exploitation Context | Finding | live | Incident Exploited Vulnerability (Incoming) -> Finding From Incident (Incoming) | Starting from a vulnerability, find incidents where it was exploited and the findings from those investigations. Answers: "What did we learn last time this CVE was exploited?" |
 | Vulnerability Asset Context | Asset | reviewable | Vulnerability Affects Product (Outgoing) -> Asset Runs Product (Incoming) | Starting from a vulnerability, return internal assets that run affected products, with the relationship evidence needed to tell whether each asset is only a candidate, has pending or accepted exposure state, has remediation state, or is covered by operational context such as owners, services, exceptions, controls, and patch windows. |
 | Vulnerability Products | Product | live | Vulnerability Affects Product (Outgoing) | Starting from a vulnerability, return affected products with reference edge evidence. |
 
@@ -379,24 +355,13 @@ No configured constraints.
 | `assets_have_one_owner` | Cardinality | Asset -> Asset Owned By (out) | Warning | min `1`, max `1` |
 | `minimum_assets_loaded` | Bounds | Asset count | Warning | min `5` |
 | `no_empty_affected_version_objects` | Json Content | Vulnerability Affects Product.affected_versions | Error | No Empty Objects In Array |
+| `product_vendor_id_matches_vendor_edge` | Relationship Property Consistency | Product.vendor_id -> Product From Vendor | Error | Matches related `vendor_id` |
+| `product_vendor_name_matches_vendor_edge` | Relationship Property Consistency | Product.vendor_name -> Product From Vendor | Warning | Matches related `name` |
 | `products_have_exactly_one_vendor` | Cardinality | Product -> Product From Vendor (out) | Error | min `1`, max `1` |
 <!-- CRUXIBLE:END quality-rules -->
 
 <!-- CRUXIBLE:BEGIN learning-loops -->
 ### Feedback Profiles (Loop 1)
-
-#### `asset_vulnerability_posture`
-- Version: `1`
-- Reason codes:
-  - `control_mitigates` (`decision_policy`): A compensating control effectively blocks this exploit path.
-  - `epss_score_stale` (`provider_fix`): EPSS score has changed since the exposure judgment.
-  - `not_internet_reachable` (`constraint`): Asset is not reachable from the attack vector.
-  - `version_not_in_range` (`constraint`): Installed version is not within the NVD affected range.
-- Scope keys:
-  - `criticality`: `FROM.criticality`
-  - `cve`: `TO.cve_id`
-  - `environment`: `FROM.environment`
-  - `product`: `EDGE.product_id`
 
 #### `asset_patch_exception_for`
 - Version: `1`
@@ -428,6 +393,19 @@ No configured constraints.
   - `hostname`: `FROM.hostname`
   - `product`: `TO.product_name`
 
+#### `asset_vulnerability_posture`
+- Version: `1`
+- Reason codes:
+  - `control_mitigates` (`decision_policy`): A compensating control effectively blocks this exploit path.
+  - `epss_score_stale` (`provider_fix`): EPSS score has changed since the exposure judgment.
+  - `not_internet_reachable` (`constraint`): Asset is not reachable from the attack vector.
+  - `version_not_in_range` (`constraint`): Installed version is not within the NVD affected range.
+- Scope keys:
+  - `criticality`: `FROM.criticality`
+  - `cve`: `TO.cve_id`
+  - `environment`: `FROM.environment`
+  - `product`: `EDGE.product_id`
+
 #### `control_mitigates_class`
 - Version: `1`
 - Reason codes:
@@ -436,42 +414,6 @@ No configured constraints.
 - Scope keys:
   - `class`: `TO.class_id`
   - `control_type`: `FROM.control_type`
-
-#### `finding_from_incident`
-- Version: `1`
-- Reason codes:
-  - `duplicate_finding` (`quality_check`): This finding duplicates another finding for the same incident.
-  - `wrong_root_cause` (`decision_policy`): This finding was not actually a root cause of this incident.
-- Scope keys:
-  - `finding`: `FROM.finding_id`
-  - `incident`: `TO.incident_id`
-
-#### `incident_exploited_vulnerability`
-- Version: `1`
-- Reason codes:
-  - `correlation_not_causation` (`decision_policy`): CVE was present but not the attack vector used.
-  - `wrong_cve_attribution` (`provider_fix`): The CVE was not actually exploited in this incident.
-- Scope keys:
-  - `cve`: `TO.cve_id`
-  - `incident`: `FROM.incident_id`
-
-#### `incident_involved_asset`
-- Version: `1`
-- Reason codes:
-  - `misidentified_role` (`quality_check`): Asset was involved but its role was mischaracterized.
-  - `wrong_asset` (`provider_fix`): This asset was not actually involved in the incident.
-- Scope keys:
-  - `hostname`: `TO.hostname`
-  - `incident`: `FROM.incident_id`
-
-#### `incident_owned_by`
-- Version: `1`
-- Reason codes:
-  - `ownership_transferred` (`quality_check`): Ownership was transferred to a different team.
-  - `wrong_team` (`provider_fix`): This team is not the correct owner for this incident.
-- Scope keys:
-  - `incident`: `FROM.incident_id`
-  - `owner`: `TO.owner_id`
 
 #### `vulnerability_classified_as`
 - Version: `1`
@@ -485,15 +427,6 @@ No configured constraints.
 ### Outcome Profiles (Loop 2)
 
 #### Resolution-Anchored
-
-##### `asset_vulnerability_posture_resolution`
-- Version: `1`
-- Target: Relationship `asset_vulnerability_posture`
-- Outcome codes:
-  - `overestimated_exposure` (`trust_adjustment`): Control was effective but was not credited during resolution.
-  - `underestimated_exposure` (`require_review`): An attack path was missed during exposure assessment.
-- Scope keys:
-  - `relationship_type`: `RESOLUTION.relationship_type`
 
 ##### `asset_remediated_resolution`
 - Version: `1`
@@ -514,25 +447,16 @@ No configured constraints.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
-##### `incident_attribution_resolution`
+##### `asset_vulnerability_posture_resolution`
 - Version: `1`
-- Target: Relationship `incident_exploited_vulnerability`
+- Target: Relationship `asset_vulnerability_posture`
 - Outcome codes:
-  - `attribution_incorrect` (`require_review`): Further investigation showed a different CVE or attack vector was used.
-  - `confirmed_exploitation` (`trust_adjustment`): Post-incident analysis confirmed this CVE was the attack vector.
+  - `overestimated_exposure` (`trust_adjustment`): Control was effective but was not credited during resolution.
+  - `underestimated_exposure` (`require_review`): An attack path was missed during exposure assessment.
 - Scope keys:
   - `relationship_type`: `RESOLUTION.relationship_type`
 
 #### Receipt-Anchored
-
-##### `vulnerability_asset_context_query`
-- Version: `1`
-- Target: Query `vulnerability_asset_context`
-- Outcome codes:
-  - `false_positive_result` (`graph_fix`): Query returned an asset that is not actually affected.
-  - `missing_results` (`graph_fix`): A known-affected asset was not returned by the query.
-- Scope keys:
-  - `query`: `SURFACE.name`
 
 ##### `owner_patch_queue_query`
 - Version: `1`
@@ -540,6 +464,15 @@ No configured constraints.
 - Outcome codes:
   - `missing_exposure` (`workflow_fix`): An exposed vulnerability was not returned for this owner.
   - `stale_priority` (`graph_fix`): Returned vulnerability that has already been patched or mitigated.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `vulnerability_asset_context_query`
+- Version: `1`
+- Target: Query `vulnerability_asset_context`
+- Outcome codes:
+  - `false_positive_result` (`graph_fix`): Query returned an asset that is not actually affected.
+  - `missing_results` (`graph_fix`): A known-affected asset was not returned by the query.
 - Scope keys:
   - `query`: `SURFACE.name`
 <!-- CRUXIBLE:END learning-loops -->
@@ -579,44 +512,22 @@ system.
 
 Source material for governed agent actions lives under
 `data/seed/review_material/`. Those files are not loaded by
-`build_local_state`; they are synthetic incident reports, waiver requests, and
-control reviews meant to drive `add-entity` and `group propose`.
+`build_local_state`; they are synthetic reports, waiver requests, and control
+reviews meant to support governed relationship proposals.
 
-## Incident History Layer
+## Evidence Artifacts
 
-Adds incident investigation knowledge that compounds across triage cycles. The
-vulnerability triage layer tells you what's exposed *now*. The incident layer
-tells you what's been exploited *before* — and what you learned from it.
+The KEV graph stores accepted operational conclusions, not raw observation
+records. Scanner findings, EDR detections, SIEM alerts, reports, and
+postmortems remain evidence inputs. Providers, proposal traces, tri-state
+signals, receipts, `evidence_source`, and `evidence_refs` preserve those
+pointers while the graph stays focused on durable facts such as product
+matching, asset-vulnerability posture, remediation, scoped exceptions, control
+coverage, and vulnerability classification.
 
-### Why this compounds
-
-When a new CVE drops and the triage agent runs the exposure assessment, it can
-also query `incident_history_for_product` to check: "has this product been
-exploited before in our environment?" If yes, the triage summary includes what
-happened last time — which assets were hit, what the root cause was, what
-findings are still open. The priority isn't just CVSS × EPSS anymore; it's
-informed by organizational history.
-
-### Configured entity types
-
-| Entity | Properties | Source |
-|---|---|---|
-| `Incident` | incident_id (PK), title, severity, status (open/investigating/resolved/closed), occurred_at, resolved_at, source, summary | PagerDuty export, SIEM, manual |
-| `Finding` | finding_id (PK), title, category, detail, status (open/remediated/accepted_risk), remediation_action, remediated_at | Post-mortem extraction (agent or manual) |
-
-### Configured relationships
-
-| Relationship | From → To | Governed? | How it's created |
-|---|---|---|---|
-| `incident_owned_by` | Incident → Owner | Yes | Agent proposes accountable owner for incident |
-| `incident_involved_asset` | Incident → Asset | Yes | Agent reads incident report, proposes link |
-| `incident_exploited_vulnerability` | Incident → Vulnerability | Yes | Agent reads post-mortem, proposes CVE attribution |
-| `finding_from_incident` | Finding → Incident | Yes | Agent extracts findings from post-mortem |
-
-### Configured named queries
-
-| Query | Traversal | What it answers |
-|---|---|---|
-| `incident_history_for_product` | Product ← vulnerability_affects_product ← incident_exploited_vulnerability | "Has this product been exploited before?" |
-| `open_findings_for_asset` | Asset ← incident_involved_asset ← finding_from_incident (status = open) | "What open findings still need action for this asset?" |
-| `prior_exploitation_context` | Vulnerability ← incident_exploited_vulnerability → finding_from_incident | "What did we learn last time this CVE was exploited?" |
+When an evidence artifact says a host was affected by a CVE, use it to support
+or challenge a governed relationship proposal. For example, cite the report in
+`evidence_refs` on `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
+`asset_patch_exception_for`, `vulnerability_classified_as`, or
+`control_mitigates_class` rather than creating a separate graph object for the
+source report itself.

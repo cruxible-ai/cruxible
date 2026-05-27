@@ -10,27 +10,20 @@ The response team attributed the exploit path to `CVE-2024-38475`. Traffic was
 contained by enabling the emergency WAF policy and deploying a patched Apache
 build during the next web patch window.
 
-## Candidate graph facts
+## Evidence refs to cite
 
-- Incident entity:
-  `incident_id=INC-2024-002`
-  `title=Apache mod_rewrite exploit on prod-web-02`
-  `severity=critical`
-  `status=resolved`
-  `occurred_at=2026-02-18`
-  `resolved_at=2026-02-19`
-  `source=pagerduty`
-- Proposed `incident_owned_by`:
-  `INC-2024-002 -> OWNER-2`
-- Proposed `incident_involved_asset`:
-  `INC-2024-002 -> ASSET-6`
-  `role=target`
-- Proposed `incident_exploited_vulnerability`:
-  `INC-2024-002 -> CVE-2024-38475`
+- `source=pagerduty`
+- `source_record_id=INC-2024-002`
+- `asset_id=ASSET-6`
+- `cve_id=CVE-2024-38475`
+- `owner_id=OWNER-2`
 
-## Findings to create
+Use this postmortem as supporting evidence for governed proposals such as
+`asset_vulnerability_posture`, `asset_remediated_vulnerability`,
+`asset_patch_exception_for`, and `control_mitigates_class`. Do not create a
+separate graph object for the source report.
 
-### FIND-2024-010
+## Lessons to preserve in evidence
 
 - `title=Unsafe rewrite rule pattern deployed without security review`
 - `category=misconfiguration`
@@ -43,5 +36,3 @@ build during the next web patch window.
 - `category=process_gap`
 - `status=open`
 - `remediation_action=Pre-stage emergency WAF policy on all production web assets`
-
-Both findings should be linked to `INC-2024-002` with `finding_from_incident`.

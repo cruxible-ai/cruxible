@@ -1,4 +1,4 @@
-# Incident Report: INC-2021-001
+# Security Report: INC-2021-001
 
 ## Summary
 
@@ -11,27 +11,20 @@ Investigation concluded the attacker exploited `CVE-2021-41773`. The impacted
 service owner accepted a temporary outage window while the host was rebuilt and
 the vulnerable version removed.
 
-## Candidate graph facts
+## Evidence refs to cite
 
-- Incident entity:
-  `incident_id=INC-2021-001`
-  `title=Apache path traversal on prod-web-01`
-  `severity=high`
-  `status=resolved`
-  `occurred_at=2025-10-04`
-  `resolved_at=2025-10-05`
-  `source=siem`
-- Proposed `incident_owned_by`:
-  `INC-2021-001 -> OWNER-2`
-- Proposed `incident_involved_asset`:
-  `INC-2021-001 -> ASSET-1`
-  `role=target`
-- Proposed `incident_exploited_vulnerability`:
-  `INC-2021-001 -> CVE-2021-41773`
+- `source=siem`
+- `source_record_id=INC-2021-001`
+- `asset_id=ASSET-1`
+- `cve_id=CVE-2021-41773`
+- `owner_id=OWNER-2`
 
-## Findings to create
+Use this report as supporting evidence for governed proposals such as
+`asset_vulnerability_posture`, `asset_remediated_vulnerability`, and
+`vulnerability_classified_as`. Do not create a separate graph object for the
+source report.
 
-### FIND-2021-001
+## Lessons to preserve in evidence
 
 - `title=Apache 2.4.49 remained internet-exposed on prod-web-01`
 - `category=stale_data`
@@ -44,5 +37,3 @@ the vulnerable version removed.
 - `category=missing_control`
 - `status=open`
 - `remediation_action=Extend Edge WAF policy set to all internet-facing Apache virtual hosts`
-
-Both findings should be linked to `INC-2021-001` with `finding_from_incident`.

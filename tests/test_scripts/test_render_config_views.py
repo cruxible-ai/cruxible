@@ -165,9 +165,9 @@ entity_types:
       product_id:
         type: string
         primary_key: true
-  Incident:
+  VulnerabilityClass:
     properties:
-      incident_id:
+      class_id:
         type: string
         primary_key: true
   Vulnerability:
@@ -199,12 +199,12 @@ relationships:
           remediation_verification:
             role: required
             note: Verify remediation evidence.
-  - name: incident_exploited_vulnerability
-    from: Incident
-    to: Vulnerability
+  - name: vulnerability_classified_as
+    from: Vulnerability
+    to: VulnerabilityClass
     proposal_policy:
       signals:
-        incident_signal:
+        classification_signal:
           role: required
 
 named_queries:
@@ -280,15 +280,15 @@ feedback_profiles:
         required_scope_keys: [asset]
     scope_keys:
       asset: FROM.asset_id
-  incident_exploited_vulnerability:
+  vulnerability_classified_as:
     version: 1
     reason_codes:
-      wrong_attribution:
-        description: The incident did not exploit this vulnerability.
+      wrong_classification:
+        description: The vulnerability was assigned to the wrong class.
         remediation_hint: decision_policy
-        required_scope_keys: [incident]
+        required_scope_keys: [class]
     scope_keys:
-      incident: FROM.incident_id
+      class: TO.class_id
 
 outcome_profiles:
   asset_runs_product_resolution:
@@ -313,13 +313,13 @@ outcome_profiles:
         required_scope_keys: [relationship_type]
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
-  incident_attribution_resolution:
+  vulnerability_classification_resolution:
     anchor_type: resolution
-    relationship_type: incident_exploited_vulnerability
+    relationship_type: vulnerability_classified_as
     version: 1
     outcome_codes:
-      wrong_incident_attribution:
-        description: The incident was attributed to the wrong vulnerability.
+      wrong_classification:
+        description: The vulnerability was assigned to the wrong class.
         remediation_hint: provider_fix
         required_scope_keys: [relationship_type]
     scope_keys:
@@ -368,9 +368,9 @@ workflows:
     assert "`minimum_assets`" in rendered
     assert "`assets_have_products`" in rendered
     assert "#### `asset_remediated_vulnerability`" in rendered
-    assert "#### `incident_exploited_vulnerability`" in rendered
+    assert "#### `vulnerability_classified_as`" in rendered
     assert "##### `asset_remediated_resolution`" in rendered
-    assert "##### `incident_attribution_resolution`" in rendered
+    assert "##### `vulnerability_classification_resolution`" in rendered
     assert "##### `asset_review_query`" in rendered
 
 
