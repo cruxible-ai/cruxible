@@ -1229,7 +1229,6 @@ providers:
 workflows:
   build_local_state:
     type: canonical
-    contract_out: ApplyAllPreview
     description: >
       Load deterministic internal entities and relationships from the
       seed data bundle. This is the local's equivalent of the reference

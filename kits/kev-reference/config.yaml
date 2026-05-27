@@ -218,30 +218,6 @@ quality_checks:
     target_property: name
     allow_missing_source: true
 
-contracts:
-  ApplyRelationshipPreview:
-    description: Preview summary emitted by an apply_relationships workflow step.
-    fields:
-      relationship_type: {type: string}
-      create_count: {type: int}
-      update_count: {type: int}
-      noop_count: {type: int}
-      duplicate_input_count: {type: int}
-      conflicting_duplicate_count: {type: int}
-      duplicate_examples: {type: json}
-  ApplyAllPreview:
-    description: Preview summary emitted by an apply_all workflow step.
-    fields:
-      entities_from: {type: json}
-      relationships_from: {type: json}
-      entity_results: {type: json}
-      relationship_results: {type: json}
-      create_count: {type: int}
-      update_count: {type: int}
-      noop_count: {type: int}
-      duplicate_input_count: {type: int}
-      conflicting_duplicate_count: {type: int}
-
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -276,7 +252,6 @@ providers:
 workflows:
   build_public_kev_reference:
     type: canonical
-    contract_out: ApplyAllPreview
     description: >
       Build the canonical public KEV reference layer from the bundled
       hashed public-data artifact including NVD CPE match data.
