@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
-from .common import _first_non_empty
-
 
 def _assess_version_membership(
     installed_version: str,
@@ -129,3 +127,13 @@ def _tokenize_version(value: Any) -> list[int | str]:
         else:
             tokens.append(part)
     return tokens
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None

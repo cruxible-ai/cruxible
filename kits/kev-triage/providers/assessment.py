@@ -5,18 +5,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from cruxible_core.provider.payloads import JsonItems, evidence_ref, merge_evidence_refs
 from cruxible_core.provider.types import ProviderContext
 
-from .common import (
-    _edge_from_id,
-    _edge_properties,
-    _edge_to_id,
-    _entity_id,
-    _entity_properties,
-    _first_non_empty,
-    _require_items,
-    _verdict_rank,
-)
 from .versioning import _assess_version_membership
 
 
@@ -25,8 +16,12 @@ def assess_asset_affected(
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Join approved asset-product edges to vulnerability-product edges."""
-    asset_product_edges = _require_items(input_payload, "asset_product_edges")
-    vulnerability_product_edges = _require_items(input_payload, "vulnerability_product_edges")
+    asset_product_edges = JsonItems.from_payload(
+        input_payload, key="asset_product_edges"
+    ).items
+    vulnerability_product_edges = JsonItems.from_payload(
+        input_payload, key="vulnerability_product_edges"
+    ).items
 
     vulnerability_edges_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for edge in vulnerability_product_edges:
@@ -66,7 +61,7 @@ def assess_asset_affected(
                 "source": source,
                 "rationale": rationale,
                 "verdict": verdict,
-                "evidence_refs": _merge_evidence_refs(
+                "evidence_refs": merge_evidence_refs(
                     evidence_refs,
                     _evidence_refs(vulnerability_properties),
                 ),
@@ -76,7 +71,7 @@ def assess_asset_affected(
             if current is None or _verdict_rank(verdict) > _verdict_rank(current["verdict"]):
                 rows_by_pair[key] = row
 
-    return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
+    return JsonItems(items=[rows_by_pair[key] for key in sorted(rows_by_pair)]).to_payload()
 
 
 def assess_asset_exposure(
@@ -85,11 +80,19 @@ def assess_asset_exposure(
 ) -> dict[str, Any]:
     """Assess which affected assets are materially exposed."""
     affected_items = _affected_items(input_payload)
-    assets = _require_items(input_payload, "assets")
-    asset_control_edges = _require_items(input_payload, "asset_control_edges")
-    controls = _require_items(input_payload, "controls")
-    classification_edges = _optional_items(input_payload, "vulnerability_classification_edges")
-    control_mitigation_edges = _optional_items(input_payload, "control_mitigation_edges")
+    assets = JsonItems.from_payload(input_payload, key="assets").items
+    asset_control_edges = JsonItems.from_payload(input_payload, key="asset_control_edges").items
+    controls = JsonItems.from_payload(input_payload, key="controls").items
+    classification_edges = (
+        JsonItems.from_payload(input_payload, key="vulnerability_classification_edges").items
+        if "vulnerability_classification_edges" in input_payload
+        else []
+    )
+    control_mitigation_edges = (
+        JsonItems.from_payload(input_payload, key="control_mitigation_edges").items
+        if "control_mitigation_edges" in input_payload
+        else []
+    )
 
     assets_by_id = {_entity_id(entity): _entity_properties(entity) for entity in assets}
     controls_by_id = {_entity_id(entity): _entity_properties(entity) for entity in controls}
@@ -160,7 +163,7 @@ def assess_asset_exposure(
             "control_basis": str(control_assessment["basis"]),
             "evidence_source": _first_non_empty(item.get("source"), properties.get("source"))
             or "",
-            "evidence_refs": _merge_evidence_refs(
+            "evidence_refs": merge_evidence_refs(
                 _evidence_refs(item),
                 _evidence_refs(properties),
             ),
@@ -172,7 +175,7 @@ def assess_asset_exposure(
             "control_effect": str(control_assessment["effect"]),
         }
 
-    return {"items": [rows_by_pair[key] for key in sorted(rows_by_pair)]}
+    return JsonItems(items=[rows_by_pair[key] for key in sorted(rows_by_pair)]).to_payload()
 
 
 def assess_exposure_reconciliation(
@@ -180,11 +183,15 @@ def assess_exposure_reconciliation(
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Find accepted exposure edges no longer supported by product-derived evidence."""
-    accepted_exposure_edges = _require_items(input_payload, "accepted_exposure_edges")
-    affected_items = _require_items(input_payload, "affected_items")
-    asset_product_edges = _require_items(input_payload, "asset_product_edges")
-    vulnerability_product_edges = _require_items(input_payload, "vulnerability_product_edges")
-    remediated_edges = _require_items(input_payload, "remediated_edges")
+    accepted_exposure_edges = JsonItems.from_payload(
+        input_payload, key="accepted_exposure_edges"
+    ).items
+    affected_items = JsonItems.from_payload(input_payload, key="affected_items").items
+    asset_product_edges = JsonItems.from_payload(input_payload, key="asset_product_edges").items
+    vulnerability_product_edges = JsonItems.from_payload(
+        input_payload, key="vulnerability_product_edges"
+    ).items
+    remediated_edges = JsonItems.from_payload(input_payload, key="remediated_edges").items
 
     current_affected_pairs = {
         (asset_id, cve_id)
@@ -235,13 +242,13 @@ def assess_exposure_reconciliation(
                 "cve_id": cve_id,
                 "remediation_type": remediation_type,
                 "evidence_source": "kev_reference_reconciliation",
-                "evidence_refs": _merge_evidence_refs(
+                "evidence_refs": merge_evidence_refs(
                     _evidence_refs(properties),
                     [
-                        {
-                            "source": "kev_reference_reconciliation",
-                            "source_record_id": f"{asset_id}:{cve_id}",
-                        }
+                        evidence_ref(
+                            "kev_reference_reconciliation",
+                            f"{asset_id}:{cve_id}",
+                        )
                     ],
                 ),
                 "rationale": _stale_exposure_rationale(
@@ -254,23 +261,54 @@ def assess_exposure_reconciliation(
             }
         )
 
-    return {"items": sorted(items, key=lambda item: (item["asset_id"], item["cve_id"]))}
+    return JsonItems(
+        items=sorted(items, key=lambda item: (item["asset_id"], item["cve_id"]))
+    ).to_payload()
 
 
 def _affected_items(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw_items = input_payload.get("affected_items")
     if raw_items is None:
-        return _require_items(input_payload, "affected_edges")
+        return JsonItems.from_payload(input_payload, key="affected_edges").items
     if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
         raise ValueError("Expected 'affected_items' to be a list of objects")
     return raw_items
 
 
-def _optional_items(input_payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    raw_items = input_payload.get(key, [])
-    if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
-        raise ValueError(f"Expected '{key}' to be a list of objects")
-    return raw_items
+def _edge_from_id(edge: dict[str, Any]) -> str:
+    return _first_non_empty(edge.get("from_id")) or ""
+
+
+def _edge_to_id(edge: dict[str, Any]) -> str:
+    return _first_non_empty(edge.get("to_id")) or ""
+
+
+def _edge_properties(edge: dict[str, Any]) -> dict[str, Any]:
+    properties = edge.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _entity_id(entity: dict[str, Any]) -> str:
+    return _first_non_empty(entity.get("entity_id")) or ""
+
+
+def _entity_properties(entity: dict[str, Any]) -> dict[str, Any]:
+    properties = entity.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _verdict_rank(verdict: str) -> int:
+    return {"support": 2, "unsure": 1, "contradict": 0}.get(verdict, -1)
 
 
 def _classes_by_vulnerability(
@@ -539,20 +577,3 @@ def _evidence_refs(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(refs, list):
         return [dict(ref) for ref in refs if isinstance(ref, dict)]
     return []
-
-
-def _merge_evidence_refs(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for group in groups:
-        for ref in group:
-            key = (
-                str(ref.get("source", "")),
-                str(ref.get("source_record_id", "")),
-                str(ref.get("criteria", "")),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(ref)
-    return merged

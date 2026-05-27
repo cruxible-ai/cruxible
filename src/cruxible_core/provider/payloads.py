@@ -1,0 +1,172 @@
+"""Provider payload helpers for common Cruxible contracts."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from cruxible_core.primitives import canonical_json
+
+
+class ParsedTabularBundle(BaseModel):
+    """Validated helper for the ``cruxible.ParsedTabularBundle`` contract."""
+
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    tables: dict[str, list[dict[str, Any]]]
+    files: Any = Field(default_factory=dict)
+    diagnostics: Any = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+    _table_metadata: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> ParsedTabularBundle:
+        """Normalize a parsed tabular provider payload."""
+        raw_tables = payload.get("tables")
+        if not isinstance(raw_tables, Mapping):
+            raise ValueError("Expected input.tables to be a mapping")
+
+        artifact = payload.get("artifact", {})
+        if not isinstance(artifact, Mapping):
+            raise ValueError("Expected input.artifact to be a mapping")
+
+        tables: dict[str, list[dict[str, Any]]] = {}
+        table_metadata: dict[str, dict[str, Any]] = {}
+        for table_name, table_payload in raw_tables.items():
+            rows, metadata = _normalize_table_payload(str(table_name), table_payload)
+            table_name = str(table_name)
+            tables[table_name] = rows
+            table_metadata[table_name] = metadata
+
+        bundle = cls(
+            artifact=dict(artifact),
+            tables=tables,
+            files=payload.get("files", {}),
+            diagnostics=payload.get("diagnostics", {}),
+        )
+        bundle._table_metadata = table_metadata
+        return bundle
+
+    def require_table(self, name: str) -> list[dict[str, Any]]:
+        """Return parsed rows for ``name`` or raise a clear provider error."""
+        if name not in self.tables:
+            raise ValueError(f"Expected parsed table '{name}'")
+        return [dict(row) for row in self.tables[name]]
+
+    def optional_table(self, name: str) -> list[dict[str, Any]]:
+        """Return parsed rows for ``name`` or an empty list when absent."""
+        if name not in self.tables:
+            return []
+        return [dict(row) for row in self.tables[name]]
+
+    def table_names(self) -> list[str]:
+        """Return table names in deterministic order."""
+        return sorted(self.tables)
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return a JSON-compatible provider payload."""
+        return {
+            "artifact": dict(self.artifact),
+            "tables": {
+                table_name: _table_payload(table_name, rows, self._table_metadata)
+                for table_name, rows in self.tables.items()
+            },
+            "files": self.files,
+            "diagnostics": self.diagnostics,
+        }
+
+
+class JsonItems(BaseModel):
+    """Validated helper for the ``cruxible.JsonItems`` contract."""
+
+    items: list[dict[str, Any]]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any], key: str = "items") -> JsonItems:
+        """Normalize a list-of-objects provider payload."""
+        value = payload.get(key)
+        if not isinstance(value, list):
+            raise ValueError(f"Expected '{key}' to be a list of objects")
+        return cls(items=_coerce_rows(value, f"'{key}'"))
+
+    def to_payload(self, key: str = "items") -> dict[str, Any]:
+        """Return the provider payload shape, preserving row order."""
+        return {key: [dict(item) for item in self.items]}
+
+
+def evidence_ref(source: str, source_record_id: str, **extra: Any) -> dict[str, Any]:
+    """Build a generic evidence reference payload."""
+    if not source:
+        raise ValueError("evidence_ref source must not be empty")
+    if not source_record_id:
+        raise ValueError("evidence_ref source_record_id must not be empty")
+    return {
+        "source": source,
+        "source_record_id": source_record_id,
+        **extra,
+    }
+
+
+def merge_evidence_refs(*groups: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Merge evidence reference groups with deterministic first-seen dedupe."""
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for group in groups:
+        for ref in group:
+            payload = dict(ref)
+            key = _evidence_ref_key(payload)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(payload)
+    return merged
+
+
+def _normalize_table_payload(
+    table_name: str,
+    table_payload: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if isinstance(table_payload, list):
+        return _coerce_rows(table_payload, f"parsed table '{table_name}'"), {}
+    if not isinstance(table_payload, Mapping):
+        raise ValueError(f"Expected parsed table '{table_name}' to be a table object")
+    table = dict(table_payload)
+    rows = table.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError(f"Expected parsed table '{table_name}' to contain rows")
+    metadata = {key: value for key, value in table.items() if key != "rows"}
+    return _coerce_rows(rows, f"parsed table '{table_name}' rows"), metadata
+
+
+def _table_payload(
+    table_name: str,
+    rows: list[dict[str, Any]],
+    metadata_by_table: Mapping[str, Mapping[str, Any]],
+) -> Any:
+    metadata = dict(metadata_by_table.get(table_name, {}))
+    if not metadata:
+        return [dict(row) for row in rows]
+    return {**metadata, "rows": [dict(row) for row in rows]}
+
+
+def _coerce_rows(rows: list[Any], label: str) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"Expected {label} entry {index} to be an object")
+        result.append(dict(row))
+    return result
+
+
+def _evidence_ref_key(ref: Mapping[str, Any]) -> tuple[str, ...]:
+    source = str(ref.get("source", ""))
+    source_record_id = str(ref.get("source_record_id", ""))
+    criteria = str(ref.get("criteria", ""))
+    match_criteria_id = str(ref.get("match_criteria_id", ""))
+    if source or source_record_id or criteria or match_criteria_id:
+        return ("fields", source, source_record_id, criteria, match_criteria_id)
+    return ("json", canonical_json(dict(ref)))

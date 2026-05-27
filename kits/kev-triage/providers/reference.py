@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import re
 from ast import literal_eval
@@ -9,17 +10,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
+from cruxible_core.provider.payloads import JsonItems, ParsedTabularBundle, evidence_ref
 from cruxible_core.provider.types import ProviderContext
-
-from .common import (
-    _first_non_empty,
-    _humanize,
-    _load_csv_rows,
-    _parse_float,
-    _parsed_table_rows,
-    _require_artifact_root,
-    _slugify,
-)
 
 
 def load_public_kev_rows(
@@ -45,13 +37,16 @@ def normalize_public_kev_reference(
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Normalize parsed public KEV tables into reference graph rows."""
-    kev_rows = _parsed_table_rows(input_payload, "known_exploited_vulnerabilities")
+    bundle = ParsedTabularBundle.from_payload(input_payload)
+    kev_rows = _strip_provider_rows(bundle.require_table("known_exploited_vulnerabilities"))
     enriched_by_cve = {
         str(row.get("cve", "")).strip(): row
-        for row in _parsed_table_rows(input_payload, "epss_kev_nvd")
+        for row in _strip_provider_rows(bundle.require_table("epss_kev_nvd"))
         if str(row.get("cve", "")).strip()
     }
-    nvd_cpe_by_cve = _parse_nvd_cpe_rows(_parsed_table_rows(input_payload, "nvd_kev_cves"))
+    nvd_cpe_by_cve = _parse_nvd_cpe_rows(
+        _strip_provider_rows(bundle.require_table("nvd_kev_cves"))
+    )
     return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
 
 
@@ -183,19 +178,14 @@ def _build_public_kev_rows(
             "vulnerable": True,
             "version_logic": "fallback_product_match_from_cisa_kev",
             "source_last_modified_at": None,
-            "evidence_refs": [
-                {
-                    "source": "cisa_kev",
-                    "source_record_id": cve_id,
-                }
-            ],
+            "evidence_refs": [evidence_ref("cisa_kev", cve_id)],
             "rationale": (
                 "CISA KEV catalog lists this vendor/product; "
                 "no NVD CPE match data was available."
             ),
         })
 
-    return {"items": items}
+    return JsonItems(items=items).to_payload()
 
 
 def _load_nvd_cpe_data(path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -207,6 +197,54 @@ def _load_nvd_cpe_data(path: Path) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(raw, list):
         return {}
     return _parse_nvd_cpe_rows(raw)
+
+
+def _require_artifact_root(context: ProviderContext, provider_name: str) -> Path:
+    if context.artifact is None or context.artifact.local_path is None:
+        raise ValueError(f"{provider_name} requires a local artifact bundle")
+    return Path(context.artifact.local_path)
+
+
+def _load_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _strip_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {key: value for key, value in row.items() if not key.startswith("_")}
+        for row in rows
+    ]
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _parse_float(value: Any) -> float | None:
+    text = _first_non_empty(value)
+    if text is None:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _slugify(value: str) -> str:
+    normalized = value.lower().replace("+", "plus")
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+    return slug or "unknown"
+
+
+def _humanize(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").title()
 
 
 def _parse_nvd_cpe_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -374,11 +412,7 @@ def _parse_cwes(raw: str | None, fallback: Any) -> list[str]:
 
 
 def _nvd_match_evidence(cve_id: str, match: dict[str, Any]) -> dict[str, Any]:
-    evidence = {
-        "source": "nvd_cpe_match",
-        "source_record_id": cve_id,
-        "criteria": match.get("criteria"),
-    }
+    evidence = evidence_ref("nvd_cpe_match", cve_id, criteria=match.get("criteria"))
     match_criteria_id = _first_non_empty(match.get("matchCriteriaId"))
     if match_criteria_id:
         evidence["match_criteria_id"] = match_criteria_id

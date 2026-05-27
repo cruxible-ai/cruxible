@@ -6,9 +6,8 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
+from cruxible_core.provider.payloads import JsonItems, evidence_ref
 from cruxible_core.provider.types import ProviderContext
-
-from .common import _first_non_empty, _require_items
 
 _GENERIC_TOKENS = {
     "corp",
@@ -29,10 +28,10 @@ def match_software_to_products(
     _context: ProviderContext,
 ) -> dict[str, Any]:
     """Match software inventory rows to reference products deterministically."""
-    inventory_items = _require_items(input_payload, "inventory_items")
+    inventory_items = JsonItems.from_payload(input_payload, key="inventory_items").items
     reference_products = [
         product
-        for raw_product in _require_items(input_payload, "reference_products")
+        for raw_product in JsonItems.from_payload(input_payload, key="reference_products").items
         if (product := _normalize_reference_product(raw_product)) is not None
     ]
     reference_products = sorted(reference_products, key=_reference_product_sort_key)
@@ -71,11 +70,11 @@ def match_software_to_products(
             "match_confidence": round(best_score, 4),
             "match_basis": _match_basis(item, best_product, best_score),
             "evidence_refs": [
-                {
-                    "source": _first_non_empty(item.get("evidence_source")) or "software_inventory",
-                    "source_record_id": _inventory_source_record_id(item),
-                    "observed_at": _first_non_empty(item.get("last_seen")) or "",
-                }
+                evidence_ref(
+                    _first_non_empty(item.get("evidence_source")) or "software_inventory",
+                    _inventory_source_record_id(item),
+                    observed_at=_first_non_empty(item.get("last_seen")) or "",
+                )
             ],
             "rationale": _match_basis(item, best_product, best_score),
             "verdict": _score_to_verdict(best_score),
@@ -91,7 +90,7 @@ def match_software_to_products(
         row = dict(best_by_pair[pair])
         row.pop("_last_seen", None)
         items.append(row)
-    return {"items": items}
+    return JsonItems(items=items).to_payload()
 
 
 def _normalize_reference_product(product: dict[str, Any]) -> dict[str, Any] | None:
@@ -181,6 +180,16 @@ def _normalize_vendor(value: Any) -> str:
 
 def _normalize_name(value: Any) -> str:
     return _normalize_text(value, drop_generic=False)
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
 
 
 def _normalize_text(value: Any, *, drop_generic: bool) -> str:
