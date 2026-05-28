@@ -1,4 +1,19 @@
-"""Software inventory to KEV product matching providers."""
+"""Decide when software inventory appears to match a known product.
+
+This file contains the demo kit's judgment about messy software inventory. It
+takes rows such as "Apache HTTP Server 2.4.49 on ASSET-1" and compares them with
+the curated product list built from public vulnerability data. When the match is
+strong enough, it produces a reviewable statement that the asset runs that
+product.
+
+The numeric score is only a temporary aid for sorting matches into
+``support``, ``unsure``, or ``contradict``. It should not become durable truth
+on an accepted asset/product relationship. The durable part is the plain-English
+reason and the evidence pointer back to the source inventory row.
+
+If your inventory names, vendor names, package naming rules, or product catalog
+are different, this is the place to change the matching policy.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +42,27 @@ def match_software_to_products(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Match software inventory rows to reference products deterministically."""
+    """Find likely product matches for asset software inventory rows.
+
+    Each input row is treated as source evidence that an asset may run a
+    particular product. The function compares the observed software name and
+    vendor against every known product, keeps only the best match for each
+    asset/product pair, and returns rows for human or agent review.
+
+    The policy here is intentionally cautious:
+    - vendor disagreement blocks a match when the inventory row includes a
+      vendor, because the same product name can mean different things from
+      different vendors;
+    - exact or contained product-name matches get a boost, because inventory
+      exports often add versions, editions, or package suffixes;
+    - weak matches below 0.5 are omitted instead of creating noisy review items;
+    - repeated observations for the same asset/product keep the strongest and
+      most recent source row.
+
+    The returned ``match_score`` is temporary. It helps classify the match as
+    ``support`` or ``unsure``, but users should rely on ``match_basis``,
+    ``rationale``, and ``evidence_refs`` when deciding whether to accept it.
+    """
     inventory_items = JsonItems.from_payload(input_payload, key="inventory_items").items
     reference_products = [
         product
@@ -130,6 +165,19 @@ def _normalize_reference_product(product: dict[str, Any]) -> dict[str, Any] | No
 
 
 def _score_product_match(inventory_row: dict[str, Any], product_row: dict[str, Any]) -> float:
+    """Score one observed software row against one known product.
+
+    The score blends vendor similarity and product-name similarity. Vendor
+    agreement is used as a gate when a vendor is present because a wrong vendor
+    can point to the wrong vulnerability universe. Product-name agreement carries
+    more weight after that because inventory rows usually describe installed
+    software by product name.
+
+    The containment boost handles common source data shapes, such as "Apache
+    HTTP Server 2.4" matching "Apache HTTP Server". Stricter environments may
+    want exact package identifiers, package URLs, CPE strings, or source-specific
+    matching logic instead of these fuzzy rules.
+    """
     inventory_name = _normalize_name(inventory_row.get("software_name"))
     inventory_vendor = _normalize_vendor(inventory_row.get("vendor"))
     if not inventory_name:
@@ -225,6 +273,16 @@ def _is_contained_name(left: str, right: str) -> bool:
 
 
 def _score_to_verdict(score: float) -> str:
+    """Translate a temporary numeric score into review language.
+
+    ``support`` means the match is strong enough to recommend accepting after
+    review. ``unsure`` means the match is worth showing but should receive closer
+    inspection. ``contradict`` means the match is too weak and is normally
+    filtered out before it reaches a reviewer.
+
+    Adjust these thresholds when you want a more aggressive or more conservative
+    matching process.
+    """
     if score >= 0.8:
         return "support"
     if score >= 0.5:
@@ -236,6 +294,12 @@ def _match_basis(
     inventory_row: dict[str, Any],
     product_row: dict[str, Any],
 ) -> str:
+    """Explain why the software row matched the product.
+
+    The wording avoids the numeric score on purpose. A reviewer should see the
+    observed software, observed vendor, and matched product, then decide whether
+    the mapping makes sense.
+    """
     software_name = _first_non_empty(inventory_row.get("software_name")) or "observed software"
     product_name = _first_non_empty(product_row.get("product_name")) or "reference product"
     vendor = _first_non_empty(inventory_row.get("vendor")) or "unknown vendor"
@@ -251,6 +315,12 @@ def _match_basis(
 
 
 def _inventory_source_record_id(inventory_row: dict[str, Any]) -> str:
+    """Choose the best available pointer back to the source inventory row.
+
+    A file-and-row pointer is best because a user or agent can inspect the exact
+    source record. If that is unavailable, a row hash or an
+    asset/software/version value is still better than an untraceable decision.
+    """
     source_file = _first_non_empty(inventory_row.get("_source_file"))
     source_row = _first_non_empty(inventory_row.get("_source_row"))
     if source_file and source_row:

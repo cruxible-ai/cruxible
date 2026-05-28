@@ -1,4 +1,18 @@
-"""Governed KEV impact assessment providers."""
+"""Decide which asset/vulnerability situations deserve review.
+
+This file contains the demo kit's security judgment. It answers questions like:
+
+- Does this installed product version appear affected by this CVE?
+- Is the affected asset exposed enough to propose an action item?
+- Do active controls actually mitigate this kind of vulnerability?
+- Has an already accepted exposure become stale after the reference data changed?
+
+The surrounding configuration supplies explicit inputs: assets, products,
+vulnerabilities, control mappings, and existing accepted facts. The functions in
+this file decide what those facts mean for triage. They return plain rationale
+and evidence references so a user or their agent can inspect the decision and
+customize the policy for their own environment.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +29,22 @@ def assess_asset_affected(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Assess version applicability for pre-joined asset/product/vulnerability rows."""
+    """Decide whether an asset's installed product version is affected.
+
+    The input rows already connect an asset's installed product with a
+    vulnerability's affected product claim. This function only decides whether
+    the installed version falls inside the affected version range.
+
+    A version inside the affected range becomes review evidence. A version that
+    is known fixed, or outside the affected range, is dropped so it does not
+    create a noisy asset/vulnerability item.
+
+    If several installed products point to the same asset and CVE, the output
+    keeps one row for that asset/CVE pair. That matches the demo kit's model:
+    the thing to review is the asset's current posture for that vulnerability,
+    not every individual product path. If your environment needs product-by-
+    product posture, this is one of the places to customize.
+    """
     joined_product_edges = JsonItems.from_payload(
         input_payload, key="joined_product_edges"
     ).items
@@ -68,7 +97,26 @@ def assess_asset_exposure(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Assess which affected assets are materially exposed."""
+    """Decide whether an affected asset should be treated as exposed.
+
+    This is the main triage decision in the demo kit. It starts with "the asset
+    appears affected by the CVE" and adds business and control context:
+
+    - internet-facing assets are treated as directly exposed;
+    - production assets still matter even when they are not internet-facing;
+    - low-risk non-production assets are filtered out to avoid noisy review
+      queues;
+    - an active control only mitigates a vulnerability when it is explicitly
+      mapped to that vulnerability's class;
+    - controls that ``block`` or ``compensate`` can mark the asset mitigated;
+    - controls that ``reduce`` lower priority but leave the asset exposed;
+    - controls that only ``detect`` preserve useful context but do not claim
+      mitigation.
+
+    These are not universal rules. They are the demo kit's starting policy. A
+    user or agent should change this function when their exposure model, control
+    taxonomy, or priority policy differs.
+    """
     affected_items = _affected_items(input_payload)
     assets = JsonItems.from_payload(input_payload, key="assets").items
     asset_control_edges = JsonItems.from_payload(input_payload, key="asset_control_edges").items
@@ -182,7 +230,18 @@ def assess_exposure_reconciliation(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Find accepted exposure edges no longer supported by product-derived evidence."""
+    """Find accepted exposure facts that no longer look true.
+
+    Accepted exposure facts should continue to be supported by current product
+    mappings and current vulnerability reference data. If an asset/CVE exposure
+    was previously accepted but the current evidence no longer supports it, this
+    function creates a review item to close or update that exposure.
+
+    The reason is kept explicit. A stale exposure can mean the asset/product
+    mapping changed, the vulnerability/product reference changed, or the version
+    is no longer considered affected. Those reasons help a user or agent decide
+    whether to accept the closure or inspect upstream data first.
+    """
     accepted_exposure_edges = JsonItems.from_payload(
         input_payload, key="accepted_exposure_edges"
     ).items
@@ -315,12 +374,24 @@ def _first_non_empty(*values: Any) -> str | None:
 
 
 def _verdict_rank(verdict: str) -> int:
+    """Prefer stronger evidence when several product paths point to one CVE.
+
+    ``support`` beats ``unsure`` because the review item should keep the best
+    available reason for why the asset may be affected. ``contradict`` is lowest
+    and is normally filtered out earlier.
+    """
     return {"support": 2, "unsure": 1, "contradict": 0}.get(verdict, -1)
 
 
 def _classes_by_vulnerability(
     classification_edges: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
+    """Group vulnerability classes by CVE for control review.
+
+    A control should not be considered relevant just because it is attached to
+    the asset. The CVE also needs a class, such as "path traversal", so the code
+    can ask whether the active control is known to help with that class.
+    """
     classes_by_vulnerability: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for edge in classification_edges:
         cve_id = _edge_from_id(edge)
@@ -343,6 +414,12 @@ def _classes_by_vulnerability(
 def _mitigations_by_control_class(
     control_mitigation_edges: list[dict[str, Any]],
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Group control coverage rules by control and vulnerability class.
+
+    These rows say what a control is expected to do for a class of vulnerability:
+    block it, reduce the risk, detect it, or compensate for it in some other
+    way. They are the source of the control decision later in this file.
+    """
     mitigations_by_control_class: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for edge in control_mitigation_edges:
         control_id = _edge_from_id(edge)
@@ -404,6 +481,13 @@ def _stale_exposure_rationale(
 
 
 def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:
+    """Decide whether the asset looks reachable enough to review.
+
+    Internet exposure is treated as strong evidence. Production systems remain
+    worth review even without explicit internet exposure because internal
+    reachability and business impact may still matter. Lower-risk assets are
+    filtered out so the review queue does not fill with weak cases.
+    """
     internet_exposed = asset.get("internet_exposed")
     environment = _first_non_empty(asset.get("environment")) or ""
     criticality = _first_non_empty(asset.get("criticality")) or ""
@@ -421,6 +505,13 @@ def _derive_exposure_priority(
     exploitability_verdict: str,
     control_verdict: str,
 ) -> str:
+    """Choose the first review priority before control effects are applied.
+
+    This priority is about operational urgency for the asset, not just CVSS or
+    EPSS severity. A directly exposed critical asset starts high. Important
+    production assets also stay high enough for review even when some evidence is
+    uncertain. Control coverage may lower the priority later.
+    """
     criticality = _first_non_empty(asset.get("criticality")) or ""
     if exploitability_verdict == "support" and control_verdict == "support":
         return "critical" if criticality == "critical" else "high"
@@ -434,6 +525,20 @@ def _assess_class_aware_controls(
     vulnerability_classes: list[dict[str, Any]],
     mitigations_by_control_class: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> dict[str, Any]:
+    """Decide whether the asset's active controls help with this CVE.
+
+    The asset must have an active control, and the CVE must have a class that the
+    control is mapped to. This prevents broad statements like "the asset has EDR,
+    so every vulnerability is mitigated."
+
+    Control effects are interpreted this way:
+    - ``blocks`` and ``compensates`` are strong enough to call the exposure
+      mitigated;
+    - ``reduces`` is useful risk reduction but still leaves the asset exposed;
+    - ``detects`` is useful monitoring context but does not reduce exposure;
+    - active controls with no matching class produce ``unsure`` so a user can
+      decide whether the control mapping needs improvement.
+    """
     if not active_controls:
         return {
             "status": "exposed",
@@ -522,6 +627,7 @@ def _assess_class_aware_controls(
 
 
 def _control_effect_rank(effect: str) -> int:
+    """Order control effects from strongest to weakest mitigation."""
     return {
         "blocks": 0,
         "compensates": 1,
@@ -531,6 +637,7 @@ def _control_effect_rank(effect: str) -> int:
 
 
 def _class_aware_control_basis(matches: list[dict[str, Any]]) -> str:
+    """Explain which control/class matches affected the decision."""
     phrases: list[str] = []
     for match in matches[:3]:
         phrase = (
@@ -549,6 +656,13 @@ def _adjust_priority_for_control_effect(
     priority: str,
     control_assessment: dict[str, Any],
 ) -> str:
+    """Lower priority when controls reduce the need for urgent action.
+
+    A mitigated issue should still be visible, but it should be less urgent than
+    an unmitigated exposure. ``reduces`` lowers priority once while keeping the
+    item exposed. ``blocks`` and ``compensates`` mark the item mitigated and lower
+    urgency more strongly.
+    """
     effect = str(control_assessment.get("effect", ""))
     status = str(control_assessment.get("status", ""))
     if status == "mitigated":
@@ -559,6 +673,7 @@ def _adjust_priority_for_control_effect(
 
 
 def _lower_priority(priority: str) -> str:
+    """Move one step down the demo kit's urgency scale."""
     return {
         "critical": "high",
         "high": "medium",
@@ -573,6 +688,12 @@ def _build_exposure_rationale(
     exploitability_verdict: str,
     control_assessment: dict[str, Any] | None = None,
 ) -> str:
+    """Write the short explanation shown to a reviewer.
+
+    The text should explain why the asset is worth review and whether controls
+    mitigate, reduce, or simply add context. It avoids internal implementation
+    detail so users and agents can reason from the explanation directly.
+    """
     hostname = _first_non_empty(asset.get("hostname")) or "asset"
     environment = _first_non_empty(asset.get("environment")) or "unknown"
     exposure_clause = (
