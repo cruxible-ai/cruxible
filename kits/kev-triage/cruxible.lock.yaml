@@ -1,12 +1,12 @@
 version: '1'
-config_digest: sha256:b29c15660ca7f7760347e4053f43d8564a98ee0b3ee864fe6d248039d1c1a437
-lock_digest: sha256:df9727adbcf1ae26833a4c5f47a1a9a22fc8e342df521127072b31c7aae04f63
-generated_at: 2026-05-27 21:02:04.328504+00:00
+config_digest: sha256:8ee6ed2cb08d2e5c522b5a70e9ebf82ebf3eaa1b3e0253093622586b470eac74
+lock_digest: sha256:afdc5fa61ed2ec1093481c5d6410313010407fecb5e5e19bc11b8cd0c263389b
+generated_at: 2026-05-28 11:23:35.299896+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:d22398167dc1d1ee58d5826de973eaefeb8af86280acbc07ff87e2f438465cdb
+    sha256: sha256:f8671b9da8f68c2eae1941a59a2b96195af912c2f14cfdd41098a8dd4d0f193b
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational
         system exports, and review material for governed proposals.
@@ -23,7 +23,7 @@ providers:
   normalize_local_seed_tables:
     version: 1.0.0
     ref: kit://providers/seed.py::normalize_local_seed_tables
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false
@@ -32,7 +32,7 @@ providers:
   load_software_inventory:
     version: 1.0.0
     ref: kit://providers/seed.py::load_software_inventory
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false
@@ -41,7 +41,7 @@ providers:
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false
@@ -49,7 +49,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false
@@ -57,7 +57,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false
@@ -65,7 +65,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_sha256: sha256:47286a947ab52a85206aaa393e50457509ac56c08349cb77fb0f395df80de713
+    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
     runtime: python
     deterministic: true
     side_effects: false

@@ -8,9 +8,9 @@ partner API incident and concluded it materially reduces exposure to WebLogic
 administrative endpoints when source CIDRs are tightly constrained and changes
 are time-bounded.
 
-## Candidate graph facts
+## Curated local graph facts
 
-- Proposed `control_mitigates_class`:
+- Seeded `control_mitigates_class`:
   `CTRL-3 -> admin_interface_rce`
   `validation_basis=Replay of blocked admin-console requests from non-allowlisted partner hosts`
 

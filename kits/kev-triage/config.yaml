@@ -244,7 +244,11 @@ relationships:
           always_review_on_unsure: true
 
   - name: control_mitigates_class
-    description: Accepted judgment that a compensating control materially mitigates a vulnerability class.
+    description: >
+      Curated local control-coverage knowledge that says a compensating
+      control mitigates a vulnerability class. Operators maintain this as
+      deterministic local state; agents consume it when assessing posture
+      and should raise data/config corrections when it is missing or wrong.
     from: CompensatingControl
     to: VulnerabilityClass
     properties:
@@ -253,11 +257,6 @@ relationships:
       verified_at: {type: date, optional: true}
       expires_at: {type: date, optional: true}
       evidence_refs: {type: json, optional: true}
-    proposal_policy:
-      signals:
-        control_effectiveness:
-          role: required
-          always_review_on_unsure: true
 
   - name: asset_remediated_vulnerability
     description: >
@@ -676,9 +675,6 @@ named_queries:
       - as: mitigated_class
         relationship: control_mitigates_class
         direction: outgoing
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
       - as: classified_vulnerability
         relationship: vulnerability_classified_as
         direction: incoming
@@ -773,9 +769,6 @@ named_queries:
         direction: incoming
         many: true
         limit: 20
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
     order_by:
       - by: $result.entity_id
         direction: asc
@@ -850,6 +843,7 @@ contracts:
       asset_has_control: {type: json}
       asset_has_exception: {type: json}
       asset_patch_window: {type: json}
+      control_mitigates_class: {type: json}
 
   SoftwareInventory:
     description: Raw software inventory from CMDB and inventory tools with business-friendly names.
@@ -898,11 +892,6 @@ contracts:
     fields:
       items: {type: json}
 
-  ControlMitigatesClassProposalInput:
-    description: Agent-selected control-to-vulnerability-class mitigation proposals.
-    fields:
-      items: {type: json}
-
   ExposureReconciliationInput:
     description: Accepted exposure state plus product-derived current affected candidates.
     fields:
@@ -921,7 +910,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:d22398167dc1d1ee58d5826de973eaefeb8af86280acbc07ff87e2f438465cdb
+    sha256: sha256:f8671b9da8f68c2eae1941a59a2b96195af912c2f14cfdd41098a8dd4d0f193b
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
@@ -1031,6 +1020,7 @@ workflows:
             - asset_has_control
             - asset_has_exception
             - asset_patch_window
+            - control_mitigates_class
         as: raw_tables
 
       - id: seed
@@ -1173,6 +1163,21 @@ workflows:
           to_type: PatchWindow
           to_id: $item.patch_window_id
         as: patch_window_edges
+      - id: control_mitigation_edges
+        make_relationships:
+          relationship_type: control_mitigates_class
+          items: $steps.seed.control_mitigates_class
+          from_type: CompensatingControl
+          from_id: $item.control_id
+          to_type: VulnerabilityClass
+          to_id: $item.class_id
+          properties:
+            effect: $item.effect
+            validation_basis: $item.validation_basis
+            verified_at: $item.verified_at
+            expires_at: $item.expires_at
+            evidence_refs: $item.evidence_refs
+        as: control_mitigation_edges
 
       # --- Apply ---
       - id: apply_local_state
@@ -1191,6 +1196,7 @@ workflows:
             - control_edges
             - exception_edges
             - patch_window_edges
+            - control_mitigation_edges
         as: apply_local_state
     returns: apply_local_state
 
@@ -1555,75 +1561,6 @@ workflows:
         as: proposal
     returns: proposal
 
-  propose_control_mitigates_class:
-    type: proposal
-    description: >
-      Propose that an existing compensating control materially mitigates
-      a vulnerability class. This is the stock onboarding path and may be
-      tuned to the user's control evidence model.
-    contract_in: ControlMitigatesClassProposalInput
-    contract_out: RelationshipGroupProposalArtifact
-    steps:
-      - id: mitigation_summary
-        aggregate_items:
-          items: $input.items
-          group_by:
-            verdict: $item.verdict
-            class_id: $item.class_id
-          measures:
-            proposal_count:
-              count: true
-            controls:
-              count_distinct:
-                value: $item.control_id
-        as: mitigation_summary
-      - id: candidates
-        make_candidates:
-          relationship_type: control_mitigates_class
-          items: $input.items
-          from_type: CompensatingControl
-          from_id: $item.control_id
-          to_type: VulnerabilityClass
-          to_id: $item.class_id
-          properties:
-            effect: $item.effect
-            validation_basis: $item.validation_basis
-            verified_at: $item.verified_at
-            expires_at: $item.expires_at
-            evidence_refs: $item.evidence_refs
-        as: candidates
-      - id: control_signals
-        map_signals:
-          signal_source: control_effectiveness
-          items: $input.items
-          from_id: $item.control_id
-          to_id: $item.class_id
-          evidence: $item.validation_basis
-          enum:
-            path: verdict
-            map:
-              support: support
-              unsure: unsure
-              contradict: contradict
-        as: control_signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: control_mitigates_class
-          candidates_from: candidates
-          signals_from: [control_signals]
-          pending_refresh_mode: retain_missing
-          thesis_text: >
-            Agent-selected control mitigation coverage for vulnerability class
-          thesis_facts:
-            rule_id: agent_control_class_mitigation
-            rule_version: 1
-            source: control_review
-          analysis_state:
-            mitigation_summary: $steps.mitigation_summary.items
-          proposed_by: agent
-        as: proposal
-    returns: proposal
-
   propose_exposure_reconciliation:
     type: proposal
     contract_out: RelationshipGroupProposalArtifact
@@ -1821,11 +1758,11 @@ feedback_profiles:
     version: 1
     reason_codes:
       control_not_validated:
-        description: Control effectiveness has not been tested against this vulnerability class.
+        description: Curated local control coverage has not been tested against this vulnerability class; correct the local seed/config evidence.
         remediation_hint: quality_check
         required_scope_keys: [control_type]
       wrong_vulnerability_class:
-        description: Control does not apply to this vulnerability class.
+        description: Curated local control coverage maps this control to the wrong vulnerability class; correct the local seed/config mapping.
         remediation_hint: constraint
         required_scope_keys: [control_type, class]
     scope_keys:

@@ -87,8 +87,9 @@ traces, tri-state signal evidence, receipts, `evidence_source`, and
 
 When a report says a host was affected by a CVE, use that source to support or
 challenge `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
-`asset_patch_exception_for`, `vulnerability_classified_as`, or
-`control_mitigates_class`.
+`asset_patch_exception_for`, or `vulnerability_classified_as`. Treat
+`control_mitigates_class` as curated local state: inspect it as context, and
+report a data/config authoring issue if the mapping is missing or wrong.
 
 ## Task 1 — Daily triage pass
 
@@ -225,24 +226,17 @@ materially blocks a specific CVE class.
    cruxible get-entity --type CompensatingControl --id CTRL-1
    ```
 
-2. Propose `control_mitigates_class` for the vulnerability class the control mitigates:
+2. Inspect curated `control_mitigates_class` mappings for the vulnerability
+   class the control is meant to cover:
    ```
-   cruxible group propose \
-     --relationship control_mitigates_class \
-     --members '[{"from_type":"CompensatingControl","from_id":"CTRL-1",
-                   "to_type":"VulnerabilityClass","to_id":"path_traversal",
-                   "relationship_type":"control_mitigates_class",
-                   "properties":{"effect":"blocks",
-                                 "validation_basis":"WAF rule set 941xx blocks path traversal payloads",
-                                 "verified_at":"2025-10-15",
-                                 "expires_at":"2026-04-15",
-                                 "evidence_refs":[{"source":"waf_test","source_record_id":"CTRL-1-941xx-2025-10-15"}]},
-                   "signals":[{"signal_source":"control_effectiveness","signal":"support",
-                                "evidence":"WAF rule set 941xx blocks path traversal payloads; tested 2025-10-15"}]}]' \
-     --thesis "Edge WAF ruleset 941xx blocks path traversal exploit strings" \
-     --thesis-facts '{"control_id":"CTRL-1","class_id":"path_traversal"}' \
-     --signal-source control_effectiveness
+   cruxible query --query vulnerability_class_context --param class_id=path_traversal
+   cruxible query --query control_coverage_gap --param control_id=CTRL-1
    ```
+
+   Do not propose `control_mitigates_class` as a governed relationship. It is
+   deterministic local state loaded by `build_local_state`. If the mapping is
+   missing, stale, or too broad, cite the evidence in the review summary and
+   ask the operator to correct the local seed/config data.
 
 ## Task 4 — Remediation verification
 
@@ -375,12 +369,12 @@ Every governed relationship the agent can propose:
 | `asset_vulnerability_posture` | Asset → Vulnerability | `product_version_evidence` + `exploitability_signal` + `control_effectiveness` |
 | `asset_patch_exception_for` | Asset → Vulnerability | `policy_review` |
 | `vulnerability_classified_as` | Vulnerability → VulnerabilityClass | `vulnerability_classification` |
-| `control_mitigates_class` | CompensatingControl → VulnerabilityClass | `control_effectiveness` |
 | `asset_remediated_vulnerability` | Asset → Vulnerability | `remediation_verification` |
 
 `asset_runs_product`, `asset_vulnerability_posture`, and
 `asset_remediated_vulnerability` closure proposals are typically produced by
-batch workflows. Classifications and control-class mitigation proposals can be
-produced by agent-called workflows with explicit input. Exception and
-remediation verification proposals are typically one-off agent proposals from
-review material.
+batch workflows. Classifications can be produced by agent-called workflows with
+explicit input. Exception and remediation verification proposals are typically
+one-off agent proposals from review material. `control_mitigates_class` is not
+listed here because it is deterministic local state, not an agent-governed
+proposal relationship.

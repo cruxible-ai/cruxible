@@ -20,7 +20,8 @@ build during the next web patch window.
 
 Use this postmortem as supporting evidence for governed proposals such as
 `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
-`asset_patch_exception_for`, and `control_mitigates_class`. Do not create a
+and `asset_patch_exception_for`. It may also justify a local data/config
+correction to curated `control_mitigates_class` mappings. Do not create a
 separate graph object for the source report.
 
 ## Lessons to preserve in evidence

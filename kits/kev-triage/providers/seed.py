@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ _LOCAL_SEED_FILES = {
     "asset_has_control": "asset_has_control.csv",
     "asset_has_exception": "asset_has_exception.csv",
     "asset_patch_window": "asset_patch_window.csv",
+    "control_mitigates_class": "control_mitigates_class.csv",
 }
 
 
@@ -63,6 +65,8 @@ def _build_local_seed_data(tables: dict[str, list[dict[str, Any]]]) -> dict[str,
             "rollback_required",
         ):
             row[field] = _parse_bool(row.get(field))
+    for row in payload["control_mitigates_class"]:
+        row["evidence_refs"] = _parse_json_list(row.get("evidence_refs"))
     return payload
 
 
@@ -103,6 +107,16 @@ def _parse_bool(value: Any) -> bool | None:
     if lowered in {"false", "0", "no"}:
         return False
     return None
+
+
+def _parse_json_list(value: Any) -> list[Any]:
+    text = _first_non_empty(value)
+    if text is None:
+        return []
+    parsed = json.loads(text)
+    if isinstance(parsed, list):
+        return parsed
+    return []
 
 
 def _first_non_empty(*values: Any) -> str | None:

@@ -141,6 +141,13 @@ def test_kev_config_omits_incident_and_finding_ontology() -> None:
     assert "incident_history_for_product" not in config.named_queries
     assert "open_findings_for_asset" not in config.named_queries
     assert "prior_exploitation_context" not in config.named_queries
+    assert "propose_control_mitigates_class" not in config.workflows
+    control_mitigation = next(
+        relationship
+        for relationship in config.relationships
+        if relationship.name == "control_mitigates_class"
+    )
+    assert control_mitigation.proposal_policy is None
 
 
 def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) -> None:
@@ -193,13 +200,22 @@ def test_load_local_seed_data_reads_expected_rows() -> None:
         "asset_has_control",
         "asset_has_exception",
         "asset_patch_window",
+        "control_mitigates_class",
     }
     assert payload["assets"][0]["internet_exposed"] is True
+    assert payload["control_mitigates_class"][0]["effect"] == "blocks"
+    assert payload["control_mitigates_class"][0]["evidence_refs"] == [
+        {
+            "source": "control_review",
+            "source_record_id": "CTRL-1:path_traversal",
+            "observed_at": "2026-04-01",
+        }
+    ]
 
 
 def test_normalize_local_seed_tables_accepts_common_tabular_output() -> None:
     parsed = load_tabular_artifact_bundle(
-        {"expected_tables": ["assets", "asset_owned_by"]},
+        {"expected_tables": list(_seed_module._LOCAL_SEED_FILES)},
         _provider_context(KEV_KIT_DIR / "data" / "seed"),
     )
 
@@ -207,6 +223,9 @@ def test_normalize_local_seed_tables_accepts_common_tabular_output() -> None:
 
     assert payload["assets"][0]["internet_exposed"] is True
     assert payload["asset_owned_by"][0]["asset_id"]
+    assert payload["control_mitigates_class"][0]["evidence_refs"][0][
+        "source_record_id"
+    ] == "CTRL-1:path_traversal"
 
 
 def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
@@ -604,6 +623,12 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
         for control in graph.list_entities("CompensatingControl")
         if control.properties.get("status") == "active"
     }
+    path_traversal_mitigating_controls = {
+        edge["from_id"]
+        for edge in graph.list_edges("control_mitigates_class")
+        if edge["to_id"] == "path_traversal"
+        and edge["properties"].get("effect") in {"blocks", "compensates"}
+    }
     affected = assess_asset_affected(
         {
             "asset_product_edges": graph.list_edges("asset_runs_product"),
@@ -622,13 +647,15 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
     ):
         if edge["to_id"] not in active_controls:
             continue
+        if edge["to_id"] not in path_traversal_mitigating_controls:
+            continue
         cve_ids = sorted(affected_cves_by_asset.get(edge["from_id"], []))
         if cve_ids:
             selected = (edge["from_id"], edge["to_id"], cve_ids[0])
             break
 
     assert selected is not None
-    asset_id, control_id, cve_id = selected
+    asset_id, _control_id, cve_id = selected
     class_id = "path_traversal"
 
     _approve_workflow_group_with_input(
@@ -641,24 +668,6 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
                     "class_id": class_id,
                     "basis": "Regression classification for mitigated posture signal.",
                     "source": "test",
-                    "verdict": "support",
-                }
-            ]
-        },
-    )
-    _approve_workflow_group_with_input(
-        instance,
-        "propose_control_mitigates_class",
-        {
-            "items": [
-                {
-                    "control_id": control_id,
-                    "class_id": class_id,
-                    "effect": "blocks",
-                    "validation_basis": "Regression control coverage.",
-                    "verified_at": "2026-04-01",
-                    "expires_at": "2026-10-01",
-                    "evidence_refs": [],
                     "verdict": "support",
                 }
             ]
@@ -765,6 +774,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert "asset_vulnerability_posture" in relationship_names
     assert "asset_exposed_to_vulnerability" not in relationship_names
     assert graph.edge_count("asset_runs_product") > 0
+    assert graph.edge_count("control_mitigates_class") > 0
     assert graph.edge_count("asset_vulnerability_posture") > 0
     assert graph.edge_count("asset_remediated_vulnerability") == 0
 
@@ -842,29 +852,6 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
             ]
         },
     )
-    _approve_workflow_group_with_input(
-        instance,
-        "propose_control_mitigates_class",
-        {
-            "items": [
-                {
-                    "control_id": "CTRL-1",
-                    "class_id": "path_traversal",
-                    "effect": "blocks",
-                    "validation_basis": "Test control coverage traversal",
-                    "verified_at": "2026-04-01",
-                    "expires_at": "2026-10-01",
-                    "evidence_refs": [
-                        {
-                            "source": "control_review",
-                            "source_record_id": "CTRL-1:path_traversal",
-                        }
-                    ],
-                    "verdict": "support",
-                }
-            ]
-        },
-    )
     vulnerability_class_context = service_query(
         instance,
         "vulnerability_class_context",
@@ -896,6 +883,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         {
             "source": "control_review",
             "source_record_id": "CTRL-1:path_traversal",
+            "observed_at": "2026-04-01",
         }
     ]
 

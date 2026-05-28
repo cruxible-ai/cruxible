@@ -222,6 +222,11 @@ is where optional inputs such as exceptions, controls, patch windows, and
 review-material evidence become required if the user chooses to keep the
 queries or workflows that depend on them.
 
+`control_mitigates_class` is deterministic curated local state, not a governed
+proposal workflow. During onboarding, load or edit the local control-class
+mapping seed/config and treat missing or wrong mappings as data authoring
+issues rather than review queue items.
+
 After modifying the final supported surface, rerender the runtime config views
 inline and update the README marker blocks again. Do this before initializing
 or running the local so the durable README matches the config the agent is about
@@ -479,7 +484,8 @@ Tell the user concisely:
 - The local is live; the proposal chain walked through with reviewer approval
   at each stage
 - To exercise the ongoing daily loop on this local (waiver intake, control
-  reviews, remediation verification, daily triage summary), run `kev-triage`
+  coverage inspection, remediation verification, daily triage summary), run
+  `kev-triage`
   next
 - If they want to keep adapting the kit, the next likely changes are provider
   templates, input-file shapes, workflow params, kept workflows, and named

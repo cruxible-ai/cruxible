@@ -52,14 +52,14 @@ flowchart LR
   entity_Vendor["Vendor"]
   entity_Vulnerability["Vulnerability"]
   entity_VulnerabilityClass["Vulnerability Class"]
-  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_Product,entity_Vendor,entity_Vulnerability canonicalEntity
-  class entity_VulnerabilityClass governedEntity
+  class entity_Asset,entity_BusinessService,entity_CompensatingControl,entity_Exception,entity_Owner,entity_PatchWindow,entity_Product,entity_Vendor,entity_Vulnerability,entity_VulnerabilityClass canonicalEntity
 
   %% Deterministic canonical relationships
   entity_Asset -- "Asset Has Control" --> entity_CompensatingControl
   entity_Asset -- "Asset Has Exception" --> entity_Exception
   entity_Asset -- "Asset Owned By" --> entity_Owner
   entity_Asset -- "Asset Patch Window" --> entity_PatchWindow
+  entity_CompensatingControl -- "Control Mitigates Class" --> entity_VulnerabilityClass
   entity_Product -- "Product From Vendor" --> entity_Vendor
   entity_BusinessService -- "Service Depends On Asset" --> entity_Asset
   entity_Vulnerability -- "Vulnerability Affects Product" --> entity_Product
@@ -69,10 +69,9 @@ flowchart LR
   entity_Asset -. "Asset Remediated Vulnerability" .-> entity_Vulnerability
   entity_Asset -. "Asset Runs Product" .-> entity_Product
   entity_Asset -. "Asset Vulnerability Posture" .-> entity_Vulnerability
-  entity_CompensatingControl -. "Control Mitigates Class" .-> entity_VulnerabilityClass
   entity_Vulnerability -. "Vulnerability Classified As" .-> entity_VulnerabilityClass
-  linkStyle 0,1,2,3,4,5,6 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 7,8,9,10,11,12 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 8,9,10,11,12 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -94,17 +93,15 @@ flowchart LR
 
   workflow_pipeline_build_local_state["1. Seed canonical state<br/>Canonical"]
   workflow_pipeline_propose_asset_products["2. Asset Runs Product<br/>Governed proposal"]
-  workflow_pipeline_propose_control_mitigates_class["3. Control Mitigates Class<br/>Governed proposal"]
-  workflow_pipeline_propose_vulnerability_classification["4. Vulnerability Classified As<br/>Governed proposal"]
-  workflow_pipeline_propose_asset_exposure["5. Asset Vulnerability Posture<br/>Governed proposal"]
-  workflow_pipeline_propose_exposure_reconciliation["6. Asset Remediated Vulnerability<br/>Governed proposal"]
+  workflow_pipeline_propose_vulnerability_classification["3. Vulnerability Classified As<br/>Governed proposal"]
+  workflow_pipeline_propose_asset_exposure["4. Asset Vulnerability Posture<br/>Governed proposal"]
+  workflow_pipeline_propose_exposure_reconciliation["5. Asset Remediated Vulnerability<br/>Governed proposal"]
   workflow_pipeline_build_local_state --> workflow_pipeline_propose_asset_products
-  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_control_mitigates_class
-  workflow_pipeline_propose_control_mitigates_class --> workflow_pipeline_propose_vulnerability_classification
+  workflow_pipeline_propose_asset_products --> workflow_pipeline_propose_vulnerability_classification
   workflow_pipeline_propose_vulnerability_classification --> workflow_pipeline_propose_asset_exposure
   workflow_pipeline_propose_asset_exposure --> workflow_pipeline_propose_exposure_reconciliation
   class workflow_pipeline_build_local_state canonicalWorkflow
-  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_control_mitigates_class,workflow_pipeline_propose_vulnerability_classification,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_exposure_reconciliation governedWorkflow
+  class workflow_pipeline_propose_asset_products,workflow_pipeline_propose_vulnerability_classification,workflow_pipeline_propose_asset_exposure,workflow_pipeline_propose_exposure_reconciliation governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -118,7 +115,7 @@ flowchart LR
 
 **Result**
 - Canonical entities: Asset, Business Service, Compensating Control, Exception, Owner, Patch Window, Vulnerability Class
-- Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Service Depends On Asset
+- Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Control Mitigates Class, Service Depends On Asset
 
 **Provider source**
 - Normalize Local Seed Tables (Python Function, v1.0.0); source: `kit://providers/seed.py::normalize_local_seed_tables`; artifact: Local Seed Bundle
@@ -138,20 +135,7 @@ flowchart LR
 - Load Software Inventory (Python Function, v1.0.0); source: `kit://providers/seed.py::load_software_inventory`; artifact: Local Seed Bundle
 - Match Software To Products (Python Function, v1.0.0); source: `kit://providers/matching.py::match_software_to_products`
 
-### 3. Propose Control Mitigates Class
-
-**Role:** Governed proposal
-
-**Input context**
-- None
-
-**Result**
-- Proposed relationships: Control Mitigates Class
-
-**Provider source**
-- -
-
-### 4. Propose Vulnerability Classification
+### 3. Propose Vulnerability Classification
 
 **Role:** Governed proposal
 
@@ -164,7 +148,7 @@ flowchart LR
 **Provider source**
 - -
 
-### 5. Propose Asset Exposure
+### 4. Propose Asset Exposure
 
 **Role:** Governed proposal
 
@@ -179,7 +163,7 @@ flowchart LR
 - Assess Asset Affected (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_affected`
 - Assess Asset Exposure (Python Function, v1.0.0); source: `kit://providers/assessment.py::assess_asset_exposure`
 
-### 6. Propose Exposure Reconciliation
+### 5. Propose Exposure Reconciliation
 
 **Role:** Governed proposal
 
@@ -206,7 +190,6 @@ signals, and linked feedback/outcome profiles for the Loop 1/2 flywheel.
 | Asset Remediated Vulnerability | Asset -> Vulnerability | Workflow: Propose Exposure Reconciliation | Remediation Verification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Remediated Resolution |
 | Asset Runs Product | Asset -> Product | Workflow: Propose Asset Products | Software Product Match | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 3 reason codes | Asset Runs Product Resolution |
 | Asset Vulnerability Posture | Asset -> Vulnerability | Workflow: Propose Asset Exposure | Control Effectiveness, Exploitability Signal, Product Version Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 4 reason codes | Asset Vulnerability Posture Resolution |
-| Control Mitigates Class | Compensating Control -> Vulnerability Class | Workflow: Propose Control Mitigates Class | Control Effectiveness | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 | Vulnerability Classified As | Vulnerability -> Vulnerability Class | Workflow: Propose Vulnerability Classification | Vulnerability Classification | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | 2 reason codes | - |
 <!-- CRUXIBLE:END governance-table -->
 
@@ -218,7 +201,7 @@ above is the source of truth for required/advisory signal labels.
 <!-- CRUXIBLE:BEGIN signal-policy-catalog -->
 | Signal Source | Role | Review Unsure | Used By | Notes |
 | --- | --- | --- | --- | --- |
-| `control_effectiveness` | required | yes | Asset Vulnerability Posture, Control Mitigates Class | - |
+| `control_effectiveness` | required | yes | Asset Vulnerability Posture | - |
 | `exploitability_signal` | required | yes | Asset Vulnerability Posture | - |
 | `policy_review` | required | no | Asset Patch Exception For | - |
 | `product_version_evidence` | required | yes | Asset Vulnerability Posture | - |
@@ -409,8 +392,8 @@ No configured constraints.
 #### `control_mitigates_class`
 - Version: `1`
 - Reason codes:
-  - `control_not_validated` (`quality_check`): Control effectiveness has not been tested against this vulnerability class.
-  - `wrong_vulnerability_class` (`constraint`): Control does not apply to this vulnerability class.
+  - `control_not_validated` (`quality_check`): Curated local control coverage has not been tested against this vulnerability class; correct the local seed/config evidence.
+  - `wrong_vulnerability_class` (`constraint`): Curated local control coverage maps this control to the wrong vulnerability class; correct the local seed/config mapping.
 - Scope keys:
   - `class`: `TO.class_id`
   - `control_type`: `FROM.control_type`
@@ -528,6 +511,10 @@ coverage, and vulnerability classification.
 When an evidence artifact says a host was affected by a CVE, use it to support
 or challenge a governed relationship proposal. For example, cite the report in
 `evidence_refs` on `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
-`asset_patch_exception_for`, `vulnerability_classified_as`, or
-`control_mitigates_class` rather than creating a separate graph object for the
-source report itself.
+`asset_patch_exception_for`, or `vulnerability_classified_as` rather than
+creating a separate graph object for the source report itself.
+
+`control_mitigates_class` is curated local state loaded by the canonical local
+build, not an agent-governed proposal. Agents should inspect it as context for
+posture assessment and report missing or wrong mappings as local data/config
+corrections.

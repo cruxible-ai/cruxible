@@ -8,12 +8,12 @@ Apache incidents and concluded it materially reduces exposure to path traversal
 and rewrite-based exploitation attempts against public Apache HTTP Server
 instances.
 
-## Candidate graph facts
+## Curated local graph facts
 
-- Proposed `control_mitigates_class`:
+- Seeded `control_mitigates_class`:
   `CTRL-1 -> path_traversal`
   `validation_basis=Validated against replay of observed path traversal requests`
-- Proposed `control_mitigates_class`:
+- Seeded `control_mitigates_class`:
   `CTRL-1 -> http_request_routing`
   `validation_basis=Emergency mod_rewrite blocking rule tested on production mirror`
 

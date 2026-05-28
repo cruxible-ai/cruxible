@@ -1,0 +1,5 @@
+control_id,class_id,effect,validation_basis,verified_at,expires_at,evidence_refs
+CTRL-1,path_traversal,blocks,Validated Edge WAF rule set against replayed path traversal requests,2026-04-01,2026-10-01,"[{""source"":""control_review"",""source_record_id"":""CTRL-1:path_traversal"",""observed_at"":""2026-04-01""}]"
+CTRL-1,http_request_routing,reduces,Emergency rewrite blocking rules reduce HTTP request routing exploitability on public Apache assets,2026-04-01,2026-10-01,"[{""source"":""control_review"",""source_record_id"":""CTRL-1:http_request_routing"",""observed_at"":""2026-04-01""}]"
+CTRL-2,admin_interface_rce,detects,Managed EDR detects post-exploitation behavior from administrative interface compromise but does not block initial access,2026-03-15,2026-09-15,"[{""source"":""control_review"",""source_record_id"":""CTRL-2:admin_interface_rce"",""observed_at"":""2026-03-15""}]"
+CTRL-3,admin_interface_rce,compensates,Reverse proxy allowlist restricts WebLogic administrative endpoint access to approved partner source ranges,2026-04-02,2026-10-02,"[{""source"":""control_review"",""source_record_id"":""CTRL-3:admin_interface_rce"",""observed_at"":""2026-04-02""}]"
