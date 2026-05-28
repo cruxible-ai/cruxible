@@ -73,6 +73,19 @@ def _include_result(row: object, alias: str) -> object:
 
 def _include_items(row: object, alias: str) -> list[object]:
     return list(getattr(_include_result(row, alias), "items", []))
+
+
+def _path_segment_review_status(row: object, alias: str) -> str:
+    segment = _row_path_segment(row, alias)
+    return segment.metadata.assertion.review.status
+
+
+def _has_exposure_path(rows: list[object], asset_id: str, cve_id: str) -> bool:
+    return any(
+        getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
+        and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
+        for row in rows
+    )
 _assessment_module = load_kit_provider_module(
     KEV_KIT_DIR / "providers" / "assessment.py",
     KEV_KIT_DIR,
@@ -886,6 +899,142 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
             "observed_at": "2026-04-01",
         }
     ]
+
+
+def test_broad_context_queries_include_reviewable_provenance(
+    tmp_path: Path,
+) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_public_kev_reference")
+    _apply_canonical_workflow(instance, "build_local_state")
+
+    graph = instance.load_graph()
+    product_to_vendor = {
+        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("product_from_vendor")
+    }
+    vulnerability_product = next(
+        edge
+        for edge in graph.list_edges("vulnerability_affects_product")
+        if edge["to_id"] in product_to_vendor
+    )
+    cve_id = vulnerability_product["from_id"]
+    product_id = vulnerability_product["to_id"]
+    vendor_id = product_to_vendor[product_id]
+
+    service_asset = graph.list_edges("service_depends_on_asset")[0]
+    asset_id = service_asset["to_id"]
+    owner_id = next(
+        edge["to_id"]
+        for edge in graph.list_edges("asset_owned_by")
+        if edge["from_id"] == asset_id
+    )
+
+    base_posture_properties = {
+        "status": "exposed",
+        "priority": "high",
+        "product_id": product_id,
+        "installed_version": "test-version",
+        "affected_basis": "Regression test affected basis.",
+        "exposure_basis": "Regression test exposure basis.",
+        "control_basis": "Regression test control basis.",
+        "evidence_source": "test",
+        "evidence_refs": [],
+        "rationale": "Regression test reviewable posture.",
+    }
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_vulnerability_posture",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={**base_posture_properties, "priority": "medium"},
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_vulnerability_posture",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={**base_posture_properties, "priority": "critical"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending", source="agent")
+                )
+            ),
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="vulnerability_classified_as",
+            from_type="Vulnerability",
+            from_id=cve_id,
+            to_type="VulnerabilityClass",
+            to_id="path_traversal",
+            properties={
+                "basis": "Regression pending classification.",
+                "source": "test",
+            },
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending", source="agent")
+                )
+            ),
+        )
+    )
+    instance.save_graph(graph)
+
+    vendor_context = service_query(
+        instance,
+        "vendor_service_impact",
+        {"vendor_id": vendor_id},
+    )
+    assert vendor_context.relationship_state == "reviewable"
+    vendor_rows = [
+        row
+        for row in vendor_context.results
+        if getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
+        and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
+    ]
+    assert {_path_segment_review_status(row, "exposure") for row in vendor_rows} >= {
+        "pending",
+        "unreviewed",
+    }
+
+    owner_queue = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
+    assert owner_queue.relationship_state == "live"
+    assert not _has_exposure_path(owner_queue.results, asset_id, cve_id)
+
+    vulnerability_class_context = service_query(
+        instance,
+        "vulnerability_class_context",
+        {"class_id": "path_traversal"},
+    )
+    assert vulnerability_class_context.relationship_state == "reviewable"
+    assert any(
+        getattr(_row_path_segment(row, "classification"), "from_id") == cve_id
+        and _path_segment_review_status(row, "classification") == "pending"
+        for row in vulnerability_class_context.results
+    )
+
+    control_coverage_gap = service_query(
+        instance,
+        "control_coverage_gap",
+        {"control_id": "CTRL-1"},
+    )
+    assert control_coverage_gap.relationship_state == "reviewable"
+    assert any(
+        getattr(_row_path_segment(row, "classified_vulnerability"), "from_id") == cve_id
+        and _path_segment_review_status(row, "classified_vulnerability") == "pending"
+        and getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
+        and _path_segment_review_status(row, "exposure") == "pending"
+        for row in control_coverage_gap.results
+    )
 
 
 def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:

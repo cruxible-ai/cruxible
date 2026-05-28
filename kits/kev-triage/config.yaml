@@ -568,15 +568,17 @@ named_queries:
 
   vendor_service_impact:
     description: >
-      Starting from a vendor, trace through affected products, approved
+      Starting from a vendor, trace through affected products, reviewable
       asset-vulnerability posture, and service dependencies to find business
       services in the blast radius. This broad investigation query keeps
-      remediated and exception-covered context visible so agents can triage
-      from the first result instead of treating it as a strict action queue.
+      accepted, unreviewed, pending, remediated, and exception-covered context
+      visible so agents can triage from the first result instead of treating it
+      as a strict action queue.
     entry_point: Vendor
     returns: BusinessService
     result_shape: path
     dedupe: path
+    relationship_state: reviewable
     max_paths: 2000
     max_paths_per_result: 20
     traversal:
@@ -589,9 +591,6 @@ named_queries:
       - as: exposure
         relationship: asset_vulnerability_posture
         direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -664,11 +663,14 @@ named_queries:
       This broad investigation query exposes the mitigation effect for agent
       interpretation: blocks/compensates are stronger mitigation coverage,
       reduces is risk-reduction coverage, and detects is monitoring rather
-      than blocking mitigation.
+      than blocking mitigation. It keeps accepted, unreviewed, and pending
+      posture/classification context visible where reviewable query visibility
+      allows.
     entry_point: CompensatingControl
     returns: BusinessService
     result_shape: path
     dedupe: path
+    relationship_state: reviewable
     max_paths: 2000
     max_paths_per_result: 20
     traversal:
@@ -678,15 +680,9 @@ named_queries:
       - as: classified_vulnerability
         relationship: vulnerability_classified_as
         direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
       - as: exposure
         relationship: asset_vulnerability_posture
         direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
       - as: service_dependency
         relationship: service_depends_on_asset
         direction: incoming
@@ -748,20 +744,19 @@ named_queries:
 
   vulnerability_class_context:
     description: >
-      Starting from a vulnerability class, return governed vulnerabilities
-      in the class and include the compensating controls mapped to that class.
+      Starting from a vulnerability class, return reviewable vulnerability
+      classifications in the class and include the compensating controls
+      mapped to that class.
     entry_point: VulnerabilityClass
     returns: Vulnerability
     result_shape: path
     dedupe: path
+    relationship_state: reviewable
     max_paths: 500
     traversal:
       - as: classification
         relationship: vulnerability_classified_as
         direction: incoming
-        where:
-          edge.metadata.assertion.review.status:
-            eq: approved
     include:
       controls:
         from: $entry

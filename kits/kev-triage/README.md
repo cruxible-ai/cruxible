@@ -254,7 +254,7 @@ relationship.
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Control Coverage Gap | Business Service | live | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services with asset-vulnerability posture tied to classes this control covers. This broad investigation query exposes the mitigation effect for agent interpretation: blocks/compensates are stronger mitigation coverage, reduces is risk-reduction coverage, and detects is monitoring rather than blocking mitigation. |
+| Control Coverage Gap | Business Service | reviewable | Control Mitigates Class (Outgoing) -> Vulnerability Classified As (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a compensating control, find the business services with asset-vulnerability posture tied to classes this control covers. This broad investigation query exposes the mitigation effect for agent interpretation: blocks/compensates are stronger mitigation coverage, reduces is risk-reduction coverage, and detects is monitoring rather than blocking mitigation. It keeps accepted, unreviewed, and pending posture/classification context visible where reviewable query visibility allows. |
 
 ### Owner
 
@@ -274,7 +274,7 @@ relationship.
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
 | Vendor Products | Product | live | Product From Vendor (Incoming) | Starting from a vendor, return products published by that vendor. |
-| Vendor Service Impact | Business Service | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, approved asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps remediated and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
+| Vendor Service Impact | Business Service | reviewable | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) -> Asset Vulnerability Posture (Incoming) -> Service Depends On Asset (Incoming) | Starting from a vendor, trace through affected products, reviewable asset-vulnerability posture, and service dependencies to find business services in the blast radius. This broad investigation query keeps accepted, unreviewed, pending, remediated, and exception-covered context visible so agents can triage from the first result instead of treating it as a strict action queue. |
 | Vendor Vulnerabilities | Vulnerability | live | Product From Vendor (Incoming) -> Vulnerability Affects Product (Incoming) | Starting from a vendor, return vulnerabilities across that vendor's products, preserving the product evidence path. |
 
 ### Vulnerability
@@ -288,7 +288,7 @@ relationship.
 
 | Query | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- |
-| Vulnerability Class Context | Vulnerability | live | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return governed vulnerabilities in the class and include the compensating controls mapped to that class. |
+| Vulnerability Class Context | Vulnerability | reviewable | Vulnerability Classified As (Incoming) | Starting from a vulnerability class, return reviewable vulnerability classifications in the class and include the compensating controls mapped to that class. |
 <!-- CRUXIBLE:END query-catalog -->
 
 `owner_patch_queue` is the strict action queue: it returns approved exposed
