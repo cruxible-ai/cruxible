@@ -355,6 +355,30 @@ class TestWorkflowCompiler:
         assert plan.steps[0].provider_entrypoint_sha256 is not None
         assert "apply_entities" in [step.kind for step in plan.steps]
 
+    def test_compile_canonical_workflow_allows_transform_provider_without_artifact(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        config = canonical_workflow_instance.load_config()
+        provider_name = config.workflows["build_reference"].steps[0].provider
+        assert provider_name is not None
+        config.providers[provider_name].artifact = None
+        canonical_workflow_instance.save_config(config)
+        write_lock_for_instance(canonical_workflow_instance)
+        config = canonical_workflow_instance.load_config()
+        lock = build_lock(config, canonical_workflow_instance.get_config_path().parent)
+
+        plan = compile_workflow(
+            config,
+            lock,
+            "build_reference",
+            {},
+            config_base_path=canonical_workflow_instance.get_config_path().parent,
+        )
+
+        assert plan.steps[0].provider_name == provider_name
+        assert plan.steps[0].artifact_name is None
+        assert plan.steps[0].artifact_sha256 is None
+
     def test_compile_workflow_carries_apply_all_step(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:

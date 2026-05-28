@@ -560,6 +560,41 @@ class TestValidateWorkflowExecution:
             validate_config(config)
         assert any("artifact 'artifact'" in error for error in exc_info.value.errors)
 
+    def test_canonical_workflow_allows_transform_provider_without_artifact(self):
+        config = self._workflow_config(
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                )
+            },
+            workflows={
+                "wf": WorkflowSchema(
+                    type="canonical",
+                    contract_in="WorkflowInput",
+                    steps=[
+                        WorkflowStepSchema(
+                            id="provider_step",
+                            provider="provider",
+                            input={"id": "$input.id"},
+                            **{"as": "loaded"},
+                        ),
+                        WorkflowStepSchema(
+                            id="apply_loaded",
+                            apply_entities={"entities_from": "loaded"},
+                            **{"as": "applied"},
+                        ),
+                    ],
+                    returns="applied",
+                )
+            },
+        )
+
+        validate_config(config)
+
     def test_invalid_workflow_returns_alias(self):
         config = self._workflow_config(
             workflows={

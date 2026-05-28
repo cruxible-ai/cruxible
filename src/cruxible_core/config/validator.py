@@ -1263,11 +1263,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
                         "must not declare side_effects"
                     )
-                if provider.artifact is None:
-                    errors.append(
-                        f"Workflow '{workflow_name}': canonical provider '{provider_name}' "
-                        "must declare an artifact bundle"
-                    )
 
 
 def _workflow_returns_relationship_proposal(workflow: Any) -> bool:

@@ -246,23 +246,19 @@ def compile_workflow(
                         f"Canonical workflow '{workflow_name}' requires deterministic, "
                         "side-effect-free providers"
                     )
-                if locked.artifact is None:
-                    raise ConfigError(
-                        f"Canonical workflow '{workflow_name}' provider '{step.provider}' "
-                        "must declare an artifact bundle"
+                if locked.artifact is not None:
+                    if config_base_path is None:
+                        raise ConfigError(
+                            f"Canonical workflow '{workflow_name}' requires config_base_path for "
+                            "artifact verification"
+                        )
+                    locked_artifact = lock.artifacts[locked.artifact]
+                    _verify_local_artifact_hash(
+                        locked.artifact,
+                        locked_artifact.uri,
+                        locked_artifact.sha256,
+                        config_base_path,
                     )
-                if config_base_path is None:
-                    raise ConfigError(
-                        f"Canonical workflow '{workflow_name}' requires config_base_path for "
-                        "artifact verification"
-                    )
-                locked_artifact = lock.artifacts[locked.artifact]
-                _verify_local_artifact_hash(
-                    locked.artifact,
-                    locked_artifact.uri,
-                    locked_artifact.sha256,
-                    config_base_path,
-                )
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
