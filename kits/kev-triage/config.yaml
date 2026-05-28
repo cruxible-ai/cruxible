@@ -1262,10 +1262,6 @@ workflows:
           pending_refresh_mode: retain_missing
           thesis_text: >
             Fuzzy software-to-product matching from CMDB inventory
-          thesis_facts:
-            rule_id: cmdb_inventory_fuzzy_product_match
-            rule_version: 1
-            source: cmdb_inventory
           analysis_state:
             match_summary: $steps.match_summary.items
           proposed_by: agent
@@ -1460,10 +1456,6 @@ workflows:
           thesis_text: >
             Installed versions fall within KEV reference ranges and
             exposed asset posture requires action
-          thesis_facts:
-            rule_id: exposure_assessment_from_version_posture_and_controls
-            rule_version: 1
-            source: kev_reference_asset_posture_and_controls
           analysis_state:
             exposure_summary: $steps.exposure_summary.items
           proposed_by: agent
@@ -1525,10 +1517,6 @@ workflows:
           pending_refresh_mode: retain_missing
           thesis_text: >
             Agent-selected operational vulnerability classification
-          thesis_facts:
-            rule_id: agent_vulnerability_classification
-            rule_version: 1
-            source: agent_review
           analysis_state:
             classification_summary: $steps.classification_summary.items
           proposed_by: agent
@@ -1639,10 +1627,6 @@ workflows:
           thesis_text: >
             Accepted exposure edges no longer supported by current
             product-derived affected evidence should be closed
-          thesis_facts:
-            rule_id: exposure_reconciliation_from_product_reference_path
-            rule_version: 1
-            source: kev_reference_refresh
           analysis_state:
             reconciliation_summary: $steps.reconciliation_summary.items
           proposed_by: agent

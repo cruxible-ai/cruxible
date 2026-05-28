@@ -539,8 +539,8 @@ relationships:
 # supplies tri-state signals; the auto_resolve_when policy gates when proposals
 # can apply without human review.
 #
-# Bucket signatures are rule-centric (rule_id + rule_version live in
-# thesis_facts on the propose step), so trust accumulates on the rule
+# Bucket signatures are Cruxible-built from workflow/proposal structure and
+# consumed signal sources, so trust accumulates on the configured proposal path
 # across many incidents — not per incident.
 
   - name: incident_impacts_supplier
@@ -2366,10 +2366,6 @@ workflows:
           thesis_text: >
             Open incidents match suppliers via direct supplier or
             geography scope.
-          thesis_facts:
-            rule_id: incident_scope_match_to_supplier
-            rule_version: 1
-            source: incident_scope_and_supplier_geography
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -2438,10 +2434,6 @@ workflows:
           thesis_text: >
             Components are impacted via the supplier cascade,
             adjusted for alternate sourcing coverage.
-          thesis_facts:
-            rule_id: cascade_from_impacted_supplier_to_component
-            rule_version: 1
-            source: supplier_supplies_component_edges
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -2511,10 +2503,6 @@ workflows:
           thesis_text: >
             Directly supplied assemblies are impacted via the supplier
             cascade, adjusted for alternate sourcing coverage.
-          thesis_facts:
-            rule_id: cascade_from_impacted_supplier_to_direct_assembly
-            rule_version: 1
-            source: supplier_supplies_assembly_edges
           proposed_by: agent
         as: proposal
     returns: proposal
@@ -2596,8 +2584,8 @@ workflows:
 #
 # Per-relationship feedback vocabulary used when reviewers reject or
 # qualify resolutions. scope_keys pull from the resolved edge's
-# endpoints/properties — they are NOT bucket signature fields. The
-# bucket signature is rule-centric (set in propose.thesis_facts).
+# endpoints/properties — they are NOT bucket signature fields. Cruxible derives
+# bucket signatures from workflow/proposal structure and consumed signal sources.
 
 feedback_profiles:
   incident_impacts_supplier:

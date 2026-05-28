@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:272864759fe3847264a1f9237b423548d862762ab530f1f306cb89fc5ba4f1d5
-lock_digest: sha256:dea6debb8e0404acbc83a56e52768f5ac564dd6f468f517abde1fd39a984d563
-generated_at: 2026-05-07 18:05:32.861571+00:00
+config_digest: sha256:68210bf45255a199bce5565867bd12c9507c33e1207b59c7fba7986f37070dd2
+lock_digest: sha256:c90222142190c06cd03d25ec4687cafda3b246d577255b8ad6d315ddfd711858
+generated_at: 2026-05-28 14:09:40.282153+00:00
 artifacts: {}
 providers:
   extract_holdings_from_opinions:
