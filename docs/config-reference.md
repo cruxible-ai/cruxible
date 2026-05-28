@@ -1380,6 +1380,24 @@ For `type: proposal` workflows that produce governed proposals (fuzzy matching, 
 
 The group then enters the resolution lifecycle (auto-resolve or manual review) based on the relationship's `proposal_policy` config.
 
+Workflow proposal signatures are Cruxible-generated. Config authors provide
+`thesis_text` for human explanation and `analysis_state` for review/debug
+context, but workflow `propose_relationship_group` steps do not author
+`thesis_facts`. Cruxible builds the stored signature facts from executable
+structure: workflow name, proposal step id, relationship shape, candidate
+alias, actual consumed signal batches, the relationship proposal policy, and a
+Cruxible-controlled proposal logic digest. `thesis_text`, `analysis_state`, and
+`suggested_priority` are not hashed.
+
+Direct agent-authored group proposals may provide optional caller
+`thesis_facts` as signature scope. Cruxible stores that scope under
+`agent_scope` in generated `thesis_facts`; generated top-level fields such as
+`origin`, `relationship`, and `signals` remain Cruxible-owned. The origin is
+marked `agent` with `evidence_mode: agent_supplied`, and signal-source facts
+come from member signals supplied on the proposal. Agent-supplied facts cannot
+impersonate workflow/provider-backed evidence; use a configured workflow when
+evidence must be provider-backed.
+
 `propose_relationship_group` is strict by default: if `candidates_from` resolves
 to an empty candidate set, the workflow fails. Set `on_empty: complete` only when
 "no candidates" is a valid terminal outcome for that workflow. In that case no

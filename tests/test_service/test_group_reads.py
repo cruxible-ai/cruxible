@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,6 +22,7 @@ from cruxible_core.service import (
     service_propose_group,
     service_resolve_group,
 )
+from cruxible_core.service.groups import build_agent_proposal_signature_facts
 
 # ---------------------------------------------------------------------------
 # Config
@@ -128,6 +130,44 @@ def _member(from_id="BP-1", to_id="V-1", properties: dict | None = None):
         relationship_type="fits",
         signals=[CandidateSignal(signal_source="check_v1", signal="support")],
         properties=properties or {},
+    )
+
+
+def _agent_signature_facts(
+    instance: CruxibleInstance,
+    members: list[CandidateMember],
+    *,
+    agent_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rel_schema = instance.load_config().get_relationship("fits")
+    assert rel_schema is not None
+    signal_sources = [
+        signal.signal_source for member in members for signal in member.signals
+    ]
+    return build_agent_proposal_signature_facts(
+        rel_schema=rel_schema,
+        relationship_type="fits",
+        signal_sources_used=signal_sources,
+        agent_scope=agent_scope or {},
+        member_scope=[
+            {
+                "relationship_type": member.relationship_type,
+                "from_type": member.from_type,
+                "from_id": member.from_id,
+                "to_type": member.to_type,
+                "to_id": member.to_id,
+            }
+            for member in sorted(
+                members,
+                key=lambda value: (
+                    value.relationship_type,
+                    value.from_type,
+                    value.from_id,
+                    value.to_type,
+                    value.to_id,
+                ),
+            )
+        ],
     )
 
 
@@ -253,7 +293,9 @@ class TestListGroups:
         # Create a group (no prior → review priority)
         service_propose_group(instance, "fits", [_member("BP-1", "V-1")], thesis_facts={"a": 1})
         # Create a group with invalidated prior → critical priority
-        facts2 = {"b": 2}
+        facts2_scope = {"b": 2}
+        members2 = [_member("BP-2", "V-2")]
+        facts2 = _agent_signature_facts(instance, members2, agent_scope=facts2_scope)
         sig = compute_group_signature("fits", facts2)
         store = instance.get_group_store()
         try:
@@ -272,7 +314,7 @@ class TestListGroups:
                 )
         finally:
             store.close()
-        service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts=facts2)
+        service_propose_group(instance, "fits", members2, thesis_facts=facts2_scope)
 
         result = service_list_groups(instance)
         assert result.groups[0].review_priority == "critical"
@@ -317,7 +359,11 @@ class TestListResolutions:
         assert result.total == 1
         r = result.resolutions[0]
         assert r.analysis_state == {"centroid": [0.1, 0.2]}
-        assert r.thesis_facts == {"k": "v"}
+        assert r.thesis_facts["origin"] == {
+            "kind": "agent",
+            "evidence_mode": "agent_supplied",
+        }
+        assert r.thesis_facts["agent_scope"] == {"k": "v"}
         assert r.trust_status == "watch"
         assert r.trust_reason is not None
 

@@ -35,6 +35,7 @@ from cruxible_core.service import (
     service_propose_group_inputs,
     service_resolve_group,
 )
+from cruxible_core.service.groups import build_agent_proposal_signature_facts
 
 
 def _fake_resolution(
@@ -48,6 +49,45 @@ def _fake_resolution(
         action="approve",
         trust_status=trust_status,
         resolved_at=datetime.now(timezone.utc),
+    )
+
+
+def _agent_signature_facts(
+    instance: CruxibleInstance,
+    relationship_type: str,
+    members: list[CandidateMember],
+    *,
+    agent_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rel_schema = instance.load_config().get_relationship(relationship_type)
+    assert rel_schema is not None
+    signal_sources = []
+    for member in members:
+        signal_sources.extend(signal.signal_source for signal in member.signals)
+    return build_agent_proposal_signature_facts(
+        rel_schema=rel_schema,
+        relationship_type=relationship_type,
+        signal_sources_used=signal_sources,
+        agent_scope=agent_scope or {},
+        member_scope=[
+            {
+                "relationship_type": member.relationship_type,
+                "from_type": member.from_type,
+                "from_id": member.from_id,
+                "to_type": member.to_type,
+                "to_id": member.to_id,
+            }
+            for member in sorted(
+                members,
+                key=lambda value: (
+                    value.relationship_type,
+                    value.from_type,
+                    value.from_id,
+                    value.to_type,
+                    value.to_id,
+                ),
+            )
+        ],
     )
 
 # ---------------------------------------------------------------------------
@@ -386,6 +426,27 @@ class TestBasicProposal:
         assert result.status == "pending_review"
         assert result.member_count == 1
         assert result.prior_resolution is None
+        store = matching_instance.get_group_store()
+        try:
+            group = store.get_group(result.group_id)
+        finally:
+            store.close()
+        assert group is not None
+        assert group.thesis_facts == _agent_signature_facts(
+            matching_instance,
+            "fits",
+            members,
+            agent_scope={"style": "casual"},
+        )
+        assert group.thesis_facts["origin"] == {
+            "kind": "agent",
+            "evidence_mode": "agent_supplied",
+        }
+        assert group.signal_sources_used == [
+            "bolt_pattern_check",
+            "year_range_check",
+            "description_fit_v1",
+        ]
 
     def test_members_stored_with_signals(self, matching_instance: CruxibleInstance) -> None:
         sigs = _all_support_signals()
@@ -660,7 +721,7 @@ class TestRelationshipTupleProposalIdentity:
         finally:
             group_store.close()
 
-    def test_signature_identity_keeps_current_cross_signature_behavior(
+    def test_direct_signature_uses_caller_authored_thesis_facts(
         self,
         matching_instance: CruxibleInstance,
     ) -> None:
@@ -680,7 +741,28 @@ class TestRelationshipTupleProposalIdentity:
 
         assert second.group_id is not None
         assert second.group_id != first.group_id
+        assert second.signature != first.signature
         assert second.suppressed is False
+
+    def test_direct_signature_without_caller_facts_uses_member_scope(
+        self,
+        matching_instance: CruxibleInstance,
+    ) -> None:
+        first = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-1", "V-1", signals=_all_support_signals())],
+        )
+        second = service_propose_group(
+            matching_instance,
+            "fits",
+            [_member("BP-2", "V-2", signals=_all_support_signals())],
+        )
+
+        assert first.group_id is not None
+        assert second.group_id is not None
+        assert second.group_id != first.group_id
+        assert second.signature != first.signature
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +958,10 @@ class TestSignalValidation:
 
     def test_signal_sources_used_undeclared(self, matching_instance: CruxibleInstance) -> None:
         members = [_member(signals=_all_support_signals())]
-        with pytest.raises(ConfigError, match="Signal source 'unknown' not declared"):
+        with pytest.raises(
+            ConfigError,
+            match="signal_sources_used contains sources not attached to any member signal",
+        ):
             service_propose_group(
                 matching_instance,
                 "fits",
@@ -927,9 +1012,19 @@ class TestSignature:
         assert r1.signature == r2.signature
 
     def test_signature_matches_compute_function(self, matching_instance: CruxibleInstance) -> None:
-        facts = {"a": 1, "b": 2}
         members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            members,
+            thesis_facts={"a": 1, "b": 2},
+        )
+        facts = _agent_signature_facts(
+            matching_instance,
+            "fits",
+            members,
+            agent_scope={"a": 1, "b": 2},
+        )
         expected = compute_group_signature("fits", facts)
         assert result.signature == expected
 
@@ -1321,12 +1416,14 @@ class TestPendingBuckets:
         self, matching_instance: CruxibleInstance
     ) -> None:
         _seed_fitment_entities(matching_instance)
-        facts_v1 = {"rule_id": "fit_rule", "rule_version": 1}
+        initial_members = [
+            _member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())
+        ]
         initial = service_propose_group(
             matching_instance,
             "fits",
-            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
-            thesis_facts=facts_v1,
+            initial_members,
+            thesis_facts={"rule_id": "fit_rule", "rule_version": 1},
         )
         service_resolve_group(
             matching_instance,
@@ -1335,12 +1432,14 @@ class TestPendingBuckets:
             expected_pending_version=1,
         )
 
-        facts_v2 = {"rule_id": "fit_rule", "rule_version": 2}
+        reproposed_members = [
+            _member("BP-1001", "V-2024-CIVIC", signals=_all_support_with_advisory())
+        ]
         reproposed = service_propose_group(
             matching_instance,
             "fits",
-            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
-            thesis_facts=facts_v2,
+            reproposed_members,
+            thesis_facts={"rule_id": "fit_rule", "rule_version": 2},
         )
 
         assert reproposed.signature != initial.signature
@@ -1377,7 +1476,10 @@ class TestPendingBuckets:
         )
         matching_instance.save_graph(graph)
 
-        facts_v2 = {"rule_id": "fit_rule_v2", "rule_version": 1}
+        reproposed_members = [
+            _member("BP-1001", "V-2024-CIVIC", signals=_all_support_with_advisory())
+        ]
+        facts_v2 = _agent_signature_facts(matching_instance, "fits", reproposed_members)
         _create_prior_resolution(
             matching_instance,
             thesis_facts=facts_v2,
@@ -1387,8 +1489,8 @@ class TestPendingBuckets:
         reproposed = service_propose_group(
             matching_instance,
             "fits",
-            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
-            thesis_facts=facts_v2,
+            reproposed_members,
+            thesis_facts={"rule_id": "fit_rule_v2", "rule_version": 1},
         )
 
         assert reproposed.status == "pending_review"
@@ -1557,10 +1659,10 @@ class TestAutoResolve:
     def test_prior_trusted_all_support_auto_resolved(
         self, matching_instance: CruxibleInstance
     ) -> None:
-        facts = {"style": "casual"}
-        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "auto_resolved"
         assert result.prior_resolution is not None
         assert result.prior_resolution.trust_status == "trusted"
@@ -1659,39 +1761,40 @@ class TestAutoResolve:
     def test_prior_trusted_blocking_contradict_pending(
         self, matching_instance: CruxibleInstance
     ) -> None:
-        facts = {"style": "casual"}
-        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
             CandidateSignal(signal_source="bolt_pattern_check", signal="contradict"),
             CandidateSignal(signal_source="year_range_check", signal="support"),
             CandidateSignal(signal_source="description_fit_v1", signal="support"),
         ]
         members = [_member(signals=sigs)]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
         assert result.prior_resolution is not None  # advisory
 
     def test_prior_invalidated_pending(self, matching_instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
-        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="invalidated")
         members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="invalidated")
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
         assert result.review_priority == "critical"
 
     def test_prior_watch_trusted_only_pending(self, matching_instance: CruxibleInstance) -> None:
         """Default watch trust + trusted_only policy → no auto-resolve."""
-        facts = {"style": "casual"}
-        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="watch")
         members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="watch")
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
 
     def test_prior_rejected_does_not_enable_auto_resolve(
         self, matching_instance: CruxibleInstance
     ) -> None:
         """Only approved confirmed priors count for auto-resolve."""
-        facts = {"style": "casual"}
+        members = [_member(signals=_all_support_signals())]
+        facts = _agent_signature_facts(matching_instance, "fits", members)
         _create_prior_resolution(
             matching_instance,
             thesis_facts=facts,
@@ -1699,23 +1802,22 @@ class TestAutoResolve:
             trust_status="watch",
             confirmed=True,
         )
-        members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
         # reject not visible to find_resolution(action="approve")
         assert result.prior_resolution is None
 
     def test_unconfirmed_prior_invisible(self, matching_instance: CruxibleInstance) -> None:
         """Unconfirmed approval does not act as precedent."""
-        facts = {"style": "casual"}
+        members = [_member(signals=_all_support_signals())]
+        facts = _agent_signature_facts(matching_instance, "fits", members)
         _create_prior_resolution(
             matching_instance,
             thesis_facts=facts,
             trust_status="trusted",
             confirmed=False,
         )
-        members = [_member(signals=_all_support_signals())]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
         assert result.prior_resolution is None
 
@@ -1723,15 +1825,15 @@ class TestAutoResolve:
         self, matching_instance: CruxibleInstance
     ) -> None:
         """description_fit_v1 has always_review_on_unsure=True."""
-        facts = {"style": "casual"}
-        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
             CandidateSignal(signal_source="bolt_pattern_check", signal="support"),
             CandidateSignal(signal_source="year_range_check", signal="support"),
             CandidateSignal(signal_source="description_fit_v1", signal="unsure"),
         ]
         members = [_member(signals=sigs)]
-        result = service_propose_group(matching_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(matching_instance, "fits", members)
+        _create_prior_resolution(matching_instance, thesis_facts=facts, trust_status="trusted")
+        result = service_propose_group(matching_instance, "fits", members)
         assert result.status == "pending_review"
         assert result.review_priority == "review"
 
@@ -1793,11 +1895,11 @@ constraints: []
     def test_watch_plus_trusted_or_watch_auto_resolves(
         self, permissive_instance: CruxibleInstance
     ) -> None:
-        facts = {"k": "v"}
-        _create_prior_resolution(permissive_instance, thesis_facts=facts, trust_status="watch")
         sigs = [CandidateSignal(signal_source="check_v1", signal="support")]
         members = [_member(signals=sigs)]
-        result = service_propose_group(permissive_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(permissive_instance, "fits", members)
+        _create_prior_resolution(permissive_instance, thesis_facts=facts, trust_status="watch")
+        result = service_propose_group(permissive_instance, "fits", members)
         assert result.status == "auto_resolved"
 
 
@@ -1858,27 +1960,27 @@ constraints: []
         return CruxibleInstance.init(tmp_path, "config.yaml")
 
     def test_unsure_on_required_passes_no_contradict(self, nc_instance: CruxibleInstance) -> None:
-        facts = {"k": "v"}
-        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
             CandidateSignal(signal_source="blocker", signal="support"),
             CandidateSignal(signal_source="required_check", signal="unsure"),
         ]
         members = [_member(signals=sigs)]
-        result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(nc_instance, "fits", members)
+        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
+        result = service_propose_group(nc_instance, "fits", members)
         assert result.status == "auto_resolved"
 
     def test_contradict_on_blocking_fails_no_contradict(
         self, nc_instance: CruxibleInstance
     ) -> None:
-        facts = {"k": "v"}
-        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
         sigs = [
             CandidateSignal(signal_source="blocker", signal="contradict"),
             CandidateSignal(signal_source="required_check", signal="support"),
         ]
         members = [_member(signals=sigs)]
-        result = service_propose_group(nc_instance, "fits", members, thesis_facts=facts)
+        facts = _agent_signature_facts(nc_instance, "fits", members)
+        _create_prior_resolution(nc_instance, thesis_facts=facts, trust_status="trusted")
+        result = service_propose_group(nc_instance, "fits", members)
         assert result.status == "pending_review"
 
 

@@ -260,9 +260,6 @@ workflows:
           signals_from:
             - catalog_signals
           thesis_text: Recommend products for regional campaign
-          thesis_facts:
-            campaign_id: $input.campaign_id
-            region: $steps.campaign.results[0].properties.region
           analysis_state:
             source: campaign_recommendations
           suggested_priority: high

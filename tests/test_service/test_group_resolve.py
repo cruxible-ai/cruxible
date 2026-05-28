@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +19,7 @@ from cruxible_core.service import (
     service_propose_group,
     service_resolve_group,
 )
+from cruxible_core.service.groups import build_agent_proposal_signature_facts
 
 # ---------------------------------------------------------------------------
 # Config YAML — minimal matching for resolve tests
@@ -140,6 +142,44 @@ def _member(
         relationship_type="fits",
         signals=[CandidateSignal(signal_source="check_v1", signal="support")],
         properties={},
+    )
+
+
+def _agent_signature_facts(
+    instance: CruxibleInstance,
+    members: list[CandidateMember],
+    *,
+    agent_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rel_schema = instance.load_config().get_relationship("fits")
+    assert rel_schema is not None
+    signal_sources = [
+        signal.signal_source for member in members for signal in member.signals
+    ]
+    return build_agent_proposal_signature_facts(
+        rel_schema=rel_schema,
+        relationship_type="fits",
+        signal_sources_used=signal_sources,
+        agent_scope=agent_scope or {},
+        member_scope=[
+            {
+                "relationship_type": member.relationship_type,
+                "from_type": member.from_type,
+                "from_id": member.from_id,
+                "to_type": member.to_type,
+                "to_id": member.to_id,
+            }
+            for member in sorted(
+                members,
+                key=lambda value: (
+                    value.relationship_type,
+                    value.from_type,
+                    value.from_id,
+                    value.to_type,
+                    value.to_id,
+                ),
+            )
+        ],
     )
 
 
@@ -475,12 +515,17 @@ class TestConfirmedFlag:
 
     def test_unconfirmed_not_visible_to_precedent(self, instance: CruxibleInstance) -> None:
         """Unconfirmed resolutions don't act as precedent for auto-resolve."""
-        facts = {"style": "casual"}
-        _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        facts_scope = {"style": "casual"}
+        _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
 
         # Manually create an unconfirmed resolution
         store = instance.get_group_store()
         try:
+            facts = _agent_signature_facts(
+                instance,
+                [_member("BP-2", "V-2")],
+                agent_scope=facts_scope,
+            )
             sig = compute_group_signature("fits", facts)
             with store.transaction():
                 store.save_resolution(
@@ -503,7 +548,7 @@ class TestConfirmedFlag:
             instance,
             "fits",
             [_member("BP-2", "V-2")],
-            thesis_facts=facts,
+            thesis_facts=facts_scope,
         )
         assert result2.prior_resolution is None
 
@@ -515,7 +560,12 @@ class TestConfirmedFlag:
 
 class TestTrustInheritance:
     def test_inherits_trusted(self, instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
         # Create prior trusted confirmed resolution
         store = instance.get_group_store()
@@ -536,7 +586,7 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
@@ -548,7 +598,12 @@ class TestTrustInheritance:
             store.close()
 
     def test_inherits_watch(self, instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
         store = instance.get_group_store()
         try:
@@ -568,7 +623,7 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
@@ -580,7 +635,12 @@ class TestTrustInheritance:
             store.close()
 
     def test_invalidated_prior_starts_watch(self, instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
         store = instance.get_group_store()
         try:
@@ -600,7 +660,7 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
@@ -624,7 +684,12 @@ class TestTrustInheritance:
             store.close()
 
     def test_unconfirmed_prior_not_inherited(self, instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
         store = instance.get_group_store()
         try:
@@ -644,7 +709,7 @@ class TestTrustInheritance:
         finally:
             store.close()
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()
@@ -665,7 +730,12 @@ class TestTrustRevalidation:
     def test_prior_invalidated_while_applying(self, instance: CruxibleInstance) -> None:
         """If prior was trusted at creation but invalidated while in applying,
         trust revalidates to watch at confirmation."""
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
 
         # Create prior trusted confirmed resolution
@@ -688,7 +758,7 @@ class TestTrustRevalidation:
             store.close()
 
         # Propose and start resolve (manually simulate applying state)
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
 
         # Now invalidate the prior before resolve completes
         store = instance.get_group_store()
@@ -711,7 +781,12 @@ class TestTrustRevalidation:
             store.close()
 
     def test_prior_trust_unchanged_preserves_inherited(self, instance: CruxibleInstance) -> None:
-        facts = {"style": "casual"}
+        facts_scope = {"style": "casual"}
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-1", "V-1")],
+            agent_scope=facts_scope,
+        )
         sig = compute_group_signature("fits", facts)
         store = instance.get_group_store()
         try:
@@ -731,7 +806,7 @@ class TestTrustRevalidation:
         finally:
             store.close()
 
-        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
+        group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
 
         store = instance.get_group_store()

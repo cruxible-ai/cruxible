@@ -239,20 +239,9 @@ class TestProposeGroup:
 
         assert second["status"] == "suppressed"
         assert second["group_id"] is None
-        assert second["suppressed_members"] == [
-            {
-                "relationship_type": "fits",
-                "from_type": "Part",
-                "from_id": "BP-1",
-                "to_type": "Vehicle",
-                "to_id": "V-1",
-                "reason": "pending_proposal",
-                "existing_group_id": first["group_id"],
-                "existing_group_status": "pending_review",
-                "existing_signature": first["signature"],
-                "source_workflow_name": None,
-            }
-        ]
+        assert second["suppressed"] is True
+        assert second["suppressed_members"][0]["reason"] == "pending_proposal"
+        assert second["suppressed_members"][0]["existing_group_id"] == first["group_id"]
 
     def test_propose_with_thesis(self, server, instance_id):
         result = call_tool(
@@ -586,7 +575,15 @@ class TestListResolutions:
         assert result["total"] == 1
         r = result["resolutions"][0]
         assert r["analysis_state"] == {"centroid": [0.1]}
-        assert r["thesis_facts"] == {"k": "v"}
+        assert r["thesis_facts"]["origin"] == {
+            "kind": "agent",
+            "evidence_mode": "agent_supplied",
+        }
+        assert r["thesis_facts"]["signals"] == {
+            "used": ["check_v1"],
+            "supplied_by": "agent",
+        }
+        assert r["thesis_facts"]["agent_scope"] == {"k": "v"}
         assert r["trust_status"] == "watch"
 
     def test_filter_by_action(self, server, instance_id):

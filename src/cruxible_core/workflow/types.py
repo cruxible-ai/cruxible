@@ -227,6 +227,8 @@ class RelationshipGroupProposalArtifact(BaseModel):
     """Internal workflow artifact bridged into a governed relationship proposal."""
 
     relationship_type: str
+    proposal_step_id: str | None = None
+    candidates_from: str | None = None
     members: list[CandidateMember]
     status: Literal["ready", "no_candidates"] = "ready"
     candidate_count: int = 0

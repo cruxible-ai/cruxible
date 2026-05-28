@@ -833,9 +833,11 @@ def register_tools(server: FastMCP) -> list[str]:
         """Propose a candidate group of edges for batch review.
 
         Each member carries tri-state signals (support/contradict/unsure) from
-        declared signal sources. The group carries a thesis (structured facts that
-        get hashed into a deterministic signature) and optional analysis_state
-        (opaque agent data, NOT hashed).
+        declared signal sources. For direct proposals, optional thesis_facts are
+        caller-supplied signature scope stored under agent_scope in Cruxible's
+        generated thesis_facts. Signal sources are derived from attached member
+        signals. Optional analysis_state remains opaque agent data and is not
+        hashed.
 
         If a prior trusted resolution exists for the same thesis signature and
         all signals meet the auto-resolve policy, the group is auto-resolved.

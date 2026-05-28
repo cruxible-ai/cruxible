@@ -52,12 +52,16 @@ def group_group() -> None:
 )
 @click.option("--members", "members_json", default=None, help="Inline JSON array of members.")
 @click.option("--thesis", default="", help="Human-readable thesis text.")
-@click.option("--thesis-facts", default=None, help="JSON object of structured thesis facts.")
+@click.option(
+    "--thesis-facts",
+    default=None,
+    help="Optional JSON object used as agent-supplied direct proposal scope.",
+)
 @click.option("--analysis-state", default=None, help="JSON object of opaque analysis state.")
 @click.option(
     "--signal-source",
     multiple=True,
-    help="Signal source name used in this proposal.",
+    help="Deprecated; signal sources are derived from member signals.",
 )
 @handle_errors
 def group_propose(

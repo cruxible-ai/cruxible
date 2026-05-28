@@ -539,6 +539,8 @@ def build_relationship_group_proposal(
     return RelationshipGroupProposalArtifact.model_validate(
         {
             "relationship_type": relationship_type,
+            "proposal_step_id": step_id,
+            "candidates_from": spec.candidates_from,
             "members": [member.model_dump(mode="python") for member in members_by_pair.values()],
             "status": "no_candidates" if candidate_count == 0 else "ready",
             "candidate_count": candidate_count,
@@ -546,11 +548,6 @@ def build_relationship_group_proposal(
             "group_created": False if candidate_count == 0 else None,
             "thesis_text": resolve_value(
                 spec.thesis_text,
-                input_payload,
-                step_outputs,
-            ),
-            "thesis_facts": resolve_value(
-                spec.thesis_facts,
                 input_payload,
                 step_outputs,
             ),

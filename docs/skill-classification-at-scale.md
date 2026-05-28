@@ -18,7 +18,7 @@ You (the agent):
   - Build or invoke deterministic providers (regex, lookup tables, rules)
   - Run workflows against entities to produce structured extractions
   - Convert extraction results to tri-state signals (support/unsure/contradict)
-  - Propose groups with thesis_facts derived from extractions
+  - Propose groups through configured workflows or direct agent proposals
   - Run the review loop (sample, critique, refine rules, regroup)
 
 Core:
@@ -27,7 +27,7 @@ Core:
   - Derives review priority from signal + trust state
   - Manages group lifecycle (propose → resolve → trust)
   - Produces receipts for every mutation
-  - Gates auto-resolve on thesis-scoped trust
+  - Gates auto-resolve on Cruxible-computed proposal signatures
 
 Core executes declared providers inside workflows, but it does not own the
 domain-specific classification logic. The provider implementation and contract
@@ -243,24 +243,23 @@ member = {
 
 ## Phase 5: Group and propose
 
-Group members by their **extracted features** — these become `thesis_facts` and determine the signature. Same thesis_facts = same signature = same trust track.
+Workflow-authored proposals should use `make_candidates`, `map_signals`, and
+`propose_relationship_group`. Cruxible computes the stored `thesis_facts` from
+trusted workflow/proposal structure, relationship shape, consumed signal
+batches, proposal policy, and a proposal logic digest. Config does not author
+`thesis_facts`; direct agent proposals can provide optional caller scope facts,
+which Cruxible stores under `agent_scope` in generated facts marked as
+`agent_supplied`.
 
-### Choosing the grouping key
+### Choosing the proposal boundary
 
-Group by the combination of fields that represents a repeatable matching pattern:
-
-```
-thesis_facts: {
-    "part_noun": "trim_panel",
-    "qualifier": "quarter",
-    "target_type_id": "12730"
-}
-```
-
-All "quarter trim panels classified as taxonomy type 12730" share a signature. This means:
+Use separate workflows or signal-source versions when two proposal procedures
+should have separate trust tracks. Candidates produced by the same workflow
+proposal step, relationship, candidate alias, signal sources, policy shape, and
+proposal logic digest share a signature. This means:
 - They get reviewed as one batch (not individually)
-- Trust earned on this group applies to future batches with the same pattern
-- If trust is invalidated, all future batches of this pattern go back to review
+- Trust earned on this group applies to future batches from the same procedure
+- If trust is invalidated, future batches for that procedure go back to review
 
 ### Seed-then-fan-out
 
@@ -293,22 +292,25 @@ cruxible_propose_group(
     relationship_type="classified_as",
     members=[...list of members with signals...],
     thesis_text="Quarter trim panel parts classified as TaxonomyType 12730",
-    thesis_facts={"part_noun": "trim_panel", "qualifier": "quarter", "target_type_id": "12730"},
     analysis_state={
         "extraction_version": "keyword_extract_v1",
         "category_map_version": "category_map_v1",
         "member_count": 45,
         "unsure_count": 2,
         "sample_parts": ["31112C", "K1960", "62118E"]
-    },
-    signal_sources_used=["keyword_extract_v1", "category_map_v1"]
+    }
 )
 ```
 
-`analysis_state` is opaque to Core — it's NOT hashed into the signature. Use
-it to stash extraction context, LLM reasoning, and anything an agent might
-need when revisiting this group later. It's returned by `cruxible_get_group`
-and `cruxible_list_resolutions`.
+`analysis_state` is opaque to Core and is not hashed into the signature. Use it
+to stash extraction context, LLM reasoning, and anything an agent might need
+when revisiting this group later. It is returned by `cruxible_get_group` and
+`cruxible_list_resolutions`.
+Direct proposal `thesis_facts` are optional caller scope facts; Cruxible stores
+them under `agent_scope` while deriving top-level signature facts from the
+relationship and attached member signals. Group-level `signal_sources_used` is
+deprecated for direct proposals because signal sources are derived from the
+member signals.
 
 ### What Core does with the proposal
 
@@ -401,7 +403,7 @@ trusted resolution → `auto_resolved`:
 # Propose remaining chunks — they auto-resolve
 for chunk in remaining_chunks_for_signature:
     cruxible_propose_group(instance_id, "classified_as",
-        members=chunk, thesis_facts=same_thesis_facts, ...)
+        members=chunk, ...)
 
 # Write the edges
 cruxible_list_groups(instance_id, status="auto_resolved")
@@ -446,13 +448,13 @@ rules:
     extracts: {part_noun: "door_panel", qualifier: "interior"}
 ```
 
-Re-run the extraction with the updated rules. Propose new groups with finer
-thesis_facts:
+Re-run the extraction with the updated rules. If the trust boundary should
+change, use a new workflow step/signal-source version rather than caller-authored
+facts:
 
 ```
 cruxible_propose_group(instance_id, "classified_as",
-    members=[...formerly misclassified parts...],
-    thesis_facts={"part_noun": "trim_panel", "qualifier": "quarter", "target_type_id": "12730"})
+    members=[...formerly misclassified parts...])
 ```
 
 Each iteration of this loop:
@@ -468,8 +470,8 @@ refreshes:
 
 ```
 New catalog refresh arrives → refresh canonical state
-Agent runs same providers (same contract) → same extraction
-Agent proposes group with same thesis_facts → same signature
+Agent runs same workflow/providers (same proposal shape) → same signal sources
+Cruxible computes same signature
 Core finds prior trusted resolution → auto_resolved
 Agent calls resolve → edges created, no human review needed
 ```
@@ -490,9 +492,15 @@ providers:
     version: 2.0.0
 ```
 
-Update the relationship's `proposal_policy.signals` section and workflow `map_signals.signal_source` to reference v2. Old groups still reference v1 in their `signal_sources_used`, and old resolutions preserve the thesis, trust status, and analysis_state produced under the earlier run.
+Update the relationship's `proposal_policy.signals` section and workflow
+`map_signals.signal_source` to reference v2. Old groups still reference v1 in
+their Cruxible-generated `thesis_facts` and `signal_sources_used`, and old
+resolutions preserve the trust status and analysis_state produced under the
+earlier run.
 
-The signature is stable across provider versions when `thesis_facts` stay stable. Trust earned under v1 carries forward to v2 proposals with the same thesis_facts. If v2 changes the extraction logic enough to produce different thesis_facts, that's a new signature with its own trust track — which is correct behavior.
+Changing the consumed signal source or proposal policy shape changes the
+signature and creates a new trust track. Keeping the same workflow/proposal
+shape preserves the trust track.
 
 ## Anti-patterns
 

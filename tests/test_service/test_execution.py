@@ -10,6 +10,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.service import (
     service_apply_workflow,
     service_clone_snapshot,
@@ -18,6 +19,7 @@ from cruxible_core.service import (
     service_list_snapshots,
     service_lock,
     service_plan,
+    service_propose_group,
     service_propose_workflow,
     service_resolve_group,
     service_run,
@@ -109,9 +111,6 @@ workflows:
           candidates_from: candidates
           signals_from: []
           thesis_text: Recommend query-derived products
-          thesis_facts:
-            campaign_id: $input.campaign_id
-            evidence_shape: relationship
         as: proposal
     returns: proposal
   propose_from_path_query:
@@ -140,9 +139,6 @@ workflows:
           candidates_from: candidates
           signals_from: []
           thesis_text: Recommend query-derived products
-          thesis_facts:
-            campaign_id: $input.campaign_id
-            evidence_shape: path
         as: proposal
     returns: proposal
   propose_from_filtered_relationship_query:
@@ -179,9 +175,6 @@ workflows:
           candidates_from: candidates
           signals_from: []
           thesis_text: Recommend filtered query-derived products
-          thesis_facts:
-            campaign_id: $input.campaign_id
-            evidence_shape: filtered_relationship
         as: proposal
     returns: proposal
   propose_with_query_signals:
@@ -228,9 +221,6 @@ workflows:
           signals_from:
             - query_signals
           thesis_text: Recommend query-derived products with query signal
-          thesis_facts:
-            campaign_id: $input.campaign_id
-            evidence_shape: query_signal
         as: proposal
     returns: proposal
 """
@@ -579,6 +569,44 @@ class TestWorkflowExecutionServices:
         assert group.source_workflow_receipt_id == result.receipt_id
         assert group.source_trace_ids == result.trace_ids
         assert group.source_step_ids == ["proposal", "catalog_signals"]
+        assert group.thesis_facts == result.output["thesis_facts"]
+        assert group.thesis_facts["origin"]["proposal_logic_digest"].startswith(
+            "sha256:"
+        )
+        expected_thesis_facts = {
+            "origin": {
+                "kind": "workflow",
+                "evidence_mode": "workflow_generated",
+                "workflow_name": "propose_campaign_recommendations",
+                "step_id": "proposal",
+                "proposal_logic_digest": group.thesis_facts["origin"][
+                    "proposal_logic_digest"
+                ],
+            },
+            "relationship": {
+                "type": "recommended_for",
+                "from_type": "Campaign",
+                "to_type": "Product",
+            },
+            "candidates": {"from_alias": "candidates"},
+            "signals": {
+                "used": ["catalog"],
+                "required": ["catalog"],
+                "blocking": [],
+            },
+            "policy": {
+                "auto_resolve_when": "all_support",
+                "proposal_identity": "thesis_signature",
+            },
+        }
+        assert group.thesis_facts == expected_thesis_facts
+        receipt_store = proposal_workflow_instance.get_receipt_store()
+        try:
+            saved_receipt = receipt_store.get_receipt(result.receipt_id)
+        finally:
+            receipt_store.close()
+        assert saved_receipt is not None
+        assert saved_receipt.results[0]["output"]["thesis_facts"] == group.thesis_facts
         assert len(members) == 2
         assert all(member.relationship_type == "recommended_for" for member in members)
         assert members[0].signals[0].basis is not None
@@ -588,6 +616,162 @@ class TestWorkflowExecutionServices:
             "value": "match",
             "matched": "match",
         }
+
+    def test_direct_proposal_does_not_collide_with_workflow_signature(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(proposal_workflow_instance)
+
+        workflow_result = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+        direct_result = service_propose_group(
+            proposal_workflow_instance,
+            "recommended_for",
+            [
+                CandidateMember(
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id="SKU-123",
+                    relationship_type="recommended_for",
+                    signals=[
+                        CandidateSignal(
+                            signal_source="catalog",
+                            signal="support",
+                            evidence="agent supplied",
+                        )
+                    ],
+                )
+            ],
+            thesis_text="Agent direct recommendation",
+            thesis_facts={"origin": {"kind": "workflow"}},
+        )
+
+        assert workflow_result.group_id is not None
+        assert direct_result.group_id is not None
+        assert direct_result.group_id != workflow_result.group_id
+        group_store = proposal_workflow_instance.get_group_store()
+        try:
+            direct_group = group_store.get_group(direct_result.group_id)
+            workflow_group = group_store.get_group(workflow_result.group_id)
+        finally:
+            group_store.close()
+        assert direct_group is not None
+        assert workflow_group is not None
+        assert direct_group.signature != workflow_group.signature
+        assert direct_group.thesis_facts["origin"]["kind"] == "agent"
+        assert direct_group.thesis_facts["agent_scope"] == {"origin": {"kind": "workflow"}}
+        assert workflow_group.thesis_facts["origin"]["kind"] == "workflow"
+
+    def test_workflow_signal_source_change_changes_proposal_signature(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(proposal_workflow_instance)
+        first = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        config = proposal_workflow_instance.load_config()
+        relationship = next(
+            rel for rel in config.relationships if rel.name == "recommended_for"
+        )
+        assert relationship.proposal_policy is not None
+        relationship.proposal_policy.signals["catalog_v2"] = (
+            relationship.proposal_policy.signals.pop("catalog")
+        )
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.map_signals is not None:
+                step.map_signals.signal_source = "catalog_v2"
+        proposal_workflow_instance.save_config(config)
+        service_lock(proposal_workflow_instance)
+
+        second = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert first.group_id is not None
+        assert second.group_id is not None
+        group_store = proposal_workflow_instance.get_group_store()
+        try:
+            first_group = group_store.get_group(first.group_id)
+            second_group = group_store.get_group(second.group_id)
+        finally:
+            group_store.close()
+        assert first_group is not None
+        assert second_group is not None
+        assert first_group.signature != second_group.signature
+        assert first_group.thesis_facts["signals"]["used"] == ["catalog"]
+        assert second_group.thesis_facts["signals"]["used"] == ["catalog_v2"]
+
+    def test_workflow_logic_change_changes_signature_without_signal_name_change(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(proposal_workflow_instance)
+        first = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.map_signals is not None:
+                step.map_signals.enum.map["fallback"] = "support"
+        proposal_workflow_instance.save_config(config)
+        service_lock(proposal_workflow_instance)
+
+        second = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert first.group_id is not None
+        assert second.group_id is not None
+        assert second.group_id != first.group_id
+        assert (
+            second.output["thesis_facts"]["origin"]["proposal_logic_digest"]
+            != first.output["thesis_facts"]["origin"]["proposal_logic_digest"]
+        )
+        assert second.output["thesis_facts"]["signals"]["used"] == ["catalog"]
+
+    def test_workflow_human_context_changes_do_not_change_signature(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(proposal_workflow_instance)
+        first = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        config = proposal_workflow_instance.load_config()
+        for step in config.workflows["propose_campaign_recommendations"].steps:
+            if step.propose_relationship_group is not None:
+                step.propose_relationship_group.thesis_text = "Updated human summary"
+                step.propose_relationship_group.analysis_state = {
+                    "debug_note": "changed only for reviewers"
+                }
+                step.propose_relationship_group.suggested_priority = "critical"
+        proposal_workflow_instance.save_config(config)
+        service_lock(proposal_workflow_instance)
+
+        second = service_propose_workflow(
+            proposal_workflow_instance,
+            "propose_campaign_recommendations",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert first.group_id is not None
+        assert second.group_id == first.group_id
+        assert second.output["thesis_facts"] == first.output["thesis_facts"]
 
     @pytest.mark.parametrize(
         ("workflow_name", "row_shape"),
@@ -1052,8 +1236,12 @@ class TestWorkflowExecutionServices:
         assert result.output["candidate_count"] == 0
         assert result.output["on_empty"] == "complete"
         assert result.output["group_created"] is False
+        assert result.output["thesis_facts"]["origin"]["proposal_logic_digest"].startswith(
+            "sha256:"
+        )
         assert result.receipt is not None
         assert result.receipt.committed is False
+        assert result.receipt.results[0]["output"] == result.output
         assert result.receipt.nodes[0].detail["group_status"] == "no_candidates"
         proposal_step_node = next(
             node
@@ -1070,6 +1258,13 @@ class TestWorkflowExecutionServices:
         finally:
             group_store.close()
         assert groups == []
+        receipt_store = query_evidence_proposal_instance.get_receipt_store()
+        try:
+            saved_receipt = receipt_store.get_receipt(result.receipt_id)
+        finally:
+            receipt_store.close()
+        assert saved_receipt is not None
+        assert saved_receipt.results[0]["output"] == result.output
 
     def test_snapshot_create_list_and_overlay(
         self, proposal_workflow_instance: CruxibleInstance, tmp_path: Path

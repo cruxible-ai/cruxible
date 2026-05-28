@@ -819,7 +819,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--members-file` | no | `` | path | JSON file with member list. |
 | `--members` | no | `` | text | Inline JSON array of members. |
 | `--thesis` | no | `` | text | Human-readable thesis text. |
-| `--thesis-facts` | no | `` | text | JSON object of structured thesis facts. |
+| `--thesis-facts` | no | `` | text | Optional JSON object used as agent-supplied direct proposal scope. |
 | `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
 | `--signal-source` | no | `Sentinel.UNSET` | text | Signal source name used in this proposal. |
 

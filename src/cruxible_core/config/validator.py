@@ -1052,7 +1052,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 for ref in _iter_refs(
                     [
                         spec.thesis_text,
-                        spec.thesis_facts,
                         spec.analysis_state,
                         spec.suggested_priority,
                     ]
@@ -1063,12 +1062,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         ref,
                         produced_aliases,
                         errors,
-                    )
-                if not spec.thesis_facts:
-                    errors.append(
-                        "Workflow "
-                        f"'{workflow_name}' step '{step.id}': propose_relationship_group "
-                        "requires non-empty thesis_facts"
                     )
                 if step.as_ is not None:
                     produced_aliases.add(step.as_)

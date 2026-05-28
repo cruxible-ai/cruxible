@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Literal, TypeVar
 
 from pydantic import ValidationError
 
+from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.primitives import ordered_unique
+from cruxible_core.primitives import canonical_json, ordered_unique
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import (
     ensure_decision_record_open,
     record_decision_event_for_context,
 )
-from cruxible_core.service.groups import service_propose_group
+from cruxible_core.service.groups import (
+    build_workflow_proposal_signature_facts,
+    service_propose_group,
+)
 from cruxible_core.service.types import (
     ApplyPreviewReference,
     ApplyWorkflowResult,
@@ -182,6 +187,7 @@ def _finalize_proposal_receipt(
     *,
     head_snapshot_id: str | None,
     group_result: ProposeGroupResult,
+    output: dict[str, Any] | None = None,
 ) -> Receipt:
     """Return the workflow receipt annotated with the governed proposal write result."""
     root = receipt.nodes[0]
@@ -201,13 +207,93 @@ def _finalize_proposal_receipt(
     # A proposal workflow is committed only after the bridge reaches the
     # governed-group durability boundary. Suppressed no-op proposals still get a
     # receipt, but committed remains false because no group state was written.
-    return receipt.model_copy(
-        update={
-            "nodes": nodes,
-            "head_snapshot_id": head_snapshot_id,
-            "committed": group_result.receipt_id is not None,
-        }
+    updates: dict[str, Any] = {
+        "nodes": nodes,
+        "head_snapshot_id": head_snapshot_id,
+        "committed": group_result.receipt_id is not None,
+    }
+    if output is not None:
+        updates["results"] = [{"output": output}]
+    return receipt.model_copy(update=updates)
+
+
+def _workflow_proposal_logic_digest(
+    *,
+    config: CoreConfig,
+    workflow: Any,
+    proposal_step_id: str,
+    relationship_type: str,
+) -> str:
+    """Return a stable digest of the executable proposal dependency slice."""
+    step_payloads: list[dict[str, Any]] = []
+    provider_names: set[str] = set()
+    query_names: set[str] = set()
+    for step in workflow.steps:
+        payload = step.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        if step.provider is not None:
+            provider_names.add(step.provider)
+        if step.query is not None:
+            query_names.add(step.query)
+        proposal_spec = payload.get("propose_relationship_group")
+        if isinstance(proposal_spec, dict):
+            proposal_spec.pop("thesis_text", None)
+            proposal_spec.pop("analysis_state", None)
+            proposal_spec.pop("suggested_priority", None)
+        step_payloads.append(payload)
+        if step.id == proposal_step_id:
+            break
+
+    providers = {
+        name: config.providers[name].model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        for name in sorted(provider_names)
+        if name in config.providers
+    }
+    queries = {
+        name: config.named_queries[name].model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        for name in sorted(query_names)
+        if name in config.named_queries
+    }
+    rel_schema = config.get_relationship(relationship_type)
+    relationship_policy = (
+        rel_schema.proposal_policy.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        if rel_schema is not None and rel_schema.proposal_policy is not None
+        else None
     )
+    payload = {
+        "version": 1,
+        "workflow": {
+            "type": workflow.type,
+            "contract_in": workflow.contract_in,
+            "contract_out": workflow.contract_out,
+            "returns": workflow.returns,
+        },
+        "steps": step_payloads,
+        "providers": providers,
+        "queries": queries,
+        "relationship": {
+            "type": relationship_type,
+            "proposal_identity": rel_schema.proposal_identity if rel_schema is not None else None,
+            "proposal_policy": relationship_policy,
+        },
+    }
+    digest = hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+    return f"sha256:{digest}"
 
 
 def _enforce_decision_support_context(
@@ -451,6 +537,31 @@ def service_propose_workflow(
                 f"Workflow '{workflow_name}' must return a relationship proposal artifact"
             ) from exc
         relationship_type = proposal_payload.relationship_type
+        rel_schema = config.get_relationship(relationship_type)
+        if rel_schema is None:
+            raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
+        proposal_step_id = proposal_payload.proposal_step_id or result.alias_step_ids.get(
+            workflow.returns,
+            workflow.returns,
+        )
+        workflow_thesis_facts = build_workflow_proposal_signature_facts(
+            rel_schema=rel_schema,
+            relationship_type=relationship_type,
+            workflow_name=workflow_name,
+            step_id=proposal_step_id,
+            proposal_logic_digest=_workflow_proposal_logic_digest(
+                config=config,
+                workflow=workflow,
+                proposal_step_id=proposal_step_id,
+                relationship_type=relationship_type,
+            ),
+            candidates_from=proposal_payload.candidates_from or "",
+            signal_sources_used=proposal_payload.signal_sources_used,
+        )
+        proposal_payload = proposal_payload.model_copy(
+            update={"thesis_facts": workflow_thesis_facts}
+        )
+        proposal_output = proposal_payload.model_dump(mode="python")
         if proposal_payload.status == "no_candidates":
             no_group_result = ProposeGroupResult(
                 group_id=None,
@@ -468,11 +579,12 @@ def service_propose_workflow(
                 result.receipt,
                 head_snapshot_id=result.head_snapshot_id,
                 group_result=no_group_result,
+                output=proposal_output,
             )
             _save_workflow_receipt(instance, proposal_receipt)
             service_result = ProposeWorkflowResult(
                 workflow=result.workflow,
-                output=result.output,
+                output=proposal_output,
                 receipt_id=proposal_receipt.receipt_id,
                 group_id=None,
                 group_status="no_candidates",
@@ -552,11 +664,12 @@ def service_propose_workflow(
             result.receipt,
             head_snapshot_id=result.head_snapshot_id,
             group_result=group_result,
+            output=proposal_output,
         )
         _save_workflow_receipt(instance, proposal_receipt)
         service_result = ProposeWorkflowResult(
             workflow=result.workflow,
-            output=result.output,
+            output=proposal_output,
             receipt_id=proposal_receipt.receipt_id,
             group_id=group_result.group_id,
             group_status=group_result.status,

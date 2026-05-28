@@ -224,6 +224,116 @@ _VALID_RESOLVE_ACTIONS = ("approve", "reject")
 _VALID_RESOLVE_SOURCES = ("human", "agent")
 
 
+def _sorted_signal_sources(values: list[str]) -> list[str]:
+    return sorted(ordered_unique(values))
+
+
+def _member_signal_sources(members: list[CandidateMember]) -> list[str]:
+    return ordered_unique(
+        signal.signal_source for member in members for signal in member.signals
+    )
+
+
+def _member_signature_scope(members: list[CandidateMember]) -> list[dict[str, str]]:
+    return [
+        key.payload()
+        for key in sorted(
+            (_relationship_key(member) for member in members),
+            key=lambda value: (
+                value.relationship_type,
+                value.from_type,
+                value.from_id,
+                value.to_type,
+                value.to_id,
+            ),
+        )
+    ]
+
+
+def _policy_signal_sources(
+    proposal_policy: ProposalPolicySchema | None,
+    *,
+    role: Literal["required", "blocking"],
+) -> list[str]:
+    if proposal_policy is None:
+        return []
+    return sorted(
+        source
+        for source, signal_policy in proposal_policy.signals.items()
+        if signal_policy.role == role
+    )
+
+
+def build_workflow_proposal_signature_facts(
+    *,
+    rel_schema: RelationshipSchema,
+    relationship_type: str,
+    workflow_name: str,
+    step_id: str,
+    proposal_logic_digest: str,
+    candidates_from: str,
+    signal_sources_used: list[str],
+) -> dict[str, Any]:
+    """Build non-configurable signature facts for workflow-authored proposals."""
+    proposal_policy = rel_schema.proposal_policy
+    return {
+        "origin": {
+            "kind": "workflow",
+            "evidence_mode": "workflow_generated",
+            "workflow_name": workflow_name,
+            "step_id": step_id,
+            "proposal_logic_digest": proposal_logic_digest,
+        },
+        "relationship": {
+            "type": relationship_type,
+            "from_type": rel_schema.from_entity,
+            "to_type": rel_schema.to_entity,
+        },
+        "candidates": {"from_alias": candidates_from},
+        "signals": {
+            "used": _sorted_signal_sources(signal_sources_used),
+            "required": _policy_signal_sources(proposal_policy, role="required"),
+            "blocking": _policy_signal_sources(proposal_policy, role="blocking"),
+        },
+        "policy": {
+            "auto_resolve_when": (
+                proposal_policy.auto_resolve_when if proposal_policy is not None else None
+            ),
+            "proposal_identity": rel_schema.proposal_identity,
+        },
+    }
+
+
+def build_agent_proposal_signature_facts(
+    *,
+    rel_schema: RelationshipSchema,
+    relationship_type: str,
+    signal_sources_used: list[str],
+    agent_scope: dict[str, Any],
+    member_scope: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Build signature facts for direct proposals from agent-supplied signals."""
+    facts: dict[str, Any] = {
+        "origin": {
+            "kind": "agent",
+            "evidence_mode": "agent_supplied",
+        },
+        "relationship": {
+            "type": relationship_type,
+            "from_type": rel_schema.from_entity,
+            "to_type": rel_schema.to_entity,
+        },
+        "signals": {
+            "used": _sorted_signal_sources(signal_sources_used),
+            "supplied_by": "agent",
+        },
+        "agent_scope": agent_scope,
+    }
+    if not agent_scope:
+        facts["member_scope"] = member_scope or []
+    return facts
+
+
 def derive_review_priority(
     members: list[CandidateMember],
     proposal_policy: ProposalPolicySchema | None,
@@ -984,13 +1094,45 @@ def service_propose_group(
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
     config = instance.load_config()
-    thesis_facts = thesis_facts or {}
+    caller_thesis_facts = thesis_facts or {}
     analysis_state = analysis_state or {}
-    signal_sources_used = signal_sources_used or []
+    caller_signal_sources_used = ordered_unique(signal_sources_used or [])
     source_query_receipt_ids = ordered_unique(source_query_receipt_ids or [])
     source_trace_ids = source_trace_ids or []
     source_step_ids = source_step_ids or []
     policy_summary: dict[str, int] = {}
+    rel_schema = config.get_relationship(relationship_type)
+    if rel_schema is None:
+        raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
+
+    try:
+        canonical_json(caller_thesis_facts)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"thesis_facts must be JSON-serializable: {exc}") from exc
+
+    if source_workflow_name is None:
+        member_signal_sources = _member_signal_sources(members)
+        unknown_caller_sources = [
+            source
+            for source in caller_signal_sources_used
+            if source not in member_signal_sources
+        ]
+        if unknown_caller_sources:
+            raise ConfigError(
+                "signal_sources_used contains sources not attached to any member "
+                f"signal: {', '.join(unknown_caller_sources)}"
+            )
+        signal_sources_used = member_signal_sources
+        thesis_facts = build_agent_proposal_signature_facts(
+            rel_schema=rel_schema,
+            relationship_type=relationship_type,
+            signal_sources_used=signal_sources_used,
+            agent_scope=caller_thesis_facts,
+            member_scope=_member_signature_scope(members),
+        )
+    else:
+        signal_sources_used = caller_signal_sources_used
+        thesis_facts = caller_thesis_facts
     metadata = _ProposalMetadata(
         thesis_text=thesis_text,
         thesis_facts=thesis_facts,
@@ -1005,9 +1147,6 @@ def service_propose_group(
         source_step_ids=source_step_ids,
     )
 
-    rel_schema = config.get_relationship(relationship_type)
-    if rel_schema is None:
-        raise ConfigError(f"Relationship type '{relationship_type}' not found in config")
     _validate_group_proposal_inputs(
         rel_schema=rel_schema,
         relationship_type=relationship_type,

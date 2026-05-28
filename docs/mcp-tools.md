@@ -1197,7 +1197,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared relationship signal sources. The group carries a thesis (structured facts that get hashed into a deterministic signature) and optional analysis_state (opaque agent data, NOT hashed). If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
+**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared relationship signal sources. For direct proposals, optional thesis_facts are caller-supplied signature scope stored under agent_scope in Cruxible-generated thesis_facts. Signal sources are derived from attached member signals. Optional analysis_state remains opaque agent data and is not hashed. If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
 
 **Arguments:**
 

@@ -1914,6 +1914,19 @@ class TestWorkflowSchema:
         assert step.propose_relationship_group is not None
         assert step.propose_relationship_group.on_empty == "complete"
 
+    def test_propose_relationship_group_step_rejects_thesis_facts(self):
+        with pytest.raises(ValidationError):
+            WorkflowStepSchema(
+                id="proposal",
+                propose_relationship_group={
+                    "relationship_type": "recommended_for",
+                    "candidates_from": "candidates",
+                    "signals_from": ["catalog_signals"],
+                    "thesis_facts": {"rule_id": "caller_authored"},
+                },
+                **{"as": "proposal"},
+            )
+
     def test_propose_relationship_group_step_rejects_unknown_on_empty(self):
         with pytest.raises(ValidationError):
             WorkflowStepSchema(

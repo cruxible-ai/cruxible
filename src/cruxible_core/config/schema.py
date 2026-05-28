@@ -1476,7 +1476,6 @@ class ProposeRelationshipGroupSpec(BaseModel):
     signals_from: list[str]
     on_empty: Literal["complete"] | None = None
     thesis_text: Any = ""
-    thesis_facts: dict[str, Any] = Field(default_factory=dict)
     pending_refresh_mode: Literal["replace", "retain_missing"] = "replace"
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     suggested_priority: Any | None = None
