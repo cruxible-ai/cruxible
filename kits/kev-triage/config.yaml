@@ -805,24 +805,6 @@ quality_checks:
 # ─── Contracts ────────────────────────────────────────────────────────
 
 contracts:
-  RelationshipGroupProposalArtifact:
-    description: Proposal artifact emitted by a propose_relationship_group workflow step.
-    fields:
-      relationship_type: {type: string}
-      members: {type: json}
-      status: {type: string}
-      candidate_count: {type: int}
-      on_empty: {type: string, optional: true}
-      group_created: {type: bool, optional: true}
-      thesis_text: {type: string}
-      thesis_facts: {type: json}
-      pending_refresh_mode: {type: string}
-      analysis_state: {type: json}
-      signal_sources_used: {type: json}
-      query_receipt_ids: {type: json}
-      suggested_priority: {type: string, optional: true}
-      proposed_by: {type: string}
-
   LocalSeedData:
     description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
     fields:
@@ -1197,7 +1179,6 @@ workflows:
 
   propose_asset_products:
     type: proposal
-    contract_out: RelationshipGroupProposalArtifact
     description: >
       Load software inventory, fuzzy match against reference-layer
       products, and propose asset_runs_product edges through the
@@ -1293,7 +1274,6 @@ workflows:
 
   propose_asset_exposure:
     type: proposal
-    contract_out: RelationshipGroupProposalArtifact
     description: >
       Derive affected asset-vulnerability candidates from approved
       asset-product mappings, then propose the asset exposure edges that
@@ -1497,7 +1477,6 @@ workflows:
       agent after reviewing the available VulnerabilityClass buckets and
       prior classification examples.
     contract_in: VulnerabilityClassificationProposalInput
-    contract_out: RelationshipGroupProposalArtifact
     steps:
       - id: classification_summary
         aggregate_items:
@@ -1558,7 +1537,6 @@ workflows:
 
   propose_exposure_reconciliation:
     type: proposal
-    contract_out: RelationshipGroupProposalArtifact
     description: >
       After a KEV reference refresh or product-mapping refresh, derive the
       current affected candidate set through Asset -> Product <- Vulnerability
