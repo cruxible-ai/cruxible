@@ -118,7 +118,6 @@ flowchart LR
 - Canonical relationships: Asset Has Control, Asset Has Exception, Asset Owned By, Asset Patch Window, Control Mitigates Class, Service Depends On Asset
 
 **Provider source**
-- Normalize Local Seed Tables (Python Function, v1.0.0); source: `kit://providers/seed.py::normalize_local_seed_tables`; artifact: Local Seed Bundle
 - Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 
 ### 2. Propose Asset Products
@@ -132,7 +131,7 @@ flowchart LR
 - Proposed relationships: Asset Runs Product
 
 **Provider source**
-- Load Software Inventory (Python Function, v1.0.0); source: `kit://providers/seed.py::load_software_inventory`; artifact: Local Seed Bundle
+- Parse Local Seed Bundle (Python Function, v1.0.0); source: `src/cruxible_core/providers/common/tabular.py::load_tabular_artifact_bundle`; artifact: Local Seed Bundle
 - Match Software To Products (Python Function, v1.0.0); source: `kit://providers/matching.py::match_software_to_products`
 
 ### 3. Propose Vulnerability Classification

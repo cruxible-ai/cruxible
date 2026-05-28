@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:b4d440662d267a3fe4589877015709b629a8f6e5f4ecd21031d5b278f251700b
-lock_digest: sha256:c971150bfc673f4d4f8f997a3627c1c3a1ac7073b5e7eaf94fa78029fa49a71a
-generated_at: 2026-05-27 18:42:31.061071+00:00
+config_digest: sha256:c90edbfce1625a01d9e7b5ab0ee9979a5efb7d5a8b54d817f9907e3142caf061
+lock_digest: sha256:0fbb5ffb83e0dfdf8da49c5ae34d14bfe5be0cbed36fe5d2723e432a88b25bf6
+generated_at: 2026-05-28 18:04:42.177696+00:00
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -21,9 +21,8 @@ providers:
   normalize_public_kev_reference:
     version: 1.0.0
     ref: kit://providers/reference.py::normalize_public_kev_reference
-    provider_entrypoint_sha256: sha256:9a746df65c8252c5b97e48947c414a035d8ba776c4d1192912933cd3a08fbc37
+    provider_entrypoint_sha256: sha256:2db3f898c1e88f8c370764cf92fdd5aa4719f4f8050050d91352eafe440ace50
     runtime: python
     deterministic: true
     side_effects: false
-    artifact: public_kev_bundle
     config: {}

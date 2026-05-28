@@ -1050,18 +1050,28 @@ Versioned executable leaves used by workflow steps. A provider is a callable tha
 
 ```yaml
 providers:
-  load_public_kev_rows:
+  parse_public_kev_bundle:
     kind: function
     description: >
-      Load KEV catalog, EPSS scores, and NVD CPE configurations.
-      Emit one row per (CVE, CPE product) pair.
-    contract_in: cruxible.EmptyInput
-    contract_out: PublicKevRows
-    ref: providers.load_public_kev_rows
+      Parse the pinned public KEV artifact into generic tables.
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
     version: "1.0.0"
     deterministic: true
     runtime: python
     artifact: public_kev_bundle
+
+  normalize_public_kev_reference:
+    kind: function
+    description: >
+      Normalize explicit KEV, EPSS, and NVD rows selected by workflow config.
+    contract_in: PublicKevReferenceInput
+    contract_out: cruxible.JsonItems
+    ref: providers.normalize_public_kev_reference
+    version: "1.0.0"
+    deterministic: true
+    runtime: python
 ```
 
 ### ProviderSchema
@@ -1080,6 +1090,26 @@ providers:
 | `side_effects` | bool | no | `false` | Whether the provider has side effects |
 | `config` | dict | no | `{}` | Provider-specific configuration |
 
+Only providers whose job is to load or parse a source artifact should declare
+`artifact`. Domain transform providers should receive the least information
+they need through explicit workflow input fields. Required table selection and
+source-table mapping belong in workflow config:
+
+```yaml
+- id: raw_tables
+  provider: parse_public_kev_bundle
+  input:
+    expected_tables:
+      - known_exploited_vulnerabilities
+  as: raw_tables
+
+- id: rows
+  provider: normalize_public_kev_reference
+  input:
+    kev_rows: $steps.raw_tables.tables.known_exploited_vulnerabilities.rows
+  as: rows
+```
+
 ---
 
 ## workflows
@@ -1094,9 +1124,17 @@ workflows:
       Build the canonical public KEV reference layer from bundled data.
     contract_in: cruxible.EmptyInput
     steps:
+      - id: raw_tables
+        provider: parse_public_kev_bundle
+        input:
+          expected_tables:
+            - known_exploited_vulnerabilities
+        as: raw_tables
+
       - id: rows
-        provider: load_public_kev_rows
-        input: {}
+        provider: normalize_public_kev_reference
+        input:
+          kev_rows: $steps.raw_tables.tables.known_exploited_vulnerabilities.rows
         as: rows
 
       - id: vendors
@@ -1448,7 +1486,7 @@ tests:
     workflow: build_public_kev_reference
     input: {}
     expect:
-      receipt_contains_provider: load_public_kev_rows
+      receipt_contains_provider: parse_public_kev_bundle
 ```
 
 ### WorkflowTestSchema

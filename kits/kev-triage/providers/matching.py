@@ -68,7 +68,7 @@ def match_software_to_products(
             "last_seen_at": _first_non_empty(item.get("last_seen")) or "",
             "evidence_source": _first_non_empty(item.get("evidence_source")) or "",
             "match_score": round(best_score, 4),
-            "match_basis": _match_basis(item, best_product, best_score),
+            "match_basis": _match_basis(item, best_product),
             "evidence_refs": [
                 evidence_ref(
                     _first_non_empty(item.get("evidence_source")) or "software_inventory",
@@ -76,7 +76,7 @@ def match_software_to_products(
                     observed_at=_first_non_empty(item.get("last_seen")) or "",
                 )
             ],
-            "rationale": _match_basis(item, best_product, best_score),
+            "rationale": _match_basis(item, best_product),
             "verdict": _score_to_verdict(best_score),
             "_last_seen": _first_non_empty(item.get("last_seen")) or "",
         }
@@ -235,18 +235,29 @@ def _score_to_verdict(score: float) -> str:
 def _match_basis(
     inventory_row: dict[str, Any],
     product_row: dict[str, Any],
-    score: float,
 ) -> str:
     software_name = _first_non_empty(inventory_row.get("software_name")) or "observed software"
     product_name = _first_non_empty(product_row.get("product_name")) or "reference product"
     vendor = _first_non_empty(inventory_row.get("vendor")) or "unknown vendor"
+    product_vendor = _first_non_empty(
+        product_row.get("vendor_name"),
+        product_row.get("cpe_vendor"),
+    )
+    product_clause = f" from {product_vendor}" if product_vendor else ""
     return (
-        f"{software_name} from {vendor} matched {product_name} "
-        f"with match score {score:.2f}"
+        f"{software_name} from {vendor} matched reference product "
+        f"{product_name}{product_clause} based on vendor and product-name similarity."
     )
 
 
 def _inventory_source_record_id(inventory_row: dict[str, Any]) -> str:
+    source_file = _first_non_empty(inventory_row.get("_source_file"))
+    source_row = _first_non_empty(inventory_row.get("_source_row"))
+    if source_file and source_row:
+        return f"{source_file}:{source_row}"
+    row_hash = _first_non_empty(inventory_row.get("_row_hash"))
+    if row_hash:
+        return row_hash
     asset_id = _first_non_empty(inventory_row.get("asset_id")) or "unknown-asset"
     software_name = _first_non_empty(inventory_row.get("software_name")) or "unknown-software"
     version = _first_non_empty(inventory_row.get("version")) or "unknown-version"

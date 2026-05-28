@@ -15,61 +15,51 @@ def assess_asset_affected(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Join approved asset-product edges to vulnerability-product edges."""
-    asset_product_edges = JsonItems.from_payload(
-        input_payload, key="asset_product_edges"
+    """Assess version applicability for pre-joined asset/product/vulnerability rows."""
+    joined_product_edges = JsonItems.from_payload(
+        input_payload, key="joined_product_edges"
     ).items
-    vulnerability_product_edges = JsonItems.from_payload(
-        input_payload, key="vulnerability_product_edges"
-    ).items
-
-    vulnerability_edges_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for edge in vulnerability_product_edges:
-        product_id = _edge_to_id(edge)
-        if product_id:
-            vulnerability_edges_by_product[product_id].append(edge)
-
     rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
-    for edge in asset_product_edges:
+    for joined_row in joined_product_edges:
+        edge = _nested_mapping(joined_row, "asset_product_edge")
+        vulnerability_edge = _nested_mapping(joined_row, "vulnerability_product_edge")
         asset_id = _edge_from_id(edge)
-        product_id = _edge_to_id(edge)
+        product_id = _edge_to_id(edge) or _first_non_empty(joined_row.get("product_id")) or ""
+        cve_id = _edge_from_id(vulnerability_edge)
         properties = _edge_properties(edge)
+        vulnerability_properties = _edge_properties(vulnerability_edge)
         if not asset_id or not product_id:
+            continue
+        if not cve_id:
             continue
 
         installed_version = _first_non_empty(properties.get("installed_version")) or ""
         source = _first_non_empty(properties.get("evidence_source")) or "asset_runs_product"
-        evidence_refs = _evidence_refs(properties)
-        for vulnerability_edge in vulnerability_edges_by_product.get(product_id, []):
-            cve_id = _edge_from_id(vulnerability_edge)
-            if not cve_id:
-                continue
-            vulnerability_properties = _edge_properties(vulnerability_edge)
-            verdict, rationale = _assess_version_membership(
-                installed_version,
-                vulnerability_properties.get("affected_versions"),
-                vulnerability_properties.get("fixed_version"),
-            )
-            if verdict == "contradict":
-                continue
+        verdict, rationale = _assess_version_membership(
+            installed_version,
+            vulnerability_properties.get("affected_versions"),
+            vulnerability_properties.get("fixed_version"),
+        )
+        if verdict == "contradict":
+            continue
 
-            row = {
-                "asset_id": asset_id,
-                "cve_id": cve_id,
-                "product_id": product_id,
-                "installed_version": installed_version,
-                "source": source,
-                "rationale": rationale,
-                "verdict": verdict,
-                "evidence_refs": merge_evidence_refs(
-                    evidence_refs,
-                    _evidence_refs(vulnerability_properties),
-                ),
-            }
-            key = (asset_id, cve_id)
-            current = rows_by_pair.get(key)
-            if current is None or _verdict_rank(verdict) > _verdict_rank(current["verdict"]):
-                rows_by_pair[key] = row
+        row = {
+            "asset_id": asset_id,
+            "cve_id": cve_id,
+            "product_id": product_id,
+            "installed_version": installed_version,
+            "source": source,
+            "rationale": rationale,
+            "verdict": verdict,
+            "evidence_refs": merge_evidence_refs(
+                _evidence_refs(properties),
+                _evidence_refs(vulnerability_properties),
+            ),
+        }
+        key = (asset_id, cve_id)
+        current = rows_by_pair.get(key)
+        if current is None or _verdict_rank(verdict) > _verdict_rank(current["verdict"]):
+            rows_by_pair[key] = row
 
     return JsonItems(items=[rows_by_pair[key] for key in sorted(rows_by_pair)]).to_payload()
 
@@ -107,7 +97,16 @@ def assess_asset_exposure(
         control = controls_by_id.get(control_id)
         if control is None or _first_non_empty(control.get("status")) != "active":
             continue
-        active_controls_by_asset[asset_id].append({"control_id": control_id, **control})
+        active_controls_by_asset[asset_id].append(
+            {
+                "control_id": control_id,
+                **control,
+                "evidence_refs": merge_evidence_refs(
+                    _evidence_refs(_edge_properties(edge)),
+                    _evidence_refs(control),
+                ),
+            }
+        )
 
     rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
     for item in affected_items:
@@ -166,6 +165,7 @@ def assess_asset_exposure(
             "evidence_refs": merge_evidence_refs(
                 _evidence_refs(item),
                 _evidence_refs(properties),
+                control_assessment.get("evidence_refs", []),
             ),
             "affected_verdict": _first_non_empty(item.get("verdict"), properties.get("verdict"))
             or "support",
@@ -288,6 +288,13 @@ def _edge_properties(edge: dict[str, Any]) -> dict[str, Any]:
     return properties if isinstance(properties, dict) else {}
 
 
+def _nested_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def _entity_id(entity: dict[str, Any]) -> str:
     return _first_non_empty(entity.get("entity_id")) or ""
 
@@ -324,6 +331,7 @@ def _classes_by_vulnerability(
             {
                 "class_id": class_id,
                 "properties": _edge_properties(edge),
+                "evidence_refs": _evidence_refs(_edge_properties(edge)),
             }
         )
     return {
@@ -349,6 +357,7 @@ def _mitigations_by_control_class(
                 "class_id": class_id,
                 "effect": effect,
                 "validation_basis": _first_non_empty(properties.get("validation_basis")) or "",
+                "evidence_refs": _evidence_refs(properties),
             }
         )
     return {
@@ -433,6 +442,7 @@ def _assess_class_aware_controls(
             "effect": "",
             "basis": "No active compensating controls were attached to this asset.",
             "matches": [],
+            "evidence_refs": [],
         }
 
     matches: list[dict[str, Any]] = []
@@ -448,6 +458,11 @@ def _assess_class_aware_controls(
                     {
                         **mitigation,
                         "control_name": control_name,
+                        "evidence_refs": merge_evidence_refs(
+                            _evidence_refs(control),
+                            vulnerability_class.get("evidence_refs", []),
+                            mitigation.get("evidence_refs", []),
+                        ),
                     }
                 )
 
@@ -476,11 +491,15 @@ def _assess_class_aware_controls(
                 f"{class_clause}."
             ),
             "matches": [],
+            "evidence_refs": [],
         }
 
     strongest = matches[0]
     effect = str(strongest.get("effect", ""))
     basis = _class_aware_control_basis(matches)
+    evidence_refs = merge_evidence_refs(
+        *(match.get("evidence_refs", []) for match in matches)
+    )
     if effect in {"blocks", "compensates"}:
         return {
             "status": "mitigated",
@@ -489,6 +508,7 @@ def _assess_class_aware_controls(
             "effect": effect,
             "basis": basis,
             "matches": matches,
+            "evidence_refs": evidence_refs,
         }
     return {
         "status": "exposed",
@@ -497,6 +517,7 @@ def _assess_class_aware_controls(
         "effect": effect,
         "basis": basis,
         "matches": matches,
+        "evidence_refs": evidence_refs,
     }
 
 

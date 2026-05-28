@@ -805,28 +805,6 @@ quality_checks:
 # ─── Contracts ────────────────────────────────────────────────────────
 
 contracts:
-  LocalSeedData:
-    description: Deterministic internal entities and edges from CMDB, service catalog, and operational systems.
-    fields:
-      assets: {type: json}
-      business_services: {type: json}
-      owners: {type: json}
-      compensating_controls: {type: json}
-      vulnerability_classes: {type: json}
-      exceptions: {type: json}
-      patch_windows: {type: json}
-      service_depends_on_asset: {type: json}
-      asset_owned_by: {type: json}
-      asset_has_control: {type: json}
-      asset_has_exception: {type: json}
-      asset_patch_window: {type: json}
-      control_mitigates_class: {type: json}
-
-  SoftwareInventory:
-    description: Raw software inventory from CMDB and inventory tools with business-friendly names.
-    fields:
-      items: {type: json}
-
   SoftwareMatchInput:
     description: Software inventory rows plus canonical reference products to match against.
     fields:
@@ -839,10 +817,9 @@ contracts:
       items: {type: json}
 
   AssetAffectedAssessmentInput:
-    description: Approved asset-product mappings plus public vulnerability-product edges.
+    description: Joined asset-product and vulnerability-product rows for version applicability assessment.
     fields:
-      asset_product_edges: {type: json}
-      vulnerability_product_edges: {type: json}
+      joined_product_edges: {type: json}
 
   AssetAffectedAssessmentResults:
     description: Candidate asset-vulnerability judgments derived from version-range comparison.
@@ -905,34 +882,12 @@ providers:
     deterministic: true
     artifact: local_seed_bundle
 
-  normalize_local_seed_tables:
-    description: >
-      Normalize parsed local seed tables into deterministic KEV entities and
-      relationship rows keyed by entity and relationship type.
-    contract_in: cruxible.ParsedTabularBundle
-    contract_out: LocalSeedData
-    ref: kit://providers/seed.py::normalize_local_seed_tables
-    version: "1.0.0"
-    deterministic: true
-    artifact: local_seed_bundle
-
-  load_software_inventory:
-    description: >
-      Load raw software inventory from the seed data bundle. Returns
-      rows with business-friendly software names, versions, and
-      evidence sources.
-    contract_in: cruxible.EmptyInput
-    contract_out: SoftwareInventory
-    ref: kit://providers/seed.py::load_software_inventory
-    version: "1.0.0"
-    deterministic: true
-    artifact: local_seed_bundle
-
   match_software_to_products:
     description: >
       Fuzzy match software inventory rows against reference-layer
       products using CPE name similarity and vendor matching. Returns
-      match results with deterministic match scores and verdicts.
+      transient match scores for signal mapping plus qualitative
+      governed relationship rationale.
     contract_in: SoftwareMatchInput
     contract_out: SoftwareMatchResults
     ref: kit://providers/matching.py::match_software_to_products
@@ -941,9 +896,9 @@ providers:
 
   assess_asset_affected:
     description: >
-      Join approved asset-product mappings to public
-      vulnerability-affects-product edges and assess whether the
-      installed version is within the reference-layer affected range.
+      Assess whether joined asset-product and vulnerability-product rows
+      place the installed version within the reference-layer affected
+      range.
     contract_in: AssetAffectedAssessmentInput
     contract_out: AssetAffectedAssessmentResults
     ref: kit://providers/assessment.py::assess_asset_affected
@@ -1000,20 +955,86 @@ workflows:
             - control_mitigates_class
         as: raw_tables
 
-      - id: seed
-        provider: normalize_local_seed_tables
-        input:
-          artifact: $steps.raw_tables.artifact
-          tables: $steps.raw_tables.tables
-          files: $steps.raw_tables.files
-          diagnostics: $steps.raw_tables.diagnostics
-        as: seed
+      - id: asset_rows
+        shape_items:
+          items: $steps.raw_tables.tables.assets.rows
+          include_input: true
+          casts:
+            internet_exposed: bool
+        as: asset_rows
+      - id: business_service_rows
+        shape_items:
+          items: $steps.raw_tables.tables.business_services.rows
+          include_input: true
+        as: business_service_rows
+      - id: owner_rows
+        shape_items:
+          items: $steps.raw_tables.tables.owners.rows
+          include_input: true
+        as: owner_rows
+      - id: control_rows
+        shape_items:
+          items: $steps.raw_tables.tables.compensating_controls.rows
+          include_input: true
+        as: control_rows
+      - id: vulnerability_class_rows
+        shape_items:
+          items: $steps.raw_tables.tables.vulnerability_classes.rows
+          include_input: true
+        as: vulnerability_class_rows
+      - id: exception_rows
+        shape_items:
+          items: $steps.raw_tables.tables.exceptions.rows
+          include_input: true
+        as: exception_rows
+      - id: patch_window_rows
+        shape_items:
+          items: $steps.raw_tables.tables.patch_windows.rows
+          include_input: true
+          casts:
+            emergency_patch_allowed: bool
+            outage_allowed: bool
+            testing_required: bool
+            rollback_required: bool
+        as: patch_window_rows
+      - id: service_asset_rows
+        shape_items:
+          items: $steps.raw_tables.tables.service_depends_on_asset.rows
+          include_input: true
+        as: service_asset_rows
+      - id: asset_owner_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_owned_by.rows
+          include_input: true
+        as: asset_owner_rows
+      - id: asset_control_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_has_control.rows
+          include_input: true
+        as: asset_control_rows
+      - id: asset_exception_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_has_exception.rows
+          include_input: true
+        as: asset_exception_rows
+      - id: asset_patch_window_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_patch_window.rows
+          include_input: true
+        as: asset_patch_window_rows
+      - id: control_mitigation_rows
+        shape_items:
+          items: $steps.raw_tables.tables.control_mitigates_class.rows
+          include_input: true
+          casts:
+            evidence_refs: json
+        as: control_mitigation_rows
 
       # --- Entities ---
       - id: assets
         make_entities:
           entity_type: Asset
-          items: $steps.seed.assets
+          items: $steps.asset_rows.items
           entity_id: $item.asset_id
           properties:
             asset_id: $item.asset_id
@@ -1026,7 +1047,7 @@ workflows:
       - id: services
         make_entities:
           entity_type: BusinessService
-          items: $steps.seed.business_services
+          items: $steps.business_service_rows.items
           entity_id: $item.service_id
           properties:
             service_id: $item.service_id
@@ -1036,7 +1057,7 @@ workflows:
       - id: owners
         make_entities:
           entity_type: Owner
-          items: $steps.seed.owners
+          items: $steps.owner_rows.items
           entity_id: $item.owner_id
           properties:
             owner_id: $item.owner_id
@@ -1047,7 +1068,7 @@ workflows:
       - id: controls
         make_entities:
           entity_type: CompensatingControl
-          items: $steps.seed.compensating_controls
+          items: $steps.control_rows.items
           entity_id: $item.control_id
           properties:
             control_id: $item.control_id
@@ -1058,7 +1079,7 @@ workflows:
       - id: vulnerability_classes
         make_entities:
           entity_type: VulnerabilityClass
-          items: $steps.seed.vulnerability_classes
+          items: $steps.vulnerability_class_rows.items
           entity_id: $item.class_id
           properties:
             class_id: $item.class_id
@@ -1069,7 +1090,7 @@ workflows:
       - id: exceptions
         make_entities:
           entity_type: Exception
-          items: $steps.seed.exceptions
+          items: $steps.exception_rows.items
           entity_id: $item.exception_id
           properties:
             exception_id: $item.exception_id
@@ -1080,7 +1101,7 @@ workflows:
       - id: patch_windows
         make_entities:
           entity_type: PatchWindow
-          items: $steps.seed.patch_windows
+          items: $steps.patch_window_rows.items
           entity_id: $item.patch_window_id
           properties:
             patch_window_id: $item.patch_window_id
@@ -1098,7 +1119,7 @@ workflows:
       - id: svc_asset_edges
         make_relationships:
           relationship_type: service_depends_on_asset
-          items: $steps.seed.service_depends_on_asset
+          items: $steps.service_asset_rows.items
           from_type: BusinessService
           from_id: $item.service_id
           to_type: Asset
@@ -1107,7 +1128,7 @@ workflows:
       - id: owned_by_edges
         make_relationships:
           relationship_type: asset_owned_by
-          items: $steps.seed.asset_owned_by
+          items: $steps.asset_owner_rows.items
           from_type: Asset
           from_id: $item.asset_id
           to_type: Owner
@@ -1116,7 +1137,7 @@ workflows:
       - id: control_edges
         make_relationships:
           relationship_type: asset_has_control
-          items: $steps.seed.asset_has_control
+          items: $steps.asset_control_rows.items
           from_type: Asset
           from_id: $item.asset_id
           to_type: CompensatingControl
@@ -1125,7 +1146,7 @@ workflows:
       - id: exception_edges
         make_relationships:
           relationship_type: asset_has_exception
-          items: $steps.seed.asset_has_exception
+          items: $steps.asset_exception_rows.items
           from_type: Asset
           from_id: $item.asset_id
           to_type: Exception
@@ -1134,7 +1155,7 @@ workflows:
       - id: patch_window_edges
         make_relationships:
           relationship_type: asset_patch_window
-          items: $steps.seed.asset_patch_window
+          items: $steps.asset_patch_window_rows.items
           from_type: Asset
           from_id: $item.asset_id
           to_type: PatchWindow
@@ -1143,7 +1164,7 @@ workflows:
       - id: control_mitigation_edges
         make_relationships:
           relationship_type: control_mitigates_class
-          items: $steps.seed.control_mitigates_class
+          items: $steps.control_mitigation_rows.items
           from_type: CompensatingControl
           from_id: $item.control_id
           to_type: VulnerabilityClass
@@ -1184,9 +1205,16 @@ workflows:
       products, and propose asset_runs_product edges through the
       governed group resolution flow.
     steps:
+      - id: inventory_tables
+        provider: parse_local_seed_bundle
+        input:
+          expected_tables:
+            - software_inventory
+        as: inventory_tables
       - id: inventory
-        provider: load_software_inventory
-        input: {}
+        shape_items:
+          items: $steps.inventory_tables.tables.software_inventory.rows
+          include_input: true
         as: inventory
       - id: reference_products
         list_entities:
@@ -1303,11 +1331,21 @@ workflows:
           op: gt
           value: 0
           message: Asset exposure proposal requires reference vulnerability-product edges.
+      - id: affected_product_join
+        join_items:
+          left_items: $steps.asset_products.items
+          right_items: $steps.vulnerability_products.items
+          left_key: $item.to_id
+          right_key: $item.to_id
+          fields:
+            product_id: $item.join_key
+            asset_product_edge: $item.left
+            vulnerability_product_edge: $item.right
+        as: affected_product_join
       - id: affected_assessments
         provider: assess_asset_affected
         input:
-          asset_product_edges: $steps.asset_products.items
-          vulnerability_product_edges: $steps.vulnerability_products.items
+          joined_product_edges: $steps.affected_product_join.items
         as: affected_assessments
       - id: assets
         list_entities:
@@ -1545,11 +1583,21 @@ workflows:
       - id: require_complete_reconciliation_vulnerability_products
         assert_not_truncated:
           step: vulnerability_products
+      - id: reconciliation_product_join
+        join_items:
+          left_items: $steps.asset_products.items
+          right_items: $steps.vulnerability_products.items
+          left_key: $item.to_id
+          right_key: $item.to_id
+          fields:
+            product_id: $item.join_key
+            asset_product_edge: $item.left
+            vulnerability_product_edge: $item.right
+        as: reconciliation_product_join
       - id: affected_assessments
         provider: assess_asset_affected
         input:
-          asset_product_edges: $steps.asset_products.items
-          vulnerability_product_edges: $steps.vulnerability_products.items
+          joined_product_edges: $steps.reconciliation_product_join.items
         as: affected_assessments
       - id: accepted_exposures
         list_relationships:

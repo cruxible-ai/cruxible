@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:8b32bdcdba32d5445fa2396fc33804928362f86b5f24494f00ba69dd759dc8ac
-lock_digest: sha256:a3ad5fcabfa0f5b1547ed79b0e410a396ced6ba8cd156b8ad839568d738a9c87
-generated_at: 2026-05-28 14:09:40.037002+00:00
+config_digest: sha256:d1eaa17e1998c4f4ae2b97d663bc14462230a98bc60a2f7cb0bc998b2b4d4163
+lock_digest: sha256:6d0e3c8a3d3d79ea71142aff9b8f528a1ac483f73b6d39bf26fb77ae96a88829
+generated_at: 2026-05-28 18:04:42.641963+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -20,28 +20,10 @@ providers:
     side_effects: false
     artifact: local_seed_bundle
     config: {}
-  normalize_local_seed_tables:
-    version: 1.0.0
-    ref: kit://providers/seed.py::normalize_local_seed_tables
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
-    runtime: python
-    deterministic: true
-    side_effects: false
-    artifact: local_seed_bundle
-    config: {}
-  load_software_inventory:
-    version: 1.0.0
-    ref: kit://providers/seed.py::load_software_inventory
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
-    runtime: python
-    deterministic: true
-    side_effects: false
-    artifact: local_seed_bundle
-    config: {}
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
+    provider_entrypoint_sha256: sha256:fbaeb44e60d60efec39c4dff7ad6f6123ac6f46d0e773590597d335f48b8815b
     runtime: python
     deterministic: true
     side_effects: false
@@ -49,7 +31,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
+    provider_entrypoint_sha256: sha256:fbaeb44e60d60efec39c4dff7ad6f6123ac6f46d0e773590597d335f48b8815b
     runtime: python
     deterministic: true
     side_effects: false
@@ -57,7 +39,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
+    provider_entrypoint_sha256: sha256:fbaeb44e60d60efec39c4dff7ad6f6123ac6f46d0e773590597d335f48b8815b
     runtime: python
     deterministic: true
     side_effects: false
@@ -65,7 +47,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_sha256: sha256:cddb1d1b20a3f180c2f321378f21662f6d0a92d0b5fcffbc7049435abd17dde8
+    provider_entrypoint_sha256: sha256:fbaeb44e60d60efec39c4dff7ad6f6123ac6f46d0e773590597d335f48b8815b
     runtime: python
     deterministic: true
     side_effects: false

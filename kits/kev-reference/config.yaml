@@ -218,6 +218,14 @@ quality_checks:
     target_property: name
     allow_missing_source: true
 
+contracts:
+  PublicKevReferenceInput:
+    description: Public KEV, EPSS, and NVD rows selected by workflow config.
+    fields:
+      kev_rows: {type: json}
+      epss_rows: {type: json}
+      nvd_cpe_rows: {type: json}
+
 artifacts:
   public_kev_bundle:
     kind: directory
@@ -242,12 +250,11 @@ providers:
       CVE ID, extract CPE-based product identity and version ranges, and
       emit one row per (CVE, CPE product) pair with aggregated
       affected_versions.
-    contract_in: cruxible.ParsedTabularBundle
+    contract_in: PublicKevReferenceInput
     contract_out: cruxible.JsonItems
     ref: kit://providers/reference.py::normalize_public_kev_reference
     version: "1.0.0"
     deterministic: true
-    artifact: public_kev_bundle
 
 workflows:
   build_public_kev_reference:
@@ -268,10 +275,9 @@ workflows:
       - id: rows
         provider: normalize_public_kev_reference
         input:
-          artifact: $steps.raw_tables.artifact
-          tables: $steps.raw_tables.tables
-          files: $steps.raw_tables.files
-          diagnostics: $steps.raw_tables.diagnostics
+          kev_rows: $steps.raw_tables.tables.known_exploited_vulnerabilities.rows
+          epss_rows: $steps.raw_tables.tables.epss_kev_nvd.rows
+          nvd_cpe_rows: $steps.raw_tables.tables.nvd_kev_cves.rows
         as: rows
       - id: require_reference_rows
         assert_count:

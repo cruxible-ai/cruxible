@@ -2,50 +2,29 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import re
 from ast import literal_eval
 from collections import defaultdict
-from pathlib import Path
 from typing import Any, cast
 
-from cruxible_core.provider.payloads import JsonItems, ParsedTabularBundle, evidence_ref
+from cruxible_core.provider.payloads import JsonItems, evidence_ref
 from cruxible_core.provider.types import ProviderContext
-
-
-def load_public_kev_rows(
-    _input_payload: dict[str, Any],
-    context: ProviderContext,
-) -> dict[str, Any]:
-    """Load and normalize public KEV reference rows from a hashed data bundle."""
-    bundle_root = _require_artifact_root(context, "load_public_kev_rows")
-
-    kev_rows = _load_csv_rows(bundle_root / "known_exploited_vulnerabilities.csv")
-    enriched_by_cve = {
-        row.get("CVE", "").strip(): row
-        for row in _load_csv_rows(bundle_root / "epss_kev_nvd.csv")
-        if row.get("CVE", "").strip()
-    }
-    nvd_cpe_by_cve = _load_nvd_cpe_data(bundle_root / "nvd_kev_cves.json")
-
-    return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
 
 
 def normalize_public_kev_reference(
     input_payload: dict[str, Any],
     _context: ProviderContext,
 ) -> dict[str, Any]:
-    """Normalize parsed public KEV tables into reference graph rows."""
-    bundle = ParsedTabularBundle.from_payload(input_payload)
-    kev_rows = _strip_provider_rows(bundle.require_table("known_exploited_vulnerabilities"))
+    """Normalize explicit public KEV, EPSS, and NVD rows into reference graph rows."""
+    kev_rows = _strip_provider_rows(_semantic_rows(input_payload, "kev_rows"))
     enriched_by_cve = {
         str(row.get("cve", "")).strip(): row
-        for row in _strip_provider_rows(bundle.require_table("epss_kev_nvd"))
+        for row in _strip_provider_rows(_semantic_rows(input_payload, "epss_rows"))
         if str(row.get("cve", "")).strip()
     }
     nvd_cpe_by_cve = _parse_nvd_cpe_rows(
-        _strip_provider_rows(bundle.require_table("nvd_kev_cves"))
+        _strip_provider_rows(_semantic_rows(input_payload, "nvd_cpe_rows"))
     )
     return _build_public_kev_rows(kev_rows, enriched_by_cve, nvd_cpe_by_cve)
 
@@ -188,26 +167,13 @@ def _build_public_kev_rows(
     return JsonItems(items=items).to_payload()
 
 
-def _load_nvd_cpe_data(path: Path) -> dict[str, list[dict[str, Any]]]:
-    """Parse NVD CVE JSON and extract CPE product + version data."""
-    if not path.exists():
-        return {}
-
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        return {}
-    return _parse_nvd_cpe_rows(raw)
-
-
-def _require_artifact_root(context: ProviderContext, provider_name: str) -> Path:
-    if context.artifact is None or context.artifact.local_path is None:
-        raise ValueError(f"{provider_name} requires a local artifact bundle")
-    return Path(context.artifact.local_path)
-
-
-def _load_csv_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+def _semantic_rows(input_payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    rows = input_payload.get(key)
+    if not isinstance(rows, list):
+        raise ValueError(f"normalize_public_kev_reference requires '{key}' to be a list")
+    if not all(isinstance(row, dict) for row in rows):
+        raise ValueError(f"normalize_public_kev_reference requires '{key}' rows to be objects")
+    return rows
 
 
 def _strip_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

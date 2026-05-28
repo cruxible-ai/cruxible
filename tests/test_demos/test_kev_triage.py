@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import shutil
 from pathlib import Path
 
@@ -30,7 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
 KEV_REFERENCE_KIT_DIR = REPO_ROOT / "kits" / "kev-reference"
 
-_seed_module = load_kit_provider_module(KEV_KIT_DIR / "providers" / "seed.py", KEV_KIT_DIR)
 _reference_module = load_kit_provider_module(
     KEV_REFERENCE_KIT_DIR / "providers" / "reference.py",
     KEV_REFERENCE_KIT_DIR,
@@ -86,13 +86,33 @@ def _has_exposure_path(rows: list[object], asset_id: str, cve_id: str) -> bool:
         and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
         for row in rows
     )
+
+
+def _assess_joined_asset_affected(
+    asset_product_edges: list[dict],
+    vulnerability_product_edges: list[dict],
+) -> list[dict]:
+    joined_product_edges = [
+        {
+            "product_id": asset_edge["to_id"],
+            "asset_product_edge": asset_edge,
+            "vulnerability_product_edge": vulnerability_edge,
+        }
+        for asset_edge in asset_product_edges
+        for vulnerability_edge in vulnerability_product_edges
+        if asset_edge["to_id"] == vulnerability_edge["to_id"]
+    ]
+    return assess_asset_affected(
+        {"joined_product_edges": joined_product_edges},
+        _provider_context(None),
+    )["items"]
+
+
 _assessment_module = load_kit_provider_module(
     KEV_KIT_DIR / "providers" / "assessment.py",
     KEV_KIT_DIR,
 )
 
-load_local_seed_data = _seed_module.load_local_seed_data
-normalize_local_seed_tables = _seed_module.normalize_local_seed_tables
 normalize_public_kev_reference = _reference_module.normalize_public_kev_reference
 match_software_to_products = _matching_module.match_software_to_products
 assess_asset_affected = _assessment_module.assess_asset_affected
@@ -198,26 +218,28 @@ def _approve_workflow_group_with_input(
     assert resolved.edges_created > 0
 
 
-def test_load_local_seed_data_reads_expected_rows() -> None:
-    payload = load_local_seed_data({}, _provider_context(KEV_KIT_DIR / "data" / "seed"))
-    assert set(payload) == {
-        "assets",
-        "business_services",
-        "owners",
-        "compensating_controls",
-        "vulnerability_classes",
-        "exceptions",
-        "patch_windows",
-        "service_depends_on_asset",
-        "asset_owned_by",
-        "asset_has_control",
-        "asset_has_exception",
-        "asset_patch_window",
-        "control_mitigates_class",
-    }
-    assert payload["assets"][0]["internet_exposed"] is True
-    assert payload["control_mitigates_class"][0]["effect"] == "blocks"
-    assert payload["control_mitigates_class"][0]["evidence_refs"] == [
+def test_build_local_state_shapes_seed_tables_in_config(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    service_lock(instance)
+
+    _apply_canonical_workflow(instance, "build_local_state")
+
+    graph = instance.load_graph()
+    asset = graph.get_entity("Asset", "ASSET-1")
+    assert asset is not None
+    assert asset.properties["internet_exposed"] is True
+    patch_window = graph.get_entity("PatchWindow", "PW-1")
+    assert patch_window is not None
+    assert patch_window.properties["emergency_patch_allowed"] is True
+    assert patch_window.properties["testing_required"] is True
+    mitigation = next(
+        edge
+        for edge in graph.list_edges("control_mitigates_class")
+        if edge["from_id"] == "CTRL-1" and edge["to_id"] == "path_traversal"
+    )
+    assert mitigation["properties"]["effect"] == "blocks"
+    assert mitigation["properties"]["evidence_refs"] == [
         {
             "source": "control_review",
             "source_record_id": "CTRL-1:path_traversal",
@@ -226,19 +248,22 @@ def test_load_local_seed_data_reads_expected_rows() -> None:
     ]
 
 
-def test_normalize_local_seed_tables_accepts_common_tabular_output() -> None:
-    parsed = load_tabular_artifact_bundle(
-        {"expected_tables": list(_seed_module._LOCAL_SEED_FILES)},
-        _provider_context(KEV_KIT_DIR / "data" / "seed"),
+def test_kev_domain_providers_do_not_own_seed_table_inventory() -> None:
+    config = compose_config_files(
+        base_path=KEV_REFERENCE_KIT_DIR / "config.yaml",
+        overlay_path=KEV_KIT_DIR / "config.yaml",
     )
 
-    payload = normalize_local_seed_tables(parsed, _provider_context(None))
+    assert "normalize_local_seed_tables" not in config.providers
+    assert not (KEV_KIT_DIR / "providers" / "seed.py").exists()
+    assert config.providers["normalize_public_kev_reference"].artifact is None
 
-    assert payload["assets"][0]["internet_exposed"] is True
-    assert payload["asset_owned_by"][0]["asset_id"]
-    assert payload["control_mitigates_class"][0]["evidence_refs"][0][
-        "source_record_id"
-    ] == "CTRL-1:path_traversal"
+    artifact_providers = {
+        name
+        for name, provider in config.providers.items()
+        if provider.artifact is not None
+    }
+    assert artifact_providers == {"parse_public_kev_bundle", "parse_local_seed_bundle"}
 
 
 def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
@@ -253,7 +278,14 @@ def test_normalize_public_kev_reference_accepts_common_tabular_output() -> None:
         _provider_context(KEV_REFERENCE_KIT_DIR / "data"),
     )
 
-    payload = normalize_public_kev_reference(parsed, _provider_context(None))
+    payload = normalize_public_kev_reference(
+        {
+            "kev_rows": parsed["tables"]["known_exploited_vulnerabilities"]["rows"],
+            "epss_rows": parsed["tables"]["epss_kev_nvd"]["rows"],
+            "nvd_cpe_rows": parsed["tables"]["nvd_kev_cves"]["rows"],
+        },
+        _provider_context(None),
+    )
 
     assert payload["items"]
     row = payload["items"][0]
@@ -326,8 +358,13 @@ def test_match_software_to_products_deduplicates_asset_product_pairs() -> None:
     assert item["evidence_source"] == "scanner-b"
     assert item["match_score"] == payload["items"][0]["match_score"]
     assert item["match_basis"]
+    assert "match score" not in item["match_basis"].lower()
+    assert "confidence" not in item["match_basis"].lower()
+    assert re.search(r"\b\d+\.\d+\b", item["match_basis"]) is None
     assert item["evidence_refs"][0]["source"] == "scanner-b"
     assert item["rationale"] == item["match_basis"]
+    assert "match score" not in item["rationale"].lower()
+    assert re.search(r"\b\d+\.\d+\b", item["rationale"]) is None
     assert item["verdict"] == "support"
 
 
@@ -379,35 +416,95 @@ def test_match_software_to_products_accepts_entity_shaped_reference_products() -
 def test_assess_asset_affected_uses_version_ranges() -> None:
     payload = assess_asset_affected(
         {
-            "asset_product_edges": [
+            "joined_product_edges": [
                 {
-                    "from_id": "ASSET-1",
-                    "to_id": "apache__http_server",
-                    "properties": {
-                        "installed_version": "2.4.49",
-                        "evidence_source": "qualys",
+                    "product_id": "apache__http_server",
+                    "asset_product_edge": {
+                        "from_id": "ASSET-1",
+                        "to_id": "apache__http_server",
+                        "properties": {
+                            "installed_version": "2.4.49",
+                            "evidence_source": "qualys",
+                        },
+                    },
+                    "vulnerability_product_edge": {
+                        "from_id": "CVE-2021-41773",
+                        "to_id": "apache__http_server",
+                        "properties": {
+                            "affected_versions": [
+                                {
+                                    "version_start_including": "2.4.0",
+                                    "version_end_excluding": "2.4.50",
+                                }
+                            ],
+                            "fixed_version": "2.4.50",
+                        },
                     },
                 },
                 {
-                    "from_id": "ASSET-2",
-                    "to_id": "apache__http_server",
-                    "properties": {
-                        "installed_version": "2.4.58",
-                        "evidence_source": "qualys",
+                    "product_id": "apache__http_server",
+                    "asset_product_edge": {
+                        "from_id": "ASSET-2",
+                        "to_id": "apache__http_server",
+                        "properties": {
+                            "installed_version": "2.4.58",
+                            "evidence_source": "qualys",
+                        },
+                    },
+                    "vulnerability_product_edge": {
+                        "from_id": "CVE-2021-41773",
+                        "to_id": "apache__http_server",
+                        "properties": {
+                            "affected_versions": [
+                                {
+                                    "version_start_including": "2.4.0",
+                                    "version_end_excluding": "2.4.50",
+                                }
+                            ],
+                            "fixed_version": "2.4.50",
+                        },
                     },
                 },
-            ],
-            "vulnerability_product_edges": [
                 {
-                    "from_id": "CVE-2021-41773",
-                    "to_id": "apache__http_server",
-                    "properties": {
-                        "affected_versions": [
-                            {"version_start_including": "2.4.0", "version_end_excluding": "2.4.50"}
-                        ],
-                        "fixed_version": "2.4.50",
+                    "product_id": "apache__http_server",
+                    "asset_product_edge": {
+                        "from_id": "ASSET-3",
+                        "to_id": "apache__http_server",
+                        "properties": {
+                            "installed_version": "2.4.49",
+                            "evidence_source": "qualys",
+                        },
                     },
-                }
+                    "vulnerability_product_edge": {
+                        "from_id": "CVE-2021-0002",
+                        "to_id": "apache__http_server",
+                        "properties": {},
+                    },
+                },
+                {
+                    "product_id": "apache__http_server_alt",
+                    "asset_product_edge": {
+                        "from_id": "ASSET-3",
+                        "to_id": "apache__http_server_alt",
+                        "properties": {
+                            "installed_version": "2.4.49",
+                            "evidence_source": "qualys",
+                        },
+                    },
+                    "vulnerability_product_edge": {
+                        "from_id": "CVE-2021-0002",
+                        "to_id": "apache__http_server_alt",
+                        "properties": {
+                            "affected_versions": [
+                                {
+                                    "version_start_including": "2.4.0",
+                                    "version_end_excluding": "2.4.50",
+                                }
+                            ],
+                            "fixed_version": "2.4.50",
+                        },
+                    },
+                },
             ],
         },
         _provider_context(None),
@@ -421,6 +518,16 @@ def test_assess_asset_affected_uses_version_ranges() -> None:
             "installed_version": "2.4.49",
             "source": "qualys",
             "rationale": payload["items"][0]["rationale"],
+            "verdict": "support",
+            "evidence_refs": [],
+        },
+        {
+            "asset_id": "ASSET-3",
+            "cve_id": "CVE-2021-0002",
+            "product_id": "apache__http_server_alt",
+            "installed_version": "2.4.49",
+            "source": "qualys",
+            "rationale": payload["items"][1]["rationale"],
             "verdict": "support",
             "evidence_refs": [],
         }
@@ -556,19 +663,46 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
                     },
                 ],
                 "asset_control_edges": [
-                    {"from_id": "ASSET-1", "to_id": "CTRL-1", "properties": {}}
+                    {
+                        "from_id": "ASSET-1",
+                        "to_id": "CTRL-1",
+                        "properties": {
+                            "evidence_refs": [
+                                {
+                                    "source": "control_inventory",
+                                    "source_record_id": "asset-control-1",
+                                }
+                            ]
+                        },
+                    }
                 ],
                 "controls": [
                     {
                         "entity_id": "CTRL-1",
-                        "properties": {"name": "WAF", "status": "active"},
+                        "properties": {
+                            "name": "WAF",
+                            "status": "active",
+                            "evidence_refs": [
+                                {
+                                    "source": "control_catalog",
+                                    "source_record_id": "CTRL-1",
+                                }
+                            ],
+                        },
                     }
                 ],
                 "vulnerability_classification_edges": [
                     {
                         "from_id": "CVE-2021-0001",
                         "to_id": "path_traversal",
-                        "properties": {},
+                        "properties": {
+                            "evidence_refs": [
+                                {
+                                    "source": "classification_review",
+                                    "source_record_id": "CVE-2021-0001:path_traversal",
+                                }
+                            ]
+                        },
                     }
                 ],
                 "control_mitigation_edges": [
@@ -578,6 +712,12 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
                         "properties": {
                             "effect": effect,
                             "validation_basis": f"{effect} regression",
+                            "evidence_refs": [
+                                {
+                                    "source": "control_mapping",
+                                    "source_record_id": f"CTRL-1:{effect}",
+                                }
+                            ],
                         },
                     }
                 ],
@@ -593,6 +733,13 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
         assert item["control_exposure_verdict"] == "contradict"
         assert item["control_effect"] == effect
         assert effect in str(item["control_basis"])
+        evidence_sources = {ref["source"] for ref in item["evidence_refs"]}
+        assert {
+            "control_inventory",
+            "control_catalog",
+            "classification_review",
+            "control_mapping",
+        } <= evidence_sources
 
     reduced = run_with("reduces")
     assert reduced["status"] == "exposed"
@@ -642,13 +789,10 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
         if edge["to_id"] == "path_traversal"
         and edge["properties"].get("effect") in {"blocks", "compensates"}
     }
-    affected = assess_asset_affected(
-        {
-            "asset_product_edges": graph.list_edges("asset_runs_product"),
-            "vulnerability_product_edges": graph.list_edges("vulnerability_affects_product"),
-        },
-        _provider_context(None),
-    )["items"]
+    affected = _assess_joined_asset_affected(
+        graph.list_edges("asset_runs_product"),
+        graph.list_edges("vulnerability_affects_product"),
+    )
     affected_cves_by_asset: dict[str, list[str]] = {}
     for item in affected:
         affected_cves_by_asset.setdefault(item["asset_id"], []).append(item["cve_id"])
@@ -688,6 +832,13 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
     )
 
     proposed = service_propose_workflow(instance, "propose_asset_exposure", {})
+    assert proposed.receipt is not None
+    assert any(
+        node.detail.get("step_id") == "affected_product_join"
+        and node.detail.get("kind") == "join_items"
+        and node.detail.get("output_count", 0) > 0
+        for node in proposed.receipt.nodes
+    )
     assert proposed.group_id is not None
     group_store = instance.get_group_store()
     try:
@@ -833,6 +984,11 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert product_edge["properties"]["installed_version"]
     assert product_edge["properties"]["match_basis"]
     assert product_edge["properties"]["evidence_refs"]
+    assert "match_score" not in product_edge["properties"]
+    assert "match score" not in product_edge["properties"]["match_basis"].lower()
+    assert "confidence" not in product_edge["properties"]["match_basis"].lower()
+    assert re.search(r"\b\d+\.\d+\b", product_edge["properties"]["match_basis"]) is None
+    assert "match score" not in product_edge["properties"]["rationale"].lower()
 
     vulnerability_asset_context = service_query(
         instance,
@@ -1359,3 +1515,15 @@ def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -
 
     proposed = service_propose_workflow(overlay, "propose_asset_products", {})
     assert proposed.group_id is not None
+    assert proposed.receipt is not None
+    assert any(
+        node.detail.get("step_id") == "inventory_tables"
+        and node.detail.get("provider_name") == "parse_local_seed_bundle"
+        for node in proposed.receipt.nodes
+    )
+    assert any(
+        node.detail.get("step_id") == "inventory"
+        and node.detail.get("kind") == "shape_items"
+        and node.detail.get("output_count", 0) > 0
+        for node in proposed.receipt.nodes
+    )

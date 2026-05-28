@@ -49,19 +49,37 @@ Provider functions still accept and return plain dictionaries at the workflow
 boundary. For provider implementation code, prefer the small payload helpers in
 `cruxible_core.provider.payloads` for common contracts:
 
+```yaml
+- id: raw_tables
+  provider: parse_public_kev_bundle
+  input:
+    expected_tables:
+      - known_exploited_vulnerabilities
+  as: raw_tables
+
+- id: rows
+  provider: normalize_public_kev_reference
+  input:
+    kev_rows: $steps.raw_tables.tables.known_exploited_vulnerabilities.rows
+  as: rows
+```
+
 ```python
-from cruxible_core.provider.payloads import JsonItems, ParsedTabularBundle
+from cruxible_core.provider.payloads import JsonItems
 
 
 def normalize_reference(input_payload, context):
-    bundle = ParsedTabularBundle.from_payload(input_payload)
-    kev_rows = bundle.require_table("known_exploited_vulnerabilities")
+    kev_rows = input_payload["kev_rows"]
     rows = [{"cve_id": row["cveID"]} for row in kev_rows]
     return JsonItems(items=rows).to_payload()
 ```
 
-`ParsedTabularBundle.from_payload(...)` validates the parsed artifact payload
-and exposes table rows through `require_table` and `optional_table`.
+Config should own source-table selection and map parsed table rows to semantic
+provider inputs. Common loader providers may parse artifacts and expose table
+names, but kit/domain transform providers should not own filenames, required
+table inventories, or parsed-bundle table names when workflow config can make
+that mapping explicit. `ParsedTabularBundle.from_payload(...)` remains useful
+inside generic loader/test helpers that operate on the parser contract.
 `JsonItems.from_payload(...)` and `JsonItems(...).to_payload()` validate and
 emit the standard `{items: [...]}` shape while preserving row order.
 Use `evidence_ref(...)` and `merge_evidence_refs(...)` for generic provenance
