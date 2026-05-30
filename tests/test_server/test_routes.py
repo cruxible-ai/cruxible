@@ -451,11 +451,13 @@ def test_query_discovery_routes_return_expected_shapes(
     listed_payload = listed.json()
     assert listed_payload["queries"]
     assert listed_payload["queries"][0]["name"]
+    assert listed_payload["queries"][0]["mode"] in {"collection", "traversal"}
 
     described = app_client.get(f"/api/v1/{instance_id}/queries/parts_for_vehicle")
     assert described.status_code == 200
     described_payload = described.json()
     assert described_payload["name"] == "parts_for_vehicle"
+    assert described_payload["mode"] == "traversal"
     assert described_payload["entry_point"] == "Vehicle"
     assert described_payload["required_params"] == ["vehicle_id"]
 
@@ -1313,7 +1315,7 @@ def test_workflow_run_route_appends_decision_record_event(
     assert events.json()["events"][0]["surface"] == "http"
 
 
-def test_workflow_propose_route_returns_suppressed_members(
+def test_workflow_propose_route_refreshes_same_signature_tuple_group(
     app_client: TestClient,
     workflow_server_project: Path,
     proposal_workflow_config_yaml: str,
@@ -1386,16 +1388,10 @@ def test_workflow_propose_route_returns_suppressed_members(
     )
     assert second.status_code == 200, second.text
     payload = second.json()
-    assert payload["group_id"] is None
-    assert payload["suppressed"] is True
-    assert len(payload["suppressed_members"]) == 2
-    sku_123 = next(
-        item for item in payload["suppressed_members"] if item["to_id"] == "SKU-123"
-    )
-    assert sku_123["relationship_type"] == "recommended_for"
-    assert sku_123["reason"] == "pending_proposal"
-    assert sku_123["existing_group_id"] == first_group_id
-    assert sku_123["existing_group_status"] == "pending_review"
+    assert payload["group_id"] == first_group_id
+    assert payload["group_status"] == "pending_review"
+    assert payload["suppressed"] is False
+    assert payload["suppressed_members"] == []
 
 
 def test_workflow_apply_route_commits_canonical_snapshot(

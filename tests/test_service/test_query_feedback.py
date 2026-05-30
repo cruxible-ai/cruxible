@@ -62,6 +62,7 @@ class TestQuery:
     ) -> None:
         config = populated_instance.load_config()
         config.named_queries["part_paths_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -99,6 +100,7 @@ class TestQuery:
     ) -> None:
         config = populated_instance.load_config()
         config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -356,6 +358,7 @@ def _add_relationship_query(
 ) -> None:
     config = instance.load_config()
     config.named_queries[name] = NamedQuerySchema(
+        mode="traversal",
         entry_point="Vehicle",
         traversal=[
             TraversalStep(
@@ -375,6 +378,7 @@ def _add_relationship_query(
 def _add_single_hop_path_query(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     config.named_queries["fit_path_for_vehicle"] = NamedQuerySchema(
+        mode="traversal",
         entry_point="Vehicle",
         traversal=[
             TraversalStep(
@@ -394,6 +398,7 @@ def _add_single_hop_path_query(instance: CruxibleInstance) -> None:
 def _add_multi_hop_path_query(instance: CruxibleInstance) -> None:
     config = instance.load_config()
     config.named_queries["replacement_path_for_vehicle"] = NamedQuerySchema(
+        mode="traversal",
         entry_point="Vehicle",
         traversal=[
             TraversalStep(
@@ -701,6 +706,7 @@ class TestFeedbackFromQuery:
     ) -> None:
         config = populated_instance.load_config()
         config.named_queries["projected_fit_edges_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -752,6 +758,7 @@ class TestFeedbackFromQuery:
     ) -> None:
         config = populated_instance.load_config()
         config.named_queries["projected_fit_path_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -917,6 +924,7 @@ class TestFeedbackFromQuery:
     def test_entity_row_is_rejected(self, populated_instance: CruxibleInstance) -> None:
         config = populated_instance.load_config()
         config.named_queries["entity_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",

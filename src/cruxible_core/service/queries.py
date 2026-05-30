@@ -670,6 +670,14 @@ def _query_param_hints(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
+    if query_schema.entry_point is None:
+        required_params = _infer_query_required_params(query_schema, primary_key=None)
+        return QueryParamHints(
+            entry_point=None,
+            required_params=required_params,
+            primary_key=None,
+            example_ids=[],
+        )
     entity_schema = config.get_entity_type(query_schema.entry_point)
     primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
     required_params = _infer_query_required_params(query_schema, primary_key=primary_key)
@@ -694,6 +702,8 @@ def _infer_query_required_params(
     params: set[str] = set()
     if primary_key is not None:
         params.add(primary_key)
+    if query_schema.where is not None:
+        params.update(_input_params_from_value(query_schema.where.root))
     if query_schema.select is not None:
         params.update(_input_params_from_value(query_schema.select))
     for order in query_schema.order_by:
@@ -761,6 +771,7 @@ def _query_definition(
     hints = _query_param_hints(config, graph, query_name)
     return QueryDefinitionServiceResult(
         name=query_name,
+        mode=query_schema.mode,
         entry_point=query_schema.entry_point,
         required_params=list(hints.required_params) if hints is not None else [],
         returns=query_schema.returns,

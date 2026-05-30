@@ -58,6 +58,7 @@ def test_service_describe_query_infers_required_input_refs(
 ) -> None:
     config = populated_instance.load_config()
     config.named_queries["parts_with_input_refs"] = NamedQuerySchema(
+        mode="traversal",
         entry_point="Vehicle",
         traversal=[
             TraversalStep(
@@ -104,6 +105,7 @@ def test_service_query_definition_exposes_include_contract(
 ) -> None:
     config = populated_instance.load_config()
     config.named_queries["parts_with_include"] = NamedQuerySchema(
+        mode="traversal",
         entry_point="Vehicle",
         traversal=[
             TraversalStep(
@@ -148,6 +150,40 @@ def test_service_query_definition_exposes_include_contract(
     assert described.include == expected_include
     assert listed.include == expected_include
     assert "from_" not in described.include["vehicle_fitments"]
+
+
+def test_entryless_named_query_metadata_surfaces(
+    populated_instance: CruxibleInstance,
+) -> None:
+    config = populated_instance.load_config()
+    config.named_queries["all_parts"] = NamedQuerySchema(
+        mode="collection",
+        result_shape="entity",
+        returns="Part",
+    )
+    populated_instance.save_config(config)
+
+    described = service_describe_query(populated_instance, "all_parts")
+    listed = next(
+        query
+        for query in service_list_queries(populated_instance)
+        if query.name == "all_parts"
+    )
+    inspected = service_inspect_view(populated_instance, "queries")
+    inspected_query = next(
+        query for query in inspected.payload["queries"] if query["name"] == "all_parts"
+    )
+
+    assert described.mode == "collection"
+    assert described.entry_point is None
+    assert described.required_params == []
+    assert described.example_ids == []
+    assert listed.mode == "collection"
+    assert listed.entry_point is None
+    assert listed.required_params == []
+    assert listed.example_ids == []
+    assert inspected_query["mode"] == "collection"
+    assert inspected_query["entry_point"] is None
 
 
 def test_service_render_wiki_returns_page_payloads(

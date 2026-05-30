@@ -138,6 +138,7 @@ def config() -> CoreConfig:
         ],
         named_queries={
             "parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find parts that fit a vehicle",
                 entry_point="Vehicle",
                 traversal=[
@@ -151,6 +152,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "approved_parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find approved parts that fit a vehicle",
                 entry_point="Vehicle",
                 traversal=[

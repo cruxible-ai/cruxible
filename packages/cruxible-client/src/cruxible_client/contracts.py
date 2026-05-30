@@ -305,7 +305,7 @@ class RelationshipLineageResult(BaseModel):
 
 
 class QueryParamHints(BaseModel):
-    entry_point: str
+    entry_point: str | None
     required_params: list[str] = Field(default_factory=list)
     primary_key: str | None = None
     example_ids: list[str] = Field(default_factory=list)
@@ -328,7 +328,8 @@ class ServerInfoResult(BaseModel):
 
 class NamedQueryInfoResult(BaseModel):
     name: str
-    entry_point: str
+    mode: Literal["collection", "traversal"]
+    entry_point: str | None
     required_params: list[str] = Field(default_factory=list)
     returns: str
     result_shape: Literal["entity", "path", "relationship"] = "path"

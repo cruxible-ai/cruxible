@@ -183,11 +183,12 @@ def render_query_markdown(view: QueryView) -> str:
         f"- Named queries: {view.query_count}",
         "",
         _markdown_table(
-            ("Query", "Entry", "Params", "Returns", "State", "Traversal", "Examples"),
+            ("Query", "Mode", "Entry", "Params", "Returns", "State", "Traversal", "Examples"),
             [
                 (
                     item.name,
-                    item.entry_point,
+                    item.mode,
+                    query_entry_label(item.entry_point),
                     ", ".join(item.required_params),
                     item.returns,
                     item.relationship_state,
@@ -380,10 +381,11 @@ def render_query_catalog_markdown(view: QueryView) -> str:
                 f"### {humanize_label(entry_point)}",
                 "",
                 _markdown_table(
-                    ("Query", "Returns", "State", "Traversal", "Purpose"),
+                    ("Query", "Mode", "Returns", "State", "Traversal", "Purpose"),
                     [
                         (
                             humanize_label(query.name),
+                            query.mode,
                             humanize_label(query.returns),
                             query.relationship_state,
                             " -> ".join(
@@ -606,10 +608,11 @@ def render_overview_markdown(view: OverviewView) -> str:
                 f"### {entry_point}",
                 "",
                 _markdown_table(
-                    ("Query", "Params", "Returns", "State", "Traversal"),
+                    ("Query", "Mode", "Params", "Returns", "State", "Traversal"),
                     [
                         (
                             query.name,
+                            query.mode,
                             ", ".join(query.required_params),
                             query.returns,
                             query.relationship_state,
@@ -745,11 +748,16 @@ def _group_queries_by_entry(
 ) -> list[tuple[str, list[QuerySummaryView]]]:
     grouped: dict[str, list[QuerySummaryView]] = {}
     for query in queries:
-        grouped.setdefault(query.entry_point, []).append(query)
+        grouped.setdefault(query_entry_label(query.entry_point), []).append(query)
     return [
         (entry_point, sorted(items, key=lambda item: item.name))
         for entry_point, items in sorted(grouped.items())
     ]
+
+
+def query_entry_label(entry_point: str | None) -> str:
+    """Return the display label for a named-query entry point."""
+    return entry_point if entry_point is not None else "Collection query"
 
 
 def _governed_resolution_count(view: GovernanceView, relationship_name: str) -> int:

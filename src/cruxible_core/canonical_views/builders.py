@@ -85,15 +85,16 @@ def build_workflow_view(config: CoreConfig) -> WorkflowView:
             step_kind = _workflow_step_kind(step)
             steps.append(_workflow_step_summary(step, step_kind))
             if step_kind == "query" and step.query is not None:
-                queries.append(step.query)
-                query = config.named_queries.get(step.query)
+                if isinstance(step.query, str):
+                    queries.append(step.query)
+                    query = config.named_queries.get(step.query)
+                else:
+                    query = step.query
                 if query is not None:
                     for traversal_step in query.traversal:
                         consumes.update(traversal_step.relationship_types)
             elif step_kind == "provider" and step.provider is not None:
                 providers.append(step.provider)
-            elif step_kind == "list_relationships" and step.list_relationships is not None:
-                consumes.add(step.list_relationships.relationship_type)
             elif step_kind == "make_relationships" and step.make_relationships is not None:
                 alias = step.as_ or step.id
                 alias_to_relationship[alias] = step.make_relationships.relationship_type
@@ -173,6 +174,7 @@ def build_query_view(
         queries.append(
             QuerySummaryView(
                 name=name,
+                mode=info.get("mode", query.mode),
                 entry_point=query.entry_point,
                 required_params=list(info.get("required_params", [])),
                 returns=info.get("returns", query.returns),
@@ -349,10 +351,6 @@ def _workflow_step_kind(step: WorkflowStepSchema) -> str:
         return "provider"
     if step.assert_spec is not None:
         return "assert"
-    if step.list_entities is not None:
-        return "list_entities"
-    if step.list_relationships is not None:
-        return "list_relationships"
     if step.shape_items is not None:
         return "shape_items"
     if step.join_items is not None:
@@ -386,13 +384,9 @@ def _workflow_step_summary(
 ) -> WorkflowStepSummaryView:
     detail = ""
     if step_kind == "query" and step.query is not None:
-        detail = step.query
+        detail = step.query if isinstance(step.query, str) else step.query.returns
     elif step_kind == "provider" and step.provider is not None:
         detail = step.provider
-    elif step_kind == "list_entities" and step.list_entities is not None:
-        detail = step.list_entities.entity_type
-    elif step_kind == "list_relationships" and step.list_relationships is not None:
-        detail = step.list_relationships.relationship_type
     elif step_kind == "shape_items" and step.shape_items is not None:
         detail = f"{len(step.shape_items.fields)} fields"
     elif step_kind == "join_items" and step.join_items is not None:

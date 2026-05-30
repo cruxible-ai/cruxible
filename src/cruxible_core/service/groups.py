@@ -1225,6 +1225,18 @@ def service_propose_group(
             pending_members = _merge_pending_members(old_members, delta_members)
 
         if not delta_members:
+            if suppressed_members:
+                return _proposal_result(
+                    group_id=None,
+                    signature=signature,
+                    status="suppressed",
+                    review_priority="review",
+                    member_count=0,
+                    prior_resolution=prior,
+                    suppressed=True,
+                    suppressed_members=suppressed_members,
+                    policy_summary=policy_summary,
+                )
             if pending_group is None:
                 return _proposal_result(
                     group_id=None,

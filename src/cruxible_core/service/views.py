@@ -62,6 +62,7 @@ def service_inspect_view(
         query_infos = [
             {
                 "name": query.name,
+                "mode": query.mode,
                 "entry_point": query.entry_point,
                 "required_params": list(query.required_params),
                 "returns": query.returns,
@@ -98,6 +99,7 @@ def service_inspect_view(
         query_infos = [
             {
                 "name": query.name,
+                "mode": query.mode,
                 "entry_point": query.entry_point,
                 "required_params": list(query.required_params),
                 "returns": query.returns,

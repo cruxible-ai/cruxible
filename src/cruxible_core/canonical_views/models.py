@@ -85,7 +85,8 @@ class WorkflowView:
 @dataclass(frozen=True)
 class QuerySummaryView:
     name: str
-    entry_point: str
+    mode: str
+    entry_point: str | None
     required_params: list[str]
     returns: str
     result_shape: str = "path"

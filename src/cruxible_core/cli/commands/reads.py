@@ -93,6 +93,7 @@ from cruxible_core.service import (
 def _query_definition_payload(query: Any) -> dict[str, Any]:
     return {
         "name": query.name,
+        "mode": query.mode,
         "entry_point": query.entry_point,
         "required_params": list(query.required_params),
         "returns": query.returns,
@@ -516,6 +517,7 @@ def query_describe_cmd(query_name: str, output_json: bool) -> None:
         _emit_json(payload)
         return
     click.echo(f"Query: {payload['name']}")
+    click.echo(f"Mode: {payload['mode']}")
     click.echo(f"Entry point: {payload['entry_point']}")
     click.echo(f"Returns: {payload['returns']}")
     if payload["required_params"]:

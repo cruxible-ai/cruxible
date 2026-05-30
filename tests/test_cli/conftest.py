@@ -67,6 +67,7 @@ relationships:
 
 named_queries:
   parts_for_vehicle:
+    mode: traversal
     description: Find all parts that fit a specific vehicle
     entry_point: Vehicle
     traversal:
@@ -76,6 +77,7 @@ named_queries:
           verified: true
     returns: "list[Part]"
   vehicles_for_part:
+    mode: traversal
     description: Find all vehicles a part fits
     entry_point: Part
     traversal:

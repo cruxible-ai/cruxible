@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.config.schema import NamedQuerySchema
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -215,6 +216,30 @@ class TestQuery:
         assert "Param hints:" in result.output
         assert "primary_key=vehicle_id" in result.output
         assert "examples=V-2024-ACCORD-SPORT, V-2024-CIVIC-EX" in result.output
+
+    def test_entryless_query_count_hints_do_not_sample_entry_entity(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["all_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+        )
+        populated_instance.save_config(config)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "--query", "all_parts", "--count"],
+        )
+
+        assert result.exit_code == 0
+        assert "Param hints:" in result.output
+        assert "entry_point=None" in result.output
+        assert "primary_key=" not in result.output
 
 
 class TestEvaluate:
@@ -742,7 +767,8 @@ class TestCanonicalViews:
         assert payload["query_count"] == 1
         query = payload["queries"][0]
         assert query["name"] == "get_campaign_context"
-        assert query["entry_point"] == "Campaign"
+        assert query["mode"] == "collection"
+        assert query["entry_point"] is None
         assert query["required_params"] == ["campaign_id"]
 
     def test_inspect_queries_mermaid_is_human_readable(
@@ -757,8 +783,8 @@ class TestCanonicalViews:
         )
         assert result.exit_code == 0
         assert "Get Campaign Context" in result.output
-        assert "Entry: Campaign" in result.output
-        assert "Returns: List[Campaign]" in result.output
+        assert "Entry: Collection Query" in result.output
+        assert "Returns: Campaign" in result.output
 
     def test_inspect_governance_tracks_pending_and_approved_state(
         self,

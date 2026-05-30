@@ -62,6 +62,7 @@ relationships:
 
 named_queries:
   candidate_product_relationships:
+    mode: traversal
     entry_point: Campaign
     returns: candidate_product
     result_shape: relationship
@@ -70,6 +71,7 @@ named_queries:
         relationship: candidate_product
         direction: outgoing
   candidate_product_paths:
+    mode: traversal
     entry_point: Campaign
     returns: Product
     result_shape: path
@@ -77,6 +79,10 @@ named_queries:
       - as: candidate
         relationship: candidate_product
         direction: outgoing
+  all_products:
+    mode: collection
+    returns: Product
+    result_shape: entity
 
 contracts:
   CampaignInput:
@@ -221,6 +227,98 @@ workflows:
           signals_from:
             - query_signals
           thesis_text: Recommend query-derived products with query signal
+        as: proposal
+    returns: proposal
+  propose_from_joined_query_rows:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_relationships
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: product_query
+        query: all_products
+        as: product_query
+      - id: joined
+        join_items:
+          left_items: $steps.candidates_query.results
+          right_items: $steps.product_query.results
+          left_key: $item.to_id
+          right_key: $item.entity_id
+          fields:
+            relationship: $item.left
+            product: $item.right
+            reason: $item.left.properties.reason
+        as: joined
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.joined.items
+          from_type: Campaign
+          from_id: $item.relationship.from_id
+          to_type: Product
+          to_id: $item.product.entity_id
+          properties:
+            reason: $item.reason
+        as: candidates
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from: []
+          thesis_text: Recommend joined query-derived products
+        as: proposal
+    returns: proposal
+  propose_from_shaped_joined_query_rows:
+    type: proposal
+    contract_in: CampaignInput
+    steps:
+      - id: candidates_query
+        query: candidate_product_relationships
+        params:
+          campaign_id: $input.campaign_id
+        as: candidates_query
+      - id: product_query
+        query: all_products
+        as: product_query
+      - id: joined
+        join_items:
+          left_items: $steps.candidates_query.results
+          right_items: $steps.product_query.results
+          left_key: $item.to_id
+          right_key: $item.entity_id
+          fields:
+            relationship: $item.left
+            product: $item.right
+            reason: $item.left.properties.reason
+        as: joined
+      - id: shaped
+        shape_items:
+          items: $steps.joined.items
+          fields:
+            from_id: $item.relationship.from_id
+            to_id: $item.product.entity_id
+            reason: $item.reason
+        as: shaped
+      - id: candidates
+        make_candidates:
+          relationship_type: recommended_for
+          items: $steps.shaped.items
+          from_type: Campaign
+          from_id: $item.from_id
+          to_type: Product
+          to_id: $item.to_id
+          properties:
+            reason: $item.reason
+        as: candidates
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: recommended_for
+          candidates_from: candidates
+          signals_from: []
+          thesis_text: Recommend shaped joined query-derived products
         as: proposal
     returns: proposal
 """
@@ -926,6 +1024,83 @@ class TestWorkflowExecutionServices:
                 assert receipt_store.get_receipt(evidence.query_receipt_id) is not None
         finally:
             receipt_store.close()
+
+    def test_service_propose_workflow_preserves_query_evidence_from_joined_rows(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_joined_query_rows",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is not None
+        assert len(result.query_receipt_ids) == 2
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert len(members) == 1
+        evidence_by_step = {
+            evidence.source_step: evidence
+            for evidence in members[0].source_query_evidence
+        }
+        assert set(evidence_by_step) == {"candidates_query", "product_query"}
+        relationship_evidence = evidence_by_step["candidates_query"]
+        assert relationship_evidence.query_receipt_id in result.query_receipt_ids
+        assert relationship_evidence.row_index == 0
+        assert relationship_evidence.feedback_addressable is True
+        assert relationship_evidence.row_shape == "relationship"
+        assert relationship_evidence.relationship is not None
+        assert relationship_evidence.relationship["to_id"] == "SKU-123"
+
+        product_evidence = evidence_by_step["product_query"]
+        assert product_evidence.query_receipt_id in result.query_receipt_ids
+        assert product_evidence.row_index == 0
+        assert product_evidence.feedback_addressable is True
+        assert product_evidence.row_shape == "entity"
+        assert product_evidence.entity == {
+            "entity_type": "Product",
+            "entity_id": "SKU-123",
+        }
+
+    def test_service_propose_workflow_preserves_query_evidence_after_join_shape(
+        self,
+        query_evidence_proposal_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(query_evidence_proposal_instance)
+
+        result = service_propose_workflow(
+            query_evidence_proposal_instance,
+            "propose_from_shaped_joined_query_rows",
+            {"campaign_id": "CMP-1"},
+        )
+
+        assert result.group_id is not None
+        assert len(result.query_receipt_ids) == 2
+        group_store = query_evidence_proposal_instance.get_group_store()
+        try:
+            members = group_store.get_members(result.group_id)
+        finally:
+            group_store.close()
+
+        assert len(members) == 1
+        evidence_by_step = {
+            evidence.source_step: evidence
+            for evidence in members[0].source_query_evidence
+        }
+        assert set(evidence_by_step) == {"candidates_query", "product_query"}
+        for evidence in evidence_by_step.values():
+            assert evidence.query_receipt_id in result.query_receipt_ids
+            assert evidence.row_index == 0
+            assert evidence.feedback_addressable is True
+        assert evidence_by_step["candidates_query"].row_shape == "relationship"
+        assert evidence_by_step["product_query"].row_shape == "entity"
 
     def test_retain_missing_preserves_query_receipts_for_retained_members(
         self,

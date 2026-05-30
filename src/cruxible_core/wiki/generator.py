@@ -1588,7 +1588,13 @@ class _WikiGenerator:
         if schema.description:
             lines.extend([schema.description.strip(), ""])
         lines.append("## Summary")
-        lines.append(f"- Starting record type: {_humanize(schema.entry_point)}")
+        lines.append(f"- Mode: {schema.mode}")
+        entry_label = (
+            _humanize(schema.entry_point)
+            if schema.entry_point is not None
+            else "Collection query"
+        )
+        lines.append(f"- Starting record type: {entry_label}")
         lines.append(f"- Produces: {schema.returns}")
         lines.append("")
 
@@ -1711,36 +1717,27 @@ class _WikiGenerator:
         else:
             lines.append("- Workflow input fields: none")
 
-        entity_types = {
-            step.list_entities.entity_type
+        query_names = {
+            step.query
             for step in schema.steps
-            if step.list_entities is not None
+            if isinstance(step.query, str)
         }
-        relationship_types = {
-            step.list_relationships.relationship_type
+        inline_queries = [
+            step.query.returns
             for step in schema.steps
-            if step.list_relationships is not None
-        }
-        query_names = {step.query for step in schema.steps if step.query is not None}
-        if entity_types:
-            lines.append(
-                "- Entity context: "
-                + ", ".join(_humanize(entity_type) for entity_type in sorted(entity_types))
-            )
-        if relationship_types:
-            lines.append(
-                "- Relationship context: "
-                + ", ".join(
-                    _humanize(relationship_type)
-                    for relationship_type in sorted(relationship_types)
-                )
-            )
+            if step.query is not None and not isinstance(step.query, str)
+        ]
         if query_names:
             query_links = [
                 self._query_markdown_link(query_name, current_path=current_path)
                 for query_name in sorted(query_names)
             ]
             lines.append(f"- Query context: {', '.join(query_links)}")
+        if inline_queries:
+            lines.append(
+                "- Inline query context: "
+                + ", ".join(_humanize(value) for value in sorted(inline_queries))
+            )
         if len(lines) == 1 and schema.type != "canonical":
             lines.append("- Graph context: none configured")
         elif len(lines) == 1 and schema.type == "canonical":
@@ -1938,17 +1935,12 @@ class _WikiGenerator:
                 current_path=current_path,
             )
         if step.query is not None:
-            return "Run query " + self._query_markdown_link(
-                step.query,
-                current_path=current_path,
-            )
-        if step.list_entities is not None:
-            return f"List {_humanize(step.list_entities.entity_type)} records"
-        if step.list_relationships is not None:
-            return (
-                "List recorded "
-                f"{_humanize(step.list_relationships.relationship_type)} links"
-            )
+            if isinstance(step.query, str):
+                return "Run query " + self._query_markdown_link(
+                    step.query,
+                    current_path=current_path,
+                )
+            return f"Run inline query for {_humanize(step.query.returns)}"
         if step.shape_items is not None:
             return "Shape rows"
         if step.join_items is not None:
@@ -1985,13 +1977,11 @@ class _WikiGenerator:
 
     def _workflow_step_reads(self, step: WorkflowStepSchema, current_path: Path) -> str:
         if step.query is not None:
-            return self._query_markdown_link(step.query, current_path=current_path)
+            if isinstance(step.query, str):
+                return self._query_markdown_link(step.query, current_path=current_path)
+            return _humanize(step.query.returns)
         if step.provider is not None:
             return _format_mapping_refs(step.input)
-        if step.list_entities is not None:
-            return _humanize(step.list_entities.entity_type)
-        if step.list_relationships is not None:
-            return _humanize(step.list_relationships.relationship_type)
         if step.shape_items is not None:
             return _format_mapping_refs(step.shape_items.model_dump(mode="python"))
         if step.join_items is not None:

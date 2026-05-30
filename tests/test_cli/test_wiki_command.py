@@ -106,6 +106,7 @@ relationships:
 
 named_queries:
   assets_for_vulnerability:
+    mode: traversal
     description: Find assets currently associated with a vulnerability.
     entry_point: Vulnerability
     traversal:
@@ -193,6 +194,7 @@ relationships:
 
 named_queries:
   reference_lookup:
+    mode: traversal
     description: Upstream query used by local workflows.
     entry_point: ReferenceItem
     traversal:
@@ -248,6 +250,7 @@ relationships:
 
 named_queries:
   local_review:
+    mode: traversal
     description: Local query surface.
     entry_point: LocalSubject
     traversal:

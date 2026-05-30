@@ -88,6 +88,7 @@ def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyP
                 queries=[
                     contracts.NamedQueryInfoResult(
                         name="parts_for_vehicle",
+                        mode="traversal",
                         entry_point="Vehicle",
                         required_params=["vehicle_id"],
                         returns="Part",
@@ -102,6 +103,7 @@ def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyP
             assert query_name == "parts_for_vehicle"
             return contracts.NamedQueryInfoResult(
                 name="parts_for_vehicle",
+                mode="traversal",
                 entry_point="Vehicle",
                 required_params=["vehicle_id"],
                 returns="Part",

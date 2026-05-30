@@ -1031,6 +1031,7 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
         queries=[
             contracts.NamedQueryInfoResult(
                 name=query.name,
+                mode=query.mode,
                 entry_point=query.entry_point,
                 required_params=query.required_params,
                 returns=query.returns,
@@ -1062,6 +1063,7 @@ def describe_query(
     query = service_describe_query(instance, query_name)
     return contracts.NamedQueryInfoResult(
         name=query.name,
+        mode=query.mode,
         entry_point=query.entry_point,
         required_params=query.required_params,
         returns=query.returns,

@@ -209,9 +209,9 @@ relationships:
 
 named_queries:
   asset_review:
-    entry_point: Asset
-    traversal: []
-    returns: "list[Asset]"
+    mode: collection
+    returns: Asset
+    result_shape: entity
 
 contracts:
   EmptyInput:

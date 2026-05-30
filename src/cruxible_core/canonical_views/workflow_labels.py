@@ -117,13 +117,9 @@ def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
 
 def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
     queries = _workflow_step_details(workflow, {"query"})
-    entities = _workflow_step_details(workflow, {"list_entities"})
-    relationships = _workflow_step_details(workflow, {"list_relationships"})
     context = _format_surface_groups(
         (
-            ("Entity context", entities),
-            ("Relationship context", relationships),
-            ("Named queries", queries),
+            ("Query context", queries),
         )
     )
     if context == "-":

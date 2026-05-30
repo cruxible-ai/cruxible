@@ -581,6 +581,32 @@ class TestRelationshipTupleProposalIdentity:
         assert second.status == "pending_review"
         assert second.suppressed_members == []
 
+    def test_same_signature_workflow_rerun_reuses_group_without_self_suppression(
+        self,
+        tuple_identity_instance: CruxibleInstance,
+    ) -> None:
+        members = [_member(signals=_all_support_signals())]
+        first = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "workflow"},
+            source_workflow_name="recommend_parts",
+        )
+
+        second = service_propose_group(
+            tuple_identity_instance,
+            "fits",
+            members,
+            thesis_facts={"bucket": "workflow"},
+            source_workflow_name="recommend_parts",
+        )
+
+        assert second.group_id == first.group_id
+        assert second.status == "pending_review"
+        assert second.suppressed is False
+        assert second.suppressed_members == []
+
     def test_different_signature_same_tuple_is_suppressed(
         self,
         tuple_identity_instance: CruxibleInstance,

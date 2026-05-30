@@ -317,6 +317,13 @@ def _build_query_param_hints(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
+    if query_schema.entry_point is None:
+        return contracts.QueryParamHints(
+            entry_point=None,
+            required_params=[],
+            primary_key=None,
+            example_ids=[],
+        )
     entity_schema = config.get_entity_type(query_schema.entry_point)
     primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
     required_params = [primary_key] if primary_key is not None else []
@@ -336,6 +343,8 @@ def _lookup_query_param_hints_local(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
+    if query_schema.entry_point is None:
+        return _build_query_param_hints(config, query_name, [])
     examples = service_sample(instance, query_schema.entry_point, limit=3)
     return _build_query_param_hints(config, query_name, examples)
 
@@ -349,6 +358,8 @@ def _lookup_query_param_hints_server(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
+    if query_schema.entry_point is None:
+        return _build_query_param_hints(config, query_name, [])
     sample = client.sample(instance_id, query_schema.entry_point, limit=3)
     examples = _entities_from_payload(sample.entities)
     return _build_query_param_hints(config, query_name, examples)

@@ -12,6 +12,7 @@ from cruxible_core.config.schema import (
     OutcomeAnchorType,
     OutcomeLabel,
     OutcomeRemediationHint,
+    QueryMode,
     SurfaceType,
     WorkflowType,
 )
@@ -140,7 +141,7 @@ class ValidateServiceResult:
 
 @dataclass
 class QueryParamHints:
-    entry_point: str
+    entry_point: str | None
     required_params: list[str] = field(default_factory=list)
     primary_key: str | None = None
     example_ids: list[str] = field(default_factory=list)
@@ -212,7 +213,8 @@ class ServerInfoServiceResult:
 @dataclass
 class QueryDefinitionServiceResult:
     name: str
-    entry_point: str
+    mode: QueryMode
+    entry_point: str | None
     required_params: list[str] = field(default_factory=list)
     returns: str = ""
     result_shape: QueryResultShape = "path"

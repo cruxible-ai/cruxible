@@ -66,6 +66,7 @@ relationships:
 
 named_queries:
   parts_for_vehicle:
+    mode: traversal
     description: Find parts for vehicle
     entry_point: Vehicle
     traversal:

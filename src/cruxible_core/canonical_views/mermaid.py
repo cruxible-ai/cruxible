@@ -222,7 +222,7 @@ def render_query_map_mermaid(view: QueryView) -> str:
     edges: set[tuple[str, str]] = set()
     entities: set[str] = set()
     for query in view.queries:
-        source = query.entry_point
+        source = _query_entry_label(query.entry_point)
         target = query_return_entity(query.returns)
         entities.update((source, target))
         edges.add((source, target))
@@ -266,8 +266,8 @@ def _query_mermaid_lines(query: QuerySummaryView) -> list[str]:
     query_id = _mermaid_id(f"query_{query.name}")
     entry_id = _mermaid_id(f"query_{query.name}_entry")
     return_id = _mermaid_id(f"query_{query.name}_return")
-    query_label = _escape_mermaid_label(humanize_label(query.name))
-    entry_label = _escape_mermaid_label(humanize_label(query.entry_point))
+    query_label = _escape_mermaid_label(f"{humanize_label(query.name)} ({query.mode})")
+    entry_label = _escape_mermaid_label(humanize_label(_query_entry_label(query.entry_point)))
     return_label = _escape_mermaid_label(humanize_label(query.returns))
     lines = [
         f'  {query_id}["{query_label}"]',
@@ -284,6 +284,10 @@ def _query_mermaid_lines(query: QuerySummaryView) -> list[str]:
     lines.append(f'  {return_id}["Returns: {return_label}"]')
     lines.append(f"  {previous_id} --> {return_id}")
     return lines
+
+
+def _query_entry_label(entry_point: str | None) -> str:
+    return entry_point if entry_point is not None else "Collection query"
 
 
 def _relationship_entity_names(

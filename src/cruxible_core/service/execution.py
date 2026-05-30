@@ -236,7 +236,7 @@ def _workflow_proposal_logic_digest(
         )
         if step.provider is not None:
             provider_names.add(step.provider)
-        if step.query is not None:
+        if isinstance(step.query, str):
             query_names.add(step.query)
         proposal_spec = payload.get("propose_relationship_group")
         if isinstance(proposal_spec, dict):
