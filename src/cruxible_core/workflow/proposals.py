@@ -30,6 +30,7 @@ from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
     MAX_DUPLICATE_EXAMPLES,
     query_result_index,
+    query_source_lineage,
     resolve_step_items,
     source_read_metadata,
 )
@@ -76,8 +77,7 @@ def make_candidate_set(
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     source_metadata = source_read_metadata(spec.items, step_outputs)
-    query_receipt_id = source_metadata.get("receipt_id")
-    query_receipt_ids = [query_receipt_id] if isinstance(query_receipt_id, str) else []
+    query_receipt_ids = _metadata_query_receipt_ids(source_metadata)
     candidates: list[CandidateMember] = []
     duplicate_input_count = 0
     conflicting_duplicate_count = 0
@@ -175,8 +175,44 @@ def _query_source_evidence(
     source_metadata: dict[str, Any],
 ) -> list[QuerySourceEvidence]:
     receipt_id = source_metadata.get("receipt_id")
-    if not isinstance(receipt_id, str) or not isinstance(item, dict):
+    if not isinstance(item, dict):
         return []
+    lineage = query_source_lineage(item)
+    if lineage:
+        evidence_items: list[QuerySourceEvidence] = []
+        for source in lineage:
+            query_receipt_id = source.get("query_receipt_id")
+            if not isinstance(query_receipt_id, str):
+                continue
+            evidence: dict[str, Any] = {"query_receipt_id": query_receipt_id}
+            row_index = source.get("row_index")
+            if isinstance(row_index, int):
+                evidence["row_index"] = row_index
+            else:
+                evidence["feedback_addressable"] = False
+            source_step = source.get("source_step")
+            if isinstance(source_step, str):
+                evidence["source_step"] = source_step
+            row = source.get("row")
+            row_evidence = _query_row_evidence(row) if isinstance(row, dict) else {}
+            if row_evidence:
+                evidence.update(row_evidence)
+            else:
+                evidence["row_shape"] = "unknown"
+            evidence_items.append(QuerySourceEvidence.model_validate(evidence))
+        return evidence_items
+    if not isinstance(receipt_id, str):
+        return [
+            QuerySourceEvidence.model_validate(
+                {
+                    "query_receipt_id": query_receipt_id,
+                    "feedback_addressable": False,
+                    "source_step": source_metadata.get("source_step"),
+                    "row_shape": "unknown",
+                }
+            )
+            for query_receipt_id in _metadata_query_receipt_ids(source_metadata)
+        ]
 
     source = item.get("source")
     row: dict[str, Any] = source if isinstance(source, dict) else item
@@ -317,8 +353,7 @@ def map_signal_batch(
     """
     items = resolve_step_items(spec.items, input_payload, step_outputs)
     source_metadata = source_read_metadata(spec.items, step_outputs)
-    query_receipt_id = source_metadata.get("receipt_id")
-    query_receipt_ids = [query_receipt_id] if isinstance(query_receipt_id, str) else []
+    query_receipt_ids = _metadata_query_receipt_ids(source_metadata)
     seen_pairs: set[tuple[str, str]] = set()
     signals: list[SignalBatchSignal] = []
 
@@ -439,6 +474,17 @@ def map_signal_batch(
         signals=signals,
         query_receipt_ids=query_receipt_ids,
     )
+
+
+def _metadata_query_receipt_ids(metadata: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    receipt_id = metadata.get("receipt_id")
+    if isinstance(receipt_id, str):
+        ids.append(receipt_id)
+    query_receipt_ids = metadata.get("query_receipt_ids")
+    if isinstance(query_receipt_ids, list):
+        ids.extend(item for item in query_receipt_ids if isinstance(item, str))
+    return ordered_unique(ids)
 
 
 def signal_mapping_snapshot(spec: MapSignalsSpec) -> dict[str, Any]:

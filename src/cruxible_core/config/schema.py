@@ -46,6 +46,7 @@ _OUTCOME_PATH_PATTERN = (
 )
 
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
+QueryMode = Literal["collection", "traversal"]
 PropertyType = Literal[
     "string",
     "int",
@@ -57,6 +58,13 @@ PropertyType = Literal[
     "datetime",
     "json",
 ]
+
+
+def _normalize_query_entity_returns(returns: str) -> str:
+    stripped = returns.strip()
+    if stripped.startswith("list[") and stripped.endswith("]"):
+        return stripped[5:-1].strip()
+    return stripped
 
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
@@ -269,19 +277,12 @@ class RelatedExclusionSpec(BaseModel):
 class QueryPredicateSpec(StructuredPredicateSpec):
     """Structured predicate map used by named-query traversal steps."""
 
-    @model_validator(mode="after")
-    def validate_query_predicates(self) -> QueryPredicateSpec:
-        for path in self.root:
-            if path.split(".", 1)[0] == "result":
-                msg = "result predicates are not supported at traversal step time"
-                raise ValueError(msg)
-        return self
-
 
 def _validate_top_level_query_predicate_scopes(
     predicates: QueryPredicateSpec | None,
     *,
     field_name: str,
+    allow_result: bool = False,
 ) -> None:
     from cruxible_core.query.predicates import QUERY_PREDICATE_SCOPES
 
@@ -289,6 +290,9 @@ def _validate_top_level_query_predicate_scopes(
         return
     for path in predicates.root:
         scope = path.split(".", 1)[0]
+        if scope == "result" and not allow_result:
+            msg = f"result predicates are not supported in {field_name}"
+            raise ValueError(msg)
         if scope not in QUERY_PREDICATE_SCOPES:
             allowed = ", ".join(sorted(QUERY_PREDICATE_SCOPES))
             msg = (
@@ -486,18 +490,20 @@ class TraversalStep(BaseModel):
 class NamedQuerySchema(BaseModel):
     """Schema for a declarative named query.
 
-    Queries are defined as an entry_point entity type plus a sequence
-    of traversal steps. The query engine interprets these declaratively.
+    Queries declare whether they collect one entity/relationship type or start
+    from an entry entity and traverse relationship steps.
     """
 
+    mode: QueryMode
     description: str | None = None
-    entry_point: str
-    traversal: list[TraversalStep]
+    entry_point: str | None = None
+    traversal: list[TraversalStep] = Field(default_factory=list)
     returns: str
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
     relationship_state: QueryRelationshipState = "live"
     allow_relationship_state_override: bool = False
+    where: QueryPredicateSpec | None = None
     select: dict[str, Any] | None = None
     order_by: list[QueryOrderSpec] = Field(default_factory=list)
     include: dict[str, QueryIncludeSpec] = Field(default_factory=dict)
@@ -529,6 +535,52 @@ class NamedQuerySchema(BaseModel):
             )
         self._validate_include_refs(alias_set)
         self._validate_projection_and_order_refs(alias_set)
+        _validate_top_level_query_predicate_scopes(
+            self.where,
+            field_name="query where",
+            allow_result=True,
+        )
+        is_collection = self.mode == "collection"
+        if is_collection:
+            if self.entry_point is not None:
+                msg = "mode 'collection' queries must not define entry_point"
+                raise ValueError(msg)
+            if self.result_shape == "path":
+                msg = "mode 'collection' queries do not support result_shape 'path'"
+                raise ValueError(msg)
+            if self.traversal:
+                msg = "mode 'collection' queries must not define traversal"
+                raise ValueError(msg)
+            if self.include:
+                msg = "mode 'collection' queries do not support include"
+                raise ValueError(msg)
+            if self.max_paths is not None or self.max_paths_per_result is not None:
+                msg = "mode 'collection' queries do not support path budgets"
+                raise ValueError(msg)
+            if self.where is not None:
+                allowed_where_scopes = (
+                    {"result"}
+                    if self.result_shape == "entity"
+                    else {"edge", "source", "target", "result"}
+                )
+                for predicate_path in self.where.root:
+                    scope = predicate_path.split(".", 1)[0]
+                    if scope not in allowed_where_scopes:
+                        allowed = ", ".join(sorted(allowed_where_scopes))
+                        raise ValueError(
+                            "mode 'collection' query where predicate "
+                            f"'{predicate_path}' must start with one of: {allowed}"
+                        )
+        else:
+            if self.entry_point is None:
+                msg = "mode 'traversal' queries require entry_point"
+                raise ValueError(msg)
+            if not self.traversal:
+                msg = "mode 'traversal' queries require at least one traversal step"
+                raise ValueError(msg)
+            if self.where is not None:
+                msg = "mode 'traversal' queries do not support top-level where"
+                raise ValueError(msg)
         if "dedupe" not in self.model_fields_set:
             self.dedupe = "entity" if self.result_shape == "entity" else "path"
         has_non_required_step = any(not step.required for step in self.traversal)
@@ -547,7 +599,7 @@ class NamedQuerySchema(BaseModel):
             msg = "include requires result_shape 'path' or 'relationship'"
             raise ValueError(msg)
         if self.result_shape == "relationship":
-            if not self.traversal:
+            if not is_collection and not self.traversal:
                 msg = "result_shape 'relationship' requires at least one traversal step"
                 raise ValueError(msg)
             if self.dedupe == "entity":
@@ -567,7 +619,9 @@ class NamedQuerySchema(BaseModel):
                 msg = "relationship_state 'pending' requires dedupe 'path' or 'none'"
                 raise ValueError(msg)
         if self.relationship_state == "reviewable":
-            if self.result_shape != "path":
+            if self.result_shape != "path" and not (
+                is_collection and self.result_shape == "relationship"
+            ):
                 msg = "relationship_state 'reviewable' requires result_shape 'path'"
                 raise ValueError(msg)
             if self.dedupe == "entity":
@@ -1541,26 +1595,6 @@ class ApplyAllSpec(BaseModel):
         return self
 
 
-class ListEntitiesSpec(BaseModel):
-    """List entities from the current graph state inside a workflow."""
-
-    entity_type: str
-    property_filter: dict[str, Any] = Field(default_factory=dict)
-    limit: Any | None = None
-
-    model_config = {"extra": "forbid"}
-
-
-class ListRelationshipsSpec(BaseModel):
-    """List relationships from the current graph state inside a workflow."""
-
-    relationship_type: str
-    property_filter: dict[str, Any] = Field(default_factory=dict)
-    limit: Any | None = None
-
-    model_config = {"extra": "forbid"}
-
-
 StepKind = Literal[
     "query",
     "provider",
@@ -1568,8 +1602,6 @@ StepKind = Literal[
     "assert_not_truncated",
     "assert_count",
     "assert_exists",
-    "list_entities",
-    "list_relationships",
     "shape_items",
     "join_items",
     "filter_items",
@@ -1594,9 +1626,7 @@ class WorkflowStepSchema(BaseModel):
     logical phases:
 
     Phase 1 — Read (pull data in):
-        query               Run a named query against the graph.
-        list_entities       List entities by type with optional filters.
-        list_relationships  List relationships by type with optional filters.
+        query               Run a named or inline query against the graph.
 
     Phase 2 — Compute (transform data):
         provider            Call an external provider (function/model/tool).
@@ -1631,18 +1661,16 @@ class WorkflowStepSchema(BaseModel):
         query → provider → make_candidates → propose_relationship_group
                          → map_signals    ↗
 
-        list_entities → provider → make_relationships → apply_relationships
+        query → provider → make_relationships → apply_relationships
     """
 
     id: str
-    query: str | None = None
+    query: str | NamedQuerySchema | None = None
     provider: str | None = None
     assert_spec: AssertSpec | None = Field(alias="assert", default=None)
     assert_not_truncated: AssertNotTruncatedSpec | None = None
     assert_count: AssertCountSpec | None = None
     assert_exists: AssertExistsSpec | None = None
-    list_entities: ListEntitiesSpec | None = None
-    list_relationships: ListRelationshipsSpec | None = None
     shape_items: ShapeItemsSpec | None = None
     join_items: JoinItemsSpec | None = None
     filter_items: FilterItemsSpec | None = None
@@ -1673,8 +1701,6 @@ class WorkflowStepSchema(BaseModel):
             "assert_not_truncated": self.assert_not_truncated,
             "assert_count": self.assert_count,
             "assert_exists": self.assert_exists,
-            "list_entities": self.list_entities,
-            "list_relationships": self.list_relationships,
             "shape_items": self.shape_items,
             "join_items": self.join_items,
             "filter_items": self.filter_items,
@@ -1947,9 +1973,38 @@ class CoreConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_relationship_query_returns(self) -> CoreConfig:
-        """Check relationship-shaped queries return their final relationship type."""
+        """Check collection/traversal query return declarations."""
         for query_name, query in self.named_queries.items():
+            if query.mode == "collection" and query.result_shape == "entity":
+                entity_type = _normalize_query_entity_returns(query.returns)
+                if entity_type not in self.entity_types:
+                    if self.extends is not None:
+                        continue
+                    msg = (
+                        f"Named query '{query_name}' with collection entity "
+                        f"collection returns unknown entity '{query.returns}'"
+                    )
+                    raise ValueError(msg)
             if query.result_shape != "relationship":
+                continue
+            if query.mode == "collection":
+                resolved = self.resolve_relationship_reference(query.returns)
+                if resolved is None:
+                    if self.extends is not None:
+                        continue
+                    msg = (
+                        f"Named query '{query_name}' with collection relationship "
+                        f"collection returns unknown relationship '{query.returns}'"
+                    )
+                    raise ValueError(msg)
+                rel_schema, is_reverse = resolved
+                if is_reverse:
+                    msg = (
+                        f"Named query '{query_name}' with collection relationship "
+                        f"collection must return canonical relationship '{rel_schema.name}', "
+                        f"not reverse alias '{query.returns}'"
+                    )
+                    raise ValueError(msg)
                 continue
             if not query.traversal:
                 msg = (

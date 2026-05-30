@@ -33,8 +33,6 @@ from cruxible_core.workflow.io import (
     execute_assert_step,
     execute_provider_step,
     execute_query_step,
-    list_entities_step,
-    list_relationships_step,
 )
 from cruxible_core.workflow.proposals import (
     build_relationship_group_proposal,
@@ -190,55 +188,6 @@ def execute_workflow(
                     workflow_name=workflow_name,
                     persist_traces=persist_traces,
                     config_base_path=instance.get_config_path().parent,
-                )
-                continue
-
-            if compiled_step.kind == "list_entities":
-                assert compiled_step.list_entities_spec is not None
-                entity_list = list_entities_step(
-                    config,
-                    graph,
-                    compiled_step.step_id,
-                    compiled_step.list_entities_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = entity_list
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "list_entities",
-                    detail={
-                        "entity_type": compiled_step.list_entities_spec.entity_type,
-                        "item_count": len(entity_list["items"]),
-                        "total": entity_list["total"],
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "list_relationships":
-                assert compiled_step.list_relationships_spec is not None
-                relationship_list = list_relationships_step(
-                    graph,
-                    compiled_step.step_id,
-                    compiled_step.list_relationships_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = relationship_list
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "list_relationships",
-                    detail={
-                        "relationship_type": (
-                            compiled_step.list_relationships_spec.relationship_type
-                        ),
-                        "item_count": len(relationship_list["items"]),
-                        "total": relationship_list["total"],
-                    },
                 )
                 continue
 

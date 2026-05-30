@@ -8,6 +8,7 @@ import cruxible_core.query.engine as query_engine
 from cruxible_core.config.schema import (
     ConstraintSchema,
     CoreConfig,
+    DecisionPolicySchema,
     EntityTypeSchema,
     EnumSchema,
     NamedQuerySchema,
@@ -137,6 +138,7 @@ def config() -> CoreConfig:
         ],
         named_queries={
             "parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find parts that fit a vehicle",
                 entry_point="Vehicle",
                 traversal=[
@@ -150,6 +152,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "vehicles_for_part": NamedQuerySchema(
+                mode="traversal",
                 description="Find vehicles a part fits",
                 entry_point="Part",
                 traversal=[
@@ -162,6 +165,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "fitted_parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find parts for a vehicle using the reverse relationship alias",
                 entry_point="Vehicle",
                 traversal=[
@@ -175,6 +179,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "replacements_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find replacements that fit a specific vehicle",
                 entry_point="Part",
                 traversal=[
@@ -193,6 +198,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "parts_for_vehicle_without_suppressed": NamedQuerySchema(
+                mode="traversal",
                 description="Find verified parts excluding suppressed fitments",
                 entry_point="Vehicle",
                 traversal=[
@@ -212,6 +218,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "parts_for_vehicle_without_vehicle_blocks": NamedQuerySchema(
+                mode="traversal",
                 description="Find verified parts excluding vehicle-side blocks",
                 entry_point="Vehicle",
                 traversal=[
@@ -231,6 +238,7 @@ def config() -> CoreConfig:
                 result_shape="entity",
             ),
             "replacements_excluding_blocked": NamedQuerySchema(
+                mode="traversal",
                 description="Find replacements excluding blocked part pairs",
                 entry_point="Part",
                 traversal=[
@@ -391,6 +399,257 @@ def graph() -> EntityGraph:
 
 
 class TestExecuteQuery:
+    def test_entryless_entity_collection_returns_entities_in_deterministic_order(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["all_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+        )
+
+        result = execute_query(config, graph, "all_parts", {})
+
+        assert [row.entity_id for row in result.results if isinstance(row, EntityInstance)] == [
+            "BP-1234",
+            "BP-5678",
+            "BP-9999",
+        ]
+        assert result.steps_executed == 0
+        assert result.total_results == 3
+
+    def test_entryless_entity_collection_filters_result_entity(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["stoptech_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.brand": {"eq": "StopTech"}},
+        )
+
+        result = execute_query(config, graph, "stoptech_parts", {})
+
+        assert _terminal_ids(result.results) == ["BP-1234"]
+
+    def test_entryless_entity_collection_uses_entity_id_lookup_before_scan(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        class RecordingGraph(EntityGraph):
+            def __init__(self, source: EntityGraph) -> None:
+                super().__init__()
+                self._graph = source._graph
+                self._entities_by_type = source._entities_by_type
+                self._edge_counter = source._edge_counter
+                self.list_entity_calls: list[tuple[str, dict[str, object] | None]] = []
+
+            def list_entities(
+                self,
+                entity_type: str,
+                property_filter: dict[str, object] | None = None,
+            ) -> list[EntityInstance]:
+                self.list_entity_calls.append((entity_type, property_filter))
+                return super().list_entities(entity_type, property_filter=property_filter)
+
+        recording_graph = RecordingGraph(graph)
+        config.named_queries["one_part"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.entity_id": {"eq": "$input.part_id"}},
+        )
+
+        result = execute_query(
+            config,
+            recording_graph,
+            "one_part",
+            {"part_id": "BP-5678"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-5678"]
+        assert recording_graph.list_entity_calls == []
+
+    def test_entryless_entity_collection_pushes_simple_property_filter(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        class RecordingGraph(EntityGraph):
+            def __init__(self, source: EntityGraph) -> None:
+                super().__init__()
+                self._graph = source._graph
+                self._entities_by_type = source._entities_by_type
+                self._edge_counter = source._edge_counter
+                self.list_entity_calls: list[tuple[str, dict[str, object] | None]] = []
+
+            def list_entities(
+                self,
+                entity_type: str,
+                property_filter: dict[str, object] | None = None,
+            ) -> list[EntityInstance]:
+                self.list_entity_calls.append((entity_type, property_filter))
+                return super().list_entities(entity_type, property_filter=property_filter)
+
+        recording_graph = RecordingGraph(graph)
+        config.named_queries["stoptech_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.brand": {"eq": "$input.brand"}},
+        )
+
+        result = execute_query(
+            config,
+            recording_graph,
+            "stoptech_parts",
+            {"brand": "StopTech"},
+        )
+
+        assert _terminal_ids(result.results) == ["BP-1234"]
+        assert recording_graph.list_entity_calls == [
+            ("Part", {"brand": "StopTech"})
+        ]
+
+    def test_entryless_relationship_collection_returns_relationships_in_order(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["all_fitments"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+        )
+
+        result = execute_query(config, graph, "all_fitments", {})
+
+        assert [
+            (row.from_id, row.to_id)
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow)
+        ] == [
+            ("BP-1234", "V-ACCORD"),
+            ("BP-1234", "V-CIVIC"),
+            ("BP-5678", "V-CIVIC"),
+            ("BP-9999", "V-CAMRY"),
+        ]
+
+    def test_entryless_relationship_collection_filters_edge_and_endpoints(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["honda_verified_fitments"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            where={
+                "edge.properties.verified": {"eq": True},
+                "target.properties.make": {"eq": "Honda"},
+            },
+        )
+
+        result = execute_query(config, graph, "honda_verified_fitments", {})
+
+        assert [
+            (row.from_id, row.to_id)
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow)
+        ] == [("BP-1234", "V-CIVIC"), ("BP-5678", "V-CIVIC")]
+
+    def test_entryless_relationship_collection_respects_relationship_state(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        graph.update_relationship_state(
+            "Part",
+            "BP-1234",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="approved"),
+        )
+        graph.update_relationship_state(
+            "Part",
+            "BP-5678",
+            "Vehicle",
+            "V-CIVIC",
+            "fits",
+            metadata=_metadata(review_status="pending"),
+        )
+        config.named_queries["accepted_fitments"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            relationship_state="accepted",
+        )
+        config.named_queries["pending_fitments"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            relationship_state="pending",
+        )
+        config.named_queries["reviewable_fitments"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            relationship_state="reviewable",
+        )
+
+        accepted = execute_query(config, graph, "accepted_fitments", {})
+        pending = execute_query(config, graph, "pending_fitments", {})
+        reviewable = execute_query(config, graph, "reviewable_fitments", {})
+
+        assert [(row.from_id, row.to_id) for row in accepted.results] == [
+            ("BP-1234", "V-CIVIC")
+        ]
+        assert [(row.from_id, row.to_id) for row in pending.results] == [
+            ("BP-5678", "V-CIVIC")
+        ]
+        assert ("BP-5678", "V-CIVIC") in [
+            (row.from_id, row.to_id) for row in reviewable.results
+        ]
+
+    def test_entryless_relationship_collection_reports_suppression_policy_summary(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["all_fitments_without_stoptech"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+        )
+        config.decision_policies.append(
+            DecisionPolicySchema(
+                name="suppress_stoptech_fitments",
+                applies_to="query",
+                query_name="all_fitments_without_stoptech",
+                relationship_type="fits",
+                effect="suppress",
+                match={"from": {"brand": "StopTech"}},
+            )
+        )
+
+        result = execute_query(config, graph, "all_fitments_without_stoptech", {})
+
+        assert [
+            (row.from_id, row.to_id)
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow)
+        ] == [
+            ("BP-5678", "V-CIVIC"),
+            ("BP-9999", "V-CAMRY"),
+        ]
+        assert result.policy_summary == {"suppress_stoptech_fitments": 2}
+        assert result.receipt is not None
+        assert any(
+            node.detail.get("policy_summary") == {"suppress_stoptech_fitments": 2}
+            for node in result.receipt.nodes
+        )
+
+    def test_entryless_path_shape_and_traversal_are_rejected(self):
+        with pytest.raises(ValueError, match="mode 'collection' queries do not support"):
+            NamedQuerySchema(mode="collection", result_shape="path", returns="Part")
+        with pytest.raises(ValueError, match="mode 'collection' queries must not define"):
+            NamedQuerySchema(
+                mode="collection",
+                result_shape="entity",
+                returns="Part",
+                traversal=[TraversalStep(relationship="fits")],
+            )
+
     def test_parts_for_vehicle(self, config: CoreConfig, graph: EntityGraph):
         result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
         assert isinstance(result, QueryResult)
@@ -433,6 +692,7 @@ class TestExecuteQuery:
         self, config: CoreConfig, graph: EntityGraph
     ) -> None:
         config.named_queries["published_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -537,6 +797,7 @@ class TestExecuteQuery:
         self, config: CoreConfig, graph: EntityGraph
     ):
         config.named_queries["bad_source_constraint"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -558,6 +819,7 @@ class TestExecuteQuery:
 
     def test_entity_query_enforces_matching_returns(self, config, graph):
         config.named_queries["parts_as_part"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -576,6 +838,7 @@ class TestExecuteQuery:
 
     def test_path_query_enforces_matching_returns(self, config, graph):
         config.named_queries["parts_path_as_part"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -605,6 +868,7 @@ class TestExecuteQuery:
 
     def test_entity_query_rejects_wrong_declared_returns(self, config, graph):
         config.named_queries["parts_declared_as_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -633,6 +897,7 @@ class TestExecuteQuery:
 
     def test_path_query_rejects_wrong_declared_returns(self, config, graph):
         config.named_queries["parts_path_declared_as_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -659,6 +924,7 @@ class TestExecuteQuery:
 
     def test_optional_continuation_rejects_different_result_type(self, config, graph):
         config.named_queries["optional_fit_continues_to_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -691,6 +957,7 @@ class TestExecuteQuery:
 
     def test_unknown_entity_returns_type_fails_before_traversal(self, config, graph):
         config.named_queries["unknown_returns_even_with_no_rows"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -777,6 +1044,7 @@ class TestMultiStepQuery:
         graph: EntityGraph,
     ):
         config.named_queries["path_ref_in_traversal_where"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(
@@ -815,6 +1083,7 @@ class TestMultiStepQuery:
         graph: EntityGraph,
     ):
         config.named_queries["unknown_path_ref_in_traversal_where"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(
@@ -852,6 +1121,7 @@ class TestMultiStepQuery:
     ):
         config.named_queries["missing_optional_path_ref_in_traversal_where"] = (
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[
                     TraversalStep(
@@ -900,6 +1170,7 @@ class TestMultiStepQuery:
             )
         )
         config.named_queries["path_ref_in_traversal_related"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(
@@ -1100,6 +1371,7 @@ class TestRelatedEdgeExclusions:
             )
         )
         config.named_queries["accepted_without_suppressed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -1154,6 +1426,7 @@ class TestRelatedEdgeExclusions:
             )
         )
         config.named_queries["pending_without_suppressed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -1532,6 +1805,7 @@ def _fan_out_config() -> CoreConfig:
         ],
         named_queries={
             "screen_org": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Org",
                 traversal=[
                     TraversalStep(
@@ -1543,6 +1817,7 @@ def _fan_out_config() -> CoreConfig:
                 result_shape="entity",
             ),
             "screen_org_filtered": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Org",
                 traversal=[
                     TraversalStep(
@@ -1555,6 +1830,7 @@ def _fan_out_config() -> CoreConfig:
                 result_shape="entity",
             ),
             "screen_org_constrained": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Org",
                 traversal=[
                     TraversalStep(
@@ -1567,6 +1843,7 @@ def _fan_out_config() -> CoreConfig:
                 result_shape="entity",
             ),
             "screen_org_single": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Org",
                 traversal=[
                     TraversalStep(
@@ -1754,24 +2031,28 @@ def _depth_config() -> CoreConfig:
         ],
         named_queries={
             "depth_1": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=1)],
                 returns="list[Node]",
                 result_shape="entity",
             ),
             "depth_2": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=2)],
                 returns="list[Node]",
                 result_shape="entity",
             ),
             "depth_3": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Node",
                 traversal=[TraversalStep(relationship="links", direction="outgoing", max_depth=3)],
                 returns="list[Node]",
                 result_shape="entity",
             ),
             "depth_2_filtered": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Node",
                 traversal=[
                     TraversalStep(
@@ -1785,6 +2066,7 @@ def _depth_config() -> CoreConfig:
                 result_shape="entity",
             ),
             "fan_out_depth_2": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Node",
                 traversal=[
                     TraversalStep(
@@ -1893,6 +2175,7 @@ class TestMaxDepth:
         )
         # max_depth=4 exceeds cycle length — A must still not appear
         config.named_queries["depth_4"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Node",
             traversal=[
                 TraversalStep(
@@ -1986,6 +2269,7 @@ class TestPathResults:
 
     def test_default_query_output_is_path_rows(self, config, graph):
         config.named_queries["default_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2016,6 +2300,7 @@ class TestPathResults:
 
     def test_entity_query_rejects_path_retaining_dedupe_at_runtime(self, config, graph):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2039,6 +2324,7 @@ class TestPathResults:
         graph,
     ):
         config.named_queries["parts_for_vehicle_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2089,6 +2375,7 @@ class TestPathResults:
             )
         )
         config.named_queries["parts_path_entity_dedupe"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2103,6 +2390,7 @@ class TestPathResults:
             dedupe="entity",
         )
         config.named_queries["parts_path_path_dedupe"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2185,6 +2473,7 @@ class TestPathResults:
 class TestProjectionOrderingAndLimit:
     def test_projected_entity_query_rows(self, config, graph):
         config.named_queries["projected_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2220,6 +2509,7 @@ class TestProjectionOrderingAndLimit:
 
     def test_projected_path_query_uses_alias_edge_source_and_target(self, config, graph):
         config.named_queries["projected_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2259,6 +2549,7 @@ class TestProjectionOrderingAndLimit:
         self, config, graph
     ):
         config.named_queries["projected_fit_edges"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2290,6 +2581,7 @@ class TestProjectionOrderingAndLimit:
 
     def test_missing_input_projection_ref_fails(self, config, graph):
         config.named_queries["missing_input_ref"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -2315,6 +2607,7 @@ class TestProjectionOrderingAndLimit:
             property_updates={"confidence": 0.9},
         )
         config.named_queries["ordered_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2361,6 +2654,7 @@ class TestProjectionOrderingAndLimit:
             },
         )
         config.named_queries["date_ordered_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2405,6 +2699,7 @@ class TestProjectionOrderingAndLimit:
             property_updates={"rank": 1},
         )
         config.named_queries["missing_last_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2440,6 +2735,7 @@ class TestProjectionOrderingAndLimit:
         graph.update_entity_properties("Part", "BP-5678", {"priority": "critical"})
 
         config.named_queries["enum_ordered_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2485,6 +2781,7 @@ class TestProjectionOrderingAndLimit:
         graph.update_entity_properties("Part", "BP-1234", {"priority": "urgent"})
         graph.update_entity_properties("Part", "BP-5678", {"priority": "low"})
         config.named_queries["bad_enum_order"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2517,6 +2814,7 @@ class TestProjectionOrderingAndLimit:
             property_updates={"due_by": "not-a-date"},
         )
         config.named_queries["bad_date_order"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2541,6 +2839,7 @@ class TestProjectionOrderingAndLimit:
 
     def test_query_limit_records_total_and_truncation(self, config, graph):
         config.named_queries["limited_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2574,6 +2873,7 @@ class TestQueryIncludes:
         self, config, graph
     ):
         config.named_queries["part_with_replacements"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2622,6 +2922,7 @@ class TestQueryIncludes:
 
     def test_include_where_can_reference_path_alias(self, config, graph):
         config.named_queries["include_where_path_ref"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2671,6 +2972,7 @@ class TestQueryIncludes:
             )
         )
         config.named_queries["include_related_path_ref"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2728,6 +3030,7 @@ class TestQueryIncludes:
         graph.update_entity_properties("Part", "BP-5678", {"priority": "low"})
         graph.update_entity_properties("Part", "BP-9999", {"priority": "critical"})
         config.named_queries["part_with_ordered_replacements"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2772,6 +3075,7 @@ class TestQueryIncludes:
 
     def test_optional_include_without_match_retains_row(self, config, graph):
         config.named_queries["part_with_optional_blocks"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2809,6 +3113,7 @@ class TestQueryIncludes:
 
     def test_required_include_filters_row_without_match(self, config, graph):
         config.named_queries["part_requiring_blocks"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2840,6 +3145,7 @@ class TestQueryIncludes:
 
     def test_singular_include_errors_on_multiple_matches(self, config, graph):
         config.named_queries["ambiguous_replacement"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2869,6 +3175,7 @@ class TestQueryIncludes:
 
     def test_singular_include_where_and_projection_refs(self, config, graph):
         config.named_queries["projected_replacement"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2932,6 +3239,7 @@ class TestQueryIncludes:
             )
         )
         config.named_queries["path_anchor_includes"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -2978,6 +3286,7 @@ class TestQueryIncludes:
 
     def test_many_include_items_projection_is_allowed(self, config, graph):
         config.named_queries["many_include_items"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3025,6 +3334,7 @@ class TestQueryIncludes:
             )
         )
         config.named_queries["related_include_filters"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3095,6 +3405,7 @@ class TestQueryIncludes:
             ),
         )
         config.named_queries["live_include_replacements"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3132,6 +3443,7 @@ class TestQueryIncludes:
 class TestOperationalQueryControls:
     def test_non_required_step_without_match_preserves_path_row(self, config, graph):
         config.named_queries["fit_with_optional_replacement"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3174,6 +3486,7 @@ class TestOperationalQueryControls:
 
     def test_non_required_step_with_match_appends_segment(self, config, graph):
         config.named_queries["fit_with_replacement_match"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3221,6 +3534,7 @@ class TestOperationalQueryControls:
             )
         )
         config.named_queries["fit_with_replacement_fanout"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3257,6 +3571,7 @@ class TestOperationalQueryControls:
 
     def test_unknown_path_alias_still_fails(self, config, graph):
         config.named_queries["unknown_projection_alias"] = NamedQuerySchema.model_construct(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3304,6 +3619,7 @@ class TestOperationalQueryControls:
             )
         )
         config.named_queries["budgeted_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3357,6 +3673,7 @@ class TestOperationalQueryControls:
             spy_iter_step_relationships,
         )
         config.named_queries["budgeted_multi_relationship"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3395,6 +3712,7 @@ class TestOperationalQueryControls:
 
         monkeypatch.setattr(query_engine, "deque", TrackingDeque)
         config.named_queries["budgeted_deep_replacements"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(
@@ -3445,6 +3763,7 @@ class TestOperationalQueryControls:
                 )
             )
         config.named_queries["stable_budgeted_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3480,6 +3799,7 @@ class TestOperationalQueryControls:
             )
         )
         config.named_queries["per_result_budgeted_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3520,6 +3840,7 @@ class TestOperationalQueryControls:
             )
         )
         config.named_queries["optional_budgeted_replacements"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3557,6 +3878,7 @@ class TestOperationalQueryControls:
 
     def test_output_limit_is_distinct_from_path_budget_truncation(self, config, graph):
         config.named_queries["budget_and_limited_fit_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -3625,6 +3947,7 @@ def _kev_path_config() -> CoreConfig:
         ],
         named_queries={
             "business_services_for_vulnerability": NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vulnerability",
                 traversal=[
                     TraversalStep(
@@ -3739,6 +4062,7 @@ class TestStructuredPredicates:
 
     def test_where_filters_edge_source_target_and_candidate_values(self, config, graph):
         config.named_queries["production_brake_fitments"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep.model_validate(
@@ -3780,6 +4104,7 @@ class TestStructuredPredicates:
             property_updates={"runtime": "2026-05-17-build"},
         )
         config.named_queries["python_runtime_fitments"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep.model_validate(
@@ -3829,6 +4154,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["date_like_vehicle_id_fitments"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep.model_validate(
@@ -3899,6 +4225,7 @@ class TestStructuredPredicates:
                 )
             )
         config.named_queries["approved_active_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -3947,6 +4274,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["parts_due_before_cutoff"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -3994,6 +4322,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["parts_checked_before"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4031,6 +4360,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["bad_checked_at"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4092,6 +4422,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["effective_fitments"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4120,6 +4451,7 @@ class TestStructuredPredicates:
 
     def test_missing_input_ref_raises_clear_error(self, config, graph):
         config.named_queries["missing_input_ref"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4192,6 +4524,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["owned_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4243,6 +4576,7 @@ class TestStructuredPredicates:
             )
         )
         config.named_queries["unsuppressed_parts_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4288,6 +4622,7 @@ class TestRelationshipState:
             )
         )
         config.named_queries["parts_with_live_suppression"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4328,6 +4663,7 @@ class TestRelationshipState:
             )
         )
         config.named_queries["parts_without_live_suppression"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4368,6 +4704,7 @@ class TestRelationshipState:
             )
         )
         config.named_queries["parts_with_inactive_suppression"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4387,6 +4724,7 @@ class TestRelationshipState:
             returns="list[Part]",
         )
         config.named_queries["parts_without_inactive_suppression"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4478,12 +4816,14 @@ class TestRelationshipState:
             )
         traversal = [TraversalStep(relationship="fits", direction="incoming")]
         config.named_queries["live_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
             result_shape="entity",
         )
         config.named_queries["accepted_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
@@ -4491,12 +4831,14 @@ class TestRelationshipState:
             result_shape="entity",
         )
         config.named_queries["pending_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
             relationship_state="pending",
         )
         config.named_queries["reviewable_parts"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=traversal,
             returns="list[Part]",
@@ -4519,6 +4861,7 @@ class TestRelationshipState:
 
     def test_runtime_relationship_state_override_requires_opt_in(self, config, graph):
         config.named_queries["pending_override_blocked"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -4546,6 +4889,7 @@ class TestRelationshipState:
             edge_key=rel.edge_key,
         )
         config.named_queries["parts_override_allowed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -4571,6 +4915,7 @@ class TestRelationshipState:
         state,
     ):
         config.named_queries["compact_override_allowed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -4593,6 +4938,7 @@ class TestRelationshipState:
         graph,
     ):
         config.named_queries["relationship_override_allowed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="fits",
@@ -4620,6 +4966,7 @@ class TestRelationshipState:
         state,
     ):
         config.named_queries["path_override_allowed"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -4640,6 +4987,7 @@ class TestRelationshipState:
 
     def test_receipt_records_config_relationship_state_and_shape_options(self, config, graph):
         config.named_queries["pending_path_receipt"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -4674,6 +5022,7 @@ class TestRelationshipState:
 
     def test_receipt_records_runtime_relationship_state_override_source(self, config, graph):
         config.named_queries["override_receipt"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -4713,6 +5062,7 @@ class TestRelationshipState:
             edge_key=rel.edge_key,
         )
         config.named_queries["reviewable_path_receipt"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -4750,6 +5100,7 @@ class TestRelationshipState:
 
     def test_receipt_records_structured_predicate_summary(self, config, graph):
         config.named_queries["predicate_summary_receipt"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep.model_validate(
@@ -4825,6 +5176,7 @@ class TestRelationshipState:
             edge_key=rel.edge_key,
         )
         config.named_queries["pending_fit_edges"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="fits",
@@ -4832,6 +5184,7 @@ class TestRelationshipState:
             relationship_state="pending",
         )
         config.named_queries["accepted_fit_edges"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="fits",
@@ -4839,6 +5192,7 @@ class TestRelationshipState:
             relationship_state="accepted",
         )
         config.named_queries["live_fit_edges"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="fits",
@@ -4912,6 +5266,7 @@ class TestRelationshipResults:
         graph,
     ):
         config.named_queries["fit_edges_for_part"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(
@@ -4954,6 +5309,7 @@ class TestRelationshipResults:
 
     def test_incoming_relationship_rows(self, config, graph):
         config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -4997,6 +5353,7 @@ class TestRelationshipResults:
             )
         )
         config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -5037,6 +5394,7 @@ class TestRelationshipResults:
             )
         )
         config.named_queries["fit_edges_for_vehicle"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -5070,6 +5428,7 @@ class TestRelationshipResults:
         graph,
     ):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(

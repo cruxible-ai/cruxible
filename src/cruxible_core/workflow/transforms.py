@@ -26,9 +26,12 @@ from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.workflow.refs import resolve_value
 from cruxible_core.workflow.step_helpers import (
     MAX_DUPLICATE_EXAMPLES,
+    attach_query_source_lineage,
     attach_source_metadata,
     carry_query_result_index,
     merge_read_metadata,
+    query_result_index,
+    query_source_lineage,
     resolve_step_items,
     source_read_metadata,
 )
@@ -205,16 +208,22 @@ def join_items(
                 "join_key": left_key,
             }
             output_items.append(
-                {
-                    field_name: resolve_value(
-                        template,
-                        input_payload,
-                        step_outputs,
-                        item_payload=join_payload,
-                        allow_item=True,
-                    )
-                    for field_name, template in spec.fields.items()
-                }
+                attach_query_source_lineage(
+                    {
+                        field_name: resolve_value(
+                            template,
+                            input_payload,
+                            step_outputs,
+                            item_payload=join_payload,
+                            allow_item=True,
+                        )
+                        for field_name, template in spec.fields.items()
+                    },
+                    [
+                        *_query_sources_for_join_row(left_row, left_source_metadata),
+                        *_query_sources_for_join_row(right_row, right_source_metadata),
+                    ],
+                )
             )
 
     output = {
@@ -233,6 +242,28 @@ def join_items(
         output,
         merge_read_metadata(left_source_metadata, right_source_metadata),
     )
+
+
+def _query_sources_for_join_row(
+    row: dict[str, Any],
+    source_metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    sources = query_source_lineage(row)
+    if sources:
+        return sources
+    row_index = query_result_index(row)
+    receipt_id = source_metadata.get("receipt_id")
+    if row_index is None or not isinstance(receipt_id, str):
+        return []
+    source: dict[str, Any] = {
+        "query_receipt_id": receipt_id,
+        "row_index": row_index,
+        "row": dict(row),
+    }
+    source_step = source_metadata.get("source_step")
+    if isinstance(source_step, str):
+        source["source_step"] = source_step
+    return [source]
 
 
 def filter_items(

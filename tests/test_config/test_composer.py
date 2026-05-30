@@ -129,9 +129,9 @@ entity_types: {}
 relationships: []
 named_queries:
   vendor_index:
-    entry_point: Vendor
-    traversal: []
-    returns: "list[Vendor]"
+    mode: collection
+    returns: Vendor
+    result_shape: entity
 """
         )
 
@@ -154,6 +154,7 @@ named_queries:
             {
                 "named_queries": {
                     "bad_query": {
+                        "mode": "traversal",
                         "entry_point": "Case",
                         "traversal": [
                             {"relationship": "missing_relationship", "direction": "outgoing"}
@@ -173,6 +174,7 @@ named_queries:
             {
                 "named_queries": {
                     "bad_query": {
+                        "mode": "traversal",
                         "entry_point": "Case",
                         "traversal": [
                             {"relationship": "missing_relationship", "direction": "outgoing"}
@@ -390,6 +392,7 @@ class TestDecisionPoliciesComposition:
             ],
             "named_queries": {
                 "find_cases": {
+                    "mode": "traversal",
                     "entry_point": "Case",
                     "returns": "Case",
                     "traversal": [{"relationship": "cites", "direction": "outgoing"}],
@@ -421,6 +424,7 @@ class TestDecisionPoliciesComposition:
             {
                 "named_queries": {
                     "find_cases": {
+                        "mode": "traversal",
                         "entry_point": "Case",
                         "returns": "Case",
                         "traversal": [
@@ -572,6 +576,7 @@ entity_types: {}
 relationships: []
 named_queries:
   bad_query:
+    mode: traversal
     entry_point: Case
     traversal:
       - relationship: missing_relationship

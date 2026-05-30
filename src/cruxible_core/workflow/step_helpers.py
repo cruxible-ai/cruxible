@@ -22,6 +22,7 @@ READ_METADATA_KEYS = (
     "relationship_state",
     "policy_summary",
     "receipt_id",
+    "query_receipt_ids",
     "max_paths",
     "max_paths_per_result",
     "total_path_count",
@@ -78,12 +79,31 @@ def attach_query_result_index(row: dict[str, Any], index: int) -> dict[str, Any]
     return WorkflowIndexedRow(row, query_result_index=index)
 
 
+def attach_query_source_lineage(
+    row: dict[str, Any],
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach internal query-source lineage without adding public payload keys."""
+    if not sources:
+        return row
+    return WorkflowIndexedRow(
+        row,
+        query_result_index=query_result_index(row),
+        query_sources=sources,
+    )
+
+
 def carry_query_result_index(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
     """Preserve query result lineage through transforms that reshape one row."""
     index = query_result_index(source)
-    if index is None:
+    sources = query_source_lineage(source)
+    if index is None and not sources:
         return target
-    return WorkflowIndexedRow(target, query_result_index=index)
+    return WorkflowIndexedRow(
+        target,
+        query_result_index=index,
+        query_sources=sources,
+    )
 
 
 def query_result_index(row: Any) -> int | None:
@@ -93,6 +113,13 @@ def query_result_index(row: Any) -> int | None:
     return None
 
 
+def query_source_lineage(row: Any) -> list[dict[str, Any]]:
+    """Return internal query-source lineage attached to a workflow row."""
+    if isinstance(row, WorkflowIndexedRow):
+        return [dict(source) for source in row.query_sources]
+    return []
+
+
 class WorkflowIndexedRow(dict):
     """Workflow row carrying internal lineage outside the public keyspace."""
 
@@ -100,10 +127,12 @@ class WorkflowIndexedRow(dict):
         self,
         row: dict[str, Any],
         *,
-        query_result_index: int,
+        query_result_index: int | None,
+        query_sources: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(row)
         self.query_result_index = query_result_index
+        self.query_sources = list(query_sources or [])
 
 
 def extract_read_metadata(step_output: Any) -> dict[str, Any]:
@@ -134,7 +163,12 @@ def merge_read_metadata(*metadata_items: dict[str, Any]) -> dict[str, Any]:
         for reason in metadata.get("truncation_reasons", [])
         if isinstance(reason, str)
     )
-    return {
+    query_receipt_ids = _ordered_unique(
+        receipt_id
+        for metadata in non_empty
+        for receipt_id in _metadata_query_receipt_ids(metadata)
+    )
+    merged = {
         "truncated": any(bool(metadata.get("truncated")) for metadata in non_empty),
         "limit_truncated": any(
             bool(metadata.get("limit_truncated")) for metadata in non_empty
@@ -144,6 +178,25 @@ def merge_read_metadata(*metadata_items: dict[str, Any]) -> dict[str, Any]:
         ),
         "truncation_reasons": reasons,
     }
+    if query_receipt_ids:
+        merged["query_receipt_ids"] = query_receipt_ids
+        if len(query_receipt_ids) == 1:
+            merged["receipt_id"] = query_receipt_ids[0]
+    return merged
+
+
+def source_read_metadata_from_template(
+    template: Any,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge read metadata from all step references used by a template."""
+    return merge_read_metadata(
+        *[
+            metadata
+            for ref in _iter_step_refs(template)
+            if (metadata := source_read_metadata(ref, step_outputs))
+        ]
+    )
 
 
 def _source_step_output(
@@ -157,6 +210,43 @@ def _source_step_output(
     if step_name not in step_outputs:
         return None
     return {"step": step_name, "output": step_outputs[step_name]}
+
+
+def _metadata_query_receipt_ids(metadata: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    receipt_id = metadata.get("receipt_id")
+    if isinstance(receipt_id, str):
+        ids.append(receipt_id)
+    query_receipt_ids = metadata.get("query_receipt_ids")
+    if isinstance(query_receipt_ids, list):
+        ids.extend(item for item in query_receipt_ids if isinstance(item, str))
+    return ids
+
+
+def _iter_step_refs(value: Any) -> list[str]:
+    refs: list[str] = []
+    if isinstance(value, str):
+        if value.startswith("$steps."):
+            refs.append(value)
+        return refs
+    if isinstance(value, dict):
+        for item in value.values():
+            refs.extend(_iter_step_refs(item))
+    elif isinstance(value, list):
+        for item in value:
+            refs.extend(_iter_step_refs(item))
+    return refs
+
+
+def _ordered_unique(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _ordered_truncation_reasons(reasons: Any) -> list[str]:

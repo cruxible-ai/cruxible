@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from cruxible_core.config.schema import CoreConfig, ListEntitiesSpec, ListRelationshipsSpec
+from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -17,13 +17,8 @@ from cruxible_core.provider.types import (
     ProviderContext,
     ResolvedArtifact,
 )
+from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.enums import QueryRelationshipState
-from cruxible_core.query.read_surface import (
-    list_entities as read_list_entities,
-)
-from cruxible_core.query.read_surface import (
-    list_relationships as read_list_relationships,
-)
 from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
@@ -33,7 +28,12 @@ from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.artifacts import resolve_local_artifact_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
 from cruxible_core.workflow.refs import resolve_value
-from cruxible_core.workflow.step_helpers import attach_query_result_index, extract_read_metadata
+from cruxible_core.workflow.step_helpers import (
+    attach_query_result_index,
+    attach_source_metadata,
+    extract_read_metadata,
+    source_read_metadata_from_template,
+)
 from cruxible_core.workflow.tracing import (
     build_trace,
     persist_trace,
@@ -55,36 +55,6 @@ def _evaluate_assert(
         return evaluate_typed_comparison(left, op, right, value_type=value_type)
     except ValueError as exc:
         raise ConfigError(f"Unsupported assert op '{op}'") from exc
-
-
-def _resolve_limit(
-    limit_template: Any,
-    step_id: str,
-    input_payload: dict[str, Any],
-    step_outputs: dict[str, Any],
-) -> int | None:
-    if limit_template is None:
-        return None
-    limit_value = resolve_value(limit_template, input_payload, step_outputs)
-    if not isinstance(limit_value, int) or limit_value < 1:
-        raise QueryExecutionError(
-            f"Workflow step '{step_id}' limit must resolve to an integer >= 1"
-        )
-    return limit_value
-
-
-def _resolve_property_filter(
-    property_filter_template: dict[str, Any],
-    step_id: str,
-    input_payload: dict[str, Any],
-    step_outputs: dict[str, Any],
-) -> dict[str, Any]:
-    property_filter = resolve_value(property_filter_template, input_payload, step_outputs)
-    if not isinstance(property_filter, dict):
-        raise QueryExecutionError(
-            f"Workflow step '{step_id}' property_filter must resolve to a mapping"
-        )
-    return property_filter
 
 
 def _resolve_query_relationship_state(
@@ -152,79 +122,6 @@ def _read_output_metadata(
     return metadata
 
 
-def list_entities_step(
-    config: CoreConfig,
-    graph: EntityGraph,
-    step_id: str,
-    spec: ListEntitiesSpec,
-    input_payload: dict[str, Any],
-    step_outputs: dict[str, Any],
-) -> dict[str, Any]:
-    property_filter = _resolve_property_filter(
-        spec.property_filter,
-        step_id,
-        input_payload,
-        step_outputs,
-    )
-    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
-    result = read_list_entities(
-        graph,
-        spec.entity_type,
-        config=config,
-        property_filter=property_filter or None,
-        limit=limit,
-    )
-    items = [entity.model_dump(mode="python") for entity in result.items]
-    limit_truncated = limit is not None and len(items) < result.total
-    return {
-        "items": items,
-        "total": result.total,
-        **_read_output_metadata(
-            total_results=result.total,
-            returned_results=len(items),
-            limit=limit,
-            limit_truncated=limit_truncated,
-            path_truncated=False,
-            truncation_reasons=["limit"] if limit_truncated else [],
-        ),
-    }
-
-
-def list_relationships_step(
-    graph: EntityGraph,
-    step_id: str,
-    spec: ListRelationshipsSpec,
-    input_payload: dict[str, Any],
-    step_outputs: dict[str, Any],
-) -> dict[str, Any]:
-    property_filter = _resolve_property_filter(
-        spec.property_filter,
-        step_id,
-        input_payload,
-        step_outputs,
-    )
-    limit = _resolve_limit(spec.limit, step_id, input_payload, step_outputs)
-    result = read_list_relationships(
-        graph,
-        relationship_type=spec.relationship_type,
-        property_filter=property_filter or None,
-        limit=limit,
-    )
-    limit_truncated = limit is not None and len(result.items) < result.total
-    return {
-        "items": result.items,
-        "total": result.total,
-        **_read_output_metadata(
-            total_results=result.total,
-            returned_results=len(result.items),
-            limit=limit,
-            limit_truncated=limit_truncated,
-            path_truncated=False,
-            truncation_reasons=["limit"] if limit_truncated else [],
-        ),
-    }
-
-
 def execute_query_step(
     instance: InstanceProtocol,
     config: CoreConfig,
@@ -238,7 +135,6 @@ def execute_query_step(
     *,
     persist_receipt: bool,
 ) -> None:
-    assert compiled_step.query_name is not None
     step_params = resolve_value(compiled_step.params_template, plan.input_payload, step_outputs)
     relationship_state = _resolve_query_relationship_state(
         compiled_step.relationship_state_template,
@@ -246,13 +142,31 @@ def execute_query_step(
         plan.input_payload,
         step_outputs,
     )
-    query_result = read_run_query(
-        config,
-        graph,
-        compiled_step.query_name,
-        step_params,
-        relationship_state=relationship_state,
-    )
+    if compiled_step.inline_query is not None:
+        if not isinstance(step_params, dict):
+            raise QueryExecutionError(
+                f"Workflow query step '{compiled_step.step_id}' params must resolve to a mapping"
+            )
+        step_params = {**plan.input_payload, **step_params}
+        query_name = f"workflow:{plan.workflow}/{compiled_step.step_id}"
+        query_result = execute_query_definition(
+            config,
+            graph,
+            query_name,
+            compiled_step.inline_query,
+            step_params,
+            relationship_state=relationship_state,
+        )
+    else:
+        assert compiled_step.query_name is not None
+        query_name = compiled_step.query_name
+        query_result = read_run_query(
+            config,
+            graph,
+            query_name,
+            step_params,
+            relationship_state=relationship_state,
+        )
     if query_result.receipt is None:
         raise QueryExecutionError(f"Query step '{compiled_step.step_id}' did not produce a receipt")
     if persist_receipt:
@@ -275,7 +189,11 @@ def execute_query_step(
     step_outputs[compiled_step.as_name or compiled_step.step_id] = {
         "results": [
             attach_query_result_index(
-                dump_query_row(item, include_source=compiled_step.include_source),
+                dump_query_row(
+                    item,
+                    include_source=compiled_step.include_source,
+                    mode="json",
+                ),
                 index,
             )
             for index, item in enumerate(query_result.results)
@@ -294,10 +212,18 @@ def execute_query_step(
         "query",
         detail={
             "query_name": compiled_step.query_name,
+            "inline_query": (
+                compiled_step.inline_query.model_dump(mode="python", exclude_none=True)
+                if compiled_step.inline_query is not None
+                else None
+            ),
             "receipt_id": query_result.receipt.receipt_id,
             "params": step_params,
             "relationship_state": relationship_state,
             "include_source": compiled_step.include_source,
+            "returned_results": len(query_result.results),
+            "total_results": query_result.total_results,
+            "truncated": query_result.truncated,
         },
     )
 
@@ -373,6 +299,12 @@ def execute_provider_step(
             subject=f"Provider step '{compiled_step.step_id}' output",
             error_factory=query_execution_error,
         )
+        source_metadata = source_read_metadata_from_template(
+            compiled_step.input_template,
+            step_outputs,
+        )
+        if "items" in provider_output or "results" in provider_output:
+            provider_output = attach_source_metadata(provider_output, source_metadata)
     except Exception as exc:
         status = "error"
         error_message = str(exc)

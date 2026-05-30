@@ -83,6 +83,7 @@ class TestWorkflowExecutor:
             )
         )
         config.named_queries["get_active_recommendations"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -163,6 +164,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -226,6 +228,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["recommendation_edges"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -288,6 +291,7 @@ class TestWorkflowExecutor:
             optional=True,
         )
         config.named_queries["reviewable_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -380,6 +384,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -422,6 +427,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["projected_recommendations"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -492,6 +498,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -562,6 +569,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -676,6 +684,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -764,6 +773,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -853,7 +863,7 @@ class TestWorkflowExecutor:
         assert shaped_step["metadata"]["truncated"] is True
         assert shaped_step["metadata"]["truncation_reasons"] == ["limit"]
 
-    def test_execute_workflow_list_entities_step_returns_items(
+    def test_execute_workflow_inline_entity_query_step_returns_results(
         self, workflow_instance: CruxibleInstance
     ) -> None:
         config = workflow_instance.load_config()
@@ -865,9 +875,11 @@ class TestWorkflowExecutor:
             1,
             WorkflowStepSchema(
                 id="products",
-                list_entities={
-                    "entity_type": "Product",
-                    "property_filter": {"category": "$input.category"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "entity",
+                    "returns": "Product",
+                    "where": {"result.properties.category": {"eq": "$input.category"}},
                     "limit": 5,
                 },
                 **{"as": "products"},
@@ -888,17 +900,17 @@ class TestWorkflowExecutor:
             },
         )
 
-        assert result.step_outputs["products"]["total"] == 1
-        assert len(result.step_outputs["products"]["items"]) == 1
+        assert result.step_outputs["products"]["total_results"] == 1
+        assert len(result.step_outputs["products"]["results"]) == 1
         products_step = next(
             node
             for node in result.receipt.nodes
             if node.node_type == "plan_step" and node.detail.get("step_id") == "products"
         )
-        assert products_step.detail["entity_type"] == "Product"
-        assert products_step.detail["item_count"] == 1
+        assert products_step.detail["inline_query"]["returns"] == "Product"
+        assert products_step.detail["returned_results"] == 1
 
-    def test_execute_workflow_limited_list_entities_reports_read_metadata(
+    def test_execute_workflow_limited_inline_entity_query_reports_read_metadata(
         self, workflow_instance: CruxibleInstance
     ) -> None:
         graph = workflow_instance.load_graph()
@@ -919,9 +931,11 @@ class TestWorkflowExecutor:
             1,
             WorkflowStepSchema(
                 id="products",
-                list_entities={
-                    "entity_type": "Product",
-                    "property_filter": {"category": "$input.category"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "entity",
+                    "returns": "Product",
+                    "where": {"result.properties.category": {"eq": "$input.category"}},
                     "limit": 1,
                 },
                 **{"as": "products"},
@@ -943,7 +957,7 @@ class TestWorkflowExecutor:
         )
 
         products = result.step_outputs["products"]
-        assert products["total"] == 2
+        assert products["total_results"] == 2
         assert products["total_results"] == 2
         assert products["returned_results"] == 1
         assert products["limit"] == 1
@@ -952,7 +966,7 @@ class TestWorkflowExecutor:
         assert products["path_truncated"] is False
         assert products["truncation_reasons"] == ["limit"]
 
-    def test_assert_can_guard_complete_list_metadata_and_count(
+    def test_assert_can_guard_complete_query_metadata_and_count(
         self, workflow_instance: CruxibleInstance
     ) -> None:
         config = workflow_instance.load_config()
@@ -961,9 +975,11 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                         "limit": 10,
                     },
                     **{"as": "products"},
@@ -1020,9 +1036,11 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                         "limit": 10,
                     },
                     **{"as": "products"},
@@ -1071,6 +1089,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -1217,6 +1236,7 @@ class TestWorkflowExecutor:
     ) -> None:
         config = proposal_workflow_instance.load_config()
         config.named_queries["limited_recommendation_paths"] = NamedQuerySchema(
+            mode="traversal",
             entry_point="Campaign",
             traversal=[
                 TraversalStep(
@@ -1296,9 +1316,11 @@ class TestWorkflowExecutor:
                 ),
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                     },
                     **{"as": "products"},
                 ),
@@ -1330,10 +1352,10 @@ class TestWorkflowExecutor:
                     },
                 ),
                 WorkflowStepSchema(
-                    id="require_product_items",
+                    id="require_product_results",
                     assert_count={
                         "step": "products",
-                        "count": "items",
+                        "count": "results",
                         "op": "eq",
                         "value": 1,
                     },
@@ -1376,9 +1398,11 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                     },
                     **{"as": "products"},
                 ),
@@ -1386,7 +1410,7 @@ class TestWorkflowExecutor:
                     id="require_many_products",
                     assert_count={
                         "step": "products",
-                        "count": "items",
+                        "count": "results",
                         "op": "gte",
                         "value": 2,
                         "message": "expected at least two products",
@@ -1419,16 +1443,18 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                     },
                     **{"as": "products"},
                 ),
                 WorkflowStepSchema(
                     id="shaped",
                     shape_items={
-                        "items": "$steps.products.items",
+                        "items": "$steps.products.results",
                         "fields": {
                             "false_value": False,
                             "zero_value": 0,
@@ -1498,16 +1524,18 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="products",
-                    list_entities={
-                        "entity_type": "Product",
-                        "property_filter": {"sku": "$input.sku"},
+                    query={
+                        "mode": "collection",
+                        "result_shape": "entity",
+                        "returns": "Product",
+                        "where": {"result.properties.sku": {"eq": "$input.sku"}},
                     },
                     **{"as": "products"},
                 ),
                 WorkflowStepSchema(
                     id="shaped",
                     shape_items={
-                        "items": "$steps.products.items",
+                        "items": "$steps.products.results",
                         "fields": {
                             "entity_id": "$item.entity_id",
                             "null_value": None,
@@ -1560,7 +1588,7 @@ class TestWorkflowExecutor:
         assert guard_step.detail["present"] is False
         assert guard_step.detail["message"] == "required context value missing"
 
-    def test_execute_workflow_list_entities_matches_service_list(
+    def test_execute_workflow_inline_entity_query_matches_service_list(
         self, workflow_instance: CruxibleInstance
     ) -> None:
         graph = workflow_instance.load_graph()
@@ -1581,9 +1609,11 @@ class TestWorkflowExecutor:
             1,
             WorkflowStepSchema(
                 id="products",
-                list_entities={
-                    "entity_type": "Product",
-                    "property_filter": {"sku": "$input.sku"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "entity",
+                    "returns": "Product",
+                    "where": {"result.properties.sku": {"eq": "$input.sku"}},
                     "limit": 5,
                 },
                 **{"as": "products"},
@@ -1611,13 +1641,13 @@ class TestWorkflowExecutor:
             limit=5,
         )
 
-        assert result.step_outputs["products"]["total"] == listed.total
-        assert result.step_outputs["products"]["items"][0]["properties"]["sku"] == "SKU-123"
-        assert result.step_outputs["products"]["items"] == [
+        assert result.step_outputs["products"]["total_results"] == listed.total
+        assert result.step_outputs["products"]["results"][0]["properties"]["sku"] == "SKU-123"
+        assert result.step_outputs["products"]["results"] == [
             item.model_dump(mode="python") for item in listed.items
         ]
 
-    def test_execute_workflow_list_relationships_step_returns_items(
+    def test_execute_workflow_inline_relationship_query_step_returns_results(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
         config = proposal_workflow_instance.load_config()
@@ -1629,9 +1659,11 @@ class TestWorkflowExecutor:
             1,
             WorkflowStepSchema(
                 id="existing_links",
-                list_relationships={
-                    "relationship_type": "recommended_for",
-                    "property_filter": {"status": "$input.status"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "relationship",
+                    "returns": "recommended_for",
+                    "where": {"edge.properties.status": {"eq": "$input.status"}},
                     "limit": 10,
                 },
                 **{"as": "existing_links"},
@@ -1647,17 +1679,17 @@ class TestWorkflowExecutor:
             {"campaign_id": "CMP-1", "status": "human_approved"},
         )
 
-        assert result.step_outputs["existing_links"]["total"] == 0
-        assert result.step_outputs["existing_links"]["items"] == []
+        assert result.step_outputs["existing_links"]["total_results"] == 0
+        assert result.step_outputs["existing_links"]["results"] == []
         links_step = next(
             node
             for node in result.receipt.nodes
             if node.node_type == "plan_step" and node.detail.get("step_id") == "existing_links"
         )
-        assert links_step.detail["relationship_type"] == "recommended_for"
-        assert links_step.detail["item_count"] == 0
+        assert links_step.detail["inline_query"]["returns"] == "recommended_for"
+        assert links_step.detail["returned_results"] == 0
 
-    def test_execute_workflow_limited_list_relationships_reports_read_metadata(
+    def test_execute_workflow_limited_inline_relationship_query_reports_read_metadata(
         self,
         proposal_workflow_instance: CruxibleInstance,
     ) -> None:
@@ -1667,8 +1699,10 @@ class TestWorkflowExecutor:
             steps=[
                 WorkflowStepSchema(
                     id="existing_links",
-                    list_relationships={
-                        "relationship_type": "recommended_for",
+                    query={
+                        "mode": "collection",
+                        "result_shape": "relationship",
+                        "returns": "recommended_for",
                         "limit": 1,
                     },
                     **{"as": "existing_links"},
@@ -1700,7 +1734,7 @@ class TestWorkflowExecutor:
         )
 
         links = result.step_outputs["existing_links"]
-        assert links["total"] == 2
+        assert links["total_results"] == 2
         assert links["total_results"] == 2
         assert links["returned_results"] == 1
         assert links["limit"] == 1
@@ -1709,7 +1743,7 @@ class TestWorkflowExecutor:
         assert links["path_truncated"] is False
         assert links["truncation_reasons"] == ["limit"]
 
-    def test_execute_workflow_list_relationships_matches_service_list(
+    def test_execute_workflow_inline_relationship_query_matches_service_list(
         self, proposal_workflow_instance: CruxibleInstance
     ) -> None:
         config = proposal_workflow_instance.load_config()
@@ -1721,9 +1755,11 @@ class TestWorkflowExecutor:
             1,
             WorkflowStepSchema(
                 id="existing_links",
-                list_relationships={
-                    "relationship_type": "recommended_for",
-                    "property_filter": {"status": "$input.status"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "relationship",
+                    "returns": "recommended_for",
+                    "where": {"edge.properties.status": {"eq": "$input.status"}},
                     "limit": 10,
                 },
                 **{"as": "existing_links"},
@@ -1746,8 +1782,8 @@ class TestWorkflowExecutor:
             limit=10,
         )
 
-        assert result.step_outputs["existing_links"]["total"] == listed.total
-        assert result.step_outputs["existing_links"]["items"] == listed.items
+        assert result.step_outputs["existing_links"]["total_results"] == listed.total
+        assert result.step_outputs["existing_links"]["results"] == listed.items
 
     def test_execute_workflow_rejects_provider_output_contract(
         self, workflow_instance: CruxibleInstance

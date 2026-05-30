@@ -28,10 +28,12 @@ relationships: []
 
 named_queries:
   get_promo_context:
-    entry_point: Product
-    traversal: []
-    returns: "list[Product]"
+    mode: collection
+    returns: Product
     result_shape: entity
+    where:
+      result.entity_id:
+        eq: $input.sku
 
 contracts:
   PromoInput:
@@ -181,10 +183,12 @@ relationships:
 
 named_queries:
   get_campaign_context:
-    entry_point: Campaign
-    traversal: []
-    returns: "list[Campaign]"
+    mode: collection
+    returns: Campaign
     result_shape: entity
+    where:
+      result.entity_id:
+        eq: $input.campaign_id
 
 contracts:
   CampaignInput:
@@ -379,9 +383,12 @@ relationships:
 
 named_queries:
   get_vendors:
-    entry_point: Vendor
-    traversal: []
-    returns: "list[Vendor]"
+    mode: collection
+    returns: Vendor
+    result_shape: entity
+    where:
+      result.entity_id:
+        eq: $input.vendor_id
 
 contracts:
   EmptyInput:

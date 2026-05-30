@@ -282,19 +282,23 @@ class TestWorkflowDataflowSteps:
             tmp_path,
             steps_yaml="""
             - id: left_rows
-              list_entities:
-                entity_type: Row
+              query:
+                mode: collection
+                result_shape: entity
+                returns: Row
                 limit: 1
               as: left_rows
             - id: right_rows
-              list_entities:
-                entity_type: Row
+              query:
+                mode: collection
+                result_shape: entity
+                returns: Row
                 limit: 1
               as: right_rows
             - id: joined
               join_items:
-                left_items: $steps.left_rows.items
-                right_items: $steps.right_rows.items
+                left_items: $steps.left_rows.results
+                right_items: $steps.right_rows.results
                 left_key: $item.entity_id
                 right_key: $item.entity_id
                 fields:
@@ -317,18 +321,17 @@ class TestWorkflowDataflowSteps:
         result = execute_workflow(instance, instance.load_config(), "dataflow", {})
 
         metadata = result.output["source_metadata"]
-        assert metadata == {
-            "truncated": True,
-            "limit_truncated": True,
-            "path_truncated": False,
-            "truncation_reasons": ["limit"],
-        }
+        assert metadata["truncated"] is True
+        assert metadata["limit_truncated"] is True
+        assert metadata["path_truncated"] is False
+        assert metadata["truncation_reasons"] == ["limit"]
+        assert len(metadata["query_receipt_ids"]) == 2
         assert result.output["left_source_metadata"]["source_step"] == "left_rows"
-        assert result.output["left_source_metadata"]["source_ref"] == "$steps.left_rows.items"
+        assert result.output["left_source_metadata"]["source_ref"] == "$steps.left_rows.results"
         assert result.output["left_source_metadata"]["total_results"] == 2
         assert result.output["left_source_metadata"]["returned_results"] == 1
         assert result.output["right_source_metadata"]["source_step"] == "right_rows"
-        assert result.output["right_source_metadata"]["source_ref"] == "$steps.right_rows.items"
+        assert result.output["right_source_metadata"]["source_ref"] == "$steps.right_rows.results"
         assert result.output["right_source_metadata"]["total_results"] == 2
         assert result.output["right_source_metadata"]["returned_results"] == 1
 
@@ -417,13 +420,15 @@ class TestWorkflowDataflowSteps:
             tmp_path,
             steps_yaml="""
             - id: rows
-              list_entities:
-                entity_type: Row
+              query:
+                mode: collection
+                result_shape: entity
+                returns: Row
                 limit: 1
               as: rows
             - id: filtered
               filter_items:
-                items: $steps.rows.items
+                items: $steps.rows.results
                 where:
                   entity_type: Row
               as: filtered
@@ -450,15 +455,15 @@ class TestWorkflowDataflowSteps:
 
         filtered_metadata = result.step_outputs["filtered"]["source_metadata"]
         assert filtered_metadata["source_step"] == "rows"
-        assert filtered_metadata["source_ref"] == "$steps.rows.items"
-        assert filtered_metadata["input_ref"] == "$steps.rows.items"
+        assert filtered_metadata["source_ref"] == "$steps.rows.results"
+        assert filtered_metadata["input_ref"] == "$steps.rows.results"
         assert filtered_metadata["total_results"] == 2
         assert filtered_metadata["returned_results"] == 1
         assert filtered_metadata["truncated"] is True
         assert filtered_metadata["truncation_reasons"] == ["limit"]
         deduped_metadata = result.output["source_metadata"]
         assert deduped_metadata["source_step"] == "rows"
-        assert deduped_metadata["source_ref"] == "$steps.rows.items"
+        assert deduped_metadata["source_ref"] == "$steps.rows.results"
         assert deduped_metadata["input_ref"] == "$steps.filtered.items"
         assert deduped_metadata["total_results"] == 2
         assert deduped_metadata["returned_results"] == 1
@@ -706,13 +711,15 @@ class TestWorkflowDataflowSteps:
             tmp_path,
             steps_yaml="""
             - id: rows
-              list_entities:
-                entity_type: Row
+              query:
+                mode: collection
+                result_shape: entity
+                returns: Row
                 limit: 1
               as: rows
             - id: summary
               aggregate_items:
-                items: $steps.rows.items
+                items: $steps.rows.results
                 measures:
                   row_count:
                     count: true

@@ -142,6 +142,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "find_b": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[TraversalStep(relationship="links")],
                     returns="list[B]",
@@ -162,6 +163,7 @@ class TestValidateNamedQueries:
             ],
             named_queries={
                 "find_a": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="B",
                     traversal=[TraversalStep(relationship="linked_from")],
                     returns="list[A]",
@@ -174,6 +176,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "bad": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="Missing",
                     traversal=[TraversalStep(relationship="links")],
                     returns="list[B]",
@@ -188,6 +191,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "bad": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[TraversalStep(relationship="nonexistent")],
                     returns="list[B]",
@@ -202,6 +206,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "bad": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[TraversalStep(relationship="links", filter={"scroe": 1})],
                     returns="list[B]",
@@ -216,6 +221,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "bad": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[
                         TraversalStep(relationship="links", target_filter={"statuz": "open"})
@@ -232,6 +238,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "find_open_b": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[
                         TraversalStep(
@@ -250,6 +257,7 @@ class TestValidateNamedQueries:
         config = _minimal_config(
             named_queries={
                 "bad": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[
                         TraversalStep(
@@ -305,6 +313,7 @@ class TestValidateLoopOneControls:
         config = _minimal_config(
             named_queries={
                 "find_b": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[TraversalStep(relationship="links")],
                     returns="list[B]",
@@ -423,6 +432,7 @@ class TestValidateMultiRelationshipStep:
         config = _minimal_config(
             named_queries={
                 "q": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[TraversalStep(relationship=["links"], direction="outgoing")],
                     returns="list[B]",
@@ -435,6 +445,7 @@ class TestValidateMultiRelationshipStep:
         config = _minimal_config(
             named_queries={
                 "q": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="A",
                     traversal=[
                         TraversalStep(relationship=["links", "bogus"], direction="outgoing")
@@ -673,7 +684,7 @@ class TestValidateWorkflowExecution:
             for error in exc_info.value.errors
         )
 
-    def test_list_entities_rejects_unknown_entity_type(self):
+    def test_inline_entity_query_rejects_unknown_entity_type(self):
         config = self._workflow_config(
             workflows={
                 "wf": WorkflowSchema(
@@ -681,9 +692,11 @@ class TestValidateWorkflowExecution:
                     steps=[
                         WorkflowStepSchema(
                             id="entities",
-                            list_entities={
-                                "entity_type": "Missing",
-                                "property_filter": {"name": "$input.id"},
+                            query={
+                                "mode": "collection",
+                                "result_shape": "entity",
+                                "returns": "Missing",
+                                "where": {"result.properties.name": {"eq": "$input.id"}},
                             },
                             **{"as": "entities"},
                         )
@@ -695,10 +708,10 @@ class TestValidateWorkflowExecution:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any(
-            "list_entities entity_type 'Missing'" in error for error in exc_info.value.errors
+            "inline query returns entity type 'Missing'" in error for error in exc_info.value.errors
         )
 
-    def test_list_relationships_rejects_unknown_relationship(self):
+    def test_inline_relationship_query_rejects_unknown_relationship(self):
         config = self._workflow_config(
             workflows={
                 "wf": WorkflowSchema(
@@ -706,9 +719,11 @@ class TestValidateWorkflowExecution:
                     steps=[
                         WorkflowStepSchema(
                             id="edges",
-                            list_relationships={
-                                "relationship_type": "missing",
-                                "property_filter": {"status": "$input.id"},
+                            query={
+                                "mode": "collection",
+                                "result_shape": "relationship",
+                                "returns": "missing",
+                                "where": {"edge.properties.status": {"eq": "$input.id"}},
                             },
                             **{"as": "edges"},
                         )
@@ -720,7 +735,7 @@ class TestValidateWorkflowExecution:
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any(
-            "list_relationships relationship_type 'missing'" in error
+            "inline query returns relationship 'missing'" in error
             for error in exc_info.value.errors
         )
 

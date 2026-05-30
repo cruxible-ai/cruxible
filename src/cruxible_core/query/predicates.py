@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
 
 _MISSING = object()
-QUERY_PREDICATE_SCOPES = (
+RELATED_PREDICATE_SCOPES = (
     "edge",
     "source",
     "target",
@@ -39,6 +39,7 @@ QUERY_PREDICATE_SCOPES = (
     "candidate",
     "entry",
 )
+QUERY_PREDICATE_SCOPES = (*RELATED_PREDICATE_SCOPES, "result")
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class PredicateContext:
     current: EntityInstance
     candidate: EntityInstance
     entry: EntityInstance
+    result: Any = None
     path: tuple[QueryPathSegment, ...] = ()
     entities: tuple[EntityInstance, ...] = ()
     optional_path_aliases: frozenset[str] = frozenset()
@@ -117,6 +119,7 @@ def build_predicate_context(
         current=current,
         candidate=candidate,
         entry=entry,
+        result=candidate,
         path=path,
         entities=entities,
         optional_path_aliases=optional_path_aliases,
@@ -246,6 +249,8 @@ def related_edge_exists(
 def query_filter_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]:
     """Return config-level predicate summaries for receipt root metadata."""
     summaries: list[dict[str, Any]] = []
+    if query_schema.where is not None:
+        summaries.append({"scope": "query", "where": query_schema.where.model_dump(mode="python")})
     for index, step in enumerate(query_schema.traversal):
         summary: dict[str, Any] = {
             "step": index,
@@ -285,6 +290,7 @@ def _build_related_context(
         current=original_context.current,
         candidate=original_context.candidate,
         entry=original_context.entry,
+        result=original_context.result,
         path=original_context.path,
         entities=original_context.entities,
         optional_path_aliases=original_context.optional_path_aliases,
@@ -312,7 +318,7 @@ def _related_predicates_match(
 def _iter_related_predicate_scopes(
     related: RelatedPredicateSpec,
 ) -> Iterator[tuple[str, QueryPredicateSpec]]:
-    for scope in QUERY_PREDICATE_SCOPES:
+    for scope in RELATED_PREDICATE_SCOPES:
         predicates = getattr(related, scope)
         if predicates is not None:
             yield scope, predicates
@@ -324,7 +330,7 @@ def _split_predicate_path(path: str, *, base_scope: str | None) -> tuple[str, li
         raise QueryExecutionError("predicate path must not be empty")
     first = parts[0]
     if first == "result":
-        raise QueryExecutionError("result predicates are not supported at traversal step time")
+        return first, parts[1:]
     if first in QUERY_PREDICATE_SCOPES:
         return first, parts[1:]
     if base_scope is not None:
@@ -343,6 +349,7 @@ def _scope_value(context: PredicateContext, scope: str) -> Any:
         "current": context.current,
         "candidate": context.candidate,
         "entry": context.entry,
+        "result": context.result,
     }[scope]
 
 

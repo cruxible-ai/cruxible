@@ -379,7 +379,7 @@ class TestTraversalStep:
     def test_where_rejects_result_scope(self):
         with pytest.raises(
             ValidationError,
-            match="result predicates are not supported at traversal step time",
+            match="result predicates are not supported in where",
         ):
             TraversalStep.model_validate(
                 {
@@ -436,8 +436,17 @@ class TestTraversalStep:
 
 
 class TestNamedQuerySchema:
+    def test_mode_is_required(self):
+        with pytest.raises(ValidationError, match="mode"):
+            NamedQuerySchema(
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", direction="incoming")],
+                returns="list[Part]",
+            )
+
     def test_minimal(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -449,8 +458,41 @@ class TestNamedQuerySchema:
         assert query.relationship_state == "live"
         assert query.allow_relationship_state_override is False
 
+    def test_collection_query_accepts_entity_collection(self):
+        query = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.brand": {"eq": "$input.brand"}},
+        )
+
+        assert query.mode == "collection"
+        assert query.entry_point is None
+        assert query.traversal == []
+        assert query.dedupe == "entity"
+
+    def test_collection_query_rejects_entry_point(self):
+        with pytest.raises(ValidationError, match="must not define entry_point"):
+            NamedQuerySchema(
+                mode="collection",
+                entry_point="Part",
+                result_shape="entity",
+                returns="Part",
+            )
+
+    def test_traversal_query_rejects_top_level_where(self):
+        with pytest.raises(ValidationError, match="do not support top-level where"):
+            NamedQuerySchema(
+                mode="traversal",
+                entry_point="Vehicle",
+                traversal=[TraversalStep(relationship="fits", direction="incoming")],
+                returns="list[Part]",
+                where={"result.properties.brand": {"eq": "$input.brand"}},
+            )
+
     def test_relationship_state_accepts_pending_with_override_opt_in(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", direction="incoming")],
             returns="list[Part]",
@@ -463,6 +505,7 @@ class TestNamedQuerySchema:
 
     def test_multi_step(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Part",
             traversal=[
                 TraversalStep(relationship="replaces", direction="outgoing"),
@@ -475,6 +518,7 @@ class TestNamedQuerySchema:
     @pytest.mark.parametrize("result_shape", ["entity", "path", "relationship"])
     def test_valid_result_shapes(self, result_shape):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -484,6 +528,7 @@ class TestNamedQuerySchema:
 
     def test_default_result_shape_is_path_with_path_dedupe(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -495,6 +540,7 @@ class TestNamedQuerySchema:
     def test_invalid_result_shape(self):
         with pytest.raises(ValidationError, match="entity|path|relationship"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -503,6 +549,7 @@ class TestNamedQuerySchema:
 
     def test_entity_shape_accepts_entity_dedupe(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -513,6 +560,7 @@ class TestNamedQuerySchema:
 
     def test_entity_shape_defaults_to_entity_dedupe(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -524,6 +572,7 @@ class TestNamedQuerySchema:
     @pytest.mark.parametrize("dedupe", ["entity", "path", "none"])
     def test_path_shape_accepts_dedupe_values(self, dedupe):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -539,6 +588,7 @@ class TestNamedQuerySchema:
             match="result_shape 'entity' requires dedupe 'entity'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -549,6 +599,7 @@ class TestNamedQuerySchema:
     def test_invalid_dedupe_value(self):
         with pytest.raises(ValidationError, match="entity|path|none"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -557,6 +608,7 @@ class TestNamedQuerySchema:
 
     def test_relationship_shape_defaults_to_path_dedupe(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="fits",
@@ -571,6 +623,7 @@ class TestNamedQuerySchema:
             match="result_shape 'relationship' requires dedupe 'path' or 'none'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="fits",
@@ -584,6 +637,7 @@ class TestNamedQuerySchema:
             match="relationship_state 'pending' requires result_shape 'path' or 'relationship'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -593,6 +647,7 @@ class TestNamedQuerySchema:
 
     def test_pending_relationship_state_uses_path_default(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -608,6 +663,7 @@ class TestNamedQuerySchema:
             match="relationship_state 'pending' requires dedupe 'path' or 'none'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -623,6 +679,7 @@ class TestNamedQuerySchema:
             match="relationship_state 'reviewable' requires result_shape 'path'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="fits" if shape == "relationship" else "list[Part]",
@@ -636,6 +693,7 @@ class TestNamedQuerySchema:
             match="relationship_state 'reviewable' requires dedupe 'path' or 'none'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -646,6 +704,7 @@ class TestNamedQuerySchema:
 
     def test_reviewable_relationship_state_uses_path_default(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits")],
             returns="list[Part]",
@@ -658,6 +717,7 @@ class TestNamedQuerySchema:
     def test_duplicate_traversal_aliases_fail_validation(self):
         with pytest.raises(ValidationError, match="duplicate traversal aliases: hop"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[
                     TraversalStep(relationship="fits", alias="hop"),
@@ -668,6 +728,7 @@ class TestNamedQuerySchema:
 
     def test_accepts_projection_order_and_limit(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -703,6 +764,7 @@ class TestNamedQuerySchema:
 
     def test_accepts_include_block(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(
@@ -741,6 +803,7 @@ class TestNamedQuerySchema:
     def test_include_rejects_unknown_path_alias_anchor(self):
         with pytest.raises(ValidationError, match="unknown traversal alias 'missing'"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -756,6 +819,7 @@ class TestNamedQuerySchema:
     def test_include_alias_collision_rejected(self):
         with pytest.raises(ValidationError, match="include aliases must not collide"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -766,6 +830,7 @@ class TestNamedQuerySchema:
     def test_include_rejects_entity_shape(self):
         with pytest.raises(ValidationError, match="include requires result_shape"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -777,6 +842,7 @@ class TestNamedQuerySchema:
     def test_include_order_rejects_query_row_scopes(self):
         with pytest.raises(ValidationError, match="include order_by reference"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -792,6 +858,7 @@ class TestNamedQuerySchema:
 
     def test_include_order_accepts_input_refs(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[TraversalStep(relationship="fits", alias="fit")],
             returns="list[Part]",
@@ -810,6 +877,7 @@ class TestNamedQuerySchema:
     def test_projection_rejects_singular_ref_for_many_include(self):
         with pytest.raises(ValidationError, match="targets many include"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -826,6 +894,7 @@ class TestNamedQuerySchema:
 
     def test_required_false_defaults_and_is_accepted_for_path_shape(self):
         query = NamedQuerySchema(
+            mode="traversal",
             entry_point="Vehicle",
             traversal=[
                 TraversalStep(relationship="fits", alias="fit"),
@@ -844,6 +913,7 @@ class TestNamedQuerySchema:
             match="required false traversal steps require result_shape 'path' or 'relationship'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", required=False)],
                 returns="list[Part]",
@@ -856,6 +926,7 @@ class TestNamedQuerySchema:
             match="final traversal step to be required",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", required=False)],
                 returns="fits",
@@ -868,6 +939,7 @@ class TestNamedQuerySchema:
             match="path budgets require result_shape 'path' or 'relationship'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -879,6 +951,7 @@ class TestNamedQuerySchema:
     def test_path_budgets_reject_non_positive_values(self, field):
         with pytest.raises(ValidationError):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -889,6 +962,7 @@ class TestNamedQuerySchema:
     def test_projection_rejects_unknown_scope(self):
         with pytest.raises(ValidationError, match="unsupported query reference scope"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -898,6 +972,7 @@ class TestNamedQuerySchema:
     def test_projection_rejects_unknown_path_alias(self):
         with pytest.raises(ValidationError, match="unknown traversal alias 'missing'"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -911,6 +986,7 @@ class TestNamedQuerySchema:
             match="not available for result_shape 'entity'",
         ):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits", alias="fit")],
                 returns="list[Part]",
@@ -921,6 +997,7 @@ class TestNamedQuerySchema:
     def test_order_by_rejects_non_reference(self):
         with pytest.raises(ValidationError, match="order_by.by must be a query reference"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -930,6 +1007,7 @@ class TestNamedQuerySchema:
     def test_order_by_rejects_value_type_and_enum_ref(self):
         with pytest.raises(ValidationError, match="mutually exclusive"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -945,6 +1023,7 @@ class TestNamedQuerySchema:
     def test_order_by_rejects_blank_enum_ref(self):
         with pytest.raises(ValidationError, match="enum_ref"):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -954,6 +1033,7 @@ class TestNamedQuerySchema:
     def test_limit_rejects_negative_values(self):
         with pytest.raises(ValidationError):
             NamedQuerySchema(
+                mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
@@ -987,6 +1067,7 @@ class TestNamedQuerySchema:
                 ],
                 named_queries={
                     "bad": NamedQuerySchema(
+                        mode="traversal",
                         entry_point="Vehicle",
                         traversal=[TraversalStep(relationship="fits", direction="incoming")],
                         returns="not_fits",
@@ -1019,6 +1100,7 @@ class TestNamedQuerySchema:
                 ],
                 named_queries={
                     "bad": NamedQuerySchema(
+                        mode="traversal",
                         entry_point="Vehicle",
                         traversal=[
                             TraversalStep.model_validate(
@@ -1077,6 +1159,55 @@ class TestCoreConfigQueryValidation:
         )
         assert config.entity_types["Thing"].properties["status"].enum_ref == "status"
 
+    def test_collection_entity_query_accepts_known_returns(self):
+        config = CoreConfig(
+            name="collection_entity_returns",
+            entity_types={
+                "Part": EntityTypeSchema(
+                    properties={"part_number": PropertySchema(primary_key=True)}
+                )
+            },
+            named_queries={
+                "parts": NamedQuerySchema(
+                    mode="collection",
+                    result_shape="entity",
+                    returns="Part",
+                ),
+                "listed_parts": NamedQuerySchema(
+                    mode="collection",
+                    result_shape="entity",
+                    returns="list[Part]",
+                ),
+            },
+        )
+
+        assert config.named_queries["parts"].returns == "Part"
+        assert config.named_queries["listed_parts"].returns == "list[Part]"
+
+    def test_collection_entity_query_rejects_unknown_returns(self):
+        with pytest.raises(
+            ValidationError,
+            match=(
+                "Named query 'missing_parts' with collection entity collection "
+                "returns unknown entity 'MissingPart'"
+            ),
+        ):
+            CoreConfig(
+                name="collection_entity_returns",
+                entity_types={
+                    "Part": EntityTypeSchema(
+                        properties={"part_number": PropertySchema(primary_key=True)}
+                    )
+                },
+                named_queries={
+                    "missing_parts": NamedQuerySchema(
+                        mode="collection",
+                        result_shape="entity",
+                        returns="MissingPart",
+                    )
+                },
+            )
+
     def test_query_order_by_accepts_ordered_enum_ref(self):
         config = CoreConfig(
             name="test",
@@ -1099,6 +1230,7 @@ class TestCoreConfigQueryValidation:
             ],
             named_queries={
                 "ordered": NamedQuerySchema(
+                    mode="traversal",
                     entry_point="Vehicle",
                     traversal=[TraversalStep(relationship="fits", direction="incoming")],
                     returns="list[Part]",
@@ -1144,6 +1276,7 @@ class TestCoreConfigQueryValidation:
                 ],
                 named_queries={
                     "ordered": NamedQuerySchema(
+                        mode="traversal",
                         entry_point="Vehicle",
                         traversal=[
                             TraversalStep(relationship="fits", direction="incoming")
@@ -1177,6 +1310,7 @@ class TestCoreConfigQueryValidation:
                 ],
                 named_queries={
                     "ordered": NamedQuerySchema(
+                        mode="traversal",
                         entry_point="Vehicle",
                         traversal=[
                             TraversalStep(relationship="fits", direction="incoming")
@@ -1360,6 +1494,7 @@ relationships: []
                 ],
                 named_queries={
                     "parts_for_vehicle": NamedQuerySchema(
+                        mode="traversal",
                         entry_point="Vehicle",
                         traversal=[
                             TraversalStep(
@@ -1606,7 +1741,11 @@ class TestWorkflowSchema:
                     steps=[
                         WorkflowStepSchema(
                             id="products",
-                            list_entities={"entity_type": "Product"},
+                            query={
+                                "mode": "collection",
+                                "result_shape": "entity",
+                                "returns": "Product",
+                            },
                             **{"as": "products"},
                         )
                     ],
@@ -1678,30 +1817,36 @@ class TestWorkflowSchema:
         assert step.make_candidates is not None
         assert step.make_candidates.relationship_type == "recommended_for"
 
-    def test_list_entities_step_accepts_property_filter_refs(self):
+    def test_inline_entity_query_step_accepts_predicate_refs(self):
         step = WorkflowStepSchema(
             id="products",
-            list_entities={
-                "entity_type": "Product",
-                "property_filter": {"category": "$input.category"},
+            query={
+                "mode": "collection",
+                "result_shape": "entity",
+                "returns": "Product",
+                "where": {"result.properties.category": {"eq": "$input.category"}},
                 "limit": 5,
             },
             **{"as": "products"},
         )
-        assert step.list_entities is not None
-        assert step.list_entities.entity_type == "Product"
+        assert step.query is not None
+        assert not isinstance(step.query, str)
+        assert step.query.returns == "Product"
 
-    def test_list_relationships_step_accepts_property_filter_refs(self):
+    def test_inline_relationship_query_step_accepts_predicate_refs(self):
         step = WorkflowStepSchema(
             id="links",
-            list_relationships={
-                "relationship_type": "recommended_for",
-                "property_filter": {"status": "$input.status"},
+            query={
+                "mode": "collection",
+                "result_shape": "relationship",
+                "returns": "recommended_for",
+                "where": {"edge.properties.status": {"eq": "$input.status"}},
             },
             **{"as": "links"},
         )
-        assert step.list_relationships is not None
-        assert step.list_relationships.relationship_type == "recommended_for"
+        assert step.query is not None
+        assert not isinstance(step.query, str)
+        assert step.query.returns == "recommended_for"
 
     def test_query_step_accepts_relationship_state_and_source_output_options(self):
         step = WorkflowStepSchema(

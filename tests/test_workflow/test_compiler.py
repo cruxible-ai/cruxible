@@ -158,7 +158,7 @@ class TestWorkflowCompiler:
         assert plan.steps[2].assert_count_spec is not None
         assert plan.steps[3].assert_exists_spec is not None
 
-    def test_compile_workflow_includes_list_entities_step(
+    def test_compile_workflow_includes_inline_collection_query_step(
         self, workflow_instance: CruxibleInstance
     ) -> None:
         config = workflow_instance.load_config()
@@ -170,9 +170,11 @@ class TestWorkflowCompiler:
             1,
             WorkflowStepSchema(
                 id="products",
-                list_entities={
-                    "entity_type": "Product",
-                    "property_filter": {"category": "$input.category"},
+                query={
+                    "mode": "collection",
+                    "result_shape": "entity",
+                    "returns": "Product",
+                    "where": {"result.properties.category": {"eq": "$input.category"}},
                     "limit": 5,
                 },
                 **{"as": "products"},
@@ -193,9 +195,9 @@ class TestWorkflowCompiler:
             },
         )
 
-        assert plan.steps[1].kind == "list_entities"
-        assert plan.steps[1].list_entities_spec is not None
-        assert plan.steps[1].list_entities_spec.entity_type == "Product"
+        assert plan.steps[1].kind == "query"
+        assert plan.steps[1].inline_query is not None
+        assert plan.steps[1].inline_query.returns == "Product"
 
     def test_compile_workflow_carries_aggregate_items_step(
         self, workflow_instance: CruxibleInstance

@@ -200,17 +200,19 @@ def compile_workflow(
     compiled_steps: list[CompiledPlanStep] = []
     for step in workflow.steps:
         if step.query is not None:
-            if step.query not in config.named_queries:
+            if isinstance(step.query, str) and step.query not in config.named_queries:
                 raise ConfigError(
                     f"Workflow '{workflow_name}' references unknown query '{step.query}'"
                 )
+            query_name = step.query if isinstance(step.query, str) else None
             compiled_steps.append(
                 CompiledPlanStep(
                     step_id=step.id,
                     kind="query",
                     workflow_type=workflow_type,
                     as_name=step.as_,
-                    query_name=step.query,
+                    query_name=query_name,
+                    inline_query=None if isinstance(step.query, str) else step.query,
                     params_template=step.params,
                     params_preview=preview_value(step.params, normalized_input),
                     relationship_state_template=step.relationship_state,
@@ -275,30 +277,6 @@ def compile_workflow(
                     ),
                     input_template=step.input,
                     input_preview=preview_value(step.input, normalized_input),
-                )
-            )
-            continue
-
-        if step.list_entities is not None:
-            compiled_steps.append(
-                CompiledPlanStep(
-                    step_id=step.id,
-                    kind="list_entities",
-                    workflow_type=workflow_type,
-                    as_name=step.as_,
-                    list_entities_spec=step.list_entities,
-                )
-            )
-            continue
-
-        if step.list_relationships is not None:
-            compiled_steps.append(
-                CompiledPlanStep(
-                    step_id=step.id,
-                    kind="list_relationships",
-                    workflow_type=workflow_type,
-                    as_name=step.as_,
-                    list_relationships_spec=step.list_relationships,
                 )
             )
             continue

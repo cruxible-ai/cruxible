@@ -19,8 +19,6 @@ from cruxible_core.config.schema import (
     DedupeItemsSpec,
     FilterItemsSpec,
     JoinItemsSpec,
-    ListEntitiesSpec,
-    ListRelationshipsSpec,
     MakeCandidatesSpec,
     MakeEntitiesSpec,
     MakeRelationshipsSpec,
@@ -96,6 +94,7 @@ class CompiledPlanStep(BaseModel):
     workflow_type: WorkflowType = "utility"
     as_name: str | None = None
     query_name: str | None = None
+    inline_query: Any | None = None
     provider_name: str | None = None
     provider_ref: str | None = None
     provider_version: str | None = None
@@ -112,8 +111,6 @@ class CompiledPlanStep(BaseModel):
     assert_not_truncated_spec: AssertNotTruncatedSpec | None = None
     assert_count_spec: AssertCountSpec | None = None
     assert_exists_spec: AssertExistsSpec | None = None
-    list_entities_spec: ListEntitiesSpec | None = None
-    list_relationships_spec: ListRelationshipsSpec | None = None
     shape_items_spec: ShapeItemsSpec | None = None
     join_items_spec: JoinItemsSpec | None = None
     filter_items_spec: FilterItemsSpec | None = None

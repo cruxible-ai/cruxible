@@ -81,6 +81,9 @@ if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
 
 
+_NO_COLLECTION_PUSHDOWN = object()
+
+
 @dataclass(frozen=True)
 class _TraversalState:
     """Internal path-carrying traversal state."""
@@ -169,6 +172,26 @@ def execute_query(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         raise QueryNotFoundError(query_name)
+    return execute_query_definition(
+        config,
+        graph,
+        query_name,
+        query_schema,
+        params,
+        relationship_state=relationship_state,
+    )
+
+
+def execute_query_definition(
+    config: CoreConfig,
+    graph: EntityGraph,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState | None = None,
+) -> QueryResult:
+    """Execute a named or inline query definition against the graph."""
     effective_options = _resolve_effective_query_options(
         config,
         query_name,
@@ -205,6 +228,19 @@ def execute_query(
         },
     )
 
+    if query_schema.mode == "collection":
+        return _execute_collection_query(
+            config,
+            graph,
+            query_name,
+            query_schema,
+            params,
+            effective_options=effective_options,
+            builder=builder,
+        )
+
+    if query_schema.entry_point is None:
+        raise QueryExecutionError(f"Traversal query '{query_name}' requires entry_point")
     entry_entity = _resolve_entry_entity(
         config,
         graph,
@@ -389,6 +425,390 @@ def _resolve_entry_entity(
     return entity
 
 
+def _execute_collection_query(
+    config: CoreConfig,
+    graph: EntityGraph,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    params: dict[str, Any],
+    *,
+    effective_options: _EffectiveQueryOptions,
+    builder: ReceiptBuilder,
+) -> QueryResult:
+    """Execute an entity or relationship collection query."""
+    if query_schema.result_shape == "path":
+        raise QueryExecutionError(
+            f"Collection query '{query_name}' does not support result_shape 'path'"
+        )
+    if query_schema.traversal:
+        raise QueryExecutionError(
+            f"Collection query '{query_name}' must not define traversal"
+        )
+    if query_schema.result_shape == "entity":
+        contexts = _collection_entity_contexts(
+            config,
+            graph,
+            query_name,
+            query_schema,
+            params,
+        )
+        policy_summary: dict[str, int] = {}
+    elif query_schema.result_shape == "relationship":
+        contexts, policy_summary = _collection_relationship_contexts(
+            config,
+            graph,
+            query_name,
+            query_schema,
+            params,
+            relationship_state=effective_options.relationship_state,
+            builder=builder,
+        )
+    else:
+        raise QueryExecutionError(
+            f"Unsupported collection query result_shape '{query_schema.result_shape}'"
+        )
+
+    contexts = sort_query_row_contexts(
+        contexts,
+        query_schema.order_by,
+        params,
+        config=config,
+    )
+    total_results = len(contexts)
+    limited_contexts = (
+        contexts[: query_schema.limit] if query_schema.limit is not None else contexts
+    )
+    limit_truncated = query_schema.limit is not None and total_results > query_schema.limit
+    truncation_reasons = ["limit"] if limit_truncated else []
+    result_rows: list[QueryRow] = [
+        (
+            project_query_row(query_schema.select, context, params)
+            if query_schema.select is not None
+            else context.row
+        )
+        for context in limited_contexts
+    ]
+    result_dicts = [dump_query_row(row, include_source=True) for row in result_rows]
+    builder.record_results(
+        result_dicts,
+        detail={
+            "total_results": total_results,
+            "limit": query_schema.limit,
+            "truncated": limit_truncated,
+            "limit_truncated": limit_truncated,
+            "path_truncated": False,
+            "truncation_reasons": truncation_reasons,
+            "max_paths": None,
+            "max_paths_per_result": None,
+            "total_path_count": None,
+            "retained_path_count": None,
+            "evaluated_path_candidate_count": None,
+            "policy_summary": policy_summary,
+        },
+    )
+    receipt = builder.build(result_dicts)
+    return QueryResult(
+        query_name=query_name,
+        parameters=params,
+        results=result_rows,
+        result_shape=query_schema.result_shape,
+        dedupe=effective_options.dedupe,
+        relationship_state=effective_options.relationship_state,
+        steps_executed=0,
+        total_results=total_results,
+        limit=query_schema.limit,
+        truncated=limit_truncated,
+        limit_truncated=limit_truncated,
+        path_truncated=False,
+        truncation_reasons=truncation_reasons,
+        max_paths=None,
+        max_paths_per_result=None,
+        total_path_count=None,
+        retained_path_count=None,
+        receipt=receipt,
+        policy_summary=policy_summary,
+    )
+
+
+def _collection_entity_contexts(
+    config: CoreConfig,
+    graph: EntityGraph,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    params: dict[str, Any],
+) -> list[QueryRowContext]:
+    entity_type = _normalize_entity_returns(query_schema.returns)
+    if entity_type not in config.entity_types:
+        raise QueryExecutionError(
+            f"Entryless query '{query_name}' declares unknown result entity type "
+            f"'{query_schema.returns}'"
+        )
+    contexts: list[QueryRowContext] = []
+    for raw_entity in _collection_entity_candidates(
+        config,
+        graph,
+        entity_type,
+        query_schema.where,
+        params,
+    ):
+        entity = entity_with_identity_properties(config, raw_entity)
+        if query_schema.where is not None:
+            predicate_context = _entity_collection_predicate_context(entity)
+            if not evaluate_query_predicates(
+                config,
+                query_schema.where,
+                predicate_context,
+                params,
+            ):
+                continue
+        contexts.append(
+            QueryRowContext(
+                row=entity,
+                entry=entity,
+                result=entity,
+                entities=(entity,),
+                path=(),
+            )
+        )
+    return contexts
+
+
+def _collection_entity_candidates(
+    config: CoreConfig,
+    graph: EntityGraph,
+    entity_type: str,
+    where: Any | None,
+    params: dict[str, Any],
+) -> list[EntityInstance]:
+    if where is None:
+        return graph.list_entities(entity_type)
+
+    entity_id = _collection_entity_id_eq_filter(where, params)
+    if entity_id is not _NO_COLLECTION_PUSHDOWN:
+        if not isinstance(entity_id, str):
+            return []
+        entity = graph.get_entity(entity_type, entity_id)
+        return [entity] if entity is not None else []
+
+    primary_key_id = _collection_entity_primary_key_eq_filter(
+        config,
+        entity_type,
+        where,
+        params,
+    )
+    if primary_key_id is not _NO_COLLECTION_PUSHDOWN:
+        if not isinstance(primary_key_id, str):
+            return []
+        entity = graph.get_entity(entity_type, primary_key_id)
+        return [entity] if entity is not None else []
+
+    property_filter = _collection_entity_property_eq_filter(
+        config,
+        entity_type,
+        where,
+        params,
+    )
+    if property_filter:
+        return graph.list_entities(entity_type, property_filter=property_filter)
+
+    return graph.list_entities(entity_type)
+
+
+def _collection_entity_id_eq_filter(where: Any, params: dict[str, Any]) -> Any:
+    operators = where.root.get("result.entity_id")
+    if not isinstance(operators, dict) or "eq" not in operators:
+        return _NO_COLLECTION_PUSHDOWN
+    return _resolve_collection_pushdown_expected(operators["eq"], params)
+
+
+def _collection_entity_primary_key_eq_filter(
+    config: CoreConfig,
+    entity_type: str,
+    where: Any,
+    params: dict[str, Any],
+) -> Any:
+    primary_key_properties = _entity_primary_key_properties(config, entity_type)
+    for property_name in primary_key_properties:
+        operators = where.root.get(f"result.properties.{property_name}")
+        if not isinstance(operators, dict) or "eq" not in operators:
+            continue
+        return _resolve_collection_pushdown_expected(operators["eq"], params)
+    return _NO_COLLECTION_PUSHDOWN
+
+
+def _collection_entity_property_eq_filter(
+    config: CoreConfig,
+    entity_type: str,
+    where: Any,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    property_filter: dict[str, Any] = {}
+    primary_key_properties = _entity_primary_key_properties(config, entity_type)
+    for predicate_path, operators in where.root.items():
+        if not predicate_path.startswith("result.properties."):
+            continue
+        property_name = predicate_path.removeprefix("result.properties.")
+        if property_name in primary_key_properties:
+            continue
+        if "." in property_name or not isinstance(operators, dict) or "eq" not in operators:
+            continue
+        expected = _resolve_collection_pushdown_expected(operators["eq"], params)
+        if expected is _NO_COLLECTION_PUSHDOWN:
+            continue
+        property_filter[property_name] = expected
+    return property_filter
+
+
+def _entity_primary_key_properties(config: CoreConfig, entity_type: str) -> set[str]:
+    entity_schema = config.entity_types.get(entity_type)
+    if entity_schema is None:
+        return set()
+    return {
+        name
+        for name, prop in entity_schema.properties.items()
+        if prop.primary_key
+    }
+
+
+def _resolve_collection_pushdown_expected(value: Any, params: dict[str, Any]) -> Any:
+    if isinstance(value, str) and value.startswith("$"):
+        prefix, sep, path = value[1:].partition(".")
+        if prefix != "input" or not sep or not path:
+            return _NO_COLLECTION_PUSHDOWN
+        resolved = resolve_path(params, path.split("."))
+        if is_missing_path(resolved):
+            raise QueryExecutionError(f"Missing query input reference '{value}'")
+        return resolved
+    return value
+
+
+def _collection_relationship_contexts(
+    config: CoreConfig,
+    graph: EntityGraph,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState,
+    builder: ReceiptBuilder,
+) -> tuple[list[QueryRowContext], dict[str, int]]:
+    resolved = config.resolve_relationship_reference(query_schema.returns)
+    if resolved is None:
+        raise RelationshipNotFoundError(query_schema.returns)
+    relationship_schema, is_reverse = resolved
+    if is_reverse:
+        raise QueryExecutionError(
+            f"Entryless relationship query '{query_name}' must return canonical "
+            f"relationship name '{relationship_schema.name}', not reverse alias "
+            f"'{query_schema.returns}'"
+        )
+    contexts: list[QueryRowContext] = []
+    policy_summary: dict[str, int] = {}
+    policies = _active_query_policies(config, query_name, relationship_schema.name)
+    for relationship in sorted(
+        graph.iter_relationships(relationship_schema.name),
+        key=lambda item: _relationship_instance_identity(item),
+    ):
+        if not relationship_matches_query_state(relationship.metadata, relationship_state):
+            continue
+        from_entity = graph.get_entity(relationship.from_type, relationship.from_id)
+        to_entity = graph.get_entity(relationship.to_type, relationship.to_id)
+        if from_entity is None or to_entity is None:
+            continue
+        source = entity_with_identity_properties(config, from_entity)
+        target = entity_with_identity_properties(config, to_entity)
+        segment = QueryPathSegment.model_validate(
+            relationship.model_dump(mode="python")
+        )
+        base_predicate_context = build_predicate_context(
+            entry=source,
+            current=source,
+            candidate=target,
+            segment=segment,
+            path=(segment,),
+            entities=(source, target),
+        )
+        predicate_context = replace(base_predicate_context, result=segment)
+        if query_schema.where is not None and not evaluate_query_predicates(
+            config,
+            query_schema.where,
+            predicate_context,
+            params,
+        ):
+            continue
+        if policies and _policy_should_suppress(
+            config=config,
+            policies=policies,
+            from_entity=source,
+            to_entity=target,
+            edge_props=segment.properties,
+            context={
+                "query_name": query_name,
+                "relationship_type": relationship_schema.name,
+                "direction": "outgoing",
+            },
+            policy_summary=policy_summary,
+            builder=builder,
+            parent_id=None,
+        ):
+            continue
+        row = QueryRelationshipRow(
+            relationship_type=relationship.relationship_type,
+            from_type=relationship.from_type,
+            from_id=relationship.from_id,
+            to_type=relationship.to_type,
+            to_id=relationship.to_id,
+            edge_key=relationship.edge_key,
+            properties=dict(relationship.properties),
+            metadata=relationship.metadata,
+            entry=source,
+            from_entity=source,
+            to_entity=target,
+        )
+        contexts.append(
+            QueryRowContext(
+                row=row,
+                entry=source,
+                result=target,
+                entities=(source, target),
+                path=(segment,),
+            )
+        )
+    return contexts, policy_summary
+
+
+def _entity_collection_predicate_context(entity: EntityInstance) -> Any:
+    dummy = QueryPathSegment(
+        relationship_type="",
+        from_type=entity.entity_type,
+        from_id=entity.entity_id,
+        to_type=entity.entity_type,
+        to_id=entity.entity_id,
+        properties={},
+        metadata={},
+    )
+    return build_predicate_context(
+        entry=entity,
+        current=entity,
+        candidate=entity,
+        segment=dummy,
+        path=(),
+        entities=(entity,),
+    )
+
+
+def _relationship_instance_identity(relationship: Any) -> tuple[Any, ...]:
+    return (
+        relationship.relationship_type,
+        relationship.from_type,
+        relationship.from_id,
+        relationship.to_type,
+        relationship.to_id,
+        relationship.edge_key is None,
+        relationship.edge_key if relationship.edge_key is not None else -1,
+    )
+
+
 def _resolve_declared_entity_return_type(
     config: CoreConfig,
     query_name: str,
@@ -469,6 +889,7 @@ def _validate_effective_query_options(
     relationship_state_override: QueryRelationshipState | None,
 ) -> None:
     """Validate execution-time query options after runtime overrides are applied."""
+    is_collection = query_schema.mode == "collection"
     if (
         relationship_state_override is not None
         and not query_schema.allow_relationship_state_override
@@ -510,7 +931,9 @@ def _validate_effective_query_options(
                 "requires dedupe 'path' or 'none'"
             )
     if effective_relationship_state == "reviewable":
-        if query_schema.result_shape != "path":
+        if query_schema.result_shape != "path" and not (
+            is_collection and query_schema.result_shape == "relationship"
+        ):
             raise QueryExecutionError(
                 f"Named query '{query_name}' with relationship_state 'reviewable' "
                 "requires result_shape 'path'"
@@ -527,6 +950,17 @@ def _validate_effective_query_options(
             f"Named query '{query_name}' with result_shape 'relationship' requires "
             "dedupe 'path' or 'none'"
         )
+    if is_collection:
+        resolved = config.resolve_relationship_reference(query_schema.returns)
+        if resolved is None:
+            raise RelationshipNotFoundError(query_schema.returns)
+        rel_schema, is_reverse = resolved
+        if is_reverse:
+            raise QueryExecutionError(
+                f"Entryless relationship query '{query_name}' must return canonical "
+                f"relationship name '{rel_schema.name}'"
+            )
+        return
     if not query_schema.traversal:
         raise QueryExecutionError(
             f"Named query '{query_name}' with result_shape 'relationship' requires traversal"

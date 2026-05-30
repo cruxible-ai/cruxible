@@ -101,13 +101,30 @@ def _validate_relationships(config: CoreConfig, errors: list[str]) -> None:
 def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
     """Check that named queries reference valid entity types and relationships."""
     entity_names = set(config.entity_types.keys())
+    relationship_names = {rel.name for rel in config.relationships}
 
     for query_name, query in config.named_queries.items():
-        if query.entry_point not in entity_names:
+        if query.entry_point is not None and query.entry_point not in entity_names:
             errors.append(
                 f"Named query '{query_name}': entry_point "
                 f"'{query.entry_point}' not defined in entity_types"
             )
+        if query.mode == "collection":
+            if query.result_shape == "entity":
+                returned = _normalize_query_entity_return(query.returns)
+                if returned not in entity_names:
+                    errors.append(
+                        f"Named query '{query_name}': returns entity type "
+                        f"'{query.returns}' not defined in entity_types"
+                    )
+            elif query.result_shape == "relationship" and query.returns not in relationship_names:
+                errors.append(
+                    f"Named query '{query_name}': returns relationship "
+                    f"'{query.returns}' not defined in relationships"
+                )
+            continue
+        if query.entry_point is None:
+            errors.append(f"Named query '{query_name}': traversal mode requires entry_point")
 
         for i, step in enumerate(query.traversal):
             for rel_name in step.relationship_types:
@@ -150,6 +167,57 @@ def _validate_named_queries(config: CoreConfig, errors: list[str]) -> None:
                             f"Named query '{query_name}' step {i}: source-side traversal "
                             "constraints are not supported; use target.<property> constraints"
                         )
+
+
+def _normalize_query_entity_return(returns: str) -> str:
+    value = returns.strip()
+    if value.startswith("list[") and value.endswith("]"):
+        return value[5:-1].strip()
+    return value
+
+
+def _validate_inline_query(
+    config: CoreConfig,
+    workflow_name: str,
+    step_id: str,
+    query: Any,
+    errors: list[str],
+) -> None:
+    entity_names = set(config.entity_types.keys())
+    relationship_names = {rel.name for rel in config.relationships}
+    if query.mode == "collection":
+        if query.result_shape == "entity":
+            returned = _normalize_query_entity_return(query.returns)
+            if returned not in entity_names:
+                errors.append(
+                    f"Workflow '{workflow_name}' step '{step_id}': inline query "
+                    f"returns entity type '{query.returns}' not found in entity_types"
+                )
+        elif query.result_shape == "relationship" and query.returns not in relationship_names:
+            errors.append(
+                f"Workflow '{workflow_name}' step '{step_id}': inline query "
+                f"returns relationship '{query.returns}' not found in relationships"
+            )
+        return
+    if query.entry_point is None:
+        errors.append(
+            f"Workflow '{workflow_name}' step '{step_id}': inline traversal query "
+            "requires entry_point"
+        )
+        return
+    if query.entry_point not in entity_names:
+        errors.append(
+            f"Workflow '{workflow_name}' step '{step_id}': inline query entry_point "
+            f"'{query.entry_point}' not found in entity_types"
+        )
+    for index, traversal_step in enumerate(query.traversal):
+        for rel_name in traversal_step.relationship_types:
+            if config.resolve_relationship_reference(rel_name) is None:
+                errors.append(
+                    f"Workflow '{workflow_name}' step '{step_id}': inline query "
+                    f"traversal step {index} relationship '{rel_name}' not found "
+                    "in relationships"
+                )
 
 
 def _flip_direction(direction: str) -> str:
@@ -727,11 +795,19 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
             step_ids.add(step.id)
 
             if step.query is not None:
-                if step.query not in query_names:
+                if isinstance(step.query, str) and step.query not in query_names:
                     errors.append(
                         "Workflow "
                         f"'{workflow_name}' step '{step.id}': query '{step.query}' "
                         "not found in named_queries"
+                    )
+                if not isinstance(step.query, str):
+                    _validate_inline_query(
+                        config,
+                        workflow_name,
+                        step.id,
+                        step.query,
+                        errors,
                     )
                 for ref in _iter_refs(step.params):
                     _validate_workflow_ref(
@@ -755,55 +831,6 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                 else:
                     providers_used.add(step.provider)
                 for ref in _iter_refs(step.input):
-                    _validate_workflow_ref(
-                        workflow_name,
-                        step.id,
-                        ref,
-                        produced_aliases,
-                        errors,
-                    )
-                if step.as_ is not None:
-                    produced_aliases.add(step.as_)
-                continue
-
-            if step.list_entities is not None:
-                if step.list_entities.entity_type not in entity_names:
-                    errors.append(
-                        "Workflow "
-                        f"'{workflow_name}' step '{step.id}': list_entities entity_type "
-                        f"'{step.list_entities.entity_type}' not found in entity_types"
-                    )
-                for ref in _iter_refs(
-                    [
-                        step.list_entities.property_filter,
-                        step.list_entities.limit,
-                    ]
-                ):
-                    _validate_workflow_ref(
-                        workflow_name,
-                        step.id,
-                        ref,
-                        produced_aliases,
-                        errors,
-                    )
-                if step.as_ is not None:
-                    produced_aliases.add(step.as_)
-                continue
-
-            if step.list_relationships is not None:
-                if step.list_relationships.relationship_type not in relationship_names:
-                    errors.append(
-                        "Workflow "
-                        f"'{workflow_name}' step '{step.id}': list_relationships "
-                        f"relationship_type '{step.list_relationships.relationship_type}' "
-                        "not found in relationships"
-                    )
-                for ref in _iter_refs(
-                    [
-                        step.list_relationships.property_filter,
-                        step.list_relationships.limit,
-                    ]
-                ):
                     _validate_workflow_ref(
                         workflow_name,
                         step.id,

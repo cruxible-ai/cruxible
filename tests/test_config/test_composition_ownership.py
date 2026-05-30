@@ -34,6 +34,7 @@ relationships:
 
 named_queries:
   reference_lookup:
+    mode: traversal
     entry_point: ReferenceThing
     traversal:
       - relationship: reference_links_reference
@@ -80,6 +81,7 @@ relationships:
 
 named_queries:
   local_lookup:
+    mode: traversal
     entry_point: LocalThing
     traversal:
       - relationship: local_links_reference
