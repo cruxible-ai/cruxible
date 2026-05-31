@@ -1,3 +1,6 @@
 exception_id,asset_id,reason,review_due_at,status,system_of_record,ticket_id
 EXC-LEGACY-001,ASSET-7,Legacy partner integration blocks immediate Apache upgrade,2026-05-15,approved,servicenow_grc,CHG-4821
 EXC-PARTNER-002,ASSET-8,Partner certification freeze delays WebLogic patch rollout,2026-04-29,approved,servicenow_grc,CHG-4914
+EXC-BILLING-003,ASSET-5,Billing quarter close freeze requires scoped review before patching batch workers,2026-05-10,approved,servicenow_grc,CHG-5003
+EXC-CHROME-OLD-004,ASSET-17,Expired browser patch exception retained for audit only,2026-02-28,expired,servicenow_grc,CHG-4472
+EXC-LEGACY-REVOKED-005,ASSET-24,Revoked legacy waiver after internet exposure was confirmed,2026-03-31,revoked,servicenow_grc,CHG-4720

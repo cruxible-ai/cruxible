@@ -13,3 +13,48 @@ ASSET-7,Apache HTTP Server,Apache,2.4.50,qualys,2026-03-19
 ASSET-7,Confluence Server,Atlassian,8.5.0,qualys,2026-03-19
 ASSET-8,Oracle WebLogic Server,Oracle,12.2.1.4.0,qualys,2026-03-21
 ASSET-8,Java SE,Oracle,8.0.401,qualys,2026-03-21
+ASSET-9,Apache HTTP Server,Apache,2.4.59,qualys,2026-03-20
+ASSET-9,OpenSSL,OpenSSL,3.0.12,qualys,2026-03-20
+ASSET-10,Oracle WebLogic Server,Oracle,14.1.1.0.0,qualys,2026-03-20
+ASSET-10,Java SE,Oracle,17.0.9,qualys,2026-03-20
+ASSET-11,Oracle Database,Oracle,19.20,qualys,2026-03-22
+ASSET-11,Java SE,Oracle,8.0.321,qualys,2026-03-22
+ASSET-12,Apache ActiveMQ,Apache,5.15.9,qualys,2026-03-19
+ASSET-12,Apache Tomcat,Apache,9.0.85,qualys,2026-03-19
+ASSET-13,Microsoft Windows Server,Microsoft,2019,endpoint_inventory,2026-03-21
+ASSET-13,PuTTY,Simon Tatham,0.76,endpoint_inventory,2026-03-21
+ASSET-14,Apache Struts,Apache,2.3.32,qualys,2026-03-18
+ASSET-14,Apache HTTPD,Apache,2.4.49,qualys,2026-03-18
+ASSET-15,Apache HTTP Server,Apache,2.4.49,qualys,2026-03-18
+ASSET-15,PHP,PHP,7.4.33,qualys,2026-03-18
+ASSET-16,Google Chrome,Google,123.0.6312.86,endpoint_inventory,2026-03-22
+ASSET-16,Mozilla Firefox,Mozilla,124.0,endpoint_inventory,2026-03-22
+ASSET-17,Google Chrome,Google,120.0.6099.129,endpoint_inventory,2026-03-22
+ASSET-17,Microsoft Office,Microsoft,2016,endpoint_inventory,2026-03-22
+ASSET-17,Windows 10,Microsoft,22H2,endpoint_inventory,2026-03-22
+ASSET-18,Java Development Kit,Oracle,8.0.202,endpoint_inventory,2026-03-22
+ASSET-18,Google Chrome,Google,124.0.6367.207,endpoint_inventory,2026-03-22
+ASSET-19,Mozilla Firefox,Mozilla,115.0,endpoint_inventory,2026-03-22
+ASSET-19,Google Chrome,Google,124.0.6367.207,endpoint_inventory,2026-03-22
+ASSET-20,Adobe Acrobat Reader,Adobe,23.003.20284,endpoint_inventory,2026-03-22
+ASSET-20,Google Chrome,Google,124.0.6367.207,endpoint_inventory,2026-03-22
+ASSET-21,Oracle WebLogic Server,Oracle,12.2.1.3.0,qualys,2026-03-21
+ASSET-21,Apache HTTP Server,Apache,2.4.57,qualys,2026-03-21
+ASSET-22,Redis,Redis,6.2.6,qualys,2026-03-20
+ASSET-22,OpenSSL,OpenSSL,1.1.1k,qualys,2026-03-20
+ASSET-23,Confluence Server,Atlassian,7.19.8,qualys,2026-03-21
+ASSET-23,Apache Tomcat,Apache,9.0.80,qualys,2026-03-21
+ASSET-24,Apache HTTP Server,Apache,2.4.48,qualys,2026-03-17
+ASSET-24,PHP,PHP,7.4.3,qualys,2026-03-17
+ASSET-25,Microsoft Windows 11,Microsoft,23H2,endpoint_inventory,2026-03-22
+ASSET-25,PowerShell,Microsoft,7.3.4,endpoint_inventory,2026-03-22
+ASSET-25,Google Chrome,Google,122.0.6261.128,endpoint_inventory,2026-03-22
+ASSET-25,Remote Desktop Client,Microsoft,10.2.3012,endpoint_inventory,2026-03-22
+ASSET-26,Google Chrome,Google,118.0.5993.70,endpoint_inventory,2026-02-12
+ASSET-26,Node.js,OpenJS Foundation,18.17.1,endpoint_inventory,2026-02-12
+ASSET-27,Mozilla Firefox,Mozilla,124.0,endpoint_inventory,2026-03-23
+ASSET-27,Google Chrome,Google,124.0.6367.207,endpoint_inventory,2026-03-23
+ASSET-27,Zoom Workplace,Zoom,6.0.2,endpoint_inventory,2026-03-23
+ASSET-28,Java SE,Oracle,8.0.301,endpoint_inventory,2026-03-22
+ASSET-28,Adobe Acrobat Reader,Adobe,22.003.20310,endpoint_inventory,2026-03-22
+ASSET-28,Google Chrome,Google,121.0.6167.85,endpoint_inventory,2026-03-22

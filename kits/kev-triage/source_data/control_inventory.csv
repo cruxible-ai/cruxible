@@ -2,3 +2,6 @@ control_id,name,control_type,status,owner_id,coverage_scope
 CTRL-1,Edge WAF,waf,active,OWNER-1,internet_facing_http
 CTRL-2,Managed EDR,endpoint_detection,active,OWNER-1,endpoints_and_servers
 CTRL-3,Reverse Proxy Allowlist,network_acl,active,OWNER-3,partner_api_ingress
+CTRL-4,Legacy WAF,waf,inactive,OWNER-7,legacy_public_http
+CTRL-5,Admin VPN ACL,network_acl,active,OWNER-1,admin_interfaces
+CTRL-6,Browser Isolation,endpoint_detection,active,OWNER-5,high_risk_user_browsing
