@@ -1,0 +1,3630 @@
+{
+  "graph": {
+    "counts": {
+      "entities_by_type": {
+        "Product": 3195,
+        "Vendor": 343,
+        "Vulnerability": 1551
+      },
+      "entities_total": 5089,
+      "relationships_by_type": {
+        "product_from_vendor": 3195,
+        "vulnerability_affects_product": 10453
+      },
+      "relationships_total": 13648
+    },
+    "entities": [
+      {
+        "entity_id": "3ds",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "3Ds"
+        }
+      },
+      {
+        "entity_id": "3rdmill",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "3Rdmill"
+        }
+      },
+      {
+        "entity_id": "5none",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "5None"
+        }
+      },
+      {
+        "entity_id": "7-zip",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "7 Zip"
+        }
+      },
+      {
+        "entity_id": "accellion",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Accellion"
+        }
+      },
+      {
+        "entity_id": "acclaimsystems",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Acclaimsystems"
+        }
+      },
+      {
+        "entity_id": "acronis",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Acronis"
+        }
+      },
+      {
+        "entity_id": "adminer",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Adminer"
+        }
+      },
+      {
+        "entity_id": "adobe",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Adobe"
+        }
+      },
+      {
+        "entity_id": "advantive",
+        "entity_type": "Vendor",
+        "properties": {
+          "name": "Advantive"
+        }
+      },
+      {
+        "entity_id": "3ds-delmia-apriso",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "delmia_apriso",
+          "cpe_vendor": "3ds",
+          "product_name": "Delmia Apriso",
+          "vendor_id": "3ds",
+          "vendor_name": "3Ds"
+        }
+      },
+      {
+        "entity_id": "3rdmill-novi-survey",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "novi_survey",
+          "cpe_vendor": "3rdmill",
+          "product_name": "Novi Survey",
+          "vendor_id": "3rdmill",
+          "vendor_name": "3Rdmill"
+        }
+      },
+      {
+        "entity_id": "5none-nonecms",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "nonecms",
+          "cpe_vendor": "5none",
+          "product_name": "Nonecms",
+          "vendor_id": "5none",
+          "vendor_name": "5None"
+        }
+      },
+      {
+        "entity_id": "7-zip-7-zip",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "7-zip",
+          "cpe_vendor": "7-zip",
+          "product_name": "7 Zip",
+          "vendor_id": "7-zip",
+          "vendor_name": "7 Zip"
+        }
+      },
+      {
+        "entity_id": "accellion-fta",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "fta",
+          "cpe_vendor": "accellion",
+          "product_name": "Fta",
+          "vendor_id": "accellion",
+          "vendor_name": "Accellion"
+        }
+      },
+      {
+        "entity_id": "acclaimsystems-usaherds",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "usaherds",
+          "cpe_vendor": "acclaimsystems",
+          "product_name": "Usaherds",
+          "vendor_id": "acclaimsystems",
+          "vendor_name": "Acclaimsystems"
+        }
+      },
+      {
+        "entity_id": "acronis-cyber-infrastructure",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "cyber_infrastructure",
+          "cpe_vendor": "acronis",
+          "product_name": "Cyber Infrastructure",
+          "vendor_id": "acronis",
+          "vendor_name": "Acronis"
+        }
+      },
+      {
+        "entity_id": "adminer-adminer",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "adminer",
+          "cpe_vendor": "adminer",
+          "product_name": "Adminer",
+          "vendor_id": "adminer",
+          "vendor_name": "Adminer"
+        }
+      },
+      {
+        "entity_id": "adobe-acrobat",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "acrobat",
+          "cpe_vendor": "adobe",
+          "product_name": "Acrobat",
+          "vendor_id": "adobe",
+          "vendor_name": "Adobe"
+        }
+      },
+      {
+        "entity_id": "adobe-acrobat-dc",
+        "entity_type": "Product",
+        "properties": {
+          "cpe_part": "a",
+          "cpe_product": "acrobat_dc",
+          "cpe_vendor": "adobe",
+          "product_name": "Acrobat Dc",
+          "vendor_id": "adobe",
+          "vendor_name": "Adobe"
+        }
+      },
+      {
+        "entity_id": "CVE-2002-0367",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 7.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-269",
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2022-03-03",
+          "description": "smss.exe debugging subsystem in Windows NT and Windows 2000 does not properly authenticate programs that connect to other programs, which allows local users to gain administrator or SYSTEM privileges by duplicating a handle to a privileged process, as demonstrated by DebPloit.",
+          "epss_percentile": 0.79006,
+          "epss_score": 0.01228,
+          "kev_due_date": "2022-03-24",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Microsoft Windows Privilege Escalation Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2004-0210",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 7.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-120"
+          ],
+          "date_added_to_kev": "2022-03-03",
+          "description": "The POSIX component of Microsoft Windows NT and Windows 2000 allows local users to execute arbitrary code via certain parameters, possibly by modifying message length values and causing a buffer overflow.",
+          "epss_percentile": 0.89761,
+          "epss_score": 0.05116,
+          "kev_due_date": "2022-03-24",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Microsoft Windows Privilege Escalation Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2004-1464",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 5.9,
+          "cvss_severity": "MEDIUM",
+          "cwes": [
+            "CWE-400",
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2023-05-19",
+          "description": "Cisco IOS 12.2(15) and earlier allows remote attackers to cause a denial of service (refused VTY (virtual terminal) connections), via a crafted TCP connection to the Telnet or reverse Telnet port.",
+          "epss_percentile": 0.82136,
+          "epss_score": 0.01698,
+          "kev_due_date": "2023-06-09",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Cisco IOS Denial-of-Service Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2005-2773",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 9.8,
+          "cvss_severity": "CRITICAL",
+          "cwes": [
+            "CWE-77",
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2022-03-25",
+          "description": "HP OpenView Network Node Manager 6.2 through 7.50 allows remote attackers to execute arbitrary commands via shell metacharacters in the (1) node parameter to connectedNodes.ovpl, (2) cdpView.ovpl, (3) freeIPaddrs.ovpl, and (4) ecscmg.ovpl.",
+          "epss_percentile": 0.99595,
+          "epss_score": 0.90297,
+          "kev_due_date": "2022-04-15",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "HP OpenView Network Node Manager Remote Code Execution Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2006-1547",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 7.5,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-749",
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2022-01-21",
+          "description": "ActionForm in Apache Software Foundation (ASF) Struts before 1.2.9 with BeanUtils 1.7 allows remote attackers to cause a denial of service via a multipart/form-data encoded form with a parameter name that references the public getMultipartRequestHandler method, which provides further access to elements in the CommonsMultipartRequestHandler implementation and BeanUtils.",
+          "epss_percentile": 0.94573,
+          "epss_score": 0.15372,
+          "kev_due_date": "2022-07-21",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Apache Struts 1 ActionForm Denial-of-Service Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2006-2492",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 8.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-120"
+          ],
+          "date_added_to_kev": "2022-06-08",
+          "description": "Buffer overflow in Microsoft Word in Office 2000 SP3, Office XP SP3, Office 2003 Sp1 and SP2, and Microsoft Works Suites through 2006, allows user-assisted attackers to execute arbitrary code via a malformed object pointer, as originally reported by ISC on 20060519 for a zero-day attack.",
+          "epss_percentile": 0.99251,
+          "epss_score": 0.83201,
+          "kev_due_date": "2022-06-22",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Microsoft Word Malformed Object Pointer Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2007-0671",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 8.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2025-08-12",
+          "description": "Unspecified vulnerability in Microsoft Excel 2000, XP, 2003, and 2004 for Mac, and possibly other Office products, allows remote user-assisted attackers to execute arbitrary code via unknown attack vectors, as demonstrated by Exploit-MSExcel.h in targeted zero-day attacks.",
+          "epss_percentile": 0.98525,
+          "epss_score": 0.66804,
+          "kev_due_date": "2025-09-02",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable.",
+          "vulnerability_name": "Microsoft Office Excel Remote Code Execution Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2007-3010",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 9.8,
+          "cvss_severity": "CRITICAL",
+          "cwes": [
+            "CWE-77",
+            "NVD-CWE-noinfo"
+          ],
+          "date_added_to_kev": "2022-04-15",
+          "description": "masterCGI in the Unified Maintenance Tool in Alcatel OmniPCX Enterprise Communication Server R7.1 and earlier allows remote attackers to execute arbitrary commands via shell metacharacters in the user parameter during a ping action.",
+          "epss_percentile": 0.99891,
+          "epss_score": 0.94007,
+          "kev_due_date": "2022-05-06",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Alcatel OmniPCX Enterprise Remote Code Execution Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2007-5659",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 7.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-120"
+          ],
+          "date_added_to_kev": "2022-06-08",
+          "description": "Multiple buffer overflows in Adobe Reader and Acrobat 8.1.1 and earlier allow remote attackers to execute arbitrary code via a PDF file with long arguments to unspecified JavaScript methods.  NOTE: this issue might be subsumed by CVE-2008-0655.",
+          "epss_percentile": 0.99789,
+          "epss_score": 0.93116,
+          "kev_due_date": "2022-06-22",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply updates per vendor instructions.",
+          "vulnerability_name": "Adobe Acrobat and Reader Buffer Overflow Vulnerability"
+        }
+      },
+      {
+        "entity_id": "CVE-2008-0015",
+        "entity_type": "Vulnerability",
+        "properties": {
+          "cvss_score": 8.8,
+          "cvss_severity": "HIGH",
+          "cwes": [
+            "CWE-119",
+            "CWE-121"
+          ],
+          "date_added_to_kev": "2026-02-17",
+          "description": "Stack-based buffer overflow in the CComVariant::ReadFromStream function in the Active Template Library (ATL), as used in the MPEG2TuneRequest ActiveX control in msvidctl.dll in DirectShow, in Microsoft Windows 2000 SP4, XP SP2 and SP3, Server 2003 SP2, Vista Gold, SP1, and SP2, and Server 2008 Gold and SP2 allows remote attackers to execute arbitrary code via a crafted web page, as exploited in the wild in July 2009, aka \"Microsoft Video ActiveX Control Vulnerability.\"",
+          "epss_percentile": 0.99126,
+          "epss_score": 0.8064,
+          "kev_due_date": "2026-03-10",
+          "known_ransomware_use": "Unknown",
+          "required_action": "Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable.",
+          "vulnerability_name": "Microsoft Windows Video ActiveX Control Remote Code Execution Vulnerability"
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "from_id": "3ds-delmia-apriso",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "3ds",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "3rdmill-novi-survey",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "3rdmill",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "5none-nonecms",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "5none",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "7-zip-7-zip",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "7-zip",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "accellion-fta",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "accellion",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "acclaimsystems-usaherds",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "acclaimsystems",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "acronis-cyber-infrastructure",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "acronis",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adminer-adminer",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adminer",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-acrobat",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-acrobat-dc",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-acrobat-reader",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-acrobat-reader-dc",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-adobe-air",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "adobe-adobe-air-sdk",
+        "from_type": "Product",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {},
+        "relationship_type": "product_from_vendor",
+        "to_id": "adobe",
+        "to_type": "Vendor"
+      },
+      {
+        "from_id": "CVE-2002-0367",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_2000:-:*:*:*:*:*:*:*",
+                  "match_criteria_id": "685F1981-EA61-4A00-89F8-A748A88962F8"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2002-0367"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [],
+          "cpe_part": "o",
+          "cpe_product": "windows_2000",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:30.693000+00:00",
+          "source_record_id": "CVE-2002-0367",
+          "version_logic": "NVD CPE match applies to all listed product versions.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-windows-2000",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2002-0367",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_nt:4.0:*:*:*:*:*:*:*",
+                  "match_criteria_id": "E53CDA8E-50A8-4509-B070-CCA5604FFB21"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2002-0367"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_nt:4.0:-:*:*:terminal_server:*:*:*",
+                  "match_criteria_id": "E30F6C9C-3371-44FF-AD0B-3CAA0AB6F1B8"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2002-0367"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "4.0"
+            },
+            {
+              "version_exact": "4.0"
+            }
+          ],
+          "cpe_part": "o",
+          "cpe_product": "windows_nt",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:30.693000+00:00",
+          "source_record_id": "CVE-2002-0367",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-windows-nt",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2004-0210",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:interix:2.2:*:*:*:*:*:*:*",
+                  "match_criteria_id": "D191C828-2312-4579-9910-511BB35FD4E9"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/interix.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2.2"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "interix",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:31.677000+00:00",
+          "source_record_id": "CVE-2004-0210",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-interix",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2004-0210",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_2000:-:sp2:*:*:*:*:*:*",
+                  "match_criteria_id": "FF99A17F-9469-4937-A23B-FD5C8B37087B"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_2000:-:sp3:*:*:*:*:*:*",
+                  "match_criteria_id": "530FC172-94E1-481A-9810-26061D22B6AC"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_2000:-:sp4:*:*:*:*:*:*",
+                  "match_criteria_id": "CA2CBE65-F4B6-49AF-983C-D3CF6C172CC5"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_2000.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [],
+          "cpe_part": "o",
+          "cpe_product": "windows_2000",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:31.677000+00:00",
+          "source_record_id": "CVE-2004-0210",
+          "version_logic": "NVD CPE match applies to all listed product versions.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-windows-2000",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2004-0210",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_nt:4.0:sp6a:*:*:server:*:*:*",
+                  "match_criteria_id": "DB28B8C1-9110-4780-A0CB-2188D1E86F56"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_nt:4.0:sp6a:*:*:terminal_server:*:*:*",
+                  "match_criteria_id": "8C5AA872-3652-4A44-8858-80F7E73AE610"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:microsoft:windows_nt:4.0:sp6a:*:*:workstation:*:*:*",
+                  "match_criteria_id": "F08AE7EC-2EBC-4088-8874-640A63C4A7F6"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-0210"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/windows_nt.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "4.0"
+            },
+            {
+              "version_exact": "4.0"
+            },
+            {
+              "version_exact": "4.0"
+            }
+          ],
+          "cpe_part": "o",
+          "cpe_product": "windows_nt",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:31.677000+00:00",
+          "source_record_id": "CVE-2004-0210",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-windows-nt",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2004-1464",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:o:cisco:ios:*:*:*:*:*:*:*:*",
+                  "match_criteria_id": "38FF1890-4ED2-4190-8D9F-0DF93AD1C894"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2004-1464"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to cisco/ios.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_end_including": "12.2\\(15\\)zj3"
+            }
+          ],
+          "cpe_part": "o",
+          "cpe_product": "ios",
+          "cpe_vendor": "cisco",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:31.843000+00:00",
+          "source_record_id": "CVE-2004-1464",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "cisco-ios",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2005-2773",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:hp:openview_network_node_manager:*:*:*:*:*:*:*:*",
+                  "match_criteria_id": "15973175-E70A-41C5-AFF2-4F22CB4520E0"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2005-2773"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to hp/openview_network_node_manager.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_end_including": "7.50",
+              "version_start_including": "6.2"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "openview_network_node_manager",
+          "cpe_vendor": "hp",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.007000+00:00",
+          "source_record_id": "CVE-2005-2773",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "hp-openview-network-node-manager",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2006-1547",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:apache:struts:*:*:*:*:*:*:*:*",
+                  "match_criteria_id": "B108ED90-C4AA-496F-B3C7-4AA392564C1F"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-1547"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to apache/struts.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "fixed_version": "1.2.9",
+              "version_end_excluding": "1.2.9"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "struts",
+          "cpe_vendor": "apache",
+          "default_status": "Deferred",
+          "fixed_version": "1.2.9",
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.230000+00:00",
+          "source_record_id": "CVE-2006-1547",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "apache-struts",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2006-2492",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:office:2000:sp3:*:*:*:*:*:*",
+                  "match_criteria_id": "4891122F-AD7F-45E6-98C6-833227916F6B"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:office:2003:sp1:*:*:*:*:*:*",
+                  "match_criteria_id": "4EED9D78-AE73-44BA-A1CE-603994E92E89"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:office:2003:sp2:*:*:*:*:*:*",
+                  "match_criteria_id": "07D3F3E4-93FB-481A-94D9-075E726697C4"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:office:xp:sp3:*:*:*:*:*:*",
+                  "match_criteria_id": "79BA1175-7F02-4435-AEA6-1BA8AADEB7EF"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/office.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2000"
+            },
+            {
+              "version_exact": "2003"
+            },
+            {
+              "version_exact": "2003"
+            },
+            {
+              "version_exact": "xp"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "office",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.400000+00:00",
+          "source_record_id": "CVE-2006-2492",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-office",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2006-2492",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:works_suite:*:*:*:*:*:*:*:*",
+                  "match_criteria_id": "CB6B64C0-E58E-4606-A6DD-AEF2C6F5D33F"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2006-2492"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/works_suite.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_end_including": "2006",
+              "version_start_including": "2000"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "works_suite",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.400000+00:00",
+          "source_record_id": "CVE-2006-2492",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-works-suite",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2007-0671",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:access:2000:*:*:*:*:*:*:*",
+                  "match_criteria_id": "90D7BA07-3BCA-41CF-B5D3-341E912650A2"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:access:2002:*:*:*:*:*:*:*",
+                  "match_criteria_id": "83DFFFF4-EA09-48C5-A600-A62C1A1A7360"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:access:2003:*:*:*:*:*:*:*",
+                  "match_criteria_id": "EC4AE5AF-C83E-4802-B75C-0058742A4997"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/access.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2000"
+            },
+            {
+              "version_exact": "2002"
+            },
+            {
+              "version_exact": "2003"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "access",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.590000+00:00",
+          "source_record_id": "CVE-2007-0671",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-access",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2007-0671",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:excel:2000:*:*:*:*:*:*:*",
+                  "match_criteria_id": "F55D42D5-7371-47C2-BF55-B7F51C19B61E"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:excel:2002:*:*:*:*:*:*:*",
+                  "match_criteria_id": "082D3262-87E3-4245-AD9C-02BE0871FA3B"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:excel:2003:*:*:*:*:*:*:*",
+                  "match_criteria_id": "5F79E0AB-7081-4F97-BFE4-9AF84F643B9A"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:excel:2004:*:mac:*:*:*:*:*",
+                  "match_criteria_id": "CE1A1218-8033-4F3C-B8D7-7D1D61A273E6"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/excel.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2000"
+            },
+            {
+              "version_exact": "2002"
+            },
+            {
+              "version_exact": "2003"
+            },
+            {
+              "version_exact": "2004"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "excel",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.590000+00:00",
+          "source_record_id": "CVE-2007-0671",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-excel",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2007-0671",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:excel_viewer:2003:*:*:*:*:*:*:*",
+                  "match_criteria_id": "FDB0020C-A804-4003-B411-1AC7A6E7193E"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/excel_viewer.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2003"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "excel_viewer",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.590000+00:00",
+          "source_record_id": "CVE-2007-0671",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-excel-viewer",
+        "to_type": "Product"
+      },
+      {
+        "from_id": "CVE-2007-0671",
+        "from_type": "Vulnerability",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:frontpage:2000:*:*:*:*:*:*:*",
+                  "match_criteria_id": "D2C6629C-BF53-49A1-B32C-A828CA0A0500"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:frontpage:2002:*:*:*:*:*:*:*",
+                  "match_criteria_id": "6548F837-A687-4EEF-B754-DAA834B34FA3"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              },
+              {
+                "metadata": {
+                  "criteria": "cpe:2.3:a:microsoft:frontpage:2003:*:*:*:*:*:*:*",
+                  "match_criteria_id": "3C79FEE1-70A3-4A48-BE7B-0D18F0A5FA7F"
+                },
+                "source": "nvd_cpe_match",
+                "source_record_id": "CVE-2007-0671"
+              }
+            ],
+            "rationale": "NVD vulnerable CPE match data maps this KEV vulnerability to microsoft/frontpage.",
+            "source_receipt_ids": [],
+            "source_step_ids": [
+              "vulnerability_product"
+            ],
+            "source_trace_ids": []
+          },
+          "provenance": {
+            "created_at": "<TIMESTAMP>",
+            "source": "workflow_apply",
+            "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
+          }
+        },
+        "properties": {
+          "affected_versions": [
+            {
+              "version_exact": "2000"
+            },
+            {
+              "version_exact": "2002"
+            },
+            {
+              "version_exact": "2003"
+            }
+          ],
+          "cpe_part": "a",
+          "cpe_product": "frontpage",
+          "cpe_vendor": "microsoft",
+          "default_status": "Deferred",
+          "fixed_version": null,
+          "source": "nvd",
+          "source_last_modified_at": "2025-10-22T01:15:32.590000+00:00",
+          "source_record_id": "CVE-2007-0671",
+          "version_logic": "NVD CPE match version ranges aggregated by product.",
+          "vulnerable": true
+        },
+        "relationship_type": "vulnerability_affects_product",
+        "to_id": "microsoft-frontpage",
+        "to_type": "Product"
+      }
+    ]
+  },
+  "query_surfaces": {
+    "queries": [
+      {
+        "limit": 5,
+        "limit_truncated": false,
+        "name": "product_vulnerabilities",
+        "params": {
+          "product_id": "apache-http-server"
+        },
+        "path_truncated": false,
+        "relationship_state": "live",
+        "result_shape": "path",
+        "results": [
+          {
+            "entities": [
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_by",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "2.4.49"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-42013",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-42013",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22",
+                    "NVD-CWE-Other"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "It was found that the fix for CVE-2021-41773 in Apache HTTP Server 2.4.50 was insufficient. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue only affects Apache 2.4.49 and Apache 2.4.50 and not earlier versions.",
+                  "epss_percentile": 0.99977,
+                  "epss_score": 0.9441,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_by",
+                "from_id": "CVE-2021-42013",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "2.4.49"
+                    },
+                    {
+                      "version_exact": "2.4.50"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-27T17:36:49.387000+00:00",
+                  "source_record_id": "CVE-2021-42013",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-42013",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-42013",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22",
+                  "NVD-CWE-Other"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "It was found that the fix for CVE-2021-41773 in Apache HTTP Server 2.4.50 was insufficient. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue only affects Apache 2.4.49 and Apache 2.4.50 and not earlier versions.",
+                "epss_percentile": 0.99977,
+                "epss_score": 0.9441,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-40438",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-40438",
+                  "cvss_score": 9.0,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-918"
+                  ],
+                  "date_added_to_kev": "2021-12-01",
+                  "description": "A crafted request uri-path can cause mod_proxy to forward the request to an origin server choosen by the remote user. This issue affects Apache HTTP Server 2.4.48 and earlier.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94432,
+                  "kev_due_date": "2021-12-15",
+                  "known_ransomware_use": "Unknown",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server-Side Request Forgery (SSRF)"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_by",
+                "from_id": "CVE-2021-40438",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_end_including": "2.4.48"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-27T17:37:06.747000+00:00",
+                  "source_record_id": "CVE-2021-40438",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-40438",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-40438",
+                "cvss_score": 9.0,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-918"
+                ],
+                "date_added_to_kev": "2021-12-01",
+                "description": "A crafted request uri-path can cause mod_proxy to forward the request to an origin server choosen by the remote user. This issue affects Apache HTTP Server 2.4.48 and earlier.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94432,
+                "kev_due_date": "2021-12-15",
+                "known_ransomware_use": "Unknown",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server-Side Request Forgery (SSRF)"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2019-0211",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2019-0211",
+                  "cvss_score": 7.8,
+                  "cvss_severity": "HIGH",
+                  "cwes": [
+                    "CWE-416"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "In Apache HTTP Server 2.4 releases 2.4.17 to 2.4.38, with MPM event, worker or prefork, code executing in less-privileged child processes or threads (including scripts executed by an in-process scripting interpreter) could execute arbitrary code with the privileges of the parent process (usually root) by manipulating the scoreboard. Non-Unix systems are not affected.",
+                  "epss_percentile": 0.99549,
+                  "epss_score": 0.89548,
+                  "kev_due_date": "2022-05-03",
+                  "known_ransomware_use": "Unknown",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Privilege Escalation Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_by",
+                "from_id": "CVE-2019-0211",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_end_including": "2.4.38",
+                      "version_start_including": "2.4.17"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-27T17:37:51.787000+00:00",
+                  "source_record_id": "CVE-2019-0211",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2019-0211",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2019-0211",
+                "cvss_score": 7.8,
+                "cvss_severity": "HIGH",
+                "cwes": [
+                  "CWE-416"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "In Apache HTTP Server 2.4 releases 2.4.17 to 2.4.38, with MPM event, worker or prefork, code executing in less-privileged child processes or threads (including scripts executed by an in-process scripting interpreter) could execute arbitrary code with the privileges of the parent process (usually root) by manipulating the scoreboard. Non-Unix systems are not affected.",
+                "epss_percentile": 0.99549,
+                "epss_score": 0.89548,
+                "kev_due_date": "2022-05-03",
+                "known_ransomware_use": "Unknown",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Privilege Escalation Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2024-38475",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2024-38475",
+                  "cvss_score": 9.1,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-116"
+                  ],
+                  "date_added_to_kev": "2025-05-01",
+                  "description": "Improper escaping of output in mod_rewrite in Apache HTTP Server 2.4.59 and earlier allows an attacker to map URLs to filesystem locations that are\u00a0permitted to be served by the server but are not intentionally/directly reachable by any URL, resulting in code execution or source code disclosure. \n\nSubstitutions in\u00a0server context that use a backreferences or variables as the first segment of the substitution are affected.\u00a0 Some unsafe RewiteRules will be broken by this change and the rewrite flag \"UnsafePrefixStat\" can be used to opt back in once ensuring the substitution is appropriately constrained.",
+                  "epss_percentile": 0.99865,
+                  "epss_score": 0.93858,
+                  "kev_due_date": "2025-05-22",
+                  "known_ransomware_use": "Unknown",
+                  "required_action": "Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable.",
+                  "vulnerability_name": "Apache HTTP Server Improper Escaping of Output Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_by",
+                "from_id": "CVE-2024-38475",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "fixed_version": "2.4.60",
+                      "version_end_excluding": "2.4.60",
+                      "version_start_including": "2.4.0"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": "2.4.60",
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-11-17T21:49:55.247000+00:00",
+                  "source_record_id": "CVE-2024-38475",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2024-38475",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2024-38475",
+                "cvss_score": 9.1,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-116"
+                ],
+                "date_added_to_kev": "2025-05-01",
+                "description": "Improper escaping of output in mod_rewrite in Apache HTTP Server 2.4.59 and earlier allows an attacker to map URLs to filesystem locations that are\u00a0permitted to be served by the server but are not intentionally/directly reachable by any URL, resulting in code execution or source code disclosure. \n\nSubstitutions in\u00a0server context that use a backreferences or variables as the first segment of the substitution are affected.\u00a0 Some unsafe RewiteRules will be broken by this change and the rewrite flag \"UnsafePrefixStat\" can be used to opt back in once ensuring the substitution is appropriately constrained.",
+                "epss_percentile": 0.99865,
+                "epss_score": 0.93858,
+                "kev_due_date": "2025-05-22",
+                "known_ransomware_use": "Unknown",
+                "required_action": "Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable.",
+                "vulnerability_name": "Apache HTTP Server Improper Escaping of Output Vulnerability"
+              }
+            }
+          }
+        ],
+        "returned_results": 5,
+        "total_results": 5,
+        "truncated": false,
+        "truncation_reasons": []
+      },
+      {
+        "limit": 5,
+        "limit_truncated": true,
+        "name": "vendor_products",
+        "params": {
+          "vendor_id": "apache"
+        },
+        "path_truncated": false,
+        "relationship_state": "live",
+        "result_shape": "path",
+        "results": [
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-activemq",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "activemq",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-activemq",
+                  "product_name": "Activemq",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-activemq",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-activemq",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "activemq",
+                "cpe_vendor": "apache",
+                "product_id": "apache-activemq",
+                "product_name": "Activemq",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-activemq-legacy-openwire-module",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "activemq_legacy_openwire_module",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-activemq-legacy-openwire-module",
+                  "product_name": "Activemq Legacy Openwire Module",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-activemq-legacy-openwire-module",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-activemq-legacy-openwire-module",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "activemq_legacy_openwire_module",
+                "cpe_vendor": "apache",
+                "product_id": "apache-activemq-legacy-openwire-module",
+                "product_name": "Activemq Legacy Openwire Module",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-airflow",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "airflow",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-airflow",
+                  "product_name": "Airflow",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-airflow",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-airflow",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "airflow",
+                "cpe_vendor": "apache",
+                "product_id": "apache-airflow",
+                "product_name": "Airflow",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-apisix",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "apisix",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-apisix",
+                  "product_name": "Apisix",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-apisix",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-apisix",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "apisix",
+                "cpe_vendor": "apache",
+                "product_id": "apache-apisix",
+                "product_name": "Apisix",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-archiva",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "archiva",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-archiva",
+                  "product_name": "Archiva",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-archiva",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-archiva",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "archiva",
+                "cpe_vendor": "apache",
+                "product_id": "apache-archiva",
+                "product_name": "Archiva",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          }
+        ],
+        "returned_results": 5,
+        "total_results": 25,
+        "truncated": true,
+        "truncation_reasons": [
+          "response_limit"
+        ]
+      },
+      {
+        "limit": 5,
+        "limit_truncated": true,
+        "name": "vendor_vulnerabilities",
+        "params": {
+          "vendor_id": "apache"
+        },
+        "path_truncated": false,
+        "relationship_state": "live",
+        "result_shape": "path",
+        "results": [
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-http-server",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              },
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "2.4.49"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-42013",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-42013",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22",
+                    "NVD-CWE-Other"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "It was found that the fix for CVE-2021-41773 in Apache HTTP Server 2.4.50 was insufficient. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue only affects Apache 2.4.49 and Apache 2.4.50 and not earlier versions.",
+                  "epss_percentile": 0.99977,
+                  "epss_score": 0.9441,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-http-server",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              },
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-42013",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "2.4.49"
+                    },
+                    {
+                      "version_exact": "2.4.50"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-27T17:36:49.387000+00:00",
+                  "source_record_id": "CVE-2021-42013",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-42013",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-42013",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22",
+                  "NVD-CWE-Other"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "It was found that the fix for CVE-2021-41773 in Apache HTTP Server 2.4.50 was insufficient. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue only affects Apache 2.4.49 and Apache 2.4.50 and not earlier versions.",
+                "epss_percentile": 0.99977,
+                "epss_score": 0.9441,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-40438",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-40438",
+                  "cvss_score": 9.0,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-918"
+                  ],
+                  "date_added_to_kev": "2021-12-01",
+                  "description": "A crafted request uri-path can cause mod_proxy to forward the request to an origin server choosen by the remote user. This issue affects Apache HTTP Server 2.4.48 and earlier.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94432,
+                  "kev_due_date": "2021-12-15",
+                  "known_ransomware_use": "Unknown",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server-Side Request Forgery (SSRF)"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-http-server",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              },
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-40438",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_end_including": "2.4.48"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-27T17:37:06.747000+00:00",
+                  "source_record_id": "CVE-2021-40438",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-40438",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-40438",
+                "cvss_score": 9.0,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-918"
+                ],
+                "date_added_to_kev": "2021-12-01",
+                "description": "A crafted request uri-path can cause mod_proxy to forward the request to an origin server choosen by the remote user. This issue affects Apache HTTP Server 2.4.48 and earlier.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94432,
+                "kev_due_date": "2021-12-15",
+                "known_ransomware_use": "Unknown",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server-Side Request Forgery (SSRF)"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-log4j",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "log4j",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-log4j",
+                  "product_name": "Log4J",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-44228",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-44228",
+                  "cvss_score": 10.0,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-20",
+                    "CWE-400",
+                    "CWE-502",
+                    "CWE-917"
+                  ],
+                  "date_added_to_kev": "2021-12-10",
+                  "description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints. An attacker who can control log messages or log message parameters can execute arbitrary code loaded from LDAP servers when message lookup substitution is enabled. From log4j 2.15.0, this behavior has been disabled by default. From version 2.16.0 (along with 2.12.2, 2.12.3, and 2.3.1), this functionality has been completely removed. Note that this vulnerability is specific to log4j-core and does not affect log4net, log4cxx, or other Apache Logging Services projects.",
+                  "epss_percentile": 0.99995,
+                  "epss_score": 0.94465,
+                  "kev_due_date": "2021-12-24",
+                  "known_ransomware_use": "Known",
+                  "required_action": "For all affected software assets for which updates exist, the only acceptable remediation actions are: 1) Apply updates; OR 2) remove affected assets from agency networks. Temporary mitigations using one of the measures provided at https://www.cisa.gov/uscert/ed-22-02-apache-log4j-recommended-mitigation-measures are only acceptable until updates are available.",
+                  "vulnerability_name": "Apache Log4j2 Remote Code Execution Vulnerability"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-log4j",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              },
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-44228",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "fixed_version": "2.3.1",
+                      "version_end_excluding": "2.3.1",
+                      "version_start_including": "2.0.1"
+                    },
+                    {
+                      "fixed_version": "2.12.2",
+                      "version_end_excluding": "2.12.2",
+                      "version_start_including": "2.4.0"
+                    },
+                    {
+                      "fixed_version": "2.15.0",
+                      "version_end_excluding": "2.15.0",
+                      "version_start_including": "2.13.0"
+                    },
+                    {
+                      "version_exact": "2.0"
+                    },
+                    {
+                      "version_exact": "2.0"
+                    },
+                    {
+                      "version_exact": "2.0"
+                    },
+                    {
+                      "version_exact": "2.0"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "log4j",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": "2.3.1",
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-20T16:15:59.363000+00:00",
+                  "source_record_id": "CVE-2021-44228",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-log4j",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-44228",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-44228",
+                "cvss_score": 10.0,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-20",
+                  "CWE-400",
+                  "CWE-502",
+                  "CWE-917"
+                ],
+                "date_added_to_kev": "2021-12-10",
+                "description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints. An attacker who can control log messages or log message parameters can execute arbitrary code loaded from LDAP servers when message lookup substitution is enabled. From log4j 2.15.0, this behavior has been disabled by default. From version 2.16.0 (along with 2.12.2, 2.12.3, and 2.3.1), this functionality has been completely removed. Note that this vulnerability is specific to log4j-core and does not affect log4net, log4cxx, or other Apache Logging Services projects.",
+                "epss_percentile": 0.99995,
+                "epss_score": 0.94465,
+                "kev_due_date": "2021-12-24",
+                "known_ransomware_use": "Known",
+                "required_action": "For all affected software assets for which updates exist, the only acceptable remediation actions are: 1) Apply updates; OR 2) remove affected assets from agency networks. Temporary mitigations using one of the measures provided at https://www.cisa.gov/uscert/ed-22-02-apache-log4j-recommended-mitigation-measures are only acceptable until updates are available.",
+                "vulnerability_name": "Apache Log4j2 Remote Code Execution Vulnerability"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "apache",
+                "entity_type": "Vendor",
+                "properties": {
+                  "name": "Apache",
+                  "vendor_id": "apache"
+                }
+              },
+              {
+                "entity_id": "apache-cordova",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "cordova",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-cordova",
+                  "product_name": "Cordova",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              },
+              {
+                "entity_id": "CVE-2021-21315",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-21315",
+                  "cvss_score": 7.1,
+                  "cvss_severity": "HIGH",
+                  "cwes": [
+                    "CWE-78"
+                  ],
+                  "date_added_to_kev": "2022-01-18",
+                  "description": "The System Information Library for Node.JS (npm package \"systeminformation\") is an open source collection of functions to retrieve detailed hardware, system and OS information. In systeminformation before version 5.3.1 there is a command injection vulnerability. Problem was fixed in version 5.3.1. As a workaround instead of upgrading, be sure to check or sanitize service parameters that are passed to si.inetLatency(), si.inetChecksite(), si.services(), si.processLoad() ... do only allow strings, reject any arrays. String sanitation works as expected.",
+                  "epss_percentile": 0.99877,
+                  "epss_score": 0.93933,
+                  "kev_due_date": "2022-02-01",
+                  "known_ransomware_use": "Unknown",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "System Information Library for Node.JS Command Injection"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "apache",
+              "entity_type": "Vendor",
+              "properties": {
+                "name": "Apache",
+                "vendor_id": "apache"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "vendor_product",
+                "from_id": "apache-cordova",
+                "from_type": "Product",
+                "properties": {},
+                "relationship_type": "product_from_vendor",
+                "review_status": "unreviewed",
+                "to_id": "apache",
+                "to_type": "Vendor"
+              },
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-21315",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "10.0.0"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "cordova",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2025-10-24T14:47:57.750000+00:00",
+                  "source_record_id": "CVE-2021-21315",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-cordova",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "CVE-2021-21315",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-21315",
+                "cvss_score": 7.1,
+                "cvss_severity": "HIGH",
+                "cwes": [
+                  "CWE-78"
+                ],
+                "date_added_to_kev": "2022-01-18",
+                "description": "The System Information Library for Node.JS (npm package \"systeminformation\") is an open source collection of functions to retrieve detailed hardware, system and OS information. In systeminformation before version 5.3.1 there is a command injection vulnerability. Problem was fixed in version 5.3.1. As a workaround instead of upgrading, be sure to check or sanitize service parameters that are passed to si.inetLatency(), si.inetChecksite(), si.services(), si.processLoad() ... do only allow strings, reject any arrays. String sanitation works as expected.",
+                "epss_percentile": 0.99877,
+                "epss_score": 0.93933,
+                "kev_due_date": "2022-02-01",
+                "known_ransomware_use": "Unknown",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "System Information Library for Node.JS Command Injection"
+              }
+            }
+          }
+        ],
+        "returned_results": 5,
+        "total_results": 50,
+        "truncated": true,
+        "truncation_reasons": [
+          "response_limit"
+        ]
+      },
+      {
+        "limit": 5,
+        "limit_truncated": false,
+        "name": "vulnerability_products",
+        "params": {
+          "cve_id": "CVE-2021-41773"
+        },
+        "path_truncated": false,
+        "relationship_state": "live",
+        "result_shape": "path",
+        "results": [
+          {
+            "entities": [
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              },
+              {
+                "entity_id": "apache-http-server",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "product_id": "apache-http-server",
+                  "product_name": "Http Server",
+                  "vendor_id": "apache",
+                  "vendor_name": "Apache"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "2.4.49"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "http_server",
+                  "cpe_vendor": "apache",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "apache-http-server",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "apache-http-server",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "http_server",
+                "cpe_vendor": "apache",
+                "product_id": "apache-http-server",
+                "product_name": "Http Server",
+                "vendor_id": "apache",
+                "vendor_name": "Apache"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              },
+              {
+                "entity_id": "fedoraproject-fedora",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "o",
+                  "cpe_product": "fedora",
+                  "cpe_vendor": "fedoraproject",
+                  "product_id": "fedoraproject-fedora",
+                  "product_name": "Fedora",
+                  "vendor_id": "fedoraproject",
+                  "vendor_name": "Fedoraproject"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "34"
+                    },
+                    {
+                      "version_exact": "35"
+                    }
+                  ],
+                  "cpe_part": "o",
+                  "cpe_product": "fedora",
+                  "cpe_vendor": "fedoraproject",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "fedoraproject-fedora",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "fedoraproject-fedora",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "o",
+                "cpe_product": "fedora",
+                "cpe_vendor": "fedoraproject",
+                "product_id": "fedoraproject-fedora",
+                "product_name": "Fedora",
+                "vendor_id": "fedoraproject",
+                "vendor_name": "Fedoraproject"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              },
+              {
+                "entity_id": "netapp-cloud-backup",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "cloud_backup",
+                  "cpe_vendor": "netapp",
+                  "product_id": "netapp-cloud-backup",
+                  "product_name": "Cloud Backup",
+                  "vendor_id": "netapp",
+                  "vendor_name": "Netapp"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [],
+                  "cpe_part": "a",
+                  "cpe_product": "cloud_backup",
+                  "cpe_vendor": "netapp",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match applies to all listed product versions.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "netapp-cloud-backup",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "netapp-cloud-backup",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "cloud_backup",
+                "cpe_vendor": "netapp",
+                "product_id": "netapp-cloud-backup",
+                "product_name": "Cloud Backup",
+                "vendor_id": "netapp",
+                "vendor_name": "Netapp"
+              }
+            }
+          },
+          {
+            "entities": [
+              {
+                "entity_id": "CVE-2021-41773",
+                "entity_type": "Vulnerability",
+                "properties": {
+                  "cve_id": "CVE-2021-41773",
+                  "cvss_score": 9.8,
+                  "cvss_severity": "CRITICAL",
+                  "cwes": [
+                    "CWE-22"
+                  ],
+                  "date_added_to_kev": "2021-11-03",
+                  "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                  "epss_percentile": 0.99985,
+                  "epss_score": 0.94433,
+                  "kev_due_date": "2021-11-17",
+                  "known_ransomware_use": "Known",
+                  "required_action": "Apply updates per vendor instructions.",
+                  "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+                }
+              },
+              {
+                "entity_id": "oracle-instantis-enterprisetrack",
+                "entity_type": "Product",
+                "properties": {
+                  "cpe_part": "a",
+                  "cpe_product": "instantis_enterprisetrack",
+                  "cpe_vendor": "oracle",
+                  "product_id": "oracle-instantis-enterprisetrack",
+                  "product_name": "Instantis Enterprisetrack",
+                  "vendor_id": "oracle",
+                  "vendor_name": "Oracle"
+                }
+              }
+            ],
+            "entry": {
+              "entity_id": "CVE-2021-41773",
+              "entity_type": "Vulnerability",
+              "properties": {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "cvss_severity": "CRITICAL",
+                "cwes": [
+                  "CWE-22"
+                ],
+                "date_added_to_kev": "2021-11-03",
+                "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+                "epss_percentile": 0.99985,
+                "epss_score": 0.94433,
+                "kev_due_date": "2021-11-17",
+                "known_ransomware_use": "Known",
+                "required_action": "Apply updates per vendor instructions.",
+                "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+              }
+            },
+            "includes": {},
+            "path": [
+              {
+                "alias": "affected_product",
+                "from_id": "CVE-2021-41773",
+                "from_type": "Vulnerability",
+                "properties": {
+                  "affected_versions": [
+                    {
+                      "version_exact": "17.1"
+                    },
+                    {
+                      "version_exact": "17.2"
+                    },
+                    {
+                      "version_exact": "17.3"
+                    }
+                  ],
+                  "cpe_part": "a",
+                  "cpe_product": "instantis_enterprisetrack",
+                  "cpe_vendor": "oracle",
+                  "default_status": "Analyzed",
+                  "fixed_version": null,
+                  "source": "nvd",
+                  "source_last_modified_at": "2026-02-17T19:49:26.367000+00:00",
+                  "source_record_id": "CVE-2021-41773",
+                  "version_logic": "NVD CPE match version ranges aggregated by product.",
+                  "vulnerable": true
+                },
+                "relationship_type": "vulnerability_affects_product",
+                "review_status": "unreviewed",
+                "to_id": "oracle-instantis-enterprisetrack",
+                "to_type": "Product"
+              }
+            ],
+            "result": {
+              "entity_id": "oracle-instantis-enterprisetrack",
+              "entity_type": "Product",
+              "properties": {
+                "cpe_part": "a",
+                "cpe_product": "instantis_enterprisetrack",
+                "cpe_vendor": "oracle",
+                "product_id": "oracle-instantis-enterprisetrack",
+                "product_name": "Instantis Enterprisetrack",
+                "vendor_id": "oracle",
+                "vendor_name": "Oracle"
+              }
+            }
+          }
+        ],
+        "returned_results": 4,
+        "total_results": 4,
+        "truncated": false,
+        "truncation_reasons": []
+      }
+    ]
+  },
+  "receipts": [
+    {
+      "created_at": "<TIMESTAMP>",
+      "duration_ms": "<DURATION>",
+      "operation_type": "workflow",
+      "parameters": {},
+      "query_name": "build_public_kev_reference",
+      "receipt_id": "<RECEIPT_1>"
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "duration_ms": "<DURATION>",
+      "operation_type": "workflow",
+      "parameters": {},
+      "query_name": "build_public_kev_reference",
+      "receipt_id": "<RECEIPT_2>"
+    }
+  ],
+  "version": 1,
+  "world": {
+    "head_snapshot_id": "<SNAPSHOT_1>",
+    "upstream": null
+  }
+}

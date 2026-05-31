@@ -1,0 +1,566 @@
+{
+  "candidate_count": 1,
+  "group": {
+    "analysis_state": {
+      "reconciliation_summary": [
+        {
+          "affected_assets": 1,
+          "closure_count": 1,
+          "remediation_type": "reference_changed",
+          "vulnerabilities": 1
+        }
+      ]
+    },
+    "member_count": 1,
+    "relationship_type": "asset_remediated_vulnerability",
+    "review_priority": "review",
+    "signal_sources_used": [
+      "remediation_verification"
+    ],
+    "source_query_receipt_ids": [
+      "<RECEIPT_1>",
+      "<RECEIPT_2>",
+      "<RECEIPT_3>",
+      "<RECEIPT_4>"
+    ],
+    "source_step_ids": [
+      "proposal",
+      "remediation_signals"
+    ],
+    "source_workflow_name": "propose_exposure_reconciliation",
+    "status": "pending_review",
+    "thesis_facts": {
+      "candidates": {
+        "from_alias": "candidates"
+      },
+      "origin": {
+        "evidence_mode": "workflow_generated",
+        "kind": "workflow",
+        "proposal_logic_digest": "sha256:bd2a4aab9db6cb9e427a8257d702a921910fe1b6f6b6f8be063bad9834488ea1",
+        "step_id": "proposal",
+        "workflow_name": "propose_exposure_reconciliation"
+      },
+      "policy": {
+        "auto_resolve_when": "all_support",
+        "proposal_identity": "thesis_signature"
+      },
+      "relationship": {
+        "from_type": "Asset",
+        "to_type": "Vulnerability",
+        "type": "asset_remediated_vulnerability"
+      },
+      "signals": {
+        "blocking": [],
+        "required": [
+          "remediation_verification"
+        ],
+        "used": [
+          "remediation_verification"
+        ]
+      }
+    }
+  },
+  "group_id": "<GROUP_1>",
+  "group_status": "pending_review",
+  "member_count": 1,
+  "members": [
+    {
+      "properties": {
+        "remediation_type": "reference_changed",
+        "verification_basis": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support",
+            "mode": "enum",
+            "path": "verdict",
+            "value": "support"
+          },
+          "evidence": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge",
+          "evidence_refs": [
+            {
+              "source": "golden_fixture",
+              "source_record_id": "ASSET-1:CVE-2002-0367:stale-exposure"
+            },
+            {
+              "source": "kev_reference_reconciliation",
+              "source_record_id": "ASSET-1:CVE-2002-0367"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "remediation_verification"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "reconciliation"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_2>",
+          "row_shape": "unknown",
+          "source_step": "reconciliation"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_3>",
+          "row_shape": "unknown",
+          "source_step": "reconciliation"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-1",
+        "from_type": "Asset",
+        "relationship_type": "asset_remediated_vulnerability",
+        "to_id": "CVE-2002-0367",
+        "to_type": "Vulnerability"
+      }
+    }
+  ],
+  "output": {
+    "analysis_state": {
+      "reconciliation_summary": [
+        {
+          "affected_assets": 1,
+          "closure_count": 1,
+          "remediation_type": "reference_changed",
+          "vulnerabilities": 1
+        }
+      ]
+    },
+    "candidate_count": 1,
+    "candidates_from": "candidates",
+    "group_created": null,
+    "members": [
+      {
+        "edge_key": null,
+        "evidence_rationale": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge",
+        "evidence_refs": [
+          {
+            "source": "golden_fixture",
+            "source_record_id": "ASSET-1:CVE-2002-0367:stale-exposure"
+          },
+          {
+            "source": "kev_reference_reconciliation",
+            "source_record_id": "ASSET-1:CVE-2002-0367"
+          }
+        ],
+        "evidence_refs_count": 2,
+        "from_id": "ASSET-1",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "remediation_type": "reference_changed",
+          "verification_basis": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge"
+        },
+        "relationship_type": "asset_remediated_vulnerability",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support",
+              "mode": "enum",
+              "path": "verdict",
+              "value": "support"
+            },
+            "evidence": "ASSET-1->CVE-2002-0367 via product apache-http-server is no longer supported by the reference vulnerability_affects_product edge",
+            "evidence_refs": [
+              {
+                "source": "golden_fixture",
+                "source_record_id": "ASSET-1:CVE-2002-0367:stale-exposure"
+              },
+              {
+                "source": "kev_reference_reconciliation",
+                "source_record_id": "ASSET-1:CVE-2002-0367"
+              }
+            ],
+            "evidence_refs_count": 2,
+            "signal": "support",
+            "signal_source": "remediation_verification"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "reconciliation"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_2>",
+            "row_shape": "unknown",
+            "source_step": "reconciliation"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_3>",
+            "row_shape": "unknown",
+            "source_step": "reconciliation"
+          }
+        ],
+        "source_query_evidence_count": 3,
+        "to_id": "CVE-2002-0367",
+        "to_type": "Vulnerability"
+      }
+    ],
+    "on_empty": "complete",
+    "pending_refresh_mode": "retain_missing",
+    "proposal_step_id": "proposal",
+    "query_receipt_ids": [
+      "<RECEIPT_1>",
+      "<RECEIPT_2>",
+      "<RECEIPT_3>",
+      "<RECEIPT_4>"
+    ],
+    "relationship_type": "asset_remediated_vulnerability",
+    "signal_sources_used": [
+      "remediation_verification"
+    ],
+    "status": "ready",
+    "suggested_priority": null,
+    "thesis_facts": {
+      "candidates": {
+        "from_alias": "candidates"
+      },
+      "origin": {
+        "evidence_mode": "workflow_generated",
+        "kind": "workflow",
+        "proposal_logic_digest": "sha256:bd2a4aab9db6cb9e427a8257d702a921910fe1b6f6b6f8be063bad9834488ea1",
+        "step_id": "proposal",
+        "workflow_name": "propose_exposure_reconciliation"
+      },
+      "policy": {
+        "auto_resolve_when": "all_support",
+        "proposal_identity": "thesis_signature"
+      },
+      "relationship": {
+        "from_type": "Asset",
+        "to_type": "Vulnerability",
+        "type": "asset_remediated_vulnerability"
+      },
+      "signals": {
+        "blocking": [],
+        "required": [
+          "remediation_verification"
+        ],
+        "used": [
+          "remediation_verification"
+        ]
+      }
+    },
+    "thesis_text": "Accepted exposure edges no longer supported by current product-derived affected evidence should be closed\n"
+  },
+  "query_receipt_ids": [
+    "<RECEIPT_2>",
+    "<RECEIPT_3>",
+    "<RECEIPT_1>",
+    "<RECEIPT_4>"
+  ],
+  "read_metadata": {
+    "any_query_truncated": false,
+    "any_read_truncated": false,
+    "query_receipt_ids": [
+      "<RECEIPT_2>",
+      "<RECEIPT_3>",
+      "<RECEIPT_1>",
+      "<RECEIPT_4>"
+    ],
+    "read_steps": [
+      {
+        "alias": "asset_products",
+        "counts": {
+          "returned_results": 50,
+          "total_results": 50
+        },
+        "kind": "query",
+        "metadata": {
+          "dedupe": "path",
+          "limit": null,
+          "limit_truncated": false,
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "path_truncated": false,
+          "policy_summary": {},
+          "receipt_id": "<RECEIPT_2>",
+          "relationship_state": "accepted",
+          "result_shape": "relationship",
+          "retained_path_count": null,
+          "returned_results": 50,
+          "total_path_count": null,
+          "total_results": 50,
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "asset_products"
+      },
+      {
+        "alias": "vulnerability_products",
+        "counts": {
+          "returned_results": 10453,
+          "total_results": 10453
+        },
+        "kind": "query",
+        "metadata": {
+          "dedupe": "path",
+          "limit": null,
+          "limit_truncated": false,
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "path_truncated": false,
+          "policy_summary": {},
+          "receipt_id": "<RECEIPT_3>",
+          "relationship_state": "live",
+          "result_shape": "relationship",
+          "retained_path_count": null,
+          "returned_results": 10453,
+          "total_path_count": null,
+          "total_results": 10453,
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "vulnerability_products"
+      },
+      {
+        "alias": "reconciliation_product_join",
+        "counts": {
+          "left_count": 50,
+          "matched_left_count": 50,
+          "output_count": 1034,
+          "right_count": 10453,
+          "skipped_right_count": 0
+        },
+        "kind": "join_items",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_2>",
+            "<RECEIPT_3>"
+          ],
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "reconciliation_product_join"
+      },
+      {
+        "alias": "affected_assessments",
+        "counts": {},
+        "kind": "provider",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_2>",
+            "<RECEIPT_3>"
+          ],
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "affected_assessments"
+      },
+      {
+        "alias": "accepted_exposures",
+        "counts": {
+          "returned_results": 61,
+          "total_results": 61
+        },
+        "kind": "query",
+        "metadata": {
+          "dedupe": "path",
+          "limit": null,
+          "limit_truncated": false,
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "path_truncated": false,
+          "policy_summary": {},
+          "receipt_id": "<RECEIPT_1>",
+          "relationship_state": "accepted",
+          "result_shape": "relationship",
+          "retained_path_count": null,
+          "returned_results": 61,
+          "total_path_count": null,
+          "total_results": 61,
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "accepted_exposures"
+      },
+      {
+        "alias": "remediated_edges",
+        "counts": {
+          "returned_results": 0,
+          "total_results": 0
+        },
+        "kind": "query",
+        "metadata": {
+          "dedupe": "path",
+          "limit": null,
+          "limit_truncated": false,
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "path_truncated": false,
+          "policy_summary": {},
+          "receipt_id": "<RECEIPT_4>",
+          "relationship_state": "accepted",
+          "result_shape": "relationship",
+          "retained_path_count": null,
+          "returned_results": 0,
+          "total_path_count": null,
+          "total_results": 0,
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "remediated_edges"
+      },
+      {
+        "alias": "reconciliation",
+        "counts": {},
+        "kind": "provider",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>",
+            "<RECEIPT_4>"
+          ],
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "reconciliation"
+      },
+      {
+        "alias": "reconciliation_summary",
+        "counts": {
+          "group_count": 1,
+          "input_count": 1,
+          "output_count": 1
+        },
+        "kind": "aggregate_items",
+        "metadata": {
+          "input_ref": "$steps.reconciliation.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>",
+            "<RECEIPT_4>"
+          ],
+          "source_ref": "$steps.reconciliation.items",
+          "source_step": "reconciliation",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.reconciliation.items",
+        "source_step": "reconciliation",
+        "step_id": "reconciliation_summary"
+      },
+      {
+        "alias": "candidates",
+        "counts": {},
+        "kind": "make_candidates",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>",
+            "<RECEIPT_4>"
+          ]
+        },
+        "step_id": "candidates"
+      },
+      {
+        "alias": "remediation_signals",
+        "counts": {},
+        "kind": "map_signals",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>",
+            "<RECEIPT_4>"
+          ]
+        },
+        "step_id": "remediation_signals"
+      },
+      {
+        "alias": "proposal",
+        "counts": {},
+        "kind": "propose_relationship_group",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>",
+            "<RECEIPT_4>"
+          ]
+        },
+        "step_id": "proposal"
+      }
+    ],
+    "step_counts": {
+      "accepted_exposures": {
+        "returned_results": 61,
+        "total_results": 61
+      },
+      "asset_products": {
+        "returned_results": 50,
+        "total_results": 50
+      },
+      "reconciliation_product_join": {
+        "left_count": 50,
+        "matched_left_count": 50,
+        "output_count": 1034,
+        "right_count": 10453,
+        "skipped_right_count": 0
+      },
+      "reconciliation_summary": {
+        "group_count": 1,
+        "input_count": 1,
+        "output_count": 1
+      },
+      "remediated_edges": {
+        "returned_results": 0,
+        "total_results": 0
+      },
+      "vulnerability_products": {
+        "returned_results": 10453,
+        "total_results": 10453
+      }
+    },
+    "truncation_reasons": []
+  },
+  "relationship_type": "asset_remediated_vulnerability",
+  "review_priority": "review",
+  "suppressed": false,
+  "workflow": "propose_exposure_reconciliation"
+}
