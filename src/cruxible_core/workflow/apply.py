@@ -16,6 +16,7 @@ from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
 from cruxible_core.errors import DataValidationError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.evidence import RelationshipEvidence, merge_evidence_refs
 from cruxible_core.graph.operations import (
     apply_relationship,
     validate_entity,
@@ -24,6 +25,7 @@ from cruxible_core.graph.operations import (
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
+    RelationshipMetadata,
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -146,6 +148,33 @@ def make_relationship_set(
     conflicting_duplicate_count = 0
     duplicate_examples: list[dict[str, Any]] = []
     for item in items:
+        relationship_evidence: RelationshipEvidence | None = None
+        if spec.evidence is not None:
+            evidence_refs: list[dict[str, Any]] = []
+            rationale: str | None = None
+            if spec.evidence.refs is not None:
+                evidence_refs = _resolve_evidence_refs(
+                    step_id,
+                    spec.evidence.refs,
+                    input_payload,
+                    step_outputs,
+                    item,
+                )
+            if spec.evidence.rationale is not None:
+                resolved_rationale = resolve_value(
+                    spec.evidence.rationale,
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                )
+                if resolved_rationale is not None:
+                    rationale = str(resolved_rationale)
+            relationship_evidence = RelationshipEvidence(
+                evidence_refs=evidence_refs,
+                rationale=rationale,
+                source_step_ids=[step_id],
+            )
         member = RelationshipInstance.model_validate(
             {
                 "relationship_type": spec.relationship_type,
@@ -186,6 +215,8 @@ def make_relationship_set(
                 ),
             }
         )
+        if relationship_evidence is not None:
+            member.metadata = RelationshipMetadata(evidence=relationship_evidence)
         if member.from_type != rel_schema.from_entity or member.to_type != rel_schema.to_entity:
             raise QueryExecutionError(
                 f"Workflow step '{step_id}' produced relationship types "
@@ -378,6 +409,7 @@ def apply_relationship_set(
                 f"{rel.to_type}:{rel.to_id}: {detail}"
             )
             continue
+        validated.relationship.metadata = rel.metadata
         validated_relationships.append(validated)
 
     if errors:
@@ -410,7 +442,11 @@ def apply_relationship_set(
                     parent_id=parent_id,
                 )
             continue
-        if existing.properties != rel.properties:
+        evidence_changed = (
+            rel.metadata.evidence is not None
+            and existing.metadata.evidence != rel.metadata.evidence
+        )
+        if existing.properties != rel.properties or evidence_changed:
             update_count += 1
             apply_relationship(graph, validated, "workflow_apply", source_ref)
             if persist_writes:
@@ -439,6 +475,31 @@ def apply_relationship_set(
 def _would_update_entity(current: dict[str, Any], new_properties: dict[str, Any]) -> bool:
     """Return true when a patch-style entity update would change stored properties."""
     return any(current.get(key) != value for key, value in new_properties.items())
+
+
+def _resolve_evidence_refs(
+    step_id: str,
+    template: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    item: Any,
+) -> list[dict[str, Any]]:
+    resolved = resolve_value(
+        template,
+        input_payload,
+        step_outputs,
+        item_payload=item,
+        allow_item=True,
+    )
+    if resolved is None:
+        return []
+    refs = resolved if isinstance(resolved, list) else [resolved]
+    try:
+        return merge_evidence_refs(refs)
+    except (TypeError, ValueError) as exc:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' evidence refs must be evidence objects"
+        ) from exc
 
 
 def compute_apply_digest(
