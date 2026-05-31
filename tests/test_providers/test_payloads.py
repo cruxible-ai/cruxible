@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.provider.payloads import (
+    EvidenceRef,
     JsonItems,
     ParsedTabularBundle,
     evidence_ref,
@@ -96,3 +97,41 @@ def test_merge_evidence_refs_preserves_order_and_dedupes() -> None:
     second = evidence_ref("scanner", "finding-2")
 
     assert merge_evidence_refs([first], [duplicate, second]) == [first, second]
+
+
+def test_evidence_ref_collects_extra_fields_into_metadata() -> None:
+    ref = evidence_ref(
+        "inventory",
+        "row-1",
+        observed_at="2026-05-24",
+        criteria="product_name",
+    )
+
+    assert ref == {
+        "source": "inventory",
+        "source_record_id": "row-1",
+        "metadata": {
+            "observed_at": "2026-05-24",
+            "criteria": "product_name",
+        },
+    }
+    assert EvidenceRef.model_validate(ref).metadata["criteria"] == "product_name"
+
+
+def test_evidence_ref_model_dump_uses_compact_payload() -> None:
+    ref = EvidenceRef(
+        source="inventory",
+        source_record_id="row-1",
+        criteria="product_name",
+    )
+
+    assert ref.model_dump(mode="json") == {
+        "source": "inventory",
+        "source_record_id": "row-1",
+        "metadata": {"criteria": "product_name"},
+    }
+
+
+def test_evidence_ref_rejects_empty_identity() -> None:
+    with pytest.raises(ValueError, match="source and source_record_id"):
+        evidence_ref("", "row-1")

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from cruxible_core.primitives import canonical_json
+from cruxible_core.graph.evidence import (
+    EvidenceRef,
+    evidence_ref_payload,
+    merge_evidence_refs,
+)
 
 
 class ParsedTabularBundle(BaseModel):
@@ -100,30 +104,9 @@ class JsonItems(BaseModel):
 
 def evidence_ref(source: str, source_record_id: str, **extra: Any) -> dict[str, Any]:
     """Build a generic evidence reference payload."""
-    if not source:
-        raise ValueError("evidence_ref source must not be empty")
-    if not source_record_id:
-        raise ValueError("evidence_ref source_record_id must not be empty")
-    return {
-        "source": source,
-        "source_record_id": source_record_id,
-        **extra,
-    }
-
-
-def merge_evidence_refs(*groups: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Merge evidence reference groups with deterministic first-seen dedupe."""
-    merged: list[dict[str, Any]] = []
-    seen: set[tuple[str, ...]] = set()
-    for group in groups:
-        for ref in group:
-            payload = dict(ref)
-            key = _evidence_ref_key(payload)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(payload)
-    return merged
+    return evidence_ref_payload(
+        {"source": source, "source_record_id": source_record_id, **extra}
+    )
 
 
 def _normalize_table_payload(
@@ -162,11 +145,10 @@ def _coerce_rows(rows: list[Any], label: str) -> list[dict[str, Any]]:
     return result
 
 
-def _evidence_ref_key(ref: Mapping[str, Any]) -> tuple[str, ...]:
-    source = str(ref.get("source", ""))
-    source_record_id = str(ref.get("source_record_id", ""))
-    criteria = str(ref.get("criteria", ""))
-    match_criteria_id = str(ref.get("match_criteria_id", ""))
-    if source or source_record_id or criteria or match_criteria_id:
-        return ("fields", source, source_record_id, criteria, match_criteria_id)
-    return ("json", canonical_json(dict(ref)))
+__all__ = [
+    "EvidenceRef",
+    "JsonItems",
+    "ParsedTabularBundle",
+    "evidence_ref",
+    "merge_evidence_refs",
+]

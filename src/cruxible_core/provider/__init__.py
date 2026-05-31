@@ -1,6 +1,7 @@
 """Provider runtime surface."""
 
 from cruxible_core.provider.payloads import (
+    EvidenceRef,
     JsonItems,
     ParsedTabularBundle,
     evidence_ref,
@@ -11,6 +12,7 @@ from cruxible_core.provider.types import ExecutionTrace, ProviderContext, Resolv
 
 __all__ = [
     "ExecutionTrace",
+    "EvidenceRef",
     "JsonItems",
     "ParsedTabularBundle",
     "ProviderContext",

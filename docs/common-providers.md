@@ -82,10 +82,12 @@ that mapping explicit. `ParsedTabularBundle.from_payload(...)` remains useful
 inside generic loader/test helpers that operate on the parser contract.
 `JsonItems.from_payload(...)` and `JsonItems(...).to_payload()` validate and
 emit the standard `{items: [...]}` shape while preserving row order.
-Use `evidence_ref(...)` and `merge_evidence_refs(...)` for generic provenance
-pointers on governed facts. Keep ordinary source parsing, CSV loading, text
-normalization, and source-specific scoring as local provider code unless the
-logic becomes broadly reusable across kits.
+Use `EvidenceRef`, `evidence_ref(...)`, and `merge_evidence_refs(...)` for
+generic provenance pointers. Workflow `make_candidates`, `map_signals`, and
+`make_relationships` can route those pointers into relationship metadata so
+governed relationship properties stay domain-specific. Keep ordinary source
+parsing, CSV loading, text normalization, and source-specific scoring as local
+provider code unless the logic becomes broadly reusable across kits.
 
 ## Domain Providers
 
