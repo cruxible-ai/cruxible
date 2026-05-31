@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from pydantic import BaseModel
+
 from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.schema import BUILTIN_CONTRACTS, ContractSchema, CoreConfig
 from cruxible_core.errors import ConfigError
@@ -995,6 +997,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         step.make_candidates.to_type,
                         step.make_candidates.to_id,
                         step.make_candidates.properties,
+                        step.make_candidates.evidence,
                     ]
                 ):
                     _validate_workflow_ref(
@@ -1016,6 +1019,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         step.map_signals.from_id,
                         step.map_signals.to_id,
                         step.map_signals.evidence,
+                        step.map_signals.evidence_refs,
                     ]
                 ):
                     _validate_workflow_ref(
@@ -1136,6 +1140,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
                         step.make_relationships.to_type,
                         step.make_relationships.to_id,
                         step.make_relationships.properties,
+                        step.make_relationships.evidence,
                     ]
                 ):
                     _validate_workflow_ref(
@@ -1322,12 +1327,15 @@ def _iter_refs(value: Any) -> list[str]:
             refs.append(value)
         return refs
 
+    if isinstance(value, BaseModel):
+        return _iter_refs(value.model_dump(mode="python", exclude_none=True))
+
     if isinstance(value, dict):
         for item in value.values():
             refs.extend(_iter_refs(item))
         return refs
 
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         for item in value:
             refs.extend(_iter_refs(item))
 

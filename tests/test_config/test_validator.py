@@ -516,6 +516,65 @@ class TestValidateWorkflowExecution:
         defaults.update(overrides)
         return _minimal_config(**defaults)
 
+    def _evidence_workflow_config(
+        self,
+        *,
+        step_kind: str,
+        evidence: dict[str, object],
+        include_future_step: bool = False,
+    ) -> CoreConfig:
+        if step_kind == "make_candidates":
+            step = WorkflowStepSchema(
+                id="build",
+                make_candidates={
+                    "relationship_type": "links",
+                    "items": [{"from": "A-1", "to": "B-1"}],
+                    "from_type": "A",
+                    "from_id": "$item.from",
+                    "to_type": "B",
+                    "to_id": "$item.to",
+                    "evidence": evidence,
+                },
+                **{"as": "built"},
+            )
+        elif step_kind == "make_relationships":
+            step = WorkflowStepSchema(
+                id="build",
+                make_relationships={
+                    "relationship_type": "links",
+                    "items": [{"from": "A-1", "to": "B-1"}],
+                    "from_type": "A",
+                    "from_id": "$item.from",
+                    "to_type": "B",
+                    "to_id": "$item.to",
+                    "evidence": evidence,
+                },
+                **{"as": "built"},
+            )
+        else:
+            raise AssertionError(f"unexpected step kind: {step_kind}")
+
+        steps = [step]
+        if include_future_step:
+            steps.append(
+                WorkflowStepSchema(
+                    id="future_provider",
+                    provider="provider",
+                    input={"id": "$input.id"},
+                    **{"as": "future"},
+                )
+            )
+
+        return self._workflow_config(
+            workflows={
+                "wf": WorkflowSchema(
+                    contract_in="WorkflowInput",
+                    steps=steps,
+                    returns="built",
+                )
+            }
+        )
+
     def test_builtin_contract_refs_validate(self):
         config = self._workflow_config(
             contracts={},
@@ -681,6 +740,73 @@ class TestValidateWorkflowExecution:
             validate_config(config)
         assert any(
             "make_candidates relationship_type 'missing'" in error
+            for error in exc_info.value.errors
+        )
+
+    @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
+    @pytest.mark.parametrize("evidence_field", ["refs", "rationale"])
+    def test_evidence_mapping_rejects_unknown_step_alias(
+        self, step_kind: str, evidence_field: str
+    ):
+        config = self._evidence_workflow_config(
+            step_kind=step_kind,
+            evidence={evidence_field: "$steps.missing.items"},
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any(
+            "unknown or future step alias 'missing'" in error
+            for error in exc_info.value.errors
+        )
+
+    @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
+    @pytest.mark.parametrize("evidence_field", ["refs", "rationale"])
+    def test_evidence_mapping_rejects_future_step_alias(
+        self, step_kind: str, evidence_field: str
+    ):
+        config = self._evidence_workflow_config(
+            step_kind=step_kind,
+            evidence={evidence_field: "$steps.future.items"},
+            include_future_step=True,
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any(
+            "unknown or future step alias 'future'" in error
+            for error in exc_info.value.errors
+        )
+
+    @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
+    def test_evidence_mapping_allows_item_refs(self, step_kind: str):
+        config = self._evidence_workflow_config(
+            step_kind=step_kind,
+            evidence={
+                "refs": "$item.evidence_refs",
+                "rationale": "$item.rationale",
+            },
+        )
+
+        validate_config(config)
+
+    @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
+    def test_evidence_mapping_walks_nested_lists_and_dicts(self, step_kind: str):
+        config = self._evidence_workflow_config(
+            step_kind=step_kind,
+            evidence={
+                "refs": ["$item.evidence_refs", {"extra": "$steps.future.items"}],
+            },
+            include_future_step=True,
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any(
+            "unknown or future step alias 'future'" in error
             for error in exc_info.value.errors
         )
 
