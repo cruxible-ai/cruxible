@@ -267,9 +267,9 @@ def register_tools(server: FastMCP) -> list[str]:
         when disambiguation is needed. `applied=False` means the record was
         saved but the graph edge was not updated.
 
-        Set `group_override=True` to stamp the edge with a group_override
-        property, marking it as pre-approved for group resolve. The edge
-        must already exist in the graph.
+        Set `group_override=True` to mark the edge assertion metadata as a
+        group override for group resolve. The edge must already exist in the
+        graph.
         """
         return handlers.handle_feedback(
             instance_id,

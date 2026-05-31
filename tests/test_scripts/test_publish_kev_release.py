@@ -167,7 +167,8 @@ def test_publish_kev_release_file_transport_end_to_end(
     assert edge["properties"]["vulnerable"] is True
     assert edge["properties"]["affected_versions"]
     assert edge["properties"]["source_last_modified_at"].startswith("2026-03-01T12:00:00")
-    assert edge["properties"]["evidence_refs"][0]["match_criteria_id"] == "MATCH-1"
+    evidence_refs = edge["metadata"]["evidence"]["evidence_refs"]
+    assert evidence_refs[0]["metadata"]["match_criteria_id"] == "MATCH-1"
 
 
 def _load_publish_script() -> ModuleType:

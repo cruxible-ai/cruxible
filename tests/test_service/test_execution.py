@@ -110,6 +110,12 @@ workflows:
           to_id: $item.to_id
           properties:
             reason: $item.properties.reason
+          evidence:
+            refs:
+              - source: candidate_query
+                source_record_id: $item.to_id
+                detail: $item.properties.reason
+            rationale: $item.properties.reason
         as: candidates
       - id: proposal
         propose_relationship_group:
@@ -174,6 +180,12 @@ workflows:
           to_id: $item.to_id
           properties:
             reason: $item.properties.reason
+          evidence:
+            refs:
+              - source: candidate_query
+                source_record_id: $item.to_id
+                detail: $item.properties.reason
+            rationale: $item.properties.reason
         as: candidates
       - id: proposal
         propose_relationship_group:
@@ -202,6 +214,12 @@ workflows:
           to_id: $item.to_id
           properties:
             reason: $item.properties.reason
+          evidence:
+            refs:
+              - source: candidate_query
+                source_record_id: $item.to_id
+                detail: $item.properties.reason
+            rationale: $item.properties.reason
         as: candidates
       - id: signal_query
         query: candidate_product_paths
@@ -215,6 +233,10 @@ workflows:
           from_id: $item.path[0].from_id
           to_id: $item.path[0].to_id
           evidence: $item.path[0].properties.reason
+          evidence_refs:
+            - source: signal_query
+              source_record_id: $item.path[0].to_id
+              detail: $item.path[0].properties.reason
           enum:
             path: path[0].properties.reason
             map:
@@ -1007,6 +1029,11 @@ class TestWorkflowExecutionServices:
         assert group.source_query_receipt_ids == result.query_receipt_ids
         assert len(members) == 1
         assert members[0].signals[0].signal_source == "query_signal"
+        assert [ref.source for ref in members[0].evidence_refs] == ["candidate_query"]
+        assert members[0].evidence_rationale == "query evidence"
+        assert [ref.source for ref in members[0].signals[0].evidence_refs] == [
+            "signal_query"
+        ]
         evidence_by_step = {
             evidence.source_step: evidence
             for evidence in members[0].source_query_evidence
@@ -1024,6 +1051,28 @@ class TestWorkflowExecutionServices:
                 assert receipt_store.get_receipt(evidence.query_receipt_id) is not None
         finally:
             receipt_store.close()
+
+        service_resolve_group(
+            query_evidence_proposal_instance,
+            result.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+        graph = query_evidence_proposal_instance.load_graph()
+        relationship = graph.get_relationship(
+            "Campaign",
+            "CMP-1",
+            "Product",
+            "SKU-123",
+            "recommended_for",
+        )
+        assert relationship is not None
+        assert relationship.metadata.evidence is not None
+        assert relationship.metadata.evidence.rationale == "query evidence"
+        assert relationship.metadata.evidence.source_group_id == result.group_id
+        assert [
+            ref.source for ref in relationship.metadata.evidence.evidence_refs
+        ] == ["candidate_query", "signal_query"]
 
     def test_service_propose_workflow_preserves_query_evidence_from_joined_rows(
         self,

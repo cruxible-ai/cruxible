@@ -903,15 +903,28 @@ def _apply_feedback_record(
     applied = apply_feedback(graph, record)
     if group_override:
         target = record.target
-        graph.update_relationship_state(
+        relationship = graph.get_relationship(
             target.from_type,
             target.from_id,
             target.to_type,
             target.to_id,
             target.relationship_type,
-            property_updates={"group_override": True},
             edge_key=target.edge_key,
         )
+        if relationship is not None:
+            assertion = relationship.metadata.assertion.model_copy(
+                update={"group_override": True}
+            )
+            metadata = relationship.metadata.model_copy(update={"assertion": assertion})
+            graph.update_relationship_state(
+                target.from_type,
+                target.from_id,
+                target.to_type,
+                target.to_id,
+                target.relationship_type,
+                metadata=metadata,
+                edge_key=target.edge_key,
+            )
     return applied
 
 
@@ -1019,8 +1032,8 @@ def service_feedback(
     """Record feedback on an edge.
 
     Validates corrections, checks receipt existence, persists feedback,
-    and applies to the graph. If group_override=True, stamps the edge
-    with group_override property after applying feedback.
+    and applies to the graph. If group_override=True, marks the edge assertion
+    metadata as a group override after applying feedback.
     """
     _validate_feedback_request_values(
         action=action,

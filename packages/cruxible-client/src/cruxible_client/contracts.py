@@ -64,6 +64,7 @@ class SignalInput(BaseModel):
     signal_source: str
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
     basis: SignalBucketBasis | None = None
 
 
@@ -84,6 +85,8 @@ class MemberInput(BaseModel):
     relationship_type: str
     signals: list[SignalInput] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_rationale: str | None = None
 
 
 class SuppressedProposalMember(BaseModel):

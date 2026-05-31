@@ -760,7 +760,7 @@ class TestReadPermissions:
 
 class TestFeedbackGroupOverride:
     def test_feedback_with_group_override(self, server, instance_id):
-        """group_override=True via MCP stamps edge property."""
+        """group_override=True via MCP marks relationship assertion metadata."""
         # Add edge first
         call_tool(
             server,
@@ -810,7 +810,7 @@ class TestFeedbackGroupOverride:
         )
         assert result["applied"] is True
 
-        # Verify the edge has group_override property
+        # Verify the edge has group_override assertion metadata
         edge = call_tool(
             server,
             "cruxible_get_relationship",
@@ -823,4 +823,5 @@ class TestFeedbackGroupOverride:
                 "to_id": "V-1",
             },
         )
-        assert edge["properties"].get("group_override") is True
+        assert edge["metadata"]["assertion"]["group_override"] is True
+        assert "group_override" not in edge["properties"]

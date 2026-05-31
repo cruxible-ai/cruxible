@@ -20,6 +20,7 @@ from cruxible_core.graph.assertion_state import (
     relationship_is_live,
     relationship_lifecycle_is_active,
 )
+from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
     dump_provenance,
@@ -64,6 +65,7 @@ class RelationshipMetadata(BaseModel):
 
     provenance: RelationshipProvenance | None = None
     assertion: RelationshipAssertion = Field(default_factory=RelationshipAssertion)
+    evidence: RelationshipEvidence | None = None
 
 
 class RelationshipInstance(BaseModel):
@@ -102,6 +104,7 @@ __all__ = [
     "RelationshipAssertion",
     "RelationshipLifecycleState",
     "RelationshipMetadata",
+    "RelationshipEvidence",
     "RelationshipProvenance",
     "RelationshipReviewState",
     "dump_assertion",

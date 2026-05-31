@@ -155,7 +155,8 @@ class TestGroupOverride:
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None
-        assert rel.properties.get("group_override") is True
+        assert rel.metadata.assertion.group_override is True
+        assert "group_override" not in rel.properties
 
     def test_edge_not_in_graph_fails(self, instance: CruxibleInstance) -> None:
         """group_override requires the edge to exist."""
@@ -260,7 +261,7 @@ class TestGroupOverride:
         assert result.edges_created == 1
 
     def test_without_override_no_stamp(self, instance: CruxibleInstance) -> None:
-        """Without group_override flag, no group_override property stamped."""
+        """Without group_override flag, no group_override metadata stamped."""
         receipt_id = _get_receipt_id(instance)
         target = RelationshipInstance(
             from_type="Part",
@@ -272,4 +273,6 @@ class TestGroupOverride:
         service_feedback(instance, receipt_id, "approve", "human", target)
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        assert rel.metadata.assertion.group_override is False
         assert "group_override" not in rel.properties

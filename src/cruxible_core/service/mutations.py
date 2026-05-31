@@ -244,6 +244,7 @@ def service_add_relationships(
                     builder.record_validation(passed=False, detail={"edge": i, "error": str(exc)})
                 continue
 
+            validated.relationship.metadata = edge.metadata
             batch_seen.add(key)
             pending.append((validated, edge))
             if builder:

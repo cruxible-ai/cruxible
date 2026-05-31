@@ -14,9 +14,11 @@ from cruxible_core.errors import (
     GroupNotFoundError,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.evidence import RelationshipEvidence, merge_evidence_refs
 from cruxible_core.graph.operations import validate_relationship
 from cruxible_core.graph.types import (
     RelationshipInstance,
+    RelationshipMetadata,
 )
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
@@ -501,7 +503,7 @@ def _has_active_override(graph: EntityGraph, member: CandidateMember) -> bool:
     relationship = graph.get_relationship(**_relationship_key(member).payload())
     if relationship is None:
         return False
-    if relationship.properties.get("group_override") is True:
+    if relationship.metadata.assertion.group_override is True:
         return True
     review = relationship.metadata.assertion.review
     if review.status == "pending":
@@ -1004,11 +1006,36 @@ def _source_query_receipt_ids_from_members(members: list[CandidateMember]) -> li
     return ordered_unique(receipt_ids)
 
 
+def _relationship_evidence_for_member(
+    group: CandidateGroup,
+    member: CandidateMember,
+) -> RelationshipEvidence:
+    evidence_refs = merge_evidence_refs(
+        member.evidence_refs,
+        *(signal.evidence_refs for signal in member.signals),
+    )
+    source_receipt_ids = ordered_unique(
+        [
+            *([group.source_workflow_receipt_id] if group.source_workflow_receipt_id else []),
+            *group.source_query_receipt_ids,
+        ]
+    )
+    return RelationshipEvidence(
+        evidence_refs=evidence_refs,
+        rationale=member.evidence_rationale,
+        source_group_id=group.group_id,
+        source_receipt_ids=source_receipt_ids,
+        source_trace_ids=ordered_unique(group.source_trace_ids),
+        source_step_ids=ordered_unique(group.source_step_ids),
+    )
+
+
 def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
     return CandidateSignal(
         signal_source=signal.signal_source,
         signal=signal.signal,
         evidence=signal.evidence,
+        evidence_refs=signal.evidence_refs,
         basis=(
             SignalBucketBasis.model_validate(signal.basis)
             if signal.basis is not None
@@ -1028,6 +1055,8 @@ def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
         source_query_evidence=_query_source_evidence_from_input(
             member.source_query_evidence
         ),
+        evidence_refs=member.evidence_refs,
+        evidence_rationale=member.evidence_rationale,
         properties=member.properties,
     )
 
@@ -1543,6 +1572,7 @@ def _validate_approval_members(
     *,
     config: CoreConfig,
     graph: EntityGraph,
+    group: CandidateGroup,
     members: list[CandidateMember],
     builder: ReceiptBuilder,
 ) -> _ApprovalValidation:
@@ -1593,9 +1623,13 @@ def _validate_approval_members(
             passed=True,
             detail={"member": _member_label(member)},
         )
-        valid_inputs.append(
-            key.to_relationship_instance(properties=validated.relationship.properties)
+        relationship = key.to_relationship_instance(
+            properties=validated.relationship.properties
         )
+        relationship.metadata = RelationshipMetadata(
+            evidence=_relationship_evidence_for_member(group, member)
+        )
+        valid_inputs.append(relationship)
         applied_tuples.append(_member_tuple_payload(member))
 
     return _ApprovalValidation(
@@ -1746,6 +1780,7 @@ def _approve_group(
     validation = _validate_approval_members(
         config=config,
         graph=graph,
+        group=group,
         members=members,
         builder=builder,
     )

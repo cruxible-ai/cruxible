@@ -75,7 +75,7 @@ def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
     "--group-override",
     is_flag=True,
     default=False,
-    help="Stamp edge with group_override property (edge must exist).",
+    help="Mark edge assertion metadata as a group override (edge must exist).",
 )
 @handle_errors
 def feedback_cmd(
@@ -183,7 +183,7 @@ def feedback_cmd(
     "--group-override",
     is_flag=True,
     default=False,
-    help="Stamp selected edge with group_override property (edge must exist).",
+    help="Mark selected edge assertion metadata as a group override (edge must exist).",
 )
 @click.option(
     "--path-index",

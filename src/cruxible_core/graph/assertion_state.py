@@ -93,6 +93,7 @@ class RelationshipAssertion(BaseModel):
     lifecycle: RelationshipLifecycleState = Field(
         default_factory=RelationshipLifecycleState
     )
+    group_override: bool = False
 
 
 def dump_assertion(assertion: RelationshipAssertion) -> dict[str, Any]:

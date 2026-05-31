@@ -1811,11 +1811,17 @@ class TestWorkflowSchema:
                 "to_type": "Product",
                 "to_id": "$item.product_sku",
                 "properties": {"reason": "$item.reason"},
+                "evidence": {
+                    "refs": "$item.evidence_refs",
+                    "rationale": "$item.reason",
+                },
             },
             **{"as": "candidates"},
         )
         assert step.make_candidates is not None
         assert step.make_candidates.relationship_type == "recommended_for"
+        assert step.make_candidates.evidence is not None
+        assert step.make_candidates.evidence.refs == "$item.evidence_refs"
 
     def test_inline_entity_query_step_accepts_predicate_refs(self):
         step = WorkflowStepSchema(
@@ -2015,6 +2021,26 @@ class TestWorkflowSchema:
                 },
                 **{"as": "signals"},
             )
+
+    def test_map_signals_accepts_evidence_refs(self):
+        step = WorkflowStepSchema(
+            id="catalog_signals",
+            map_signals={
+                "signal_source": "catalog",
+                "items": "$steps.rows.items",
+                "from_id": "$input.campaign_id",
+                "to_id": "$item.product_sku",
+                "evidence": "$item.reason",
+                "evidence_refs": "$item.evidence_refs",
+                "enum": {
+                    "path": "verdict",
+                    "map": {"support": "support"},
+                },
+            },
+            **{"as": "signals"},
+        )
+        assert step.map_signals is not None
+        assert step.map_signals.evidence_refs == "$item.evidence_refs"
 
     def test_propose_relationship_group_step_accepts_signal_aliases(self):
         step = WorkflowStepSchema(

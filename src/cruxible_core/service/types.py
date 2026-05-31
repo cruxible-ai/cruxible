@@ -750,6 +750,7 @@ class GroupSignalInput:
     signal_source: str
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
     basis: dict[str, Any] | None = None
 
 
@@ -765,6 +766,8 @@ class GroupMemberInput:
     source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(
         default_factory=list
     )
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    evidence_rationale: str | None = None
 
 
 @dataclass

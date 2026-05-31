@@ -203,6 +203,7 @@ def apply_relationship(
     """
     rel = validated.relationship
     if validated.is_update:
+        incoming_evidence = rel.metadata.evidence
         existing_rel = graph.get_relationship(
             rel.from_type,
             rel.from_id,
@@ -220,6 +221,8 @@ def apply_relationship(
                         "provenance": stamp_provenance_modified(provenance, source),
                     }
                 )
+            if incoming_evidence is not None:
+                metadata = metadata.model_copy(update={"evidence": incoming_evidence})
             rel.metadata = metadata
         graph.replace_relationship_state(
             rel.from_type,
@@ -231,8 +234,10 @@ def apply_relationship(
             metadata=rel.metadata,
         )
     else:
+        incoming_evidence = rel.metadata.evidence
         rel.metadata = RelationshipMetadata(
             provenance=make_provenance(source, source_ref),
             assertion=_initial_assertion(source),
+            evidence=incoming_evidence,
         )
         graph.add_relationship(rel)

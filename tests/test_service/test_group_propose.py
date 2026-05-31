@@ -17,6 +17,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.store import GroupStore
@@ -461,6 +462,48 @@ class TestBasicProposal:
             assert stored[0].signals[0].signal_source == "bolt_pattern_check"
         finally:
             store.close()
+
+    def test_members_store_compact_evidence_refs(
+        self, matching_instance: CruxibleInstance
+    ) -> None:
+        signals = _all_support_signals()
+        signals[0] = CandidateSignal(
+            signal_source="bolt_pattern_check",
+            signal="support",
+            evidence_refs=[EvidenceRef(source="scanner", source_record_id="finding-1")],
+        )
+        member = _member(
+            signals=signals,
+        )
+        member.evidence_refs = [
+            EvidenceRef(
+                source="inventory",
+                source_record_id="row-1",
+                observed_at="2026-05-24",
+            )
+        ]
+
+        result = service_propose_group(
+            matching_instance,
+            "fits",
+            [member],
+            thesis_facts={"k": "v"},
+        )
+
+        store = matching_instance.get_group_store()
+        try:
+            stored = store.get_members(result.group_id)
+        finally:
+            store.close()
+        assert stored[0].evidence_refs[0].model_dump(mode="json") == {
+            "source": "inventory",
+            "source_record_id": "row-1",
+            "metadata": {"observed_at": "2026-05-24"},
+        }
+        assert stored[0].signals[0].evidence_refs[0].model_dump(mode="json") == {
+            "source": "scanner",
+            "source_record_id": "finding-1",
+        }
 
     def test_input_wrapper_normalizes_members_and_signals(
         self,
@@ -1315,7 +1358,9 @@ class TestPendingBuckets:
                 from_id="BP-1001",
                 to_type="Vehicle",
                 to_id="V-2024-CIVIC",
-                properties={"group_override": True},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(group_override=True)
+                ),
             )
         )
         matching_instance.save_graph(graph)
@@ -1492,13 +1537,27 @@ class TestPendingBuckets:
         )
 
         graph = matching_instance.load_graph()
+        existing = graph.get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC",
+            "fits",
+        )
+        assert existing is not None
         assert graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC",
             "fits",
-            property_updates={"group_override": True},
+            metadata=existing.metadata.model_copy(
+                update={
+                    "assertion": existing.metadata.assertion.model_copy(
+                        update={"group_override": True}
+                    )
+                }
+            ),
         )
         matching_instance.save_graph(graph)
 

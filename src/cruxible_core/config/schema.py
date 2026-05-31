@@ -1453,6 +1453,15 @@ class DedupeItemsSpec(BaseModel):
         return self
 
 
+class CandidateEvidenceSpec(BaseModel):
+    """Evidence metadata mapping for generated candidate members."""
+
+    refs: Any | None = None
+    rationale: Any | None = None
+
+    model_config = {"extra": "forbid"}
+
+
 class MakeCandidatesSpec(BaseModel):
     """Build a relationship candidate set from list-shaped workflow data."""
 
@@ -1463,6 +1472,7 @@ class MakeCandidatesSpec(BaseModel):
     to_type: Any
     to_id: Any
     properties: dict[str, Any] = Field(default_factory=dict)
+    evidence: CandidateEvidenceSpec | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -1508,6 +1518,7 @@ class MapSignalsSpec(BaseModel):
     from_id: Any
     to_id: Any
     evidence: Any | None = None
+    evidence_refs: Any | None = None
     score: ScoreSignalMappingSpec | None = None
     enum: EnumSignalMappingSpec | None = None
 
@@ -1559,6 +1570,7 @@ class MakeRelationshipsSpec(BaseModel):
     to_type: Any
     to_id: Any
     properties: dict[str, Any] = Field(default_factory=dict)
+    evidence: CandidateEvidenceSpec | None = None
 
     model_config = {"extra": "forbid"}
 

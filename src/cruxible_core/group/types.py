@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
 
@@ -65,6 +66,7 @@ class CandidateSignal(BaseModel):
     signal_source: str
     signal: SignalValue
     evidence: str = ""
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     basis: SignalBucketBasis | None = None
 
 
@@ -114,6 +116,8 @@ class CandidateMember(RelationshipInstance):
 
     signals: list[CandidateSignal] = Field(default_factory=list)
     source_query_evidence: list[QuerySourceEvidence] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    evidence_rationale: str | None = None
 
 
 class GroupResolution(BaseModel):

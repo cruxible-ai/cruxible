@@ -112,6 +112,7 @@ def group_propose(
                     signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
+                    evidence_refs=s.get("evidence_refs", []),
                     basis=(
                         contracts.SignalBucketBasis.model_validate(s["basis"])
                         if s.get("basis") is not None
@@ -121,6 +122,8 @@ def group_propose(
                 for s in m.get("signals", [])
             ],
             properties=m.get("properties", {}),
+            evidence_refs=m.get("evidence_refs", []),
+            evidence_rationale=m.get("evidence_rationale"),
         )
         for m in raw_members
     ]
@@ -136,11 +139,14 @@ def group_propose(
                     signal_source=s["signal_source"],
                     signal=s["signal"],
                     evidence=s.get("evidence", ""),
+                    evidence_refs=s.get("evidence_refs", []),
                     basis=s.get("basis"),
                 )
                 for s in m.get("signals", [])
             ],
             properties=m.get("properties", {}),
+            evidence_refs=m.get("evidence_refs", []),
+            evidence_rationale=m.get("evidence_rationale"),
         )
         for m in raw_members
     ]

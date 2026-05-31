@@ -633,6 +633,8 @@ def service_propose_workflow(
                 relationship_type=relationship_type,
                 signals=member.signals,
                 source_query_evidence=member.source_query_evidence,
+                evidence_refs=member.evidence_refs,
+                evidence_rationale=member.evidence_rationale,
                 properties=member.properties,
             )
             for member in proposal_payload.members

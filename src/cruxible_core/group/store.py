@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS candidate_members (
     relationship_type TEXT NOT NULL,
     signals TEXT NOT NULL DEFAULT '[]',
     source_query_evidence TEXT NOT NULL DEFAULT '[]',
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    evidence_rationale TEXT,
     properties TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (group_id, from_type, from_id, to_type, to_id, relationship_type)
 );
@@ -141,6 +143,15 @@ class GroupStore(GroupStoreProtocol):
             self._conn.execute(
                 "ALTER TABLE candidate_members ADD COLUMN "
                 "source_query_evidence TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "evidence_refs" not in member_columns:
+            self._conn.execute(
+                "ALTER TABLE candidate_members ADD COLUMN "
+                "evidence_refs TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "evidence_rationale" not in member_columns:
+            self._conn.execute(
+                "ALTER TABLE candidate_members ADD COLUMN evidence_rationale TEXT"
             )
 
         self._conn.execute(
@@ -493,8 +504,9 @@ class GroupStore(GroupStoreProtocol):
             self._conn.execute(
                 "INSERT INTO candidate_members "
                 "(group_id, from_type, from_id, to_type, to_id, relationship_type, "
-                "signals, source_query_evidence, properties) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "signals, source_query_evidence, evidence_refs, evidence_rationale, "
+                "properties) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     group_id,
                     m.from_type,
@@ -504,6 +516,8 @@ class GroupStore(GroupStoreProtocol):
                     m.relationship_type,
                     signals_json,
                     source_query_evidence_json,
+                    json.dumps([ref.model_dump(mode="json") for ref in m.evidence_refs]),
+                    m.evidence_rationale,
                     json.dumps(m.properties),
                 ),
             )
@@ -618,6 +632,8 @@ class GroupStore(GroupStoreProtocol):
             relationship_type=row["relationship_type"],
             signals=[CandidateSignal(**s) for s in signals_data],
             source_query_evidence=json.loads(row["source_query_evidence"]),
+            evidence_refs=json.loads(row["evidence_refs"]),
+            evidence_rationale=row["evidence_rationale"],
             properties=json.loads(row["properties"]),
         )
 

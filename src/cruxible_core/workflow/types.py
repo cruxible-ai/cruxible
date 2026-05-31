@@ -28,6 +28,7 @@ from cruxible_core.config.schema import (
     StepKind,
     WorkflowType,
 )
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
     CandidateMember,
@@ -208,6 +209,7 @@ class SignalBatchSignal(BaseModel):
     to_id: str
     signal: SignalValue
     evidence: str = ""
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     basis: SignalBucketBasis | None = None
     source_query_evidence: list[QuerySourceEvidence] = Field(default_factory=list)
 

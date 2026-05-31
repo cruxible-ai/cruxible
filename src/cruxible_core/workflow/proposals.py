@@ -17,6 +17,7 @@ from cruxible_core.config.schema import (
     ProposeRelationshipGroupSpec,
 )
 from cruxible_core.errors import QueryExecutionError
+from cruxible_core.graph.evidence import merge_evidence_refs
 from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
@@ -84,6 +85,27 @@ def make_candidate_set(
     duplicate_examples: list[dict[str, Any]] = []
 
     for item in items:
+        evidence_refs: list[dict[str, Any]] = []
+        evidence_rationale: str | None = None
+        if spec.evidence is not None:
+            if spec.evidence.refs is not None:
+                evidence_refs = _resolve_evidence_refs(
+                    step_id,
+                    spec.evidence.refs,
+                    input_payload,
+                    step_outputs,
+                    item,
+                )
+            if spec.evidence.rationale is not None:
+                resolved_rationale = resolve_value(
+                    spec.evidence.rationale,
+                    input_payload,
+                    step_outputs,
+                    item_payload=item,
+                    allow_item=True,
+                )
+                if resolved_rationale is not None:
+                    evidence_rationale = str(resolved_rationale)
         member = CandidateMember.model_validate(
             {
                 "relationship_type": relationship_type,
@@ -126,6 +148,8 @@ def make_candidate_set(
                     item,
                     source_metadata=source_metadata,
                 ),
+                "evidence_refs": evidence_refs,
+                "evidence_rationale": evidence_rationale,
             }
         )
         if member.from_type != rel_schema.from_entity or member.to_type != rel_schema.to_entity:
@@ -322,6 +346,31 @@ def _bounded_json_value(value: Any) -> Any:
     return value
 
 
+def _resolve_evidence_refs(
+    step_id: str,
+    template: Any,
+    input_payload: dict[str, Any],
+    step_outputs: dict[str, Any],
+    item: Any,
+) -> list[dict[str, Any]]:
+    resolved = resolve_value(
+        template,
+        input_payload,
+        step_outputs,
+        item_payload=item,
+        allow_item=True,
+    )
+    if resolved is None:
+        return []
+    refs = resolved if isinstance(resolved, list) else [resolved]
+    try:
+        return merge_evidence_refs(refs)
+    except (TypeError, ValueError) as exc:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' evidence refs must be evidence objects"
+        ) from exc
+
+
 def _append_member_query_evidence(
     member: CandidateMember,
     evidence: list[QuerySourceEvidence],
@@ -393,6 +442,15 @@ def map_signal_batch(
             )
             if resolved_evidence is not None:
                 evidence = str(resolved_evidence)
+        evidence_refs: list[dict[str, Any]] = []
+        if spec.evidence_refs is not None:
+            evidence_refs = _resolve_evidence_refs(
+                step_id,
+                spec.evidence_refs,
+                input_payload,
+                step_outputs,
+                item,
+            )
 
         signal: SignalValue
         basis: SignalBucketBasis
@@ -460,6 +518,7 @@ def map_signal_batch(
                 to_id=to_id,
                 signal=signal,
                 evidence=evidence,
+                evidence_refs=evidence_refs,
                 basis=basis,
                 source_query_evidence=_query_source_evidence(
                     item,
@@ -537,6 +596,8 @@ def build_relationship_group_proposal(
             to_id=candidate.to_id,
             relationship_type=relationship_type,
             properties=candidate.properties,
+            evidence_refs=candidate.evidence_refs,
+            evidence_rationale=candidate.evidence_rationale,
             source_query_evidence=candidate.source_query_evidence[
                 :MAX_QUERY_EVIDENCE_PER_MEMBER
             ],
@@ -571,6 +632,7 @@ def build_relationship_group_proposal(
                     signal_source=signal_batch.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
+                    evidence_refs=signal.evidence_refs,
                     basis=signal.basis,
                 )
             )

@@ -1775,11 +1775,14 @@ def propose_group(
                     signal_source=signal.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
+                    evidence_refs=signal.evidence_refs,
                     basis=signal.basis.model_dump(mode="python") if signal.basis else None,
                 )
                 for signal in member.signals
             ],
             properties=member.properties,
+            evidence_refs=member.evidence_refs,
+            evidence_rationale=member.evidence_rationale,
         )
         for member in members
     ]
