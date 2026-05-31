@@ -17,6 +17,7 @@ htmlcov/
 !kits/kev-triage/source_data/*.csv
 .DS_Store
 /.cruxible/
+kits/*/.cruxible/
 .venv/
 venv/
 docs/dev/
