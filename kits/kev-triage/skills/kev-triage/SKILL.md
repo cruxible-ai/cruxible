@@ -69,7 +69,8 @@ This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
 - Do not assign numeric confidence properties on governed relationship
   proposals. Relationship confidence is represented by declared tri-state
   signal-source evidence: `support`, `unsure`, or `contradict`. Put the reason
-  in `evidence`, `match_basis`, `rationale`, or thesis facts instead.
+  in signal `evidence`, domain-specific basis fields, member
+  `evidence_rationale`, or thesis text/facts instead.
 - If a workflow provider exposes an internal numeric match score, treat it
   only as an input that the workflow maps into a tri-state signal. Do not copy
   scores into proposal member properties or accepted graph relationships.
@@ -82,8 +83,10 @@ do not retry or try to bypass. Surface the error to the user and stop.
 Scanner findings, EDR detections, SIEM alerts, reports, and postmortems are
 evidence inputs in this 0.2 kit. Do not create graph entities for those source
 records. Preserve them through named artifacts, provider output rows, workflow
-traces, tri-state signal evidence, receipts, `evidence_source`, and
-`evidence_refs` on governed relationship proposals.
+traces, tri-state signal evidence, receipts, and proposal member
+`evidence_refs` / `evidence_rationale`. Once a governed relationship is
+accepted, supporting evidence lives under relationship metadata, not domain
+properties.
 
 When a report says a host was affected by a CVE, use that source to support or
 challenge `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
@@ -189,7 +192,7 @@ asset, with an approver, rationale, and review date.
    ```
 
 2. Propose `asset_patch_exception_for` linking the asset to the CVE being
-   waived, with scoped exception evidence in edge properties:
+   waived, with scoped exception evidence on the proposal member:
    ```
    cruxible group propose \
      --relationship asset_patch_exception_for \
@@ -198,10 +201,9 @@ asset, with an approver, rationale, and review date.
                    "relationship_type":"asset_patch_exception_for",
                    "properties":{"exception_id":"EXC-2026-001",
                                  "review_due_at":"2026-05-03",
-                                 "scope_basis":"Exception covers ASSET-5 Apache remediation for CVE-2024-38475 only",
-                                 "rationale":"Billing freeze approval delays this specific patch",
-                                 "evidence_source":"change_ticket",
-                                 "evidence_refs":[{"source":"servicenow","source_record_id":"CHG-40123"}]},
+                                 "scope_basis":"Exception covers ASSET-5 Apache remediation for CVE-2024-38475 only"},
+                   "evidence_rationale":"Billing freeze approval delays this specific patch",
+                   "evidence_refs":[{"source":"servicenow","source_record_id":"CHG-40123"}],
                    "signals":[{"signal_source":"policy_review","signal":"support",
                                 "evidence":"Approved by CFO per change ticket CHG-40123"}]}]' \
      --thesis "Billing asset ASSET-5 has an approved month-end freeze for CVE-2024-38475; review 2026-05-03" \
@@ -262,9 +264,10 @@ asset-vulnerability pair is now closed.
                    "relationship_type":"asset_remediated_vulnerability",
                    "properties":{"remediation_type":"patch",
                                  "verified_at":"2026-04-22",
-                                 "evidence_source":"scanner",
-                                 "evidence_refs":[{"source":"scanner","source_record_id":"scan-2026-04-22-ASSET-8-CVE-2020-14882"}],
+                                 "verification_basis":"Post-patch scanner verification",
                                  "ticket_id":"CHG-40123"},
+                   "evidence_rationale":"Scanner verification no longer detects CVE-2020-14882 on ASSET-8",
+                   "evidence_refs":[{"source":"scanner","source_record_id":"scan-2026-04-22-ASSET-8-CVE-2020-14882"}],
                    "signals":[{"signal_source":"remediation_verification","signal":"support",
                                 "evidence":"Post-patch scan no longer detects WebLogic admin console bypass"}]}]' \
      --thesis "ASSET-8 was patched and scanner verification on 2026-04-22 no longer detects CVE-2020-14882" \

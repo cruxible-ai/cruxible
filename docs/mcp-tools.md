@@ -376,7 +376,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Record edge-level feedback tied to a receipt. ``source`` identifies who produced this feedback: ``"human"`` for human review, ``"agent"`` for AI agent review. Rejected edges are excluded from future query results. Approved edges are trusted in traversals. Use `corrections` with `action="correct"` and set `edge_key` only when disambiguation is needed. `applied=False` means the record was saved but the graph edge was not updated. Set `group_override=True` to stamp the edge with a group_override property, marking it as pre-approved for group resolve. The edge must already exist in the graph.
+**Purpose:** Record edge-level feedback tied to a receipt. ``source`` identifies who produced this feedback: ``"human"`` for human review, ``"agent"`` for AI agent review. Rejected edges are excluded from future query results. Approved edges are trusted in traversals. Use `corrections` with `action="correct"` and set `edge_key` only when disambiguation is needed. `applied=False` means the record was saved but the graph edge was not updated. Set `group_override=True` to mark relationship assertion metadata as a group override, making it pre-approved for group resolve. The edge must already exist in the graph.
 
 **Arguments:**
 
@@ -426,7 +426,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `reason_code` | no | string | Structured feedback reason code. |
 | `scope_hints` | no | object | Structured feedback scope hints. |
 | `corrections` | no | object | Edge property corrections for `action="correct"`. |
-| `group_override` | no | boolean | Stamp the selected edge for group override. |
+| `group_override` | no | boolean | Mark the selected edge assertion metadata as a group override. |
 | `path_index` | no | integer | Zero-based path segment index for path rows. |
 | `path_alias` | no | string | Traversal alias for the selected path segment. |
 

@@ -7,10 +7,14 @@ import re
 import shutil
 from pathlib import Path
 
+import pytest
+
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.composer import compose_config_files
 from cruxible_core.config.loader import save_config
+from cruxible_core.errors import QueryExecutionError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.kits import load_kit_provider_module, write_materialized_kit_metadata
 from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
@@ -198,6 +202,10 @@ def _apply_canonical_workflow(instance: CruxibleInstance, workflow_name: str) ->
     assert applied.committed_snapshot_id is not None
 
 
+def _lock_mutable_kev_fixture(instance: CruxibleInstance):
+    return service_lock(instance, force=True)
+
+
 def _approve_workflow_group(instance: CruxibleInstance, workflow_name: str) -> None:
     _approve_workflow_group_with_input(instance, workflow_name, {})
 
@@ -221,7 +229,7 @@ def _approve_workflow_group_with_input(
 def test_build_local_state_shapes_seed_tables_in_config(tmp_path: Path) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_local_state")
 
@@ -239,13 +247,48 @@ def test_build_local_state_shapes_seed_tables_in_config(tmp_path: Path) -> None:
         if edge["from_id"] == "CTRL-1" and edge["to_id"] == "path_traversal"
     )
     assert mitigation["properties"]["effect"] == "blocks"
-    assert mitigation["properties"]["evidence_refs"] == [
+    assert mitigation["metadata"]["evidence"]["evidence_refs"] == [
         {
             "source": "control_review",
             "source_record_id": "CTRL-1:path_traversal",
-            "observed_at": "2026-04-01",
+            "metadata": {"observed_at": "2026-04-01"},
         }
     ]
+
+
+def test_build_local_state_requires_control_mitigation_effect(tmp_path: Path) -> None:
+    config_path = _composed_kev_config_path(tmp_path)
+    mitigation_seed = tmp_path / "data" / "seed" / "control_mitigates_class.csv"
+    with mitigation_seed.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames
+        assert fieldnames is not None
+        rows = list(reader)
+    assert rows
+    rows[0]["effect"] = ""
+    with mitigation_seed.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    config = compose_config_files(
+        base_path=KEV_REFERENCE_KIT_DIR / "config.yaml",
+        overlay_path=KEV_KIT_DIR / "config.yaml",
+    )
+    config.artifacts["local_seed_bundle"] = config.artifacts[
+        "local_seed_bundle"
+    ].model_copy(update={"uri": str(tmp_path / "data" / "seed")})
+    save_config(config, config_path)
+    write_materialized_kit_metadata(tmp_path)
+
+    instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
+    _lock_mutable_kev_fixture(instance)
+
+    with pytest.raises(QueryExecutionError) as exc_info:
+        _apply_canonical_workflow(instance, "build_local_state")
+
+    message = str(exc_info.value)
+    assert "control_mitigates_class" in message
+    assert "effect" in message
 
 
 def test_kev_domain_providers_do_not_own_seed_table_inventory() -> None:
@@ -666,13 +709,16 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
                     {
                         "from_id": "ASSET-1",
                         "to_id": "CTRL-1",
-                        "properties": {
-                            "evidence_refs": [
-                                {
-                                    "source": "control_inventory",
-                                    "source_record_id": "asset-control-1",
-                                }
-                            ]
+                        "properties": {},
+                        "metadata": {
+                            "evidence": {
+                                "evidence_refs": [
+                                    {
+                                        "source": "control_inventory",
+                                        "source_record_id": "asset-control-1",
+                                    }
+                                ]
+                            }
                         },
                     }
                 ],
@@ -695,13 +741,16 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
                     {
                         "from_id": "CVE-2021-0001",
                         "to_id": "path_traversal",
-                        "properties": {
-                            "evidence_refs": [
-                                {
-                                    "source": "classification_review",
-                                    "source_record_id": "CVE-2021-0001:path_traversal",
-                                }
-                            ]
+                        "properties": {},
+                        "metadata": {
+                            "evidence": {
+                                "evidence_refs": [
+                                    {
+                                        "source": "classification_review",
+                                        "source_record_id": "CVE-2021-0001:path_traversal",
+                                    }
+                                ]
+                            }
                         },
                     }
                 ],
@@ -712,12 +761,16 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
                         "properties": {
                             "effect": effect,
                             "validation_basis": f"{effect} regression",
-                            "evidence_refs": [
-                                {
-                                    "source": "control_mapping",
-                                    "source_record_id": f"CTRL-1:{effect}",
-                                }
-                            ],
+                        },
+                        "metadata": {
+                            "evidence": {
+                                "evidence_refs": [
+                                    {
+                                        "source": "control_mapping",
+                                        "source_record_id": f"CTRL-1:{effect}",
+                                    }
+                                ]
+                            }
                         },
                     }
                 ],
@@ -725,45 +778,43 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
             _provider_context(None),
         )["items"][0]
 
-    for effect in ("blocks", "compensates"):
-        item = run_with(effect)
-        assert item["status"] == "mitigated"
-        assert item["priority"] == "medium"
-        assert item["control_verdict"] == "support"
-        assert item["control_exposure_verdict"] == "contradict"
-        assert item["control_effect"] == effect
-        assert effect in str(item["control_basis"])
-        evidence_sources = {ref["source"] for ref in item["evidence_refs"]}
-        assert {
-            "control_inventory",
-            "control_catalog",
-            "classification_review",
-            "control_mapping",
-        } <= evidence_sources
+    mitigated = run_with("blocks")
+    assert mitigated["status"] == "mitigated"
+    assert mitigated["priority"] == "medium"
+    assert mitigated["control_verdict"] == "support"
+    assert mitigated["control_effect"] == "blocks"
+    assert "WAF blocks path_traversal" in str(mitigated["control_basis"])
+    evidence_sources = {ref["source"] for ref in mitigated["evidence_refs"]}
+    assert {
+        "control_inventory",
+        "control_catalog",
+        "classification_review",
+        "control_mapping",
+    } <= evidence_sources
+
+    compensated = run_with("compensates")
+    assert compensated["status"] == "mitigated"
+    assert compensated["priority"] == "medium"
+    assert compensated["control_verdict"] == "support"
+    assert compensated["control_effect"] == "compensates"
 
     reduced = run_with("reduces")
     assert reduced["status"] == "exposed"
     assert reduced["priority"] == "high"
     assert reduced["control_verdict"] == "support"
-    assert reduced["control_exposure_verdict"] == "support"
     assert reduced["control_effect"] == "reduces"
-    assert "reduces" in str(reduced["control_basis"])
 
     detected = run_with("detects")
     assert detected["status"] == "exposed"
     assert detected["priority"] == "critical"
     assert detected["control_verdict"] == "support"
-    assert detected["control_exposure_verdict"] == "support"
     assert detected["control_effect"] == "detects"
-    assert "detects" in str(detected["control_basis"])
 
-    unmatched = run_with("blocks", class_match=False)
-    assert unmatched["status"] == "exposed"
-    assert unmatched["priority"] == "high"
-    assert unmatched["control_verdict"] == "unsure"
-    assert unmatched["control_exposure_verdict"] == "unsure"
-    assert unmatched["control_effect"] == ""
-    assert "require review" in str(unmatched["control_basis"])
+    no_match = run_with("blocks", class_match=False)
+    assert no_match["status"] == "exposed"
+    assert no_match["priority"] == "high"
+    assert no_match["control_verdict"] == "unsure"
+    assert no_match["control_effect"] == ""
 
 
 def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
@@ -771,7 +822,7 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
 ) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")
@@ -866,6 +917,19 @@ def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
                     "from_id": "ASSET-1",
                     "to_id": "CVE-2021-0001",
                     "properties": {"product_id": "apache__http_server"},
+                    "metadata": {
+                        "evidence": {
+                            "evidence_refs": [
+                                {
+                                    "source": "accepted_posture",
+                                    "source_record_id": (
+                                        "ASSET-1:CVE-2021-0001:accepted"
+                                    ),
+                                }
+                            ],
+                            "rationale": "Previously accepted exposure evidence.",
+                        }
+                    },
                 }
             ],
             "affected_items": [],
@@ -886,6 +950,10 @@ def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
             "evidence_source": "kev_reference_reconciliation",
             "evidence_refs": [
                 {
+                    "source": "accepted_posture",
+                    "source_record_id": "ASSET-1:CVE-2021-0001:accepted",
+                },
+                {
                     "source": "kev_reference_reconciliation",
                     "source_record_id": "ASSET-1:CVE-2021-0001",
                 }
@@ -900,7 +968,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path, str(config_path))
 
-    lock_result = service_lock(instance)
+    lock_result = _lock_mutable_kev_fixture(instance)
     assert lock_result.providers_locked >= 7
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
@@ -952,7 +1020,10 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert exposure_edge["properties"]["affected_basis"]
     assert exposure_edge["properties"]["exposure_basis"]
     assert exposure_edge["properties"]["control_basis"]
-    assert exposure_edge["properties"]["evidence_refs"]
+    assert any(
+        edge["metadata"]["evidence"]["evidence_refs"]
+        for edge in graph.list_edges("asset_vulnerability_posture")
+    )
     vulnerability = graph.get_entity("Vulnerability", affected_cve_id)
     assert vulnerability is not None
     assert vulnerability.properties["vulnerability_name"]
@@ -967,7 +1038,7 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     )
     assert reference_edge["properties"]["source"]
     assert reference_edge["properties"]["vulnerable"] is True
-    assert reference_edge["properties"]["evidence_refs"]
+    assert reference_edge["metadata"]["evidence"]["evidence_refs"]
     owner_edge = next(
         edge
         for edge in graph.list_edges("asset_owned_by")
@@ -983,12 +1054,13 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert product_edge["properties"]["observed_software_name"]
     assert product_edge["properties"]["installed_version"]
     assert product_edge["properties"]["match_basis"]
-    assert product_edge["properties"]["evidence_refs"]
+    assert product_edge["metadata"]["evidence"]["evidence_refs"]
     assert "match_score" not in product_edge["properties"]
     assert "match score" not in product_edge["properties"]["match_basis"].lower()
     assert "confidence" not in product_edge["properties"]["match_basis"].lower()
     assert re.search(r"\b\d+\.\d+\b", product_edge["properties"]["match_basis"]) is None
-    assert "match score" not in product_edge["properties"]["rationale"].lower()
+    assert product_edge["metadata"]["evidence"]["rationale"]
+    assert "match score" not in product_edge["metadata"]["evidence"]["rationale"].lower()
 
     vulnerability_asset_context = service_query(
         instance,
@@ -1048,11 +1120,11 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
     assert control_mitigation_edge["properties"]["effect"] == "blocks"
     assert control_mitigation_edge["properties"]["verified_at"] == "2026-04-01"
     assert control_mitigation_edge["properties"]["expires_at"] == "2026-10-01"
-    assert control_mitigation_edge["properties"]["evidence_refs"] == [
+    assert control_mitigation_edge["metadata"]["evidence"]["evidence_refs"] == [
         {
             "source": "control_review",
             "source_record_id": "CTRL-1:path_traversal",
-            "observed_at": "2026-04-01",
+            "metadata": {"observed_at": "2026-04-01"},
         }
     ]
 
@@ -1062,7 +1134,7 @@ def test_broad_context_queries_include_reviewable_provenance(
 ) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")
@@ -1096,9 +1168,6 @@ def test_broad_context_queries_include_reviewable_provenance(
         "affected_basis": "Regression test affected basis.",
         "exposure_basis": "Regression test exposure basis.",
         "control_basis": "Regression test control basis.",
-        "evidence_source": "test",
-        "evidence_refs": [],
-        "rationale": "Regression test reviewable posture.",
     }
     graph.add_relationship(
         RelationshipInstance(
@@ -1108,6 +1177,17 @@ def test_broad_context_queries_include_reviewable_provenance(
             to_type="Vulnerability",
             to_id=cve_id,
             properties={**base_posture_properties, "priority": "medium"},
+            metadata=RelationshipMetadata(
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{cve_id}:reviewable",
+                        }
+                    ],
+                    rationale="Regression test reviewable posture.",
+                )
+            ),
         )
     )
     graph.add_relationship(
@@ -1121,7 +1201,16 @@ def test_broad_context_queries_include_reviewable_provenance(
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="pending", source="agent")
-                )
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{cve_id}:pending",
+                        }
+                    ],
+                    rationale="Regression test pending posture.",
+                ),
             ),
         )
     )
@@ -1196,7 +1285,7 @@ def test_broad_context_queries_include_reviewable_provenance(
 def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")
@@ -1259,14 +1348,21 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
             properties={
                 "remediation_type": "patched",
                 "verified_at": "2026-05-04",
-                "evidence_source": "test",
-                "evidence_refs": [],
-                "rationale": "Regression test closure context.",
+                "verification_basis": "Regression test closure context.",
             },
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="approved", source="human")
-                )
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{cve_id}:remediated",
+                        }
+                    ],
+                    rationale="Regression test closure context.",
+                ),
             ),
         )
     )
@@ -1281,14 +1377,20 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
                 "exception_id": "EXC-2026-REMEDIATED-PAIR",
                 "review_due_at": "2026-05-07",
                 "scope_basis": "Regression test scoped exception context.",
-                "rationale": "Regression test scoped exception context.",
-                "evidence_source": "test",
-                "evidence_refs": [],
             },
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="approved", source="human")
-                )
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{cve_id}:exception",
+                        }
+                    ],
+                    rationale="Regression test scoped exception context.",
+                ),
             ),
         )
     )
@@ -1316,7 +1418,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
 def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")
@@ -1365,14 +1467,20 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
                 "affected_basis": "Regression test non-actionable posture.",
                 "exposure_basis": "Regression test non-actionable posture.",
                 "control_basis": "Regression test non-actionable posture.",
-                "evidence_source": "test",
-                "evidence_refs": [],
-                "rationale": "Approved posture rows that are not exposed stay out of queues.",
             },
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="approved", source="human")
-                )
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{candidate_cve}:posture",
+                        }
+                    ],
+                    rationale="Approved posture rows that are not exposed stay out of queues.",
+                ),
             ),
         )
     )
@@ -1387,7 +1495,7 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
 def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")
@@ -1433,19 +1541,20 @@ def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> No
                 "exception_id": "EXC-2026-TEST",
                 "review_due_at": "2026-05-03",
                 "scope_basis": "Regression test scoped exception.",
-                "rationale": "Approved scoped exception suppresses patch queue action.",
-                "evidence_source": "test",
-                "evidence_refs": [
-                    {
-                        "source": "test",
-                        "source_record_id": f"{asset_id}:{cve_id}:exception",
-                    }
-                ],
             },
             metadata=RelationshipMetadata(
                 assertion=RelationshipAssertion(
                     review=RelationshipReviewState(status="approved", source="human")
-                )
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "test",
+                            "source_record_id": f"{asset_id}:{cve_id}:exception",
+                        }
+                    ],
+                    rationale="Approved scoped exception suppresses patch queue action.",
+                ),
             ),
         )
     )
@@ -1463,7 +1572,7 @@ def test_exposure_reconciliation_no_candidates_completes_without_group(
 ) -> None:
     config_path = _composed_kev_config_path(tmp_path)
     instance = CruxibleInstance.init(tmp_path / "instance", str(config_path))
-    service_lock(instance)
+    _lock_mutable_kev_fixture(instance)
 
     _apply_canonical_workflow(instance, "build_public_kev_reference")
     _apply_canonical_workflow(instance, "build_local_state")

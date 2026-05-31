@@ -78,11 +78,10 @@ relationships:
       vulnerable: {type: bool}
       version_logic: {optional: true}
       source_last_modified_at: {type: datetime, optional: true}
-      evidence_refs: {type: json}
-      rationale: {}
 
 named_queries:
   vulnerability_products:
+    mode: traversal
     description: Starting from a vulnerability, return affected products with reference edge evidence.
     entry_point: Vulnerability
     returns: Product
@@ -102,6 +101,7 @@ named_queries:
         direction: asc
 
   product_vulnerabilities:
+    mode: traversal
     description: Starting from a product, return KEV vulnerabilities that affect it.
     entry_point: Product
     returns: Vulnerability
@@ -120,6 +120,7 @@ named_queries:
         direction: asc
 
   vendor_products:
+    mode: traversal
     description: Starting from a vendor, return products published by that vendor.
     entry_point: Vendor
     returns: Product
@@ -137,6 +138,7 @@ named_queries:
         direction: asc
 
   vendor_vulnerabilities:
+    mode: traversal
     description: >
       Starting from a vendor, return vulnerabilities across that vendor's
       products, preserving the product evidence path.
@@ -357,7 +359,8 @@ workflows:
             vulnerable: $item.vulnerable
             version_logic: $item.version_logic
             source_last_modified_at: $item.source_last_modified_at
-            evidence_refs: $item.evidence_refs
+          evidence:
+            refs: $item.evidence_refs
             rationale: $item.rationale
         as: vulnerability_product
       - id: apply_reference_state

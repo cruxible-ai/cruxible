@@ -168,9 +168,6 @@ relationships:
       inventory_source: {}
       last_seen_at: {type: date}
       match_basis: {}
-      evidence_source: {}
-      evidence_refs: {type: json}
-      rationale: {}
     proposal_policy:
       signals:
         software_product_match:
@@ -193,10 +190,7 @@ relationships:
       affected_basis: {}
       exposure_basis: {}
       control_basis: {}
-      evidence_source: {}
-      evidence_refs: {type: json}
       review_due_at: {type: date, optional: true}
-      rationale: {}
     proposal_policy:
       signals:
         product_version_evidence:
@@ -220,9 +214,6 @@ relationships:
       exception_id: {}
       review_due_at: {type: date}
       scope_basis: {}
-      rationale: {}
-      evidence_source: {}
-      evidence_refs: {type: json}
     proposal_policy:
       signals:
         policy_review:
@@ -252,11 +243,10 @@ relationships:
     from: CompensatingControl
     to: VulnerabilityClass
     properties:
-      effect: {enum_ref: control_effect, optional: true}
+      effect: {enum_ref: control_effect, optional: false}
       validation_basis: {}
       verified_at: {type: date, optional: true}
       expires_at: {type: date, optional: true}
-      evidence_refs: {type: json, optional: true}
 
   - name: asset_remediated_vulnerability
     description: >
@@ -268,20 +258,19 @@ relationships:
     properties:
       remediation_type: {enum_ref: remediation_type}
       verified_at: {type: date, optional: true}
-      evidence_source: {}
-      evidence_refs: {type: json, optional: true}
       ticket_id: {optional: true}
-      rationale: {}
+      verification_basis: {}
     proposal_policy:
       signals:
         remediation_verification:
           role: required
           always_review_on_unsure: true
 
-# ─── Named queries (local-specific, traverse across both layers) ──────
+# ─── Named queries (local-specific, read across both layers) ──────────
 
 named_queries:
   vulnerability_asset_context:
+    mode: traversal
     description: >
       Starting from a vulnerability, return internal assets that run affected
       products, with the relationship evidence needed to tell whether each
@@ -403,6 +392,7 @@ named_queries:
         direction: asc
 
   product_asset_context:
+    mode: traversal
     description: >
       Starting from a reference product, return assets that run that product,
       with product-mapping evidence and side context for affected
@@ -493,7 +483,37 @@ named_queries:
       - by: $result.properties.hostname
         direction: asc
 
+  asset_vulnerability_postures_requiring_action:
+    mode: collection
+    description: >
+      Return existing asset-vulnerability posture relationships that represent
+      exposed work needing attention. This is a work-queue read surface for
+      current posture facts, not candidate discovery.
+    returns: asset_vulnerability_posture
+    result_shape: relationship
+    dedupe: none
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    where:
+      edge.properties.status:
+        eq: exposed
+    order_by:
+      - by: $relationship.properties.priority
+        direction: desc
+        enum_ref: criticality
+      - by: $from_entity.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $to_entity.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $from_entity.properties.hostname
+        direction: asc
+      - by: $to_entity.entity_id
+        direction: asc
+
   owner_patch_queue:
+    mode: traversal
     description: >
       Starting from an owner, return approved asset-vulnerability exposures
       across the owner's assets, excluding pairs already closed or covered by
@@ -567,6 +587,7 @@ named_queries:
         direction: asc
 
   vendor_service_impact:
+    mode: traversal
     description: >
       Starting from a vendor, trace through affected products, reviewable
       asset-vulnerability posture, and service dependencies to find business
@@ -657,6 +678,7 @@ named_queries:
         enum_ref: criticality
 
   control_coverage_gap:
+    mode: traversal
     description: >
       Starting from a compensating control, find the business services
       with asset-vulnerability posture tied to classes this control covers.
@@ -743,6 +765,7 @@ named_queries:
         enum_ref: criticality
 
   vulnerability_class_context:
+    mode: traversal
     description: >
       Starting from a vulnerability class, return reviewable vulnerability
       classifications in the class and include the compensating controls
@@ -1174,7 +1197,9 @@ workflows:
             validation_basis: $item.validation_basis
             verified_at: $item.verified_at
             expires_at: $item.expires_at
-            evidence_refs: $item.evidence_refs
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.validation_basis
         as: control_mitigation_edges
 
       # --- Apply ---
@@ -1217,8 +1242,10 @@ workflows:
           include_input: true
         as: inventory
       - id: reference_products
-        list_entities:
-          entity_type: Product
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Product
         as: reference_products
       - id: require_complete_reference_products
         assert_not_truncated:
@@ -1234,7 +1261,7 @@ workflows:
         provider: match_software_to_products
         input:
           inventory_items: $steps.inventory.items
-          reference_products: $steps.reference_products.items
+          reference_products: $steps.reference_products.results
         as: matches
       - id: match_summary
         aggregate_items:
@@ -1266,8 +1293,8 @@ workflows:
             inventory_source: $item.inventory_source
             last_seen_at: $item.last_seen_at
             match_basis: $item.match_basis
-            evidence_source: $item.evidence_source
-            evidence_refs: $item.evidence_refs
+          evidence:
+            refs: $item.evidence_refs
             rationale: $item.rationale
         as: candidates
       - id: signals
@@ -1276,7 +1303,8 @@ workflows:
           items: $steps.matches.items
           from_id: $item.asset_id
           to_id: $item.product_id
-          evidence: $item.evidence_source
+          evidence: $item.match_basis
+          evidence_refs: $item.evidence_refs
           score:
             path: match_score
             support_gte: 0.8
@@ -1304,8 +1332,11 @@ workflows:
       should drive action.
     steps:
       - id: asset_products
-        list_relationships:
-          relationship_type: asset_runs_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_runs_product
+          relationship_state: accepted
         as: asset_products
       - id: require_complete_asset_products
         assert_not_truncated:
@@ -1318,8 +1349,10 @@ workflows:
           value: 0
           message: Asset exposure proposal requires accepted asset-product mappings.
       - id: vulnerability_products
-        list_relationships:
-          relationship_type: vulnerability_affects_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_affects_product
         as: vulnerability_products
       - id: require_complete_vulnerability_products
         assert_not_truncated:
@@ -1333,8 +1366,8 @@ workflows:
           message: Asset exposure proposal requires reference vulnerability-product edges.
       - id: affected_product_join
         join_items:
-          left_items: $steps.asset_products.items
-          right_items: $steps.vulnerability_products.items
+          left_items: $steps.asset_products.results
+          right_items: $steps.vulnerability_products.results
           left_key: $item.to_id
           right_key: $item.to_id
           fields:
@@ -1348,8 +1381,10 @@ workflows:
           joined_product_edges: $steps.affected_product_join.items
         as: affected_assessments
       - id: assets
-        list_entities:
-          entity_type: Asset
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Asset
         as: assets
       - id: require_complete_assets
         assert_not_truncated:
@@ -1362,29 +1397,38 @@ workflows:
           value: 0
           message: Asset exposure proposal requires local Asset entities.
       - id: asset_controls
-        list_relationships:
-          relationship_type: asset_has_control
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_has_control
         as: asset_controls
       - id: require_complete_asset_controls
         assert_not_truncated:
           step: asset_controls
       - id: controls
-        list_entities:
-          entity_type: CompensatingControl
+        query:
+          mode: collection
+          result_shape: entity
+          returns: CompensatingControl
         as: controls
       - id: require_complete_controls
         assert_not_truncated:
           step: controls
       - id: vulnerability_classifications
-        list_relationships:
-          relationship_type: vulnerability_classified_as
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_classified_as
+          relationship_state: accepted
         as: vulnerability_classifications
       - id: require_complete_vulnerability_classifications
         assert_not_truncated:
           step: vulnerability_classifications
       - id: control_mitigations
-        list_relationships:
-          relationship_type: control_mitigates_class
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: control_mitigates_class
         as: control_mitigations
       - id: require_complete_control_mitigations
         assert_not_truncated:
@@ -1393,11 +1437,11 @@ workflows:
         provider: assess_asset_exposure
         input:
           affected_items: $steps.affected_assessments.items
-          assets: $steps.assets.items
-          asset_control_edges: $steps.asset_controls.items
-          controls: $steps.controls.items
-          vulnerability_classification_edges: $steps.vulnerability_classifications.items
-          control_mitigation_edges: $steps.control_mitigations.items
+          assets: $steps.assets.results
+          asset_control_edges: $steps.asset_controls.results
+          controls: $steps.controls.results
+          vulnerability_classification_edges: $steps.vulnerability_classifications.results
+          control_mitigation_edges: $steps.control_mitigations.results
         as: assessments
       - id: exposure_summary
         aggregate_items:
@@ -1440,8 +1484,8 @@ workflows:
             affected_basis: $item.affected_basis
             exposure_basis: $item.exposure_basis
             control_basis: $item.control_basis
-            evidence_source: $item.evidence_source
-            evidence_refs: $item.evidence_refs
+          evidence:
+            refs: $item.evidence_refs
             rationale: $item.rationale
         as: candidates
       - id: version_signals
@@ -1451,6 +1495,7 @@ workflows:
           from_id: $item.asset_id
           to_id: $item.cve_id
           evidence: $item.affected_basis
+          evidence_refs: $item.evidence_refs
           enum:
             path: affected_verdict
             map:
@@ -1465,6 +1510,7 @@ workflows:
           from_id: $item.asset_id
           to_id: $item.cve_id
           evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
           enum:
             path: exploitability_verdict
             map:
@@ -1479,6 +1525,7 @@ workflows:
           from_id: $item.asset_id
           to_id: $item.cve_id
           evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
           enum:
             path: control_verdict
             map:
@@ -1570,23 +1617,28 @@ workflows:
       longer supported.
     steps:
       - id: asset_products
-        list_relationships:
-          relationship_type: asset_runs_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_runs_product
+          relationship_state: accepted
         as: asset_products
       - id: require_complete_reconciliation_asset_products
         assert_not_truncated:
           step: asset_products
       - id: vulnerability_products
-        list_relationships:
-          relationship_type: vulnerability_affects_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_affects_product
         as: vulnerability_products
       - id: require_complete_reconciliation_vulnerability_products
         assert_not_truncated:
           step: vulnerability_products
       - id: reconciliation_product_join
         join_items:
-          left_items: $steps.asset_products.items
-          right_items: $steps.vulnerability_products.items
+          left_items: $steps.asset_products.results
+          right_items: $steps.vulnerability_products.results
           left_key: $item.to_id
           right_key: $item.to_id
           fields:
@@ -1600,15 +1652,21 @@ workflows:
           joined_product_edges: $steps.reconciliation_product_join.items
         as: affected_assessments
       - id: accepted_exposures
-        list_relationships:
-          relationship_type: asset_vulnerability_posture
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_vulnerability_posture
+          relationship_state: accepted
         as: accepted_exposures
       - id: require_complete_accepted_exposures
         assert_not_truncated:
           step: accepted_exposures
       - id: remediated_edges
-        list_relationships:
-          relationship_type: asset_remediated_vulnerability
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_remediated_vulnerability
+          relationship_state: accepted
         as: remediated_edges
       - id: require_complete_remediated_edges
         assert_not_truncated:
@@ -1616,11 +1674,11 @@ workflows:
       - id: reconciliation
         provider: assess_exposure_reconciliation
         input:
-          accepted_exposure_edges: $steps.accepted_exposures.items
+          accepted_exposure_edges: $steps.accepted_exposures.results
           affected_items: $steps.affected_assessments.items
-          asset_product_edges: $steps.asset_products.items
-          vulnerability_product_edges: $steps.vulnerability_products.items
-          remediated_edges: $steps.remediated_edges.items
+          asset_product_edges: $steps.asset_products.results
+          vulnerability_product_edges: $steps.vulnerability_products.results
+          remediated_edges: $steps.remediated_edges.results
         as: reconciliation
       - id: reconciliation_summary
         aggregate_items:
@@ -1647,8 +1705,9 @@ workflows:
           to_id: $item.cve_id
           properties:
             remediation_type: $item.remediation_type
-            evidence_source: $item.evidence_source
-            evidence_refs: $item.evidence_refs
+            verification_basis: $item.rationale
+          evidence:
+            refs: $item.evidence_refs
             rationale: $item.rationale
         as: candidates
       - id: remediation_signals
@@ -1658,6 +1717,7 @@ workflows:
           from_id: $item.asset_id
           to_id: $item.cve_id
           evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
           enum:
             path: verdict
             map:
@@ -1698,11 +1758,11 @@ feedback_profiles:
       stale_inventory:
         description: CMDB or software inventory data was outdated at match time.
         remediation_hint: provider_fix
-        required_scope_keys: [evidence_source]
+        required_scope_keys: [inventory_source]
     scope_keys:
       product: TO.product_name
       hostname: FROM.hostname
-      evidence_source: EDGE.evidence_source
+      inventory_source: EDGE.inventory_source
 
   asset_vulnerability_posture:
     version: 1

@@ -604,7 +604,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
 | `--source` | no | `human` | choice | Who produced this feedback (default: human). |
-| `--group-override` | no | `False` | boolean | Stamp edge with group_override property (edge must exist). |
+| `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -632,7 +632,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--reason-code` | no | `` | text | Structured feedback reason code. |
 | `--scope-hints` | no | `` | text | JSON object of structured scope hints. |
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
-| `--group-override` | no | `False` | boolean | Stamp selected edge with group_override property (edge must exist). |
+| `--group-override` | no | `False` | boolean | Mark selected edge assertion metadata as a group override (edge must exist). |
 | `--path-index` | no | `` | integer | Zero-based path segment index for path query rows. |
 | `--path-alias` | no | `` | text | Traversal alias for the selected path segment. |
 

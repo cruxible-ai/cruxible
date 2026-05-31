@@ -371,7 +371,7 @@ No configured constraints.
   - `version_mismatch` (`quality_check`): Matched correct product but installed version is wrong.
   - `wrong_product_match` (`provider_fix`): Fuzzy match linked asset to the wrong reference product.
 - Scope keys:
-  - `evidence_source`: `EDGE.evidence_source`
+  - `inventory_source`: `EDGE.inventory_source`
   - `hostname`: `FROM.hostname`
   - `product`: `TO.product_name`
 
@@ -502,16 +502,25 @@ reviews meant to support governed relationship proposals.
 The KEV graph stores accepted operational conclusions, not raw observation
 records. Scanner findings, EDR detections, SIEM alerts, reports, and
 postmortems remain evidence inputs. Providers, proposal traces, tri-state
-signals, receipts, `evidence_source`, and `evidence_refs` preserve those
-pointers while the graph stays focused on durable facts such as product
-matching, asset-vulnerability posture, remediation, scoped exceptions, control
-coverage, and vulnerability classification.
+signals, receipts, and structured evidence metadata preserve those pointers
+while the graph stays focused on durable facts such as product matching,
+asset-vulnerability posture, remediation, scoped exceptions, control coverage,
+and vulnerability classification.
+
+Relationship properties hold accepted domain facts: status, scope, product
+IDs, version details, basis fields, ticket IDs, and review dates. Supporting
+evidence for accepted relationships lives under
+`metadata.evidence.evidence_refs` and `metadata.evidence.rationale`.
+Provider and workflow payload rows may still carry top-level `evidence_refs`;
+workflow evidence mappings route those refs into relationship metadata when a
+proposal is accepted or deterministic relationships are applied.
 
 When an evidence artifact says a host was affected by a CVE, use it to support
 or challenge a governed relationship proposal. For example, cite the report in
-`evidence_refs` on `asset_vulnerability_posture`, `asset_remediated_vulnerability`,
-`asset_patch_exception_for`, or `vulnerability_classified_as` rather than
-creating a separate graph object for the source report itself.
+proposal member evidence for `asset_vulnerability_posture`,
+`asset_remediated_vulnerability`, `asset_patch_exception_for`, or
+`vulnerability_classified_as` rather than creating a separate graph object for
+the source report itself.
 
 `control_mitigates_class` is curated local state loaded by the canonical local
 build, not an agent-governed proposal. Agents should inspect it as context for

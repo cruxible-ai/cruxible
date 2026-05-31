@@ -63,7 +63,14 @@ def assess_asset_affected(
             continue
 
         installed_version = _first_non_empty(properties.get("installed_version")) or ""
-        source = _first_non_empty(properties.get("evidence_source")) or "asset_runs_product"
+        source = (
+            _first_non_empty(
+                properties.get("inventory_source"),
+                properties.get("evidence_source"),
+                properties.get("source"),
+            )
+            or "asset_runs_product"
+        )
         verdict, rationale = _assess_version_membership(
             installed_version,
             vulnerability_properties.get("affected_versions"),
@@ -81,8 +88,8 @@ def assess_asset_affected(
             "rationale": rationale,
             "verdict": verdict,
             "evidence_refs": merge_evidence_refs(
-                _evidence_refs(properties),
-                _evidence_refs(vulnerability_properties),
+                _evidence_refs(edge),
+                _evidence_refs(vulnerability_edge),
             ),
         }
         key = (asset_id, cve_id)
@@ -150,7 +157,7 @@ def assess_asset_exposure(
                 "control_id": control_id,
                 **control,
                 "evidence_refs": merge_evidence_refs(
-                    _evidence_refs(_edge_properties(edge)),
+                    _evidence_refs(edge),
                     _evidence_refs(control),
                 ),
             }
@@ -302,7 +309,7 @@ def assess_exposure_reconciliation(
                 "remediation_type": remediation_type,
                 "evidence_source": "kev_reference_reconciliation",
                 "evidence_refs": merge_evidence_refs(
-                    _evidence_refs(properties),
+                    _evidence_refs(edge),
                     [
                         evidence_ref(
                             "kev_reference_reconciliation",
@@ -402,7 +409,7 @@ def _classes_by_vulnerability(
             {
                 "class_id": class_id,
                 "properties": _edge_properties(edge),
-                "evidence_refs": _evidence_refs(_edge_properties(edge)),
+                "evidence_refs": _evidence_refs(edge),
             }
         )
     return {
@@ -434,7 +441,7 @@ def _mitigations_by_control_class(
                 "class_id": class_id,
                 "effect": effect,
                 "validation_basis": _first_non_empty(properties.get("validation_basis")) or "",
-                "evidence_refs": _evidence_refs(properties),
+                "evidence_refs": _evidence_refs(edge),
             }
         )
     return {
@@ -715,6 +722,15 @@ def _build_exposure_rationale(
 
 
 def _evidence_refs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        evidence = metadata.get("evidence")
+        if isinstance(evidence, dict) and isinstance(evidence.get("evidence_refs"), list):
+            return [
+                dict(ref)
+                for ref in evidence["evidence_refs"]
+                if isinstance(ref, dict)
+            ]
     refs = payload.get("evidence_refs")
     if isinstance(refs, list):
         return [dict(ref) for ref in refs if isinstance(ref, dict)]
