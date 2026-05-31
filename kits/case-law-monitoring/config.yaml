@@ -680,6 +680,7 @@ decision_policies:
 
 named_queries:
   matters_impacted_by_opinion:
+    mode: traversal
     description: Starting from an opinion, find matters judged affected by that opinion.
     entry_point: Opinion
     returns: Matter
@@ -688,6 +689,7 @@ named_queries:
         direction: outgoing
 
   client_impact_watch:
+    mode: traversal
     description: Starting from a client, find opinions judged to affect that client's matters.
     entry_point: Client
     returns: Opinion
@@ -698,6 +700,7 @@ named_queries:
         direction: incoming
 
   matter_statutory_scope:
+    mode: traversal
     description: Starting from a matter, find statutes and doctrines accepted as within the matter's legal scope.
     entry_point: Matter
     returns: Statute
@@ -706,6 +709,7 @@ named_queries:
         direction: outgoing
 
   adverse_authority_for_matter:
+    mode: traversal
     description: Starting from a matter, find opinions whose holdings undermine arguments in that matter.
     entry_point: Matter
     returns: Opinion
@@ -718,6 +722,7 @@ named_queries:
         direction: incoming
 
   supporting_authority_for_matter:
+    mode: traversal
     description: Starting from a matter, find opinions whose holdings support arguments in that matter.
     entry_point: Matter
     returns: Opinion
@@ -730,6 +735,7 @@ named_queries:
         direction: incoming
 
   negative_treatment_for_cited_authorities:
+    mode: traversal
     description: Starting from a matter, find new opinions that negatively treat authorities cited by matter arguments.
     entry_point: Matter
     returns: Opinion
@@ -742,6 +748,7 @@ named_queries:
         direction: incoming
 
   precedent_chain_for_issue:
+    mode: traversal
     description: Starting from a legal issue, find opinions with reviewed holdings that address the issue.
     entry_point: LegalIssue
     returns: Opinion
@@ -752,6 +759,7 @@ named_queries:
         direction: incoming
 
   statutory_interpretations_for_issue:
+    mode: traversal
     description: Starting from a legal issue, find statutes interpreted by holdings addressing that issue.
     entry_point: LegalIssue
     returns: Statute
@@ -762,6 +770,7 @@ named_queries:
         direction: outgoing
 
   review_items_for_matter:
+    mode: traversal
     description: Starting from a matter, find open or historical review items created by monitored opinions.
     entry_point: Matter
     returns: ReviewItem
@@ -770,6 +779,7 @@ named_queries:
         direction: incoming
 
   filing_response_obligations_for_matter:
+    mode: traversal
     description: Starting from a matter, find filings judged to require a response or deadline.
     entry_point: Matter
     returns: Filing
@@ -778,6 +788,7 @@ named_queries:
         direction: incoming
 
   deadline_watch:
+    mode: traversal
     description: Starting from an attorney, find deadlines across assigned matters.
     entry_point: Attorney
     returns: Deadline
@@ -788,6 +799,7 @@ named_queries:
         direction: outgoing
 
   argument_track_record:
+    mode: traversal
     description: Starting from an argument, find case outcomes where that argument was resolved or evaluated.
     entry_point: Argument
     returns: CaseOutcome
@@ -796,6 +808,7 @@ named_queries:
         direction: incoming
 
   case_outcomes_for_matter:
+    mode: traversal
     description: Starting from a matter, find case outcomes recorded for that matter.
     entry_point: Matter
     returns: CaseOutcome
@@ -804,6 +817,7 @@ named_queries:
         direction: incoming
 
   opinion_review_items:
+    mode: traversal
     description: Starting from an opinion, find review items created by that opinion.
     entry_point: Opinion
     returns: ReviewItem
@@ -1103,18 +1117,20 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: holdings
         provider: extract_holdings_from_opinions
         input:
-          opinions: $steps.opinions.items
+          opinions: $steps.opinions.results
         as: holdings
       - id: candidates
         make_candidates:
           relationship_type: opinion_has_holding
-          items: $steps.holdings.items
+          items: $steps.holdings.results
           from_type: Opinion
           from_id: $item.opinion_id
           to_type: Holding
@@ -1126,7 +1142,7 @@ workflows:
       - id: signals
         map_signals:
           signal_source: holding_extractor
-          items: $steps.holdings.items
+          items: $steps.holdings.results
           from_id: $item.opinion_id
           to_id: $item.holding_id
           evidence: $item.rationale
@@ -1153,28 +1169,36 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: holdings
-        list_entities:
-          entity_type: Holding
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Holding
         as: holdings
       - id: statutes
-        list_entities:
-          entity_type: Statute
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Statute
         as: statutes
       - id: opinion_holding_edges
-        list_relationships:
-          relationship_type: opinion_has_holding
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_has_holding
         as: opinion_holding_edges
       - id: interpretations
         provider: link_holdings_to_statutes
         input:
-          opinions: $steps.opinions.items
-          holdings: $steps.holdings.items
-          statutes: $steps.statutes.items
-          opinion_holding_edges: $steps.opinion_holding_edges.items
+          opinions: $steps.opinions.results
+          holdings: $steps.holdings.results
+          statutes: $steps.statutes.results
+          opinion_holding_edges: $steps.opinion_holding_edges.results
         as: interpretations
       - id: candidates
         make_candidates:
@@ -1218,23 +1242,29 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: holdings
-        list_entities:
-          entity_type: Holding
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Holding
         as: holdings
       - id: issues
-        list_entities:
-          entity_type: LegalIssue
+        query:
+          mode: collection
+          result_shape: entity
+          returns: LegalIssue
         as: issues
       - id: statute_edges
-        list_relationships:
-          relationship_type: holding_interprets_statute
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: holding_interprets_statute
         as: statute_edges
       - id: issue_links
         provider: map_holdings_to_issues
         input:
-          holdings: $steps.holdings.items
-          issues: $steps.issues.items
-          statute_edges: $steps.statute_edges.items
+          holdings: $steps.holdings.results
+          issues: $steps.issues.results
+          statute_edges: $steps.statute_edges.results
         as: issue_links
       - id: candidates
         make_candidates:
@@ -1278,18 +1308,22 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: citation_edges
-        list_relationships:
-          relationship_type: opinion_cites_opinion
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_cites_opinion
         as: citation_edges
       - id: treatments
         provider: classify_opinion_treatment
         input:
-          opinions: $steps.opinions.items
-          citation_edges: $steps.citation_edges.items
+          opinions: $steps.opinions.results
+          citation_edges: $steps.citation_edges.results
         as: treatments
       - id: candidates
         make_candidates:
@@ -1333,28 +1367,36 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: holdings
-        list_entities:
-          entity_type: Holding
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Holding
         as: holdings
       - id: arguments
-        list_entities:
-          entity_type: Argument
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Argument
         as: arguments
       - id: holding_issue_edges
-        list_relationships:
-          relationship_type: holding_addresses_issue
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: holding_addresses_issue
         as: holding_issue_edges
       - id: argument_issue_edges
-        list_relationships:
-          relationship_type: argument_raises_issue
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: argument_raises_issue
         as: argument_issue_edges
       - id: impacts
         provider: assess_argument_impact
         input:
-          holdings: $steps.holdings.items
-          arguments: $steps.arguments.items
-          holding_issue_edges: $steps.holding_issue_edges.items
-          argument_issue_edges: $steps.argument_issue_edges.items
+          holdings: $steps.holdings.results
+          arguments: $steps.arguments.results
+          holding_issue_edges: $steps.holding_issue_edges.results
+          argument_issue_edges: $steps.argument_issue_edges.results
         as: impacts
       - id: candidates
         make_candidates:
@@ -1398,28 +1440,36 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: holdings
-        list_entities:
-          entity_type: Holding
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Holding
         as: holdings
       - id: arguments
-        list_entities:
-          entity_type: Argument
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Argument
         as: arguments
       - id: holding_issue_edges
-        list_relationships:
-          relationship_type: holding_addresses_issue
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: holding_addresses_issue
         as: holding_issue_edges
       - id: argument_issue_edges
-        list_relationships:
-          relationship_type: argument_raises_issue
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: argument_raises_issue
         as: argument_issue_edges
       - id: impacts
         provider: assess_argument_impact
         input:
-          holdings: $steps.holdings.items
-          arguments: $steps.arguments.items
-          holding_issue_edges: $steps.holding_issue_edges.items
-          argument_issue_edges: $steps.argument_issue_edges.items
+          holdings: $steps.holdings.results
+          arguments: $steps.arguments.results
+          holding_issue_edges: $steps.holding_issue_edges.results
+          argument_issue_edges: $steps.argument_issue_edges.results
         as: impacts
       - id: candidates
         make_candidates:
@@ -1463,18 +1513,22 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: matters
-        list_entities:
-          entity_type: Matter
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
         as: matters
       - id: statutes
-        list_entities:
-          entity_type: Statute
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Statute
         as: statutes
       - id: scope_matches
         provider: scope_matters_to_statutes
         input:
-          matters: $steps.matters.items
-          statutes: $steps.statutes.items
+          matters: $steps.matters.results
+          statutes: $steps.statutes.results
         as: scope_matches
       - id: candidates
         make_candidates:
@@ -1518,38 +1572,50 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: matters
-        list_entities:
-          entity_type: Matter
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
         as: matters
       - id: support_edges
-        list_relationships:
-          relationship_type: holding_supports_argument
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: holding_supports_argument
         as: support_edges
       - id: undermine_edges
-        list_relationships:
-          relationship_type: holding_undermines_argument
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: holding_undermines_argument
         as: undermine_edges
       - id: treatment_edges
-        list_relationships:
-          relationship_type: opinion_treats_opinion
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_treats_opinion
         as: treatment_edges
       - id: matter_statute_edges
-        list_relationships:
-          relationship_type: matter_turns_on_statute
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: matter_turns_on_statute
         as: matter_statute_edges
       - id: impacts
         provider: assess_matter_impact
         input:
-          opinions: $steps.opinions.items
-          matters: $steps.matters.items
-          support_edges: $steps.support_edges.items
-          undermine_edges: $steps.undermine_edges.items
-          treatment_edges: $steps.treatment_edges.items
-          matter_statute_edges: $steps.matter_statute_edges.items
+          opinions: $steps.opinions.results
+          matters: $steps.matters.results
+          support_edges: $steps.support_edges.results
+          undermine_edges: $steps.undermine_edges.results
+          treatment_edges: $steps.treatment_edges.results
+          matter_statute_edges: $steps.matter_statute_edges.results
         as: impacts
       - id: candidates
         make_candidates:
@@ -1594,23 +1660,29 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: filings
-        list_entities:
-          entity_type: Filing
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Filing
         as: filings
       - id: matters
-        list_entities:
-          entity_type: Matter
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
         as: matters
       - id: deadlines
-        list_entities:
-          entity_type: Deadline
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Deadline
         as: deadlines
       - id: obligations
         provider: assess_filing_response_obligations
         input:
-          filings: $steps.filings.items
-          matters: $steps.matters.items
-          deadlines: $steps.deadlines.items
+          filings: $steps.filings.results
+          matters: $steps.matters.results
+          deadlines: $steps.deadlines.results
         as: obligations
       - id: candidates
         make_candidates:
@@ -1669,28 +1741,36 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: matters
-        list_entities:
-          entity_type: Matter
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
         as: matters
       - id: matter_impact_edges
-        list_relationships:
-          relationship_type: opinion_affects_matter
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_affects_matter
         as: matter_impact_edges
       - id: treatment_edges
-        list_relationships:
-          relationship_type: opinion_treats_opinion
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_treats_opinion
         as: treatment_edges
       - id: review_items
         provider: route_review_items
         input:
-          opinions: $steps.opinions.items
-          matters: $steps.matters.items
-          matter_impact_edges: $steps.matter_impact_edges.items
-          treatment_edges: $steps.treatment_edges.items
+          opinions: $steps.opinions.results
+          matters: $steps.matters.results
+          matter_impact_edges: $steps.matter_impact_edges.results
+          treatment_edges: $steps.treatment_edges.results
         as: review_items
       - id: candidates
         make_candidates:
@@ -1734,33 +1814,43 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: opinions
-        list_entities:
-          entity_type: Opinion
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Opinion
         as: opinions
       - id: matters
-        list_entities:
-          entity_type: Matter
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
         as: matters
       - id: matter_impact_edges
-        list_relationships:
-          relationship_type: opinion_affects_matter
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_affects_matter
         as: matter_impact_edges
       - id: treatment_edges
-        list_relationships:
-          relationship_type: opinion_treats_opinion
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_treats_opinion
         as: treatment_edges
       - id: created_review_items
-        list_relationships:
-          relationship_type: opinion_creates_review_item
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_creates_review_item
         as: created_review_items
       - id: review_items
         provider: route_review_items
         input:
-          opinions: $steps.opinions.items
-          matters: $steps.matters.items
-          matter_impact_edges: $steps.matter_impact_edges.items
-          treatment_edges: $steps.treatment_edges.items
-          created_review_items: $steps.created_review_items.items
+          opinions: $steps.opinions.results
+          matters: $steps.matters.results
+          matter_impact_edges: $steps.matter_impact_edges.results
+          treatment_edges: $steps.treatment_edges.results
+          created_review_items: $steps.created_review_items.results
         as: review_items
       - id: candidates
         make_candidates:

@@ -615,6 +615,7 @@ relationships:
 
 named_queries:
   incident_impacted_suppliers:
+    mode: traversal
     description: Starting from an incident, find suppliers judged impacted.
     entry_point: Incident
     returns: Supplier
@@ -623,6 +624,7 @@ named_queries:
         direction: outgoing
 
   incident_impacted_components:
+    mode: traversal
     description: Starting from an incident, find components judged impacted via the supplier cascade.
     entry_point: Incident
     returns: Component
@@ -631,6 +633,7 @@ named_queries:
         direction: outgoing
 
   incident_impacted_assemblies:
+    mode: traversal
     description: >
       Starting from an incident, find assemblies judged impacted via direct
       supplier-to-assembly cascade.
@@ -641,6 +644,7 @@ named_queries:
         direction: outgoing
 
   incident_exposed_assembly_context:
+    mode: traversal
     description: >
       Starting from an incident, derive assembly context exposed by accepted
       supplier, component, or direct assembly impacts through supply and BOM
@@ -655,6 +659,7 @@ named_queries:
         max_depth: 8
 
   incident_component_exposed_products:
+    mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
       accepted component impacts and the component/assembly BOM hierarchy.
@@ -672,6 +677,7 @@ named_queries:
         direction: outgoing
 
   incident_direct_assembly_exposed_products:
+    mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
       accepted direct assembly impacts where the assembly is a top-level
@@ -685,6 +691,7 @@ named_queries:
         direction: outgoing
 
   incident_nested_assembly_exposed_products:
+    mode: traversal
     description: >
       Starting from an incident, derive finished products exposed through
       accepted direct assembly impacts and higher-level parent assemblies.
@@ -700,6 +707,7 @@ named_queries:
         direction: outgoing
 
   single_source_components_for_incident:
+    mode: traversal
     description: >
       Starting from an incident, find impacted components that have only one
       viable supplier path. Surfaces the "no viable alternate supplier"
@@ -713,6 +721,7 @@ named_queries:
           alternate_state: no_alternate
 
   single_source_assemblies_for_incident:
+    mode: traversal
     description: >
       Starting from an incident, find impacted directly supplied assemblies
       that have only one viable supplier path.
@@ -725,6 +734,7 @@ named_queries:
           alternate_state: no_alternate
 
   supplier_supplied_components:
+    mode: traversal
     description: Starting from a supplier, find directly supplied components.
     entry_point: Supplier
     returns: Component
@@ -733,6 +743,7 @@ named_queries:
         direction: outgoing
 
   supplier_supplied_assemblies:
+    mode: traversal
     description: Starting from a supplier, find directly supplied assemblies.
     entry_point: Supplier
     returns: Assembly
@@ -741,6 +752,7 @@ named_queries:
         direction: outgoing
 
   component_parent_assemblies:
+    mode: traversal
     description: >
       Starting from a component, find direct and higher-level parent assemblies
       in the BOM hierarchy.
@@ -752,6 +764,7 @@ named_queries:
         max_depth: 8
 
   assembly_child_components:
+    mode: traversal
     description: Starting from an assembly, find direct child components.
     entry_point: Assembly
     returns: Component
@@ -760,6 +773,7 @@ named_queries:
         direction: incoming
 
   assembly_child_assemblies:
+    mode: traversal
     description: Starting from an assembly, find direct child assemblies.
     entry_point: Assembly
     returns: Assembly
@@ -768,6 +782,7 @@ named_queries:
         direction: incoming
 
   product_top_level_assemblies:
+    mode: traversal
     description: Starting from a product, find top-level assemblies in its BOM.
     entry_point: Product
     returns: Assembly
@@ -776,6 +791,7 @@ named_queries:
         direction: incoming
 
   product_shipments:
+    mode: traversal
     description: Starting from a product, find shipments containing it.
     entry_point: Product
     returns: Shipment
@@ -784,6 +800,7 @@ named_queries:
         direction: outgoing
 
   product_buffer_assessments:
+    mode: traversal
     description: Starting from a product, find current buffer assessments used for product exposure context.
     entry_point: Product
     returns: BufferAssessment
@@ -792,6 +809,7 @@ named_queries:
         direction: outgoing
 
   component_inventory_positions:
+    mode: traversal
     description: Starting from a component, find inventory positions for that component.
     entry_point: Component
     returns: InventoryPosition
@@ -800,6 +818,7 @@ named_queries:
         direction: outgoing
 
   assembly_inventory_positions:
+    mode: traversal
     description: Starting from an assembly, find inventory positions for that assembly.
     entry_point: Assembly
     returns: InventoryPosition
@@ -808,6 +827,7 @@ named_queries:
         direction: outgoing
 
   shipment_products:
+    mode: traversal
     description: Starting from a shipment, find products contained in it.
     entry_point: Shipment
     returns: Product
@@ -816,6 +836,7 @@ named_queries:
         direction: incoming
 
   supplier_impacting_incidents:
+    mode: traversal
     description: Starting from a supplier, find incidents judged to impact it.
     entry_point: Supplier
     returns: Incident
@@ -824,6 +845,7 @@ named_queries:
         direction: incoming
 
   product_component_impacting_incidents:
+    mode: traversal
     description: Starting from a product, find incidents that impact components in its BOM.
     entry_point: Product
     returns: Incident
@@ -837,6 +859,7 @@ named_queries:
         direction: incoming
 
   product_direct_assembly_impacting_incidents:
+    mode: traversal
     description: Starting from a product, find incidents that directly impact top-level assemblies in its BOM.
     entry_point: Product
     returns: Incident
@@ -847,6 +870,7 @@ named_queries:
         direction: incoming
 
   product_nested_assembly_impacting_incidents:
+    mode: traversal
     description: Starting from a product, find incidents that directly impact nested assemblies in its BOM.
     entry_point: Product
     returns: Incident
@@ -860,6 +884,7 @@ named_queries:
         direction: incoming
 
   assembly_impacting_incidents:
+    mode: traversal
     description: Starting from an assembly, find incidents judged to impact it directly.
     entry_point: Assembly
     returns: Incident
@@ -2256,53 +2281,71 @@ workflows:
     contract_in: BufferCoverageRefreshInput
     steps:
       - id: components
-        list_entities:
-          entity_type: Component
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Component
         as: components
       - id: assemblies
-        list_entities:
-          entity_type: Assembly
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Assembly
         as: assemblies
       - id: products
-        list_entities:
-          entity_type: Product
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Product
         as: products
       - id: inventory_positions
-        list_entities:
-          entity_type: InventoryPosition
+        query:
+          mode: collection
+          result_shape: entity
+          returns: InventoryPosition
         as: inventory_positions
       - id: component_inventory
-        list_relationships:
-          relationship_type: component_inventory_position
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: component_inventory_position
         as: component_inventory
       - id: assembly_inventory
-        list_relationships:
-          relationship_type: assembly_inventory_position
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_inventory_position
         as: assembly_inventory
       - id: component_assembly
-        list_relationships:
-          relationship_type: component_part_of_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: component_part_of_assembly
         as: component_assembly
       - id: assembly_recursive
-        list_relationships:
-          relationship_type: assembly_part_of_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_part_of_assembly
         as: assembly_recursive
       - id: assembly_product
-        list_relationships:
-          relationship_type: assembly_part_of_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_part_of_product
         as: assembly_product
       - id: assessments
         provider: assess_buffer_coverage
         input:
-          components: $steps.components.items
-          assemblies: $steps.assemblies.items
-          products: $steps.products.items
-          inventory_positions: $steps.inventory_positions.items
-          component_inventory_position_edges: $steps.component_inventory.items
-          assembly_inventory_position_edges: $steps.assembly_inventory.items
-          component_part_of_assembly_edges: $steps.component_assembly.items
-          assembly_part_of_assembly_edges: $steps.assembly_recursive.items
-          assembly_part_of_product_edges: $steps.assembly_product.items
+          components: $steps.components.results
+          assemblies: $steps.assemblies.results
+          products: $steps.products.results
+          inventory_positions: $steps.inventory_positions.results
+          component_inventory_position_edges: $steps.component_inventory.results
+          assembly_inventory_position_edges: $steps.assembly_inventory.results
+          component_part_of_assembly_edges: $steps.component_assembly.results
+          assembly_part_of_assembly_edges: $steps.assembly_recursive.results
+          assembly_part_of_product_edges: $steps.assembly_product.results
           demand_context: $input.demand_context
         as: assessments
     returns: assessments
@@ -2319,18 +2362,22 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: incidents
-        list_entities:
-          entity_type: Incident
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Incident
         as: incidents
       - id: suppliers
-        list_entities:
-          entity_type: Supplier
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Supplier
         as: suppliers
       - id: assessments
         provider: assess_incident_supplier_scope
         input:
-          incidents: $steps.incidents.items
-          suppliers: $steps.suppliers.items
+          incidents: $steps.incidents.results
+          suppliers: $steps.suppliers.results
         as: assessments
       - id: candidates
         make_candidates:
@@ -2382,23 +2429,29 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: impacted_supplier_edges
-        list_relationships:
-          relationship_type: incident_impacts_supplier
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_supplier
         as: impacted_supplier_edges
       - id: supplies_edges
-        list_relationships:
-          relationship_type: supplier_supplies_component
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: supplier_supplies_component
         as: supplies_edges
       - id: components
-        list_entities:
-          entity_type: Component
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Component
         as: components
       - id: assessments
         provider: assess_incident_component_cascade
         input:
-          impacted_supplier_edges: $steps.impacted_supplier_edges.items
-          supplier_supplies_component_edges: $steps.supplies_edges.items
-          components: $steps.components.items
+          impacted_supplier_edges: $steps.impacted_supplier_edges.results
+          supplier_supplies_component_edges: $steps.supplies_edges.results
+          components: $steps.components.results
         as: assessments
       - id: candidates
         make_candidates:
@@ -2450,23 +2503,29 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: impacted_supplier_edges
-        list_relationships:
-          relationship_type: incident_impacts_supplier
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_supplier
         as: impacted_supplier_edges
       - id: assembly_supply_edges
-        list_relationships:
-          relationship_type: supplier_supplies_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: supplier_supplies_assembly
         as: assembly_supply_edges
       - id: assemblies
-        list_entities:
-          entity_type: Assembly
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Assembly
         as: assemblies
       - id: assessments
         provider: assess_incident_assembly_cascade
         input:
-          impacted_supplier_edges: $steps.impacted_supplier_edges.items
-          supplier_supplies_assembly_edges: $steps.assembly_supply_edges.items
-          assemblies: $steps.assemblies.items
+          impacted_supplier_edges: $steps.impacted_supplier_edges.results
+          supplier_supplies_assembly_edges: $steps.assembly_supply_edges.results
+          assemblies: $steps.assemblies.results
         as: assessments
       - id: candidates
         make_candidates:
@@ -2520,63 +2579,85 @@ workflows:
     contract_in: EmptyInput
     steps:
       - id: impacted_component_edges
-        list_relationships:
-          relationship_type: incident_impacts_component
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_component
         as: impacted_component_edges
       - id: impacted_assembly_edges
-        list_relationships:
-          relationship_type: incident_impacts_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: incident_impacts_assembly
         as: impacted_assembly_edges
       - id: component_assembly
-        list_relationships:
-          relationship_type: component_part_of_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: component_part_of_assembly
         as: component_assembly
       - id: assembly_recursive
-        list_relationships:
-          relationship_type: assembly_part_of_assembly
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_part_of_assembly
         as: assembly_recursive
       - id: assembly_product
-        list_relationships:
-          relationship_type: assembly_part_of_product
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_part_of_product
         as: assembly_product
       - id: buffer_assessments
-        list_entities:
-          entity_type: BufferAssessment
+        query:
+          mode: collection
+          result_shape: entity
+          returns: BufferAssessment
         as: buffer_assessments
       - id: component_buffers
-        list_relationships:
-          relationship_type: component_buffer_assessment
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: component_buffer_assessment
         as: component_buffers
       - id: assembly_buffers
-        list_relationships:
-          relationship_type: assembly_buffer_assessment
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: assembly_buffer_assessment
         as: assembly_buffers
       - id: product_buffers
-        list_relationships:
-          relationship_type: product_buffer_assessment
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: product_buffer_assessment
         as: product_buffers
       - id: assemblies
-        list_entities:
-          entity_type: Assembly
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Assembly
         as: assemblies
       - id: products
-        list_entities:
-          entity_type: Product
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Product
         as: products
       - id: assessments
         provider: assess_incident_product_exposure
         input:
-          impacted_component_edges: $steps.impacted_component_edges.items
-          impacted_assembly_edges: $steps.impacted_assembly_edges.items
-          component_part_of_assembly_edges: $steps.component_assembly.items
-          assembly_part_of_assembly_edges: $steps.assembly_recursive.items
-          assembly_part_of_product_edges: $steps.assembly_product.items
-          buffer_assessments: $steps.buffer_assessments.items
-          component_buffer_assessment_edges: $steps.component_buffers.items
-          assembly_buffer_assessment_edges: $steps.assembly_buffers.items
-          product_buffer_assessment_edges: $steps.product_buffers.items
-          assemblies: $steps.assemblies.items
-          products: $steps.products.items
+          impacted_component_edges: $steps.impacted_component_edges.results
+          impacted_assembly_edges: $steps.impacted_assembly_edges.results
+          component_part_of_assembly_edges: $steps.component_assembly.results
+          assembly_part_of_assembly_edges: $steps.assembly_recursive.results
+          assembly_part_of_product_edges: $steps.assembly_product.results
+          buffer_assessments: $steps.buffer_assessments.results
+          component_buffer_assessment_edges: $steps.component_buffers.results
+          assembly_buffer_assessment_edges: $steps.assembly_buffers.results
+          product_buffer_assessment_edges: $steps.product_buffers.results
+          assemblies: $steps.assemblies.results
+          products: $steps.products.results
         as: assessments
     returns: assessments
 

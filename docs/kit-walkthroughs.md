@@ -69,6 +69,7 @@ relationships:
 
 named_queries:
   asset_owner:
+    mode: traversal
     entry_point: Asset
     returns: Owner
     result_shape: path
@@ -81,7 +82,9 @@ For operational queries, keep the traversal focused on the primary question and
 use `include` for bounded side context that should travel with each result row,
 such as owners, services, controls, exceptions, or patch windows. Use
 `required: false` only for optional follow-on traversal where a matched neighbor
-should become the next `$result`.
+should become the next `$result`. Use `mode: collection` only for entryless
+entity or relationship collection queries; traversal queries must declare
+`mode: traversal` and an `entry_point`.
 
 ### 3. Add A Provider Only For Source Adaptation
 

@@ -217,7 +217,7 @@ relationships:
     to: Vulnerability
     properties:
       installed_version: {}
-      rationale: {}
+      affected_basis: {}
     proposal_policy:
       signals:
         product_version_evidence:
@@ -289,11 +289,14 @@ proposal_policy:
 
 ## named_queries
 
-A dict of declarative traversal patterns. Each query defines an entry point and a sequence of traversal steps.
+A dict of declarative query definitions. Every query declares an explicit
+`mode`: `traversal` starts from an entry entity and walks relationship steps;
+`collection` enumerates one entity type or relationship type directly.
 
 ```yaml
 named_queries:
   parts_for_vehicle:
+    mode: traversal
     description: "Find all parts that fit a specific vehicle"
     entry_point: Vehicle
     traversal:
@@ -304,6 +307,7 @@ named_queries:
     returns: "list[Part]"
 
   compatible_replacements:
+    mode: traversal
     description: "Find replacement parts that also fit the same vehicle"
     entry_point: Part
     traversal:
@@ -315,20 +319,31 @@ named_queries:
         direction: outgoing
         constraint: "target.vehicle_id == $vehicle_id"
     returns: "list[Part]"
+
+  all_active_fitments:
+    mode: collection
+    description: "List live fitment relationships"
+    result_shape: relationship
+    returns: fits
+    where:
+      edge.properties.verified:
+        eq: true
 ```
 
 ### NamedQuerySchema
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `mode` | string | **yes** | — | Query mode: `traversal` or `collection` |
 | `description` | string | no | `null` | Human-readable description |
-| `entry_point` | string | **yes** | — | Entity type to start the traversal from |
-| `traversal` | list | **yes** | — | Sequence of traversal steps |
+| `entry_point` | string | for traversal | — | Entity type to start a traversal query from; invalid for collection queries |
+| `traversal` | list | for traversal | — | Non-empty sequence of traversal steps; invalid for collection queries |
 | `returns` | string | **yes** | — | Description of the return type |
 | `result_shape` | string | no | `"path"` | Output shape: `entity`, `path`, or `relationship` |
 | `dedupe` | string | no | shape-dependent | Result dedupe mode: `entity`, `path`, or `none`. Entity queries default to `entity`; path and relationship queries default to `path`. |
 | `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, `pending`, or `reviewable` |
 | `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
+| `where` | dict | no | `null` | Top-level predicate map for collection queries; invalid for traversal queries |
 | `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
 | `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`), and optional ordered `enum_ref`. |
 | `include` | dict | no | `{}` | One-hop side-context includes keyed by alias. Includes decorate each primary row without advancing traversal or fanning out primary rows. |
@@ -337,10 +352,13 @@ named_queries:
 | `max_paths_per_result` | int | no | `null` | Post-traversal final retained-path-per-result cap applied after traversal/dedupe, before ordering and `limit`. It does not bound traversal work. |
 
 Validation rules:
+- `mode: collection` queries omit `entry_point`, `traversal`, `include`, `max_paths`, and `max_paths_per_result`.
+- Collection queries support `result_shape: entity` with `returns` set to an entity type, or `result_shape: relationship` with `returns` set to a canonical relationship name. Reverse aliases are rejected so direction is unambiguous.
+- `mode: traversal` queries require `entry_point` and at least one traversal step. Put filters on traversal steps, include blocks, or related predicates; top-level `where` is reserved for collection queries.
 - `result_shape: entity` requires `dedupe: entity`.
 - `result_shape: relationship` requires `dedupe: path` or `none`.
 - `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.
-- `relationship_state: reviewable` requires `result_shape: path`, and does not allow `dedupe: entity`.
+- `relationship_state: reviewable` requires traversal `result_shape: path` or collection `result_shape: relationship`, and does not allow `dedupe: entity`.
 - `required: false` traversal steps are optional continuations, not independent context enrichment. They require `result_shape: path` or `relationship`.
 - `result_shape: relationship` may use `required: false` optional-continuation steps only when the final returned relationship step is still required.
 - `max_paths` and `max_paths_per_result` require `result_shape: path` or `relationship`, and must be positive integers when set.
@@ -381,6 +399,7 @@ Projection and ordering example:
 ```yaml
 named_queries:
   remediation_exposure_context:
+    mode: traversal
     entry_point: Vulnerability
     returns: Asset
     result_shape: path
@@ -418,6 +437,7 @@ Include example:
 ```yaml
 named_queries:
   vulnerability_asset_context:
+    mode: traversal
     entry_point: Vulnerability
     returns: Asset
     result_shape: path
@@ -509,6 +529,7 @@ context that is not worth baking into the named query contract.
 ```yaml
 named_queries:
   pending_exposures:
+    mode: traversal
     entry_point: Vulnerability
     returns: asset_vulnerability_posture
     result_shape: relationship
@@ -1192,25 +1213,23 @@ Each step must define exactly one of these operations:
 | Step type | Purpose | Key fields |
 |-----------|---------|------------|
 | `provider` | Call a registered provider | `provider`, `input`, `as` |
-| `query` | Run a named query | `query`, `params`, `as` |
+| `query` | Run a named query or inline query definition | `query`, `params?`, `relationship_state?`, `as` |
 | `assert` | Guard condition — fail the workflow if not met | `assert: {left, op, right, message}` |
 | `assert_not_truncated` | Guard that read/query context was not truncated | `assert_not_truncated: {step}` |
 | `assert_count` | Guard a read/result collection count | `assert_count: {step, count, op, value}` |
 | `assert_exists` | Guard that one intermediate reference resolves to a present value | `assert_exists: {ref, message?}` |
-| `list_entities` | Read entity rows from current graph state into a workflow payload | `list_entities: {entity_type, property_filter?, limit?}`, `as` |
-| `list_relationships` | Read relationship rows from current graph state into a workflow payload | `list_relationships: {relationship_type, property_filter?, limit?}`, `as` |
 | `shape_items` | Project, rename, require, and cast list-shaped rows | `shape_items: {items, include_input?, rename?, fields?, casts?, required?}`, `as` |
 | `join_items` | Indexed inner join over two item sets | `join_items: {left_items, right_items, left_key, right_key, fields}`, `as` |
 | `filter_items` | Filter rows with exact filters and comparisons | `filter_items: {items, where?, comparisons?}`, `as` |
 | `aggregate_items` | Deterministically summarize rows with grouped measures | `aggregate_items: {items, group_by?, measures}`, `as` |
 | `dedupe_items` | Deterministically deduplicate rows | `dedupe_items: {items, keys, strategy?, rank?}`, `as` |
 | `make_entities` | Build an entity set from list data | `make_entities: {entity_type, items, entity_id, properties}`, `as` |
-| `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
+| `make_relationships` | Build a relationship set from list data | `make_relationships: {relationship_type, items, from_type, from_id, to_type, to_id, properties, evidence?}`, `as` |
 | `apply_entities` | Apply a built entity set to graph state | `apply_entities: {entities_from}`, `as` |
 | `apply_relationships` | Apply a built relationship set to graph state | `apply_relationships: {relationships_from}`, `as` |
 | `apply_all` | Apply explicit entity sets, then relationship sets | `apply_all: {entities_from, relationships_from}`, `as` |
-| `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties}`, `as` |
-| `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, score/enum}`, `as` |
+| `make_candidates` | Build relationship candidates for governed proposals | `make_candidates: {relationship_type, items, from_type, from_id, to_type, to_id, properties, evidence?}`, `as` |
+| `map_signals` | Convert provider output to tri-state signal-source evidence | `map_signals: {signal_source, items, from_id, to_id, evidence?, evidence_refs?, score/enum}`, `as` |
 | `propose_relationship_group` | Assemble a governed group proposal from candidates + signals | `propose_relationship_group: {relationship_type, candidates_from, signals_from, on_empty?}`, `as` |
 
 ### Step Reference Syntax
@@ -1225,9 +1244,14 @@ Steps reference data from prior steps and the current item in list iterations:
 | `$item` | Current item when iterating over a list (used inside `make_*` and `map_signals`) |
 | `$item.<field>` | A specific field on the current item |
 
+Use `evidence` on `make_candidates`/`make_relationships` and
+`evidence_refs` on `map_signals` for provenance pointers that should follow a
+proposal or deterministic relationship into `relationship.metadata.evidence`.
+Keep relationship `properties` for domain facts such as basis, status, version,
+or scope fields.
+
 **Read-step outputs:**
-- `list_entities` returns `{items: [...], total: N}` where each item is an entity object with `entity_type`, `entity_id`, and `properties`.
-- `list_relationships` returns `{items: [...], total: N}` where each item is a relationship object with `from_id`, `to_id`, `relationship_type`, and `properties`.
+- `query` returns `{results: [...], total_results, returned_results, ...}` using the same result rows and metadata as the query engine.
 - `shape_items` returns `{items, input_count, output_count, dropped_count, drop_examples}`.
 - `join_items` returns `{items, left_count, right_count, skipped_right_count, matched_left_count, output_count}`.
 - `filter_items` returns `{items, input_count, output_count, filtered_count}`.
@@ -1240,6 +1264,46 @@ and `truncation_reasons`. Query steps additionally expose `result_shape`,
 `dedupe`, `relationship_state`, `policy_summary`, and the child query
 `receipt_id`. Transform steps that consume read output preserve that metadata in
 `source_metadata`.
+
+Workflow graph reads are query-engine-backed. Reusable product/API surfaces
+should normally be named queries. Workflow-local collection reads can use an
+inline `mode: collection` query definition:
+
+```yaml
+- id: production_assets
+  query:
+    mode: collection
+    result_shape: entity
+    returns: Asset
+    where:
+      result.properties.environment:
+        eq: production
+    order_by:
+      - by: $result.entity_id
+        direction: asc
+  as: production_assets
+
+- id: accepted_asset_products
+  query:
+    mode: collection
+    result_shape: relationship
+    returns: asset_runs_product
+    relationship_state: accepted
+  as: asset_products
+```
+
+Collection queries omit `entry_point` and do not define
+`traversal`. `result_shape: entity` enumerates entities of `returns`;
+`result_shape: relationship` enumerates relationships of `returns` using the
+query engine's relationship-state semantics. `result_shape: path` is invalid
+for collection queries. Downstream steps consume query rows through
+`$steps.<alias>.results`, not `items`.
+
+Older workflow-specific `list_entities` and `list_relationships` read steps
+are not supported. Moving collection reads into `query` keeps filtering,
+ordering, relationship visibility, receipts, truncation metadata, and query
+evidence in one engine instead of duplicating graph-read semantics in
+workflow code.
 
 ### Guarding Partial Read Context
 
@@ -1550,7 +1614,7 @@ relationships:
     to: Vulnerability
     properties:
       installed_version: {}
-      rationale: {}
+      affected_basis: {}
     proposal_policy:
       signals:
         product_version_evidence:
@@ -1561,6 +1625,7 @@ relationships:
 
 named_queries:
   affected_assets_for_vulnerability:
+    mode: traversal
     description: Find internal assets accepted as affected by a vulnerability.
     entry_point: Vulnerability
     returns: Asset
@@ -1569,6 +1634,7 @@ named_queries:
         direction: incoming
 
   owner_patch_queue:
+    mode: traversal
     description: Find vulnerabilities affecting an owner's assets.
     entry_point: Owner
     returns: Vulnerability

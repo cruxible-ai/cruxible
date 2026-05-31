@@ -81,6 +81,7 @@ relationships:
 named_queries:
   parts_for_vehicle:
     description: "Find all parts that fit a specific vehicle"
+    mode: traversal
     entry_point: Vehicle
     traversal:
       - relationship: fits
@@ -91,6 +92,7 @@ named_queries:
 
   vehicles_for_part:
     description: "Find all vehicles a part fits"
+    mode: traversal
     entry_point: Part
     traversal:
       - relationship: fits
@@ -99,6 +101,7 @@ named_queries:
 
   compatible_replacements:
     description: "Find replacement parts that also fit the same vehicle"
+    mode: traversal
     entry_point: Part
     traversal:
       - relationship: replaces

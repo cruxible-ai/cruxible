@@ -428,6 +428,7 @@ relationships:
 
 named_queries:
   product_bundle_candidates:
+    mode: traversal
     description: Starting from a product, find reviewed complementary products for bundles, PDP modules, or cross-sell surfaces.
     entry_point: Product
     returns: Product
@@ -436,6 +437,7 @@ named_queries:
         direction: outgoing
 
   products_that_complement_product:
+    mode: traversal
     description: Starting from a product, find reviewed products that complement it.
     entry_point: Product
     returns: Product
@@ -444,6 +446,7 @@ named_queries:
         direction: incoming
 
   complements_for_shopping_mission:
+    mode: traversal
     description: Starting from a shopping mission, find products connected through mission categories and reviewed complement edges.
     entry_point: ShoppingMission
     returns: Product
@@ -456,6 +459,7 @@ named_queries:
         direction: outgoing
 
   substitutes_for_product:
+    mode: traversal
     description: Starting from a product, find reviewed substitute products.
     entry_point: Product
     returns: Product
@@ -464,6 +468,7 @@ named_queries:
         direction: outgoing
 
   products_that_substitute_for_product:
+    mode: traversal
     description: Starting from a product, find products reviewed as replacements for it.
     entry_point: Product
     returns: Product
@@ -472,6 +477,7 @@ named_queries:
         direction: incoming
 
   substitution_options_for_inventory_gap:
+    mode: traversal
     description: Starting from an inventory position, find substitute products for the product represented by the constrained SKU.
     entry_point: InventoryPosition
     returns: Product
@@ -484,6 +490,7 @@ named_queries:
         direction: outgoing
 
   category_substitute_map:
+    mode: traversal
     description: Starting from a category, find products in the category and their reviewed substitutes.
     entry_point: Category
     returns: Product
@@ -494,6 +501,7 @@ named_queries:
         direction: outgoing
 
   cannibalization_risk_for_product:
+    mode: traversal
     description: Starting from a product, find products it is judged likely to cannibalize.
     entry_point: Product
     returns: Product
@@ -502,6 +510,7 @@ named_queries:
         direction: outgoing
 
   products_that_cannibalize_product:
+    mode: traversal
     description: Starting from a product, find products judged likely to cannibalize it.
     entry_point: Product
     returns: Product
@@ -510,6 +519,7 @@ named_queries:
         direction: incoming
 
   product_price_points:
+    mode: traversal
     description: Starting from a product, find its SKU price points.
     entry_point: Product
     returns: PricePoint
@@ -520,6 +530,7 @@ named_queries:
         direction: outgoing
 
   product_inventory_positions:
+    mode: traversal
     description: Starting from a product, find its SKU inventory positions.
     entry_point: Product
     returns: InventoryPosition
@@ -530,6 +541,7 @@ named_queries:
         direction: outgoing
 
   promotion_cannibalization_risk:
+    mode: traversal
     description: Starting from a promotion, find products likely to lose demand because the promotion features cannibalizing products.
     entry_point: Promotion
     returns: Product
@@ -540,6 +552,7 @@ named_queries:
         direction: outgoing
 
   promotion_lift_watch:
+    mode: traversal
     description: Starting from a promotion, find products judged to receive material lift from the promotion.
     entry_point: Promotion
     returns: Product
@@ -548,6 +561,7 @@ named_queries:
         direction: outgoing
 
   segment_merchandising_candidates:
+    mode: traversal
     description: Starting from a customer segment, find products reviewed as good merchandising fits for that segment.
     entry_point: CustomerSegment
     returns: Product
@@ -556,6 +570,7 @@ named_queries:
         direction: incoming
 
   segment_promotion_products:
+    mode: traversal
     description: Starting from a customer segment, find products featured in promotions targeting that segment.
     entry_point: CustomerSegment
     returns: Product
@@ -566,6 +581,7 @@ named_queries:
         direction: outgoing
 
   brand_substitute_risk:
+    mode: traversal
     description: Starting from a brand, find substitute products that may compete with that brand's products.
     entry_point: Brand
     returns: Product
@@ -576,6 +592,7 @@ named_queries:
         direction: outgoing
 
   channel_catalog_products:
+    mode: traversal
     description: Starting from a channel, find products available in that channel.
     entry_point: Channel
     returns: Product
@@ -584,6 +601,7 @@ named_queries:
         direction: incoming
 
   channel_price_points:
+    mode: traversal
     description: Starting from a channel, find price points that apply to it.
     entry_point: Channel
     returns: PricePoint
@@ -592,6 +610,7 @@ named_queries:
         direction: incoming
 
   channel_inventory_positions:
+    mode: traversal
     description: Starting from a channel, find inventory positions that apply to it.
     entry_point: Channel
     returns: InventoryPosition
