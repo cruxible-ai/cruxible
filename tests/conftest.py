@@ -1,6 +1,5 @@
 """Shared test fixtures for cruxible-core."""
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -343,9 +342,7 @@ def canonical_workflow_project(tmp_path: Path) -> Path:
         },
     ]
     (bundle_dir / "rows.json").write_text(json.dumps(rows, indent=2, sort_keys=True))
-    bundle_sha256 = _compute_directory_sha256(bundle_dir)
-
-    config_yaml = f"""\
+    config_yaml = """\
 version: "1.0"
 name: canonical_reference_workflow
 kind: world_model
@@ -392,7 +389,7 @@ named_queries:
 
 contracts:
   EmptyInput:
-    fields: {{}}
+    fields: {}
   BundleRows:
     fields:
       items:
@@ -402,7 +399,6 @@ artifacts:
   canonical_bundle:
     kind: directory
     uri: ./bundle
-    sha256: {bundle_sha256}
 
 providers:
   reference_loader:
@@ -422,7 +418,7 @@ workflows:
     steps:
       - id: rows
         provider: reference_loader
-        input: {{}}
+        input: {}
         as: rows
       - id: vendors
         make_entities:
@@ -506,13 +502,3 @@ workflows:
 def canonical_workflow_instance(canonical_workflow_project: Path) -> CruxibleInstance:
     """Filesystem instance for canonical preview/apply workflow tests."""
     return CruxibleInstance.init(canonical_workflow_project, "config.yaml")
-
-
-def _compute_directory_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    for child in sorted(item for item in path.rglob("*") if item.is_file()):
-        digest.update(child.relative_to(path).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(child.read_bytes()).hexdigest().encode())
-        digest.update(b"\0")
-    return f"sha256:{digest.hexdigest()}"

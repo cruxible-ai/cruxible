@@ -269,7 +269,7 @@ def validate(config_path: str) -> None:
 @click.option(
     "--force",
     is_flag=True,
-    help="Accept live canonical artifact hashes when regenerating the lock.",
+    help="Accept live canonical artifact contents when regenerating the lock.",
 )
 @handle_errors
 def lock_cmd(force: bool) -> None:

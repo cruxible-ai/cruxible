@@ -534,10 +534,6 @@ def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
     """Validate contracts, artifacts, and providers."""
     artifact_names = set(config.artifacts.keys())
 
-    for artifact_name, artifact in config.artifacts.items():
-        if artifact.sha256 is None or not artifact.sha256.strip():
-            errors.append(f"Artifact '{artifact_name}' is missing required sha256")
-
     for provider_name, provider in config.providers.items():
         if not _contract_exists(config, provider.contract_in):
             errors.append(

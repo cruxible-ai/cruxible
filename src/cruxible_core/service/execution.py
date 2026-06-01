@@ -311,7 +311,14 @@ def _enforce_decision_support_context(
 def service_lock(instance: InstanceProtocol, *, force: bool = False) -> LockServiceResult:
     """Generate and persist a workflow lock file for the instance config."""
     config = instance.load_config()
-    lock = build_lock(config, instance.get_config_path().parent, force=force)
+    previous_lock_path = resolve_lock_path(instance)
+    previous_lock = load_lock(previous_lock_path) if previous_lock_path.exists() else None
+    lock = build_lock(
+        config,
+        instance.get_config_path().parent,
+        force=force,
+        previous_lock=previous_lock,
+    )
     lock_path = get_lock_path(instance)
     write_lock(lock, lock_path)
     return LockServiceResult(

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 from tests.support.workflow_helpers import (
-    compute_directory_sha256,
     json_contract_instance,
     json_contract_workflow_yaml,
     write_lock_for_instance,
@@ -2357,8 +2356,7 @@ class TestWorkflowExecutor:
             )
             + "\n"
         )
-        bundle_sha256 = compute_directory_sha256(bundle_dir)
-        config_yaml = f"""\
+        config_yaml = """\
 version: "1.0"
 name: tabular_shape_ingest_parity
 kind: world_model
@@ -2380,7 +2378,7 @@ relationships: []
 
 contracts:
   EmptyInput:
-    fields: {{}}
+    fields: {}
   TabularParseOptions:
     fields:
       table_names:
@@ -2401,7 +2399,6 @@ artifacts:
   seed_bundle:
     kind: directory
     uri: ./bundle
-    sha256: {bundle_sha256}
 
 providers:
   parse_seed_bundle:
@@ -2489,11 +2486,6 @@ workflows:
             }
         )
         rows_path.write_text(json.dumps(rows, indent=2, sort_keys=True))
-        config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = compute_directory_sha256(
-            canonical_workflow_instance.root / "bundle"
-        )
-        canonical_workflow_instance.save_config(config)
         write_lock_for_instance(canonical_workflow_instance)
 
         result = execute_workflow(

@@ -401,7 +401,10 @@ class TestWorkflowCompiler:
 
         plan = compile_workflow(
             canonical_workflow_instance.load_config(),
-            build_lock(canonical_workflow_instance.load_config()),
+            build_lock(
+                canonical_workflow_instance.load_config(),
+                canonical_workflow_instance.get_config_path().parent,
+            ),
             "build_reference",
             {},
             config_base_path=canonical_workflow_instance.get_config_path().parent,
@@ -428,21 +431,23 @@ class TestWorkflowCompiler:
                 config_base_path=canonical_workflow_instance.get_config_path().parent,
             )
 
-    def test_build_lock_rejects_stale_canonical_artifact_hash(
+    def test_build_lock_rejects_stale_canonical_artifact_lock_hash(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
-        canonical_workflow_instance.save_config(config)
+        initial_lock = build_lock(config, canonical_workflow_instance.get_config_path().parent)
+        rows_path = canonical_workflow_instance.root / "bundle" / "rows.json"
+        rows_path.write_text(rows_path.read_text() + "\n")
 
         with pytest.raises(ConfigError) as exc_info:
             build_lock(
                 canonical_workflow_instance.load_config(),
                 canonical_workflow_instance.get_config_path().parent,
+                previous_lock=initial_lock,
             )
         message = str(exc_info.value)
         assert "Artifact 'canonical_bundle' sha256 mismatch." in message
-        assert "expected (config): sha256:bad" in message
+        assert f"expected (lock): {initial_lock.artifacts['canonical_bundle'].sha256}" in message
         assert "actual (on disk):" in message
         assert "cruxible lock --force" in message
 
@@ -450,16 +455,21 @@ class TestWorkflowCompiler:
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
-        canonical_workflow_instance.save_config(config)
+        initial_lock = build_lock(config, canonical_workflow_instance.get_config_path().parent)
+        rows_path = canonical_workflow_instance.root / "bundle" / "rows.json"
+        rows_path.write_text(rows_path.read_text() + "\n")
 
         lock = build_lock(
             canonical_workflow_instance.load_config(),
             canonical_workflow_instance.get_config_path().parent,
             force=True,
+            previous_lock=initial_lock,
         )
 
-        assert lock.artifacts["canonical_bundle"].sha256 != "sha256:bad"
+        assert (
+            lock.artifacts["canonical_bundle"].sha256
+            != initial_lock.artifacts["canonical_bundle"].sha256
+        )
         assert lock.artifacts["canonical_bundle"].sha256.startswith("sha256:")
 
     def test_executor_uses_legacy_lock_path_as_fallback(

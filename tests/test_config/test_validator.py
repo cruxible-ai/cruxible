@@ -342,6 +342,27 @@ class TestValidateLoopOneControls:
             validate_config(config)
         assert any("Duplicate decision policy name" in e for e in exc_info.value.errors)
 
+    def test_provider_artifact_sha256_is_optional_in_config(self):
+        config = _minimal_config(
+            contracts={
+                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
+            },
+            artifacts={"artifact": ProviderArtifactSchema(kind="directory", uri="./data")},
+            providers={
+                "provider": ProviderSchema(
+                    kind="function",
+                    contract_in="WorkflowInput",
+                    contract_out="WorkflowInput",
+                    ref="tests.support.workflow_test_providers.lift_predictor",
+                    version="1.0.0",
+                    artifact="artifact",
+                )
+            },
+            workflows={},
+        )
+
+        validate_config(config)
+
     def test_workflow_policy_requires_proposal_type(self):
         config = _minimal_config(
             contracts={

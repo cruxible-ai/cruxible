@@ -68,6 +68,7 @@ def build_lock(
     config_base_path: Path | None = None,
     *,
     force: bool = False,
+    previous_lock: WorkflowLock | None = None,
 ) -> WorkflowLock:
     """Generate a workflow lock from config/provider/artifact declarations."""
     for provider_name, provider in config.providers.items():
@@ -76,17 +77,26 @@ def build_lock(
     canonical_artifact_names = _collect_canonical_artifact_names(config)
     locked_artifacts: dict[str, LockedArtifact] = {}
     for name, artifact in config.artifacts.items():
-        locked_sha256 = artifact.sha256 or ""
+        previous_artifact = (
+            previous_lock.artifacts.get(name) if previous_lock is not None else None
+        )
+        locked_sha256 = artifact.sha256 or (
+            previous_artifact.sha256 if previous_artifact is not None else ""
+        )
         if name in canonical_artifact_names and config_base_path is not None:
             artifact_path = resolve_local_artifact_path(artifact.uri, config_base_path)
             if artifact_path is not None:
                 actual_sha256 = compute_path_sha256(artifact_path)
-                if artifact.sha256 and artifact.sha256 != actual_sha256:
+                if (
+                    previous_artifact is not None
+                    and previous_artifact.sha256
+                    and previous_artifact.sha256 != actual_sha256
+                ):
                     if not force:
                         raise ConfigError(
                             _artifact_hash_mismatch_message(
                                 name,
-                                artifact.sha256,
+                                previous_artifact.sha256,
                                 actual_sha256,
                             )
                         )
@@ -550,7 +560,7 @@ def _verify_local_artifact_hash(
     config_base_path: Path,
 ) -> None:
     if not expected_sha256:
-        raise ConfigError("Canonical workflow artifact is missing sha256")
+        raise ConfigError("Canonical workflow artifact is missing sha256 in lock file")
     artifact_path = resolve_local_artifact_path(uri, config_base_path)
     if artifact_path is None:
         raise ConfigError("Canonical workflows require local file or directory artifacts")
@@ -564,7 +574,7 @@ def _verify_local_artifact_hash(
 def _artifact_hash_mismatch_message(name: str, expected_sha256: str, actual_sha256: str) -> str:
     return (
         f"Artifact '{name}' sha256 mismatch.\n"
-        f"  expected (config): {expected_sha256}\n"
+        f"  expected (lock): {expected_sha256}\n"
         f"  actual (on disk):  {actual_sha256}\n"
         "Run 'cruxible lock --force' to accept the on-disk hash, or restore the expected artifact."
     )
