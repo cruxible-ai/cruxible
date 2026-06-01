@@ -1338,7 +1338,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--force` | no | `False` | boolean | Accept live canonical artifact hashes when regenerating the lock. |
+| `--force` | no | `False` | boolean | Accept live canonical artifact contents when regenerating the lock. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

@@ -1,7 +1,7 @@
 version: '1'
-config_digest: sha256:58e2a4ed48f691e9d3c04cc38b10f96288cf4a3d6cce4ff454d83178efe4a806
-lock_digest: sha256:5e93232f08eecc91c90ef443da21d071a3aec2df62fad79b650cc2b4f51d80f0
-generated_at: 2026-05-30 17:36:22.651134+00:00
+config_digest: sha256:ef58ed495e5a5808ac4a9cc7fc6757fb369f00b4e7feec9a773b80f2e4f37300
+lock_digest: sha256:a9cf461975b824abbda254f82d1464d5823d0e4e588671af4919ad5ebd22047b
+generated_at: 2026-06-01 11:32:03.979772+00:00
 artifacts:
   local_seed_bundle:
     kind: directory
@@ -23,7 +23,7 @@ providers:
   match_software_to_products:
     version: 1.0.0
     ref: kit://providers/matching.py::match_software_to_products
-    provider_entrypoint_sha256: sha256:26a837ed7375badee9443400baff5a6cd526580b8a289f0730d6ad5e20f8030f
+    provider_entrypoint_sha256: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
     runtime: python
     deterministic: true
     side_effects: false
@@ -31,7 +31,7 @@ providers:
   assess_asset_affected:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_affected
-    provider_entrypoint_sha256: sha256:26a837ed7375badee9443400baff5a6cd526580b8a289f0730d6ad5e20f8030f
+    provider_entrypoint_sha256: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
     runtime: python
     deterministic: true
     side_effects: false
@@ -39,7 +39,7 @@ providers:
   assess_asset_exposure:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_asset_exposure
-    provider_entrypoint_sha256: sha256:26a837ed7375badee9443400baff5a6cd526580b8a289f0730d6ad5e20f8030f
+    provider_entrypoint_sha256: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
     runtime: python
     deterministic: true
     side_effects: false
@@ -47,7 +47,7 @@ providers:
   assess_exposure_reconciliation:
     version: 1.0.0
     ref: kit://providers/assessment.py::assess_exposure_reconciliation
-    provider_entrypoint_sha256: sha256:26a837ed7375badee9443400baff5a6cd526580b8a289f0730d6ad5e20f8030f
+    provider_entrypoint_sha256: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
     runtime: python
     deterministic: true
     side_effects: false

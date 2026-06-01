@@ -341,7 +341,6 @@ artifacts: {}
   # source_bundle:
   #   kind: directory
   #   uri: ./data/seed
-  #   sha256: sha256:<digest>
   #   metadata:
   #     owner: data-platform
 

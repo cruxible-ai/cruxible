@@ -1044,14 +1044,16 @@ contracts:
 
 ## artifacts
 
-Pinned external artifacts referenced by providers. Artifacts represent data bundles, models, or other resources that providers depend on. The `sha256` hash enables reproducible builds — the workflow lock verifies the live artifact matches the hash at lock time.
+External artifacts referenced by providers. Artifacts represent data bundles,
+models, or other resources that providers depend on. Config names the artifact
+location; generated workflow lock files pin the resolved content hash for
+reproducible execution.
 
 ```yaml
 artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
 ```
 
 ### ProviderArtifactSchema
@@ -1060,7 +1062,7 @@ artifacts:
 |-------|------|----------|---------|-------------|
 | `kind` | string | **yes** | — | Artifact kind (e.g., `directory`, `file`, `model`) |
 | `uri` | string | **yes** | — | Location (relative path, URL, etc.) |
-| `sha256` | string | no | `null` | Content hash for reproducibility verification |
+| `sha256` | string | no | `null` | Optional legacy/input hash. Local canonical workflow artifact hashes are generated and verified from the lock file. |
 | `metadata` | dict | no | `{}` | Arbitrary metadata |
 
 ---

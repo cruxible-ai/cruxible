@@ -252,7 +252,7 @@ When a source artifact changes:
 1. Confirm the file path belongs to the kit or local workspace.
 2. Validate the config.
 3. Regenerate the workflow lock. Use `--force` only when intentionally accepting
-   new live canonical artifact hashes.
+   new live canonical artifact contents into the lock.
 4. Run the canonical workflow in preview mode.
 5. Summarize the changed examples and receipt/trace evidence.
 6. Apply only after the operator accepts the preview.

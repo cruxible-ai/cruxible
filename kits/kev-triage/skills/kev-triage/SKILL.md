@@ -357,7 +357,7 @@ Stop and ask the user (don't guess) when:
 | Symptom | Check |
 |---|---|
 | `cruxible group propose` rejects with "signal source not declared" | Use the signal source names documented in this skill for the task you are performing. If the instance still rejects the name, stop and ask rather than probing the schema directly. |
-| `cruxible run` fails with "Artifact ... sha256 mismatch" | A seed file was edited without re-pinning. Operator needs to run `cruxible lock --force`. Do not retry as agent. |
+| `cruxible run` fails with "Artifact ... sha256 mismatch" | A seed file no longer matches the workflow lock. Operator needs to inspect the data change and run `cruxible lock --force` only if accepting it. Do not retry as agent. |
 | Query returns empty when you expected results | Likely the proposal chain ran but nothing has been approved yet. `group list --status pending_review` shows the backlog and `group status --group <id>` shows the accepted-vs-pending split for a specific bucket. |
 | `add-entity` says "entity updated" when you expected "added" | ID collision — the entity already exists. Fetch it (`get-entity`) and decide whether to continue. |
 | Thesis is accepted but proposal still blocks | `group propose` enforces signal-source evidence. A proposal with no `signals` array and no `--signal-source` flag will be rejected. |
