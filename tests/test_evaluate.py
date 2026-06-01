@@ -402,7 +402,6 @@ def _store_with_member(
     )
     store.save_group(group)
     store.save_members(group_id, [member])
-    store.commit()
     return store
 
 

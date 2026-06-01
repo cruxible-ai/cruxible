@@ -943,11 +943,8 @@ def _trace(
 class TestTraceReads:
     def test_get_trace_found(self, populated_instance: CruxibleInstance) -> None:
         trace = _trace(trace_id="TRC-service-001")
-        store = populated_instance.get_receipt_store()
-        try:
-            store.save_trace(trace)
-        finally:
-            store.close()
+        with populated_instance.write_transaction() as uow:
+            uow.receipts.save_trace(trace)
 
         loaded = service_get_trace(populated_instance, trace.trace_id)
 
@@ -959,12 +956,9 @@ class TestTraceReads:
             service_get_trace(populated_instance, "TRC-missing")
 
     def test_list_traces_with_filters(self, populated_instance: CruxibleInstance) -> None:
-        store = populated_instance.get_receipt_store()
-        try:
-            store.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
-            store.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
-        finally:
-            store.close()
+        with populated_instance.write_transaction() as uow:
+            uow.receipts.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
+            uow.receipts.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
 
         result = service_list_traces(populated_instance, workflow_name="wf_a", limit=10)
 

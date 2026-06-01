@@ -847,11 +847,8 @@ def _save_workflow_receipt(instance: CruxibleInstance, workflow_name: str) -> st
         edges=[],
         operation_type="workflow",
     )
-    store = instance.get_receipt_store()
-    try:
-        store.save_receipt(receipt)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_receipt(receipt)
     return receipt.receipt_id
 
 

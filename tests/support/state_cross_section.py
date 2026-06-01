@@ -665,10 +665,24 @@ def _diff_item(
     source: str,
     annotator: Any | None,
 ) -> JsonObject:
-    output = dict(item)
+    output = _compact_default_assertion_state(dict(item))
     if annotator is not None:
         output.update(annotator(item, source))
     return output
+
+
+def _compact_default_assertion_state(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_compact_default_assertion_state(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {
+        key: _compact_default_assertion_state(item)
+        for key, item in value.items()
+    }
+    if result.get("group_override") is False:
+        result.pop("group_override")
+    return result
 
 
 def _changed_fields(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:

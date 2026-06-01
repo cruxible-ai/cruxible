@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +13,7 @@ from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.service import (
     service_apply_workflow,
     service_clone_snapshot,
@@ -25,7 +28,7 @@ from cruxible_core.service import (
     service_run,
     service_test,
 )
-from cruxible_core.workflow import get_legacy_lock_path, get_lock_path
+from cruxible_core.storage.sqlite import SQLiteGraphRepository, SQLiteSnapshotRepository
 from tests.support import workflow_test_providers
 
 QUERY_EVIDENCE_PROPOSAL_CONFIG_YAML = """\
@@ -461,26 +464,6 @@ class TestWorkflowExecutionServices:
         assert result.plan.steps[0].kind == "query"
         assert result.plan.steps[1].provider_name == "lift_predictor"
 
-    def test_instance_local_lock_wins_over_legacy_fallback(
-        self, workflow_instance: CruxibleInstance
-    ) -> None:
-        result = service_lock(workflow_instance)
-        legacy_path = get_legacy_lock_path(workflow_instance)
-        legacy_path.write_text("config_digest: sha256:bad\nartifacts: {}\nproviders: {}\n")
-
-        planned = service_plan(
-            workflow_instance,
-            "evaluate_promo",
-            {
-                "sku": "SKU-123",
-                "start_date": "2026-03-01",
-                "end_date": "2026-03-07",
-            },
-        )
-
-        assert planned.plan.workflow == "evaluate_promo"
-        assert Path(result.lock_path) == get_lock_path(workflow_instance)
-
     def test_service_run_returns_receipt_and_trace_ids(
         self, workflow_instance: CruxibleInstance
     ) -> None:
@@ -510,9 +493,7 @@ class TestWorkflowExecutionServices:
         assert result.read_metadata["query_receipt_ids"] == result.query_receipt_ids
         assert result.read_metadata["any_read_truncated"] is False
         assert result.read_metadata["any_query_truncated"] is False
-        assert [step["step_id"] for step in result.read_metadata["read_steps"]] == [
-            "context"
-        ]
+        assert [step["step_id"] for step in result.read_metadata["read_steps"]] == ["context"]
 
     def test_service_run_previews_canonical_workflow(
         self, canonical_workflow_instance: CruxibleInstance
@@ -575,6 +556,179 @@ class TestWorkflowExecutionServices:
         assert applied.receipt.workflow_mode == "apply"
         assert applied.receipt.committed is True
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_service_apply_workflow_receipt_failure_rolls_back_graph(
+        self,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+        original_save = SQLiteReceiptStore.save_receipt
+
+        def fail_apply_receipt(self, receipt):
+            if receipt.operation_type == "workflow" and receipt.workflow_mode == "apply":
+                raise RuntimeError("apply receipt failed")
+            return original_save(self, receipt)
+
+        with (
+            patch.object(SQLiteReceiptStore, "save_receipt", fail_apply_receipt),
+            pytest.raises(RuntimeError, match="apply receipt failed"),
+        ):
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
+
+        assert not canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+        assert canonical_workflow_instance.get_head_snapshot_id() == preview.head_snapshot_id
+
+    def test_service_apply_workflow_failure_persists_failed_receipt_after_rollback(
+        self,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        def fail_graph_delta(_self: SQLiteGraphRepository, _entities) -> None:
+            raise RuntimeError("graph delta failed")
+
+        with (
+            patch.object(SQLiteGraphRepository, "upsert_entities", fail_graph_delta),
+            pytest.raises(RuntimeError, match="graph delta failed"),
+        ):
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
+
+        restarted = CruxibleInstance.load(canonical_workflow_instance.root)
+        assert not restarted.load_graph().has_entity("Vendor", "vendor-acme")
+        assert restarted.get_head_snapshot_id() == preview.head_snapshot_id
+
+        store = restarted.get_receipt_store()
+        try:
+            summaries = store.list_receipts(
+                query_name="build_reference",
+                operation_type="workflow",
+            )
+            receipts = [store.get_receipt(summary["receipt_id"]) for summary in summaries]
+        finally:
+            store.close()
+        failed_apply = [
+            receipt
+            for receipt in receipts
+            if receipt is not None
+            and receipt.workflow_mode == "apply"
+            and receipt.nodes[0].detail.get("error_type") == "RuntimeError"
+        ]
+        assert len(failed_apply) == 1
+        receipt = failed_apply[0]
+        assert receipt.committed is False
+        assert "committed_snapshot_id" not in receipt.nodes[0].detail
+        assert receipt.nodes[0].detail["error"] == "graph delta failed"
+        assert receipt.nodes[0].detail["read_metadata"]["query_receipt_ids"]
+
+    def test_service_apply_workflow_snapshot_db_failure_rolls_back_authoritative_state(
+        self,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+
+        def fail_save_snapshot(_self, _snapshot, _artifacts) -> None:
+            raise RuntimeError("snapshot DB write failed")
+
+        with (
+            patch.object(SQLiteSnapshotRepository, "save_snapshot", fail_save_snapshot),
+            pytest.raises(RuntimeError, match="snapshot DB write failed"),
+        ):
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
+
+        restarted = CruxibleInstance.load(canonical_workflow_instance.root)
+        assert not restarted.load_graph().has_entity("Vendor", "vendor-acme")
+        assert restarted.get_head_snapshot_id() == preview.head_snapshot_id
+        assert restarted.list_snapshots() == []
+
+        conn = sqlite3.connect(restarted.instance_dir / "state.db")
+        try:
+            snapshot_count = conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+            artifact_count = conn.execute("SELECT COUNT(*) FROM snapshot_artifacts").fetchone()[0]
+        finally:
+            conn.close()
+        assert snapshot_count == 0
+        assert artifact_count == 0
+
+        store = restarted.get_receipt_store()
+        try:
+            summaries = store.list_receipts(
+                query_name="build_reference",
+                operation_type="workflow",
+            )
+            receipts = [store.get_receipt(summary["receipt_id"]) for summary in summaries]
+        finally:
+            store.close()
+        assert not any(
+            receipt is not None and receipt.workflow_mode == "apply" and receipt.committed is True
+            for receipt in receipts
+        )
+
+    def test_service_apply_workflow_export_failure_keeps_committed_snapshot(
+        self,
+        canonical_workflow_instance: CruxibleInstance,
+    ) -> None:
+        service_lock(canonical_workflow_instance)
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+        with patch.object(
+            canonical_workflow_instance,
+            "_export_snapshot_artifacts",
+            side_effect=OSError("snapshot export failed"),
+        ):
+            applied = service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
+
+        assert applied.committed_snapshot_id is not None
+        snapshot_id = applied.committed_snapshot_id
+
+        restarted = CruxibleInstance.load(canonical_workflow_instance.root)
+        assert restarted.load_graph().has_entity("Vendor", "vendor-acme")
+        assert restarted.get_head_snapshot_id() == snapshot_id
+        assert restarted.get_snapshot(snapshot_id) is not None
+        artifacts = restarted._read_snapshot_artifacts(snapshot_id)
+        assert {"config.yaml", "graph.json", "snapshot.json"} <= set(artifacts)
+
+        store = restarted.get_receipt_store()
+        try:
+            summaries = store.list_receipts(
+                query_name="build_reference",
+                operation_type="workflow",
+            )
+            receipts = [store.get_receipt(summary["receipt_id"]) for summary in summaries]
+        finally:
+            store.close()
+        assert any(
+            receipt is not None
+            and receipt.workflow_mode == "apply"
+            and receipt.committed is True
+            and receipt.nodes[0].detail.get("committed_snapshot_id") == snapshot_id
+            for receipt in receipts
+        )
 
     def test_service_apply_workflow_rejects_digest_mismatch(
         self, canonical_workflow_instance: CruxibleInstance
@@ -690,18 +844,14 @@ class TestWorkflowExecutionServices:
         assert group.source_trace_ids == result.trace_ids
         assert group.source_step_ids == ["proposal", "catalog_signals"]
         assert group.thesis_facts == result.output["thesis_facts"]
-        assert group.thesis_facts["origin"]["proposal_logic_digest"].startswith(
-            "sha256:"
-        )
+        assert group.thesis_facts["origin"]["proposal_logic_digest"].startswith("sha256:")
         expected_thesis_facts = {
             "origin": {
                 "kind": "workflow",
                 "evidence_mode": "workflow_generated",
                 "workflow_name": "propose_campaign_recommendations",
                 "step_id": "proposal",
-                "proposal_logic_digest": group.thesis_facts["origin"][
-                    "proposal_logic_digest"
-                ],
+                "proposal_logic_digest": group.thesis_facts["origin"]["proposal_logic_digest"],
             },
             "relationship": {
                 "type": "recommended_for",
@@ -736,6 +886,33 @@ class TestWorkflowExecutionServices:
             "value": "match",
             "matched": "match",
         }
+
+    def test_service_propose_workflow_receipt_failure_rolls_back_group(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        service_lock(proposal_workflow_instance)
+        original_save = SQLiteReceiptStore.save_receipt
+
+        def fail_final_proposal_receipt(self, receipt):
+            if receipt.operation_type == "workflow" and receipt.workflow_mode == "proposal":
+                raise RuntimeError("proposal receipt failed")
+            return original_save(self, receipt)
+
+        with (
+            patch.object(SQLiteReceiptStore, "save_receipt", fail_final_proposal_receipt),
+            pytest.raises(RuntimeError, match="proposal receipt failed"),
+        ):
+            service_propose_workflow(
+                proposal_workflow_instance,
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+        group_store = proposal_workflow_instance.get_group_store()
+        try:
+            assert group_store.count_groups(relationship_type="recommended_for") == 0
+        finally:
+            group_store.close()
 
     def test_direct_proposal_does_not_collide_with_workflow_signature(
         self, proposal_workflow_instance: CruxibleInstance
@@ -797,9 +974,7 @@ class TestWorkflowExecutionServices:
         )
 
         config = proposal_workflow_instance.load_config()
-        relationship = next(
-            rel for rel in config.relationships if rel.name == "recommended_for"
-        )
+        relationship = next(rel for rel in config.relationships if rel.name == "recommended_for")
         assert relationship.proposal_policy is not None
         relationship.proposal_policy.signals["catalog_v2"] = (
             relationship.proposal_policy.signals.pop("catalog")
@@ -939,9 +1114,7 @@ class TestWorkflowExecutionServices:
             assert evidence[0].relationship["relationship_type"] == "candidate_product"
             assert evidence[0].relationship["from_id"] == "CMP-1"
             assert evidence[0].relationship["to_id"] == "SKU-123"
-            assert evidence[0].relationship["properties"] == {
-                "reason": "query evidence"
-            }
+            assert evidence[0].relationship["properties"] == {"reason": "query evidence"}
         else:
             assert evidence[0].path is not None
             assert evidence[0].path[0]["alias"] == "candidate"
@@ -1031,12 +1204,9 @@ class TestWorkflowExecutionServices:
         assert members[0].signals[0].signal_source == "query_signal"
         assert [ref.source for ref in members[0].evidence_refs] == ["candidate_query"]
         assert members[0].evidence_rationale == "query evidence"
-        assert [ref.source for ref in members[0].signals[0].evidence_refs] == [
-            "signal_query"
-        ]
+        assert [ref.source for ref in members[0].signals[0].evidence_refs] == ["signal_query"]
         evidence_by_step = {
-            evidence.source_step: evidence
-            for evidence in members[0].source_query_evidence
+            evidence.source_step: evidence for evidence in members[0].source_query_evidence
         }
         assert set(evidence_by_step) == {"candidates_query", "signal_query"}
         signal_evidence = evidence_by_step["signal_query"]
@@ -1070,9 +1240,10 @@ class TestWorkflowExecutionServices:
         assert relationship.metadata.evidence is not None
         assert relationship.metadata.evidence.rationale == "query evidence"
         assert relationship.metadata.evidence.source_group_id == result.group_id
-        assert [
-            ref.source for ref in relationship.metadata.evidence.evidence_refs
-        ] == ["candidate_query", "signal_query"]
+        assert [ref.source for ref in relationship.metadata.evidence.evidence_refs] == [
+            "candidate_query",
+            "signal_query",
+        ]
 
     def test_service_propose_workflow_preserves_query_evidence_from_joined_rows(
         self,
@@ -1096,8 +1267,7 @@ class TestWorkflowExecutionServices:
 
         assert len(members) == 1
         evidence_by_step = {
-            evidence.source_step: evidence
-            for evidence in members[0].source_query_evidence
+            evidence.source_step: evidence for evidence in members[0].source_query_evidence
         }
         assert set(evidence_by_step) == {"candidates_query", "product_query"}
         relationship_evidence = evidence_by_step["candidates_query"]
@@ -1140,8 +1310,7 @@ class TestWorkflowExecutionServices:
 
         assert len(members) == 1
         evidence_by_step = {
-            evidence.source_step: evidence
-            for evidence in members[0].source_query_evidence
+            evidence.source_step: evidence for evidence in members[0].source_query_evidence
         }
         assert set(evidence_by_step) == {"candidates_query", "product_query"}
         for evidence in evidence_by_step.values():
@@ -1217,8 +1386,7 @@ class TestWorkflowExecutionServices:
             ("CMP-1", "SKU-456"),
         }
         member_receipts = {
-            member.to_id: member.source_query_evidence[0].query_receipt_id
-            for member in members
+            member.to_id: member.source_query_evidence[0].query_receipt_id for member in members
         }
         assert member_receipts == {
             "SKU-123": first.query_receipt_ids[0],
@@ -1439,9 +1607,7 @@ class TestWorkflowExecutionServices:
         self, query_evidence_proposal_instance: CruxibleInstance
     ) -> None:
         config = query_evidence_proposal_instance.load_config()
-        proposal_step = config.workflows[
-            "propose_from_filtered_relationship_query"
-        ].steps[-1]
+        proposal_step = config.workflows["propose_from_filtered_relationship_query"].steps[-1]
         assert proposal_step.propose_relationship_group is not None
         proposal_step.propose_relationship_group.on_empty = "complete"
         query_evidence_proposal_instance.save_config(config)
@@ -1470,8 +1636,7 @@ class TestWorkflowExecutionServices:
         proposal_step_node = next(
             node
             for node in result.receipt.nodes
-            if node.node_type == "plan_step"
-            and node.detail.get("step_id") == "proposal"
+            if node.node_type == "plan_step" and node.detail.get("step_id") == "proposal"
         )
         assert proposal_step_node.detail["candidate_count"] == 0
         assert proposal_step_node.detail["group_created"] is False

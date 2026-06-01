@@ -230,12 +230,11 @@ def test_closed_record_auto_log_race_is_best_effort(
     assert query.receipt_id is not None
     assert events == []
 
-    store = populated_instance.get_decision_store()
-    try:
-        started_at = datetime.now(timezone.utc)
-        finished_at = datetime.now(timezone.utc)
-        with pytest.raises(ConfigError, match="is not open"):
-            store.append_event(
+    started_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(timezone.utc)
+    with pytest.raises(ConfigError, match="is not open"):
+        with populated_instance.write_transaction() as uow:
+            uow.decisions.append_event(
                 DecisionEvent(
                     decision_record_id=record.decision_record_id,
                     command="manual",
@@ -246,5 +245,3 @@ def test_closed_record_auto_log_race_is_best_effort(
                     finished_at=finished_at,
                 )
             )
-    finally:
-        store.close()

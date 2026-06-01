@@ -8,6 +8,7 @@ from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.storage.sqlite import SQLiteStorageBackend
 
 
 def _trace_timing() -> dict[str, object]:
@@ -152,12 +153,11 @@ class TestSQLiteReceiptStore:
 
     def test_file_persistence(self, tmp_path):
         db_path = tmp_path / "test.db"
-        store1 = SQLiteReceiptStore(db_path)
-
         b = ReceiptBuilder(query_name="q", parameters={"x": 1})
         receipt = b.build(results=[])
-        store1.save_receipt(receipt)
-        store1.close()
+
+        with SQLiteStorageBackend(db_path).unit_of_work() as uow:
+            uow.receipts.save_receipt(receipt)
 
         store2 = SQLiteReceiptStore(db_path)
         loaded = store2.get_receipt(receipt.receipt_id)
@@ -165,13 +165,11 @@ class TestSQLiteReceiptStore:
         assert loaded.query_name == "q"
         store2.close()
 
-    def test_migration_adds_operation_type(self, tmp_path):
-        """Open store, close, reopen — operation_type column exists."""
-        db_path = tmp_path / "migrate.db"
-        store1 = SQLiteReceiptStore(db_path)
+    def test_schema_includes_operation_type(self, tmp_path):
+        db_path = tmp_path / "state.db"
         b = ReceiptBuilder(query_name="q", parameters={})
-        store1.save_receipt(b.build(results=[]))
-        store1.close()
+        with SQLiteStorageBackend(db_path).unit_of_work() as uow:
+            uow.receipts.save_receipt(b.build(results=[]))
 
         store2 = SQLiteReceiptStore(db_path)
         items = store2.list_receipts()

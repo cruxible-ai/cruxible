@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from tests.support.workflow_helpers import (
@@ -28,6 +29,7 @@ from cruxible_core.graph.assertion_state import RelationshipAssertion, Relations
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
+from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from cruxible_core.workflow import build_lock, compile_workflow, execute_workflow
 
 USER_INDEX_FIELD = "_query_result_index"
@@ -365,13 +367,9 @@ class TestWorkflowExecutor:
         )
 
         assert pending.output["relationship_state"] == "pending"
-        assert [row["result"]["entity_id"] for row in pending.output["results"]] == [
-            "SKU-456"
-        ]
+        assert [row["result"]["entity_id"] for row in pending.output["results"]] == ["SKU-456"]
         assert accepted.output["relationship_state"] == "accepted"
-        assert [row["result"]["entity_id"] for row in accepted.output["results"]] == [
-            "SKU-123"
-        ]
+        assert [row["result"]["entity_id"] for row in accepted.output["results"]] == ["SKU-123"]
         assert reviewable.output["relationship_state"] == "reviewable"
         assert [row["result"]["entity_id"] for row in reviewable.output["results"]] == [
             "SKU-123",
@@ -758,8 +756,9 @@ class TestWorkflowExecutor:
         assert read_metadata["truncation_reasons"] == ["limit"]
         assert len(read_metadata["query_receipt_ids"]) == 1
         assert read_metadata["read_steps"][0]["step_id"] == "paths"
-        assert read_metadata["read_steps"][0]["metadata"]["receipt_id"] == (
-            read_metadata["query_receipt_ids"][0]
+        assert (
+            read_metadata["read_steps"][0]["metadata"]["receipt_id"]
+            == (read_metadata["query_receipt_ids"][0])
         )
         assert read_metadata["read_steps"][0]["metadata"]["truncated"] is True
         assert read_metadata["read_steps"][0]["metadata"]["limit_truncated"] is True
@@ -1878,8 +1877,9 @@ class TestWorkflowExecutor:
         assert receipt is not None
         assert receipt.committed is False
         assert receipt.results[0]["output"] is None
-        assert "Workflow 'evaluate_promo' output failed contract 'AgentOutput'" in (
-            receipt.results[0]["error"]
+        assert (
+            "Workflow 'evaluate_promo' output failed contract 'AgentOutput'"
+            in (receipt.results[0]["error"])
         )
         assert "missing required field 'decision_frame'" in receipt.results[0]["error"]
         assert receipt.nodes[0].detail["error_type"] == "QueryExecutionError"
@@ -2311,6 +2311,35 @@ class TestWorkflowExecutor:
         assert applied.receipt.workflow_mode == "apply"
         assert applied.receipt.head_snapshot_id == applied.head_snapshot_id
         assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+
+    def test_canonical_apply_does_not_full_save_live_graph(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        write_lock_for_instance(canonical_workflow_instance)
+        preview = execute_workflow(
+            canonical_workflow_instance,
+            canonical_workflow_instance.load_config(),
+            "build_reference",
+            {},
+            mode="preview",
+        )
+
+        def fail_full_save(_self: SQLiteGraphRepository, _graph) -> None:
+            raise AssertionError("canonical apply should not replace the full live graph")
+
+        with patch.object(SQLiteGraphRepository, "save_graph", fail_full_save):
+            applied = execute_workflow(
+                canonical_workflow_instance,
+                canonical_workflow_instance.load_config(),
+                "build_reference",
+                {},
+                mode="apply",
+            )
+
+        assert applied.apply_digest == preview.apply_digest
+        assert applied.committed_snapshot_id is not None
+        restarted = CruxibleInstance.load(canonical_workflow_instance.root)
+        assert restarted.load_graph().has_entity("Vendor", "vendor-acme")
 
     def test_canonical_apply_validates_contract_out_before_commit(
         self, canonical_workflow_instance: CruxibleInstance

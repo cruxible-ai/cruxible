@@ -329,6 +329,7 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
                 queries=[
                     contracts.NamedQueryInfoResult(
                         name="parts_for_vehicle",
+                        mode="traversal",
                         entry_point="Vehicle",
                         required_params=["vehicle_id"],
                         returns="Part",
@@ -343,6 +344,7 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
             assert query_name == "parts_for_vehicle"
             return contracts.NamedQueryInfoResult(
                 name="parts_for_vehicle",
+                mode="traversal",
                 entry_point="Vehicle",
                 required_params=["vehicle_id"],
                 returns="Part",
@@ -815,6 +817,7 @@ def test_inspect_overview_uses_server_inspect_view_surface(
                         "queries": [
                             {
                                 "name": "parts_for_vehicle",
+                                "mode": "traversal",
                                 "entry_point": "Vehicle",
                                 "required_params": ["vehicle_id"],
                                 "returns": "Part",

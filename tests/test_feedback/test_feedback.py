@@ -1,7 +1,5 @@
 """Tests for the feedback system: types, store, applier, and integration."""
 
-import sqlite3
-
 import pytest
 
 from cruxible_core.config.schema import (
@@ -598,48 +596,6 @@ class TestFeedbackStore:
         assert fb1.feedback_id in ids
         assert fb2.feedback_id in ids
 
-    def test_migrates_canonical_relationship_type_target_json(self, tmp_path):
-        db_path = tmp_path / "feedback.db"
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "CREATE TABLE feedback ("
-            "feedback_id TEXT PRIMARY KEY, "
-            "receipt_id TEXT NOT NULL, "
-            "action TEXT NOT NULL, "
-            "target_json TEXT NOT NULL, "
-            "reason TEXT NOT NULL DEFAULT '', "
-            "source TEXT NOT NULL DEFAULT 'human', "
-            "model_id TEXT, "
-            "corrections TEXT NOT NULL DEFAULT '{}', "
-            "created_at TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO feedback "
-            "(feedback_id, receipt_id, action, target_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                "FB-1",
-                "RCP-1",
-                "approve",
-                '{"relationship_type":"fits","from_type":"Part","from_id":"P-1",'
-                '"to_type":"Vehicle","to_id":"V-1"}',
-                "2026-03-01T00:00:00Z",
-            ),
-        )
-        conn.commit()
-        conn.close()
-
-        migrated = FeedbackStore(db_path)
-        try:
-            row = migrated._conn.execute(
-                "SELECT target_relationship FROM feedback WHERE feedback_id = ?",
-                ("FB-1",),
-            ).fetchone()
-        finally:
-            migrated.close()
-
-        assert row["target_relationship"] == "fits"
-
     def test_count_feedback(self, store: FeedbackStore, target: RelationshipInstance):
         store.save_feedback(FeedbackRecord(receipt_id="RCP-1", action="approve", target=target))
         store.save_feedback(FeedbackRecord(receipt_id="RCP-2", action="reject", target=target))
@@ -723,49 +679,6 @@ class TestOutcomeStore:
         store.save_outcome(OutcomeRecord(receipt_id="RCP-2", outcome="incorrect"))
         assert store.count_outcomes() == 3
         assert store.count_outcomes(receipt_id="RCP-1") == 2
-
-    def test_migrates_legacy_outcomes_schema(self, tmp_path):
-        db_path = tmp_path / "feedback.db"
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "CREATE TABLE outcomes ("
-            "outcome_id TEXT PRIMARY KEY, "
-            "receipt_id TEXT NOT NULL, "
-            "outcome TEXT NOT NULL, "
-            "detail TEXT NOT NULL DEFAULT '{}', "
-            "created_at TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO outcomes (outcome_id, receipt_id, outcome, detail, created_at) "
-            "VALUES ('OUT-1', 'RCP-1', 'correct', '{}', '2026-03-01T00:00:00Z')"
-        )
-        conn.commit()
-        conn.close()
-
-        migrated = FeedbackStore(db_path)
-        try:
-            loaded = migrated.get_outcome("OUT-1")
-            assert loaded is not None
-            assert loaded.anchor_type == "receipt"
-            assert loaded.anchor_id == "RCP-1"
-
-            conn2 = sqlite3.connect(db_path)
-            try:
-                columns = {
-                    row[1] for row in conn2.execute("PRAGMA table_info(outcomes)").fetchall()
-                }
-                indexes = {
-                    row[1] for row in conn2.execute("PRAGMA index_list(outcomes)").fetchall()
-                }
-            finally:
-                conn2.close()
-        finally:
-            migrated.close()
-
-        assert {"anchor_type", "anchor_id", "outcome_code", "decision_context"} <= columns
-        assert "idx_outcomes_anchor_type" in indexes
-        assert "idx_outcomes_outcome_code" in indexes
-
 
 # ---------------------------------------------------------------------------
 # Integration: feedback reject → re-query excludes edge

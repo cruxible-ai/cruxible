@@ -64,11 +64,8 @@ def _save_trace(instance: CruxibleInstance, trace_id: str = "TRC-cli-001") -> st
         finished_at=started_at,
         duration_ms=0.0,
     )
-    store = instance.get_receipt_store()
-    try:
-        store.save_trace(trace)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
     return trace.trace_id
 
 
@@ -1882,25 +1879,26 @@ class TestExportEdges:
 
 
 class TestStoreLifecycle:
-    """Verify stores are closed even when operations raise."""
+    """Verify storage resources are closed even when operations raise."""
 
-    def test_query_closes_receipt_store_on_error(
+    def test_query_closes_unit_of_work_on_error(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from cruxible_core.receipt.store import SQLiteReceiptStore
+        from cruxible_core.storage.sqlite import SQLiteUnitOfWork
 
         close_count = 0
-        original_close = SQLiteReceiptStore.close
+        original_close = SQLiteUnitOfWork.close
 
-        def counting_close(self: SQLiteReceiptStore) -> None:
+        def counting_close(self: SQLiteUnitOfWork) -> None:
             nonlocal close_count
             close_count += 1
             original_close(self)
 
-        monkeypatch.setattr(SQLiteReceiptStore, "close", counting_close)
+        monkeypatch.setattr(SQLiteUnitOfWork, "close", counting_close)
         monkeypatch.setattr(
             SQLiteReceiptStore,
             "save_receipt",

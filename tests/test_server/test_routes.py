@@ -484,11 +484,8 @@ def test_trace_routes_return_trace_payloads(
         finished_at=started_at,
         duration_ms=0.0,
     )
-    store = get_manager().get(instance_id).get_receipt_store()
-    try:
-        store.save_trace(trace)
-    finally:
-        store.close()
+    with get_manager().get(instance_id).write_transaction() as uow:
+        uow.receipts.save_trace(trace)
 
     fetched = app_client.get(f"/api/v1/{instance_id}/traces/{trace.trace_id}")
     listed = app_client.get(f"/api/v1/{instance_id}/traces", params={"workflow_name": "wf"})

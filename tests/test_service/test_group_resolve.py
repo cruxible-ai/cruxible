@@ -196,6 +196,53 @@ def _propose(instance: CruxibleInstance, members=None, facts=None) -> str:
     return result.group_id
 
 
+def _save_resolution(
+    instance: CruxibleInstance,
+    relationship_type: str,
+    signature: str,
+    action: str,
+    rationale: str,
+    thesis_text: str,
+    thesis_facts: dict[str, Any],
+    outcome_state: dict[str, Any],
+    resolved_by: str,
+    **kwargs: Any,
+) -> str:
+    with instance.write_transaction() as uow:
+        return uow.groups.save_resolution(
+            relationship_type,
+            signature,
+            action,
+            rationale,
+            thesis_text,
+            thesis_facts,
+            outcome_state,
+            resolved_by,
+            **kwargs,
+        )
+
+
+def _update_group_status(
+    instance: CruxibleInstance,
+    group_id: str,
+    status: str,
+    *,
+    resolution_id: str | None = None,
+) -> None:
+    with instance.write_transaction() as uow:
+        uow.groups.update_group_status(group_id, status, resolution_id=resolution_id)
+
+
+def _update_resolution_trust_status(
+    instance: CruxibleInstance,
+    resolution_id: str,
+    trust_status: str,
+    reason: str,
+) -> None:
+    with instance.write_transaction() as uow:
+        uow.groups.update_resolution_trust_status(resolution_id, trust_status, reason)
+
+
 # ---------------------------------------------------------------------------
 # Approve tests
 # ---------------------------------------------------------------------------
@@ -395,22 +442,18 @@ class TestReject:
         """Cannot reject a group that's in applying state."""
         group_id = _propose(instance, [_member("BP-1", "V-1")])
         # Manually set status to applying
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                res_id = store.save_resolution(
-                    "fits",
-                    compute_group_signature("fits", {"style": "casual"}),
-                    "approve",
-                    "",
-                    "",
-                    {},
-                    {},
-                    "human",
-                )
-                store.update_group_status(group_id, "applying", resolution_id=res_id)
-        finally:
-            store.close()
+        res_id = _save_resolution(
+            instance,
+            "fits",
+            compute_group_signature("fits", {"style": "casual"}),
+            "approve",
+            "",
+            "",
+            {},
+            {},
+            "human",
+        )
+        _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
         with pytest.raises(ConfigError, match="Group is in applying state from a prior approve"):
             service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
@@ -461,35 +504,26 @@ class TestStatusGuards:
         facts = {"style": "casual"}
         sig = compute_group_signature("fits", facts)
         # Create a prior trusted confirmed resolution
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=True,
+        )
 
         # Propose — should auto-resolve since we have trusted prior
         # But we need trusted_or_watch or to change the fixture config.
         # Instead, just test that a pending_review or auto_resolved group
         # can be resolved. Let's manually set status.
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.update_group_status(group_id, "auto_resolved")
-        finally:
-            store.close()
+        _update_group_status(instance, group_id, "auto_resolved")
 
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1
@@ -519,29 +553,25 @@ class TestConfirmedFlag:
         _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
 
         # Manually create an unconfirmed resolution
-        store = instance.get_group_store()
-        try:
-            facts = _agent_signature_facts(
-                instance,
-                [_member("BP-2", "V-2")],
-                agent_scope=facts_scope,
-            )
-            sig = compute_group_signature("fits", facts)
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=False,
-                )
-        finally:
-            store.close()
+        facts = _agent_signature_facts(
+            instance,
+            [_member("BP-2", "V-2")],
+            agent_scope=facts_scope,
+        )
+        sig = compute_group_signature("fits", facts)
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=False,
+        )
 
         # Proposing again — unconfirmed should not be found
         result2 = service_propose_group(
@@ -568,23 +598,19 @@ class TestTrustInheritance:
         )
         sig = compute_group_signature("fits", facts)
         # Create prior trusted confirmed resolution
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=True,
+        )
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -605,23 +631,19 @@ class TestTrustInheritance:
             agent_scope=facts_scope,
         )
         sig = compute_group_signature("fits", facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="watch",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="watch",
+            confirmed=True,
+        )
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -642,23 +664,19 @@ class TestTrustInheritance:
             agent_scope=facts_scope,
         )
         sig = compute_group_signature("fits", facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="invalidated",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="invalidated",
+            confirmed=True,
+        )
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -691,23 +709,19 @@ class TestTrustInheritance:
             agent_scope=facts_scope,
         )
         sig = compute_group_signature("fits", facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=False,  # unconfirmed
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=False,  # unconfirmed
+        )
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -739,34 +753,25 @@ class TestTrustRevalidation:
         sig = compute_group_signature("fits", facts)
 
         # Create prior trusted confirmed resolution
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                prior_res_id = store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        prior_res_id = _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=True,
+        )
 
         # Propose and start resolve (manually simulate applying state)
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
 
         # Now invalidate the prior before resolve completes
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.update_resolution_trust_status(prior_res_id, "invalidated", "trust broken")
-        finally:
-            store.close()
+        _update_resolution_trust_status(instance, prior_res_id, "invalidated", "trust broken")
 
         # Resolve — should revalidate trust at confirmation
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -788,23 +793,19 @@ class TestTrustRevalidation:
             agent_scope=facts_scope,
         )
         sig = compute_group_signature("fits", facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    trust_status="trusted",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            facts,
+            {},
+            "human",
+            trust_status="trusted",
+            confirmed=True,
+        )
 
         group_id = _propose(instance, [_member("BP-1", "V-1")], facts=facts_scope)
         service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -846,24 +847,20 @@ class TestApplyingRetry:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
 
         # Manually move to applying with a resolution
-        store = instance.get_group_store()
-        try:
-            sig = compute_group_signature("fits", {"style": "casual"})
-            with store.transaction():
-                res_id = store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    {},
-                    {},
-                    "human",
-                    confirmed=False,
-                )
-                store.update_group_status(group_id, "applying", resolution_id=res_id)
-        finally:
-            store.close()
+        sig = compute_group_signature("fits", {"style": "casual"})
+        res_id = _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            {},
+            {},
+            "human",
+            confirmed=False,
+        )
+        _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
         # Now resolve (retry path)
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
@@ -898,24 +895,20 @@ class TestApplyingRetry:
         instance.save_graph(graph)
 
         # Set to applying
-        store = instance.get_group_store()
-        try:
-            sig = compute_group_signature("fits", {"style": "casual"})
-            with store.transaction():
-                res_id = store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    {},
-                    {},
-                    "human",
-                    confirmed=False,
-                )
-                store.update_group_status(group_id, "applying", resolution_id=res_id)
-        finally:
-            store.close()
+        sig = compute_group_signature("fits", {"style": "casual"})
+        res_id = _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            {},
+            {},
+            "human",
+            confirmed=False,
+        )
+        _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         assert result.edges_created == 1  # only BP-2→V-2
@@ -939,24 +932,20 @@ class TestApplyingRetry:
         )
         instance.save_graph(graph)
 
-        store = instance.get_group_store()
-        try:
-            sig = compute_group_signature("fits", {"style": "casual"})
-            with store.transaction():
-                res_id = store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    {},
-                    {},
-                    "human",
-                    confirmed=False,
-                )
-                store.update_group_status(group_id, "applying", resolution_id=res_id)
-        finally:
-            store.close()
+        sig = compute_group_signature("fits", {"style": "casual"})
+        res_id = _save_resolution(
+            instance,
+            "fits",
+            sig,
+            "approve",
+            "",
+            "",
+            {},
+            {},
+            "human",
+            confirmed=False,
+        )
+        _update_group_status(instance, group_id, "applying", resolution_id=res_id)
 
         # Retry with zero valid members — should succeed
         result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)

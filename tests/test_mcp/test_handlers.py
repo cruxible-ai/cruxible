@@ -228,11 +228,8 @@ def test_trace_tools_work_locally_for_dev_instance(
         duration_ms=0.0,
     )
     instance = CruxibleInstance.load(Path(dev_graph_instance_id))
-    store = instance.get_receipt_store()
-    try:
-        store.save_trace(trace)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
 
     fetched = call_tool(
         server,

@@ -193,22 +193,18 @@ class TestUpdateTrustStatus:
         """Cannot update trust on unconfirmed resolutions."""
         facts = {"k": "v"}
         sig = compute_group_signature("fits", facts)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                res_id = store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts,
-                    {},
-                    "human",
-                    confirmed=False,
-                )
-        finally:
-            store.close()
+        with instance.write_transaction() as uow:
+            res_id = uow.groups.save_resolution(
+                "fits",
+                sig,
+                "approve",
+                "",
+                "",
+                facts,
+                {},
+                "human",
+                confirmed=False,
+            )
 
         with pytest.raises(ConfigError, match="confirmed resolutions"):
             service_update_trust_status(instance, res_id, "trusted")

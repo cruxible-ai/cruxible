@@ -8,9 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.errors import ConfigError, DataValidationError, MutationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     service_add_entities,
@@ -86,21 +87,20 @@ class TestAddEntityReceipts:
         assert receipt.operation_type == "add_entity"
         assert receipt.committed is False
 
-    def test_receipt_persistence_failure_nonfatal(self, initialized_instance: CruxibleInstance):
-        """If receipt store fails, graph write still succeeds."""
-        original_fn = type(initialized_instance).get_receipt_store
+    def test_receipt_persistence_failure_rolls_back_graph(
+        self,
+        initialized_instance: CruxibleInstance,
+    ):
+        """If the success receipt cannot persist, graph writes roll back too."""
 
-        def broken_store(self_inst):
-            store = original_fn(self_inst)
+        def fail_save(self, receipt):
+            raise RuntimeError("Store broken")
 
-            def fail_save(receipt):
-                raise RuntimeError("Store broken")
-
-            store.save_receipt = fail_save
-            return store
-
-        with patch.object(type(initialized_instance), "get_receipt_store", broken_store):
-            result = service_add_entities(
+        with (
+            patch.object(SQLiteReceiptStore, "save_receipt", fail_save),
+            pytest.raises(MutationError, match="Failed to persist mutation receipt"),
+        ):
+            service_add_entities(
                 initialized_instance,
                 [
                     EntityInstance(
@@ -115,10 +115,9 @@ class TestAddEntityReceipts:
                     )
                 ],
             )
-        assert result.receipt_id is None
-        # Graph write succeeded
+
         graph = initialized_instance.load_graph()
-        assert graph.get_entity("Vehicle", "V-PERSIST") is not None
+        assert graph.get_entity("Vehicle", "V-PERSIST") is None
 
     def test_create_receipt_false_suppresses(self, initialized_instance: CruxibleInstance):
         result = service_add_entities(
@@ -280,6 +279,46 @@ class TestFeedbackReceipts:
                 target=_edge_target(),
             )
 
+    def test_feedback_apply_failure_rolls_back_feedback_row(
+        self,
+        populated_instance: CruxibleInstance,
+    ):
+        receipt_id = self._run_query(populated_instance)
+
+        with (
+            patch(
+                "cruxible_core.service.feedback._apply_feedback_record",
+                side_effect=RuntimeError("feedback graph update failed"),
+            ),
+            pytest.raises(
+                MutationError,
+                match="Unexpected failure: feedback graph update failed",
+            ),
+        ):
+            service_feedback(
+                populated_instance,
+                receipt_id=receipt_id,
+                action="reject",
+                source="human",
+                target=_edge_target(),
+                reason="not a fit",
+            )
+
+        feedback_store = populated_instance.get_feedback_store()
+        try:
+            assert feedback_store.list_feedback(receipt_id=receipt_id) == []
+        finally:
+            feedback_store.close()
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "unreviewed"
+
 
 # ---------------------------------------------------------------------------
 # group_resolve receipts
@@ -439,6 +478,46 @@ class TestGroupResolveReceipts:
         assert receipt is not None
         assert receipt.operation_type == "group_resolve"
         assert receipt.committed is True
+
+    def test_resolve_rollback_after_group_update_before_graph_replay(
+        self,
+        resolve_instance: CruxibleInstance,
+    ):
+        group_id = _propose_group(resolve_instance)
+
+        with (
+            patch(
+                "cruxible_core.service.groups._apply_resolved_relationships",
+                side_effect=RuntimeError("graph replay failed"),
+            ),
+            pytest.raises(MutationError, match="Unexpected failure: graph replay failed"),
+        ):
+            service_resolve_group(
+                resolve_instance,
+                group_id,
+                "approve",
+                expected_pending_version=1,
+            )
+
+        store = resolve_instance.get_group_store()
+        try:
+            group = store.get_group(group_id)
+            assert group is not None
+            assert group.status == "pending_review"
+            assert group.resolution_id is None
+            assert store.list_resolutions(relationship_type="fits") == []
+        finally:
+            store.close()
+        assert (
+            resolve_instance.load_graph().get_relationship(
+                "Part",
+                "BP-1",
+                "Vehicle",
+                "V-1",
+                "fits",
+            )
+            is None
+        )
 
     def test_resolve_approve_receipt_records_write_and_final_validation_shape(
         self,

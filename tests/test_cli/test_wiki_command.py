@@ -474,11 +474,8 @@ def _seed_reference_only_receipt(instance: CruxibleInstance) -> str:
     )
     receipt = builder.build(results=[{"entity_type": "ReferenceItem", "entity_id": "ref-2"}])
 
-    receipt_store = instance.get_receipt_store()
-    try:
-        receipt_store.save_receipt(receipt)
-    finally:
-        receipt_store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_receipt(receipt)
     return receipt.receipt_id
 
 
@@ -573,11 +570,10 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
         results=[{"entity_type": "Asset", "entity_id": "prod-web-01"}]
     )
 
-    receipt_store = instance.get_receipt_store()
-    try:
-        receipt_store.save_receipt(query_receipt)
-        receipt_store.save_receipt(workflow_receipt)
-        receipt_store.save_trace(
+    with instance.write_transaction() as uow:
+        uow.receipts.save_receipt(query_receipt)
+        uow.receipts.save_receipt(workflow_receipt)
+        uow.receipts.save_trace(
             ExecutionTrace(
                 trace_id="TRC-load-001",
                 workflow_name="propose_asset_exposure",
@@ -596,7 +592,7 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
                 **_trace_timing(),
             )
         )
-        receipt_store.save_trace(
+        uow.receipts.save_trace(
             ExecutionTrace(
                 trace_id="TRC-exposure-001",
                 workflow_name="propose_asset_exposure",
@@ -616,8 +612,6 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
                 **_trace_timing(),
             )
         )
-    finally:
-        receipt_store.close()
 
     return query_receipt.receipt_id, workflow_receipt.receipt_id, "TRC-exposure-001"
 
@@ -632,102 +626,95 @@ def _seed_review_history(
         {"asset_id": "prod-web-01", "vulnerability_id": "CVE-2021-41773"},
     )
     created_at = datetime.now(timezone.utc)
-    group_store = instance.get_group_store()
-    try:
-        with group_store.transaction():
-            resolution_id = group_store.save_resolution(
-                "asset_requires_action_for_vulnerability",
-                signature,
-                "approve",
-                "Confirmed during patch planning",
-                "prod-web-01 requires action for CVE-2021-41773",
-                {"asset_id": "prod-web-01", "vulnerability_id": "CVE-2021-41773"},
-                {"priority": "urgent"},
-                "human",
-                trust_status="trusted",
-                confirmed=True,
+    with instance.write_transaction() as uow:
+        resolution_id = uow.groups.save_resolution(
+            "asset_requires_action_for_vulnerability",
+            signature,
+            "approve",
+            "Confirmed during patch planning",
+            "prod-web-01 requires action for CVE-2021-41773",
+            {"asset_id": "prod-web-01", "vulnerability_id": "CVE-2021-41773"},
+            {"priority": "urgent"},
+            "human",
+            trust_status="trusted",
+            confirmed=True,
+        )
+        uow.groups.save_group(
+            CandidateGroup(
+                group_id="GRP-asset-exposure-001",
+                relationship_type="asset_requires_action_for_vulnerability",
+                signature=signature,
+                status="resolved",
+                thesis_text="prod-web-01 requires action for CVE-2021-41773",
+                thesis_facts={
+                    "asset_id": "prod-web-01",
+                    "vulnerability_id": "CVE-2021-41773",
+                },
+                analysis_state={"priority": "urgent"},
+                signal_sources_used=["inventory"],
+                proposed_by="agent",
+                member_count=1,
+                review_priority="review",
+                source_workflow_name="propose_asset_exposure",
+                source_workflow_receipt_id=workflow_receipt_id,
+                source_trace_ids=[trace_id],
+                source_step_ids=["assess_exposure"],
+                resolution_id=resolution_id,
+                created_at=created_at,
             )
-            group_store.save_group(
-                CandidateGroup(
-                    group_id="GRP-asset-exposure-001",
+        )
+        uow.groups.save_members(
+            "GRP-asset-exposure-001",
+            [
+                CandidateMember(
+                    from_type="Asset",
+                    from_id="prod-web-01",
+                    to_type="Vulnerability",
+                    to_id="CVE-2021-41773",
                     relationship_type="asset_requires_action_for_vulnerability",
-                    signature=signature,
-                    status="resolved",
-                    thesis_text="prod-web-01 requires action for CVE-2021-41773",
-                    thesis_facts={
-                        "asset_id": "prod-web-01",
-                        "vulnerability_id": "CVE-2021-41773",
-                    },
-                    analysis_state={"priority": "urgent"},
-                    signal_sources_used=["inventory"],
-                    proposed_by="agent",
-                    member_count=1,
-                    review_priority="review",
-                    source_workflow_name="propose_asset_exposure",
-                    source_workflow_receipt_id=workflow_receipt_id,
-                    source_trace_ids=[trace_id],
-                    source_step_ids=["assess_exposure"],
-                    resolution_id=resolution_id,
-                    created_at=created_at,
+                    properties={"priority": "urgent"},
                 )
+            ],
+        )
+        uow.groups.save_group(
+            CandidateGroup(
+                group_id="GRP-service-review-001",
+                relationship_type="service_impacted_by_vulnerability",
+                signature=compute_group_signature(
+                    "service_impacted_by_vulnerability",
+                    {"service_id": "svc-billing", "vulnerability_id": "CVE-2021-41773"},
+                ),
+                status="pending_review",
+                thesis_text="Billing is impacted through prod-web-01",
+                thesis_facts={
+                    "service_id": "svc-billing",
+                    "vulnerability_id": "CVE-2021-41773",
+                },
+                analysis_state={"priority": "review"},
+                signal_sources_used=["inventory"],
+                proposed_by="agent",
+                member_count=1,
+                review_priority="review",
+                source_workflow_name="propose_asset_exposure",
+                source_workflow_receipt_id=workflow_receipt_id,
+                source_trace_ids=[trace_id],
+                source_step_ids=["assess_exposure"],
+                created_at=created_at,
             )
-            group_store.save_members(
-                "GRP-asset-exposure-001",
-                [
-                    CandidateMember(
-                        from_type="Asset",
-                        from_id="prod-web-01",
-                        to_type="Vulnerability",
-                        to_id="CVE-2021-41773",
-                        relationship_type="asset_requires_action_for_vulnerability",
-                        properties={"priority": "urgent"},
-                    )
-                ],
-            )
-            group_store.save_group(
-                CandidateGroup(
-                    group_id="GRP-service-review-001",
+        )
+        uow.groups.save_members(
+            "GRP-service-review-001",
+            [
+                CandidateMember(
+                    from_type="BusinessService",
+                    from_id="svc-billing",
+                    to_type="Vulnerability",
+                    to_id="CVE-2021-41773",
                     relationship_type="service_impacted_by_vulnerability",
-                    signature=compute_group_signature(
-                        "service_impacted_by_vulnerability",
-                        {"service_id": "svc-billing", "vulnerability_id": "CVE-2021-41773"},
-                    ),
-                    status="pending_review",
-                    thesis_text="Billing is impacted through prod-web-01",
-                    thesis_facts={
-                        "service_id": "svc-billing",
-                        "vulnerability_id": "CVE-2021-41773",
-                    },
-                    analysis_state={"priority": "review"},
-                    signal_sources_used=["inventory"],
-                    proposed_by="agent",
-                    member_count=1,
-                    review_priority="review",
-                    source_workflow_name="propose_asset_exposure",
-                    source_workflow_receipt_id=workflow_receipt_id,
-                    source_trace_ids=[trace_id],
-                    source_step_ids=["assess_exposure"],
-                    created_at=created_at,
                 )
-            )
-            group_store.save_members(
-                "GRP-service-review-001",
-                [
-                    CandidateMember(
-                        from_type="BusinessService",
-                        from_id="svc-billing",
-                        to_type="Vulnerability",
-                        to_id="CVE-2021-41773",
-                        relationship_type="service_impacted_by_vulnerability",
-                    )
-                ],
-            )
-    finally:
-        group_store.close()
-
-    feedback_store = instance.get_feedback_store()
-    try:
-        feedback_store.save_feedback(
+            ],
+        )
+        uow.feedback.save_feedback(
             FeedbackRecord(
                 receipt_id=workflow_receipt_id,
                 action="approve",
@@ -746,8 +733,6 @@ def _seed_review_history(
                 },
             )
         )
-    finally:
-        feedback_store.close()
 
     return resolution_id
 
@@ -759,9 +744,8 @@ def _seed_outcomes(
     resolution_id: str,
     trace_id: str,
 ) -> None:
-    feedback_store = instance.get_feedback_store()
-    try:
-        feedback_store.save_outcome(
+    with instance.write_transaction() as uow:
+        uow.feedback.save_outcome(
             OutcomeRecord(
                 receipt_id=query_receipt_id,
                 anchor_type="receipt",
@@ -780,7 +764,7 @@ def _seed_outcomes(
                 detail={"note": "asset association held up during review"},
             )
         )
-        feedback_store.save_outcome(
+        uow.feedback.save_outcome(
             OutcomeRecord(
                 receipt_id=workflow_receipt_id,
                 anchor_type="resolution",
@@ -808,8 +792,6 @@ def _seed_outcomes(
                 detail={"note": "service impact expanded after later review"},
             )
         )
-    finally:
-        feedback_store.close()
 
 
 def test_render_wiki_builds_subject_and_evidence_pages(tmp_path: Path) -> None:
@@ -1106,56 +1088,52 @@ def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path
     _, workflow_receipt_id, trace_id = _seed_receipts_and_traces(instance)
     _seed_review_history(instance, workflow_receipt_id, trace_id)
 
-    group_store = instance.get_group_store()
-    try:
+    with instance.write_transaction() as uow:
         created_at = datetime.now(timezone.utc)
-        with group_store.transaction():
-            group_store.save_group(
-                CandidateGroup(
-                    group_id="GRP-mixed-asset-review-001",
+        uow.groups.save_group(
+            CandidateGroup(
+                group_id="GRP-mixed-asset-review-001",
+                relationship_type="asset_requires_action_for_vulnerability",
+                signature=compute_group_signature(
+                    "asset_requires_action_for_vulnerability",
+                    {"vulnerability_id": "CVE-2021-41773", "subject": "mixed-assets"},
+                ),
+                status="pending_review",
+                thesis_text=(
+                    "Mixed review group should only render relevant members per subject"
+                ),
+                thesis_facts={"vulnerability_id": "CVE-2021-41773"},
+                analysis_state={"priority": "review"},
+                signal_sources_used=["inventory"],
+                proposed_by="agent",
+                member_count=2,
+                review_priority="review",
+                source_workflow_name="propose_asset_exposure",
+                source_workflow_receipt_id=workflow_receipt_id,
+                source_trace_ids=[trace_id],
+                source_step_ids=["assess_exposure"],
+                created_at=created_at,
+            )
+        )
+        uow.groups.save_members(
+            "GRP-mixed-asset-review-001",
+            [
+                CandidateMember(
+                    from_type="Asset",
+                    from_id="prod-web-01",
+                    to_type="Vulnerability",
+                    to_id="CVE-2021-41773",
                     relationship_type="asset_requires_action_for_vulnerability",
-                    signature=compute_group_signature(
-                        "asset_requires_action_for_vulnerability",
-                        {"vulnerability_id": "CVE-2021-41773", "subject": "mixed-assets"},
-                    ),
-                    status="pending_review",
-                    thesis_text=(
-                        "Mixed review group should only render relevant members per subject"
-                    ),
-                    thesis_facts={"vulnerability_id": "CVE-2021-41773"},
-                    analysis_state={"priority": "review"},
-                    signal_sources_used=["inventory"],
-                    proposed_by="agent",
-                    member_count=2,
-                    review_priority="review",
-                    source_workflow_name="propose_asset_exposure",
-                    source_workflow_receipt_id=workflow_receipt_id,
-                    source_trace_ids=[trace_id],
-                    source_step_ids=["assess_exposure"],
-                    created_at=created_at,
-                )
-            )
-            group_store.save_members(
-                "GRP-mixed-asset-review-001",
-                [
-                    CandidateMember(
-                        from_type="Asset",
-                        from_id="prod-web-01",
-                        to_type="Vulnerability",
-                        to_id="CVE-2021-41773",
-                        relationship_type="asset_requires_action_for_vulnerability",
-                    ),
-                    CandidateMember(
-                        from_type="Asset",
-                        from_id="corp-laptop-01",
-                        to_type="Vulnerability",
-                        to_id="CVE-2021-41773",
-                        relationship_type="asset_requires_action_for_vulnerability",
-                    ),
-                ],
-            )
-    finally:
-        group_store.close()
+                ),
+                CandidateMember(
+                    from_type="Asset",
+                    from_id="corp-laptop-01",
+                    to_type="Vulnerability",
+                    to_id="CVE-2021-41773",
+                    relationship_type="asset_requires_action_for_vulnerability",
+                ),
+            ],
+        )
 
     written = render_wiki(
         instance,

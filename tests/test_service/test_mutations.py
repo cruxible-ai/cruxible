@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
@@ -15,6 +17,7 @@ from cruxible_core.service import (
     service_add_relationship_inputs,
     service_add_relationships,
 )
+from cruxible_core.storage.sqlite import SQLiteGraphRepository
 
 
 def _vehicle(
@@ -132,6 +135,19 @@ class TestAddEntities:
         entity = populated_instance.load_graph().get_entity("Vehicle", "V-2024-CIVIC-EX")
         assert entity is not None
         assert entity.metadata == {"origin": "fixture", "last_seen": "service"}
+
+    def test_incremental_entity_mutation_does_not_full_save(
+        self, initialized_instance: CruxibleInstance
+    ) -> None:
+        def fail_full_save(_self: SQLiteGraphRepository, _graph) -> None:
+            raise AssertionError("service_add_entities should not replace the full graph")
+
+        with patch.object(SQLiteGraphRepository, "save_graph", fail_full_save):
+            result = service_add_entities(initialized_instance, [_vehicle("V-1")])
+
+        assert result.added == 1
+        restarted = CruxibleInstance.load(initialized_instance.root)
+        assert restarted.load_graph().get_entity("Vehicle", "V-1") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -255,3 +271,39 @@ class TestAddRelationships:
         assert prov is not None
         assert prov.source == "agent_review"
         assert prov.source_ref == "review-123"
+
+    def test_incremental_relationship_mutation_does_not_full_save(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        def fail_full_save(_self: SQLiteGraphRepository, _graph) -> None:
+            raise AssertionError("service_add_relationships should not replace the full graph")
+
+        with patch.object(SQLiteGraphRepository, "save_graph", fail_full_save):
+            result = service_add_relationships(
+                populated_instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-ACCORD-SPORT",
+                        properties={"verified": True},
+                    )
+                ],
+                source="test",
+                source_ref="incremental",
+            )
+
+        assert result.added == 1
+        restarted = CruxibleInstance.load(populated_instance.root)
+        assert (
+            restarted.load_graph().get_relationship(
+                "Part",
+                "BP-1002",
+                "Vehicle",
+                "V-2024-ACCORD-SPORT",
+                "fits",
+            )
+            is not None
+        )

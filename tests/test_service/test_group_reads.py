@@ -297,23 +297,19 @@ class TestListGroups:
         members2 = [_member("BP-2", "V-2")]
         facts2 = _agent_signature_facts(instance, members2, agent_scope=facts2_scope)
         sig = compute_group_signature("fits", facts2)
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_resolution(
-                    "fits",
-                    sig,
-                    "approve",
-                    "",
-                    "",
-                    facts2,
-                    {},
-                    "human",
-                    trust_status="invalidated",
-                    confirmed=True,
-                )
-        finally:
-            store.close()
+        with instance.write_transaction() as uow:
+            uow.groups.save_resolution(
+                "fits",
+                sig,
+                "approve",
+                "",
+                "",
+                facts2,
+                {},
+                "human",
+                trust_status="invalidated",
+                confirmed=True,
+            )
         service_propose_group(instance, "fits", members2, thesis_facts=facts2_scope)
 
         result = service_list_groups(instance)
@@ -471,12 +467,8 @@ class TestGroupStatus:
             member_count=1,
             created_at=datetime.now(timezone.utc),
         )
-        store = instance.get_group_store()
-        try:
-            with store.transaction():
-                store.save_group(group)
-        finally:
-            store.close()
+        with instance.write_transaction() as uow:
+            uow.groups.save_group(group)
 
         status = service_group_status(instance, group_id=group.group_id)
         assert status.thesis_text == "reference thesis"
