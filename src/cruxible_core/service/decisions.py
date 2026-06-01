@@ -45,11 +45,8 @@ def service_create_decision_record(
         subject_id=subject_id,
         opened_by=opened_by,  # type: ignore[arg-type]
     )
-    store = instance.get_decision_store()
-    try:
-        store.save_record(record)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.decisions.save_record(record)
     return DecisionRecordServiceResult(record=record)
 
 
@@ -128,17 +125,14 @@ def service_finalize_decision_record(
     decision_class: DecisionClass,
     rationale: str = "",
 ) -> DecisionRecordServiceResult:
-    store = instance.get_decision_store()
-    try:
-        record = store.finalize_record(
+    with instance.write_transaction() as uow:
+        record = uow.decisions.finalize_record(
             decision_record_id,
             final_decision=final_decision,
             decision_class=decision_class,
             rationale=rationale,
         )
-        events = store.list_events(decision_record_id)
-    finally:
-        store.close()
+        events = uow.decisions.list_events(decision_record_id)
     return DecisionRecordServiceResult(record=record, events=events)
 
 
@@ -148,12 +142,9 @@ def service_abandon_decision_record(
     *,
     reason: str = "",
 ) -> DecisionRecordServiceResult:
-    store = instance.get_decision_store()
-    try:
-        record = store.abandon_record(decision_record_id, reason=reason)
-        events = store.list_events(decision_record_id)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        record = uow.decisions.abandon_record(decision_record_id, reason=reason)
+        events = uow.decisions.list_events(decision_record_id)
     return DecisionRecordServiceResult(record=record, events=events)
 
 
@@ -219,14 +210,10 @@ def record_decision_event_for_context(
         started_at=started_at,
         finished_at=utc_now(),
     )
-    store = None
     try:
-        store = instance.get_decision_store()
-        store.append_event(event)
+        with instance.write_transaction() as uow:
+            uow.decisions.append_event(event)
     except Exception:
         logger.warning(
             "Failed to append decision event for %s", context.decision_record_id, exc_info=True
         )
-    finally:
-        if store is not None:
-            store.close()

@@ -1159,7 +1159,6 @@ def inspect_relationship_lineage_cmd(
                 else None
             ),
             "provenance": result.provenance,
-            "assertion": result.assertion,
             "group": result.group.model_dump(mode="python") if result.group is not None else None,
             "resolution": (
                 result.resolution.model_dump(mode="python")

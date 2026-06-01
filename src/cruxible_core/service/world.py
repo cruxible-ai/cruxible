@@ -288,6 +288,9 @@ def build_release_bundle(
     if snapshot is None:
         raise ConfigError(f"Snapshot '{snapshot_id}' not found")
     snapshot_dir = instance.get_instance_dir() / "snapshots" / snapshot_id
+    export_snapshot = getattr(instance, "_export_snapshot_artifacts", None)
+    if callable(export_snapshot):
+        snapshot_dir = export_snapshot(snapshot_id)
     bundle_dir = Path(tempfile.mkdtemp(prefix="cruxible_bundle_"))
     for name in ("snapshot.json", "config.yaml", "graph.json", "cruxible.lock.yaml"):
         source = snapshot_dir / name

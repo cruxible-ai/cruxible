@@ -770,9 +770,9 @@ class TestGetRelationship:
 
         assert lineage.found is True
         assert lineage.relationship is not None
-        assert lineage.assertion is not None
-        assert lineage.assertion["review"]["status"] == "unreviewed"
-        assert lineage.assertion["lifecycle"]["status"] == "active"
+        assertion = lineage.relationship.metadata.assertion
+        assert assertion.review.status == "unreviewed"
+        assert assertion.lifecycle.status == "active"
         assert lineage.warnings == ["missing_provenance"]
 
     def test_lineage_warns_when_relationship_not_found(
@@ -790,7 +790,6 @@ class TestGetRelationship:
 
         assert lineage.found is False
         assert lineage.relationship is None
-        assert lineage.assertion is None
         assert lineage.warnings == ["relationship_not_found"]
 
     def test_lineage_warns_on_non_group_provenance(
@@ -831,8 +830,8 @@ class TestGetRelationship:
             "source": "workflow_apply",
             "source_ref": "workflow:canonical-fitment",
         }
-        assert lineage.assertion is not None
-        assert lineage.assertion["review"]["status"] == "unreviewed"
+        assertion = lineage.relationship.metadata.assertion
+        assert assertion.review.status == "unreviewed"
         assert lineage.group is None
         assert lineage.warnings == ["non_group_provenance"]
 
@@ -943,11 +942,8 @@ def _trace(
 class TestTraceReads:
     def test_get_trace_found(self, populated_instance: CruxibleInstance) -> None:
         trace = _trace(trace_id="TRC-service-001")
-        store = populated_instance.get_receipt_store()
-        try:
-            store.save_trace(trace)
-        finally:
-            store.close()
+        with populated_instance.write_transaction() as uow:
+            uow.receipts.save_trace(trace)
 
         loaded = service_get_trace(populated_instance, trace.trace_id)
 
@@ -959,12 +955,9 @@ class TestTraceReads:
             service_get_trace(populated_instance, "TRC-missing")
 
     def test_list_traces_with_filters(self, populated_instance: CruxibleInstance) -> None:
-        store = populated_instance.get_receipt_store()
-        try:
-            store.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
-            store.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
-        finally:
-            store.close()
+        with populated_instance.write_transaction() as uow:
+            uow.receipts.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
+            uow.receipts.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
 
         result = service_list_traces(populated_instance, workflow_name="wf_a", limit=10)
 

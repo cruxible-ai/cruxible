@@ -19,10 +19,12 @@ CREATE TABLE IF NOT EXISTS receipts (
     parameters TEXT NOT NULL,
     receipt_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    duration_ms REAL NOT NULL
+    duration_ms REAL NOT NULL,
+    operation_type TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_receipts_query_name ON receipts(query_name);
 CREATE INDEX IF NOT EXISTS idx_receipts_created_at ON receipts(created_at);
+CREATE INDEX IF NOT EXISTS idx_receipts_operation_type ON receipts(operation_type);
 
 CREATE TABLE IF NOT EXISTS receipt_entities (
     receipt_id TEXT NOT NULL,
@@ -58,24 +60,19 @@ ON execution_traces(provider_name);
 class SQLiteReceiptStore(ReceiptStoreProtocol):
     """Stores and retrieves receipts and execution traces from SQLite."""
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        *,
+        connection: sqlite3.Connection | None = None,
+        initialize_schema: bool = True,
+    ) -> None:
         self._db_path = str(db_path)
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
+        self._owns_connection = connection is None
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA)
-        self._migrate()
-
-    def _migrate(self) -> None:
-        """Run schema migrations for new columns."""
-        cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(receipts)").fetchall()}
-        if "operation_type" not in cols:
-            self._conn.execute(
-                "ALTER TABLE receipts ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'query'"
-            )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_receipts_operation_type ON receipts(operation_type)"
-            )
-            self._conn.commit()
+        if initialize_schema:
+            self._conn.executescript(_SCHEMA)
 
     def save_receipt(self, receipt: Receipt) -> str:
         """Persist a receipt. Returns the receipt_id."""
@@ -111,7 +108,6 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 "VALUES (?, ?, ?)",
                 key,
             )
-        self._conn.commit()
         return receipt.receipt_id
 
     def get_receipt(self, receipt_id: str) -> Receipt | None:
@@ -147,7 +143,6 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 format_datetime(trace.started_at),
             ),
         )
-        self._conn.commit()
         return trace.trace_id
 
     def get_trace(self, trace_id: str) -> ExecutionTrace | None:
@@ -283,9 +278,9 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
             "DELETE FROM receipts WHERE receipt_id = ?",
             (receipt_id,),
         )
-        self._conn.commit()
         return cursor.rowcount > 0
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        if self._owns_connection:
+            self._conn.close()

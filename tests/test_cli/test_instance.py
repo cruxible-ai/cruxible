@@ -14,6 +14,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.snapshot.types import UpstreamMetadata
+from cruxible_core.storage.sqlite import SQLiteGraphRepository
 
 
 class TestInit:
@@ -21,7 +22,8 @@ class TestInit:
         CruxibleInstance.init(tmp_project, "config.yaml")
         assert (tmp_project / ".cruxible").is_dir()
         assert (tmp_project / ".cruxible" / "instance.json").exists()
-        assert (tmp_project / ".cruxible" / "graph.json").exists()
+        assert (tmp_project / ".cruxible" / "state.db").exists()
+        assert not (tmp_project / ".cruxible" / "graph.json").exists()
 
     def test_instance_json_metadata(self, tmp_project: Path) -> None:
         CruxibleInstance.init(tmp_project, "config.yaml", data_dir="data")
@@ -321,48 +323,50 @@ class TestStores:
         store = initialized_project.get_receipt_store()
         assert store is not None
         store.close()
-        assert (initialized_project.instance_dir / "receipts.db").exists()
+        assert (initialized_project.instance_dir / "state.db").exists()
 
     def test_feedback_store(self, initialized_project: CruxibleInstance) -> None:
         store = initialized_project.get_feedback_store()
         assert store is not None
         store.close()
-        assert (initialized_project.instance_dir / "feedback.db").exists()
+        assert (initialized_project.instance_dir / "state.db").exists()
 
     def test_group_store(self, initialized_project: CruxibleInstance) -> None:
         store = initialized_project.get_group_store()
         assert isinstance(store, GroupStore)
         store.close()
-        # Uses same feedback.db
-        assert (initialized_project.instance_dir / "feedback.db").exists()
+        assert (initialized_project.instance_dir / "state.db").exists()
 
 
 class TestAtomicSaveGraph:
-    def test_graph_json_intact_after_simulated_failure(
+    def test_sql_graph_intact_after_simulated_full_save_failure(
         self, initialized_project: CruxibleInstance
     ) -> None:
-        """Original graph.json preserved when save_graph fails mid-write."""
+        """Original SQL graph rows are preserved when save_graph fails mid-write."""
         # Save initial graph
         graph = EntityGraph()
         graph.add_entity(
             EntityInstance(entity_type="Part", entity_id="P-1", properties={"name": "original"})
         )
         initialized_project.save_graph(graph)
-        original_content = (initialized_project.instance_dir / "graph.json").read_text()
 
         # Mutate in-memory graph
         graph.add_entity(
             EntityInstance(entity_type="Part", entity_id="P-2", properties={"name": "new"})
         )
 
-        # Simulate failure during write
-        with patch("cruxible_core.cli.instance.json.dump", side_effect=OSError("disk full")):
+        def fail_save_graph(_self: SQLiteGraphRepository, _graph: EntityGraph) -> None:
+            raise OSError("disk full")
+
+        # Simulate failure during SQL replacement
+        with patch.object(SQLiteGraphRepository, "save_graph", fail_save_graph):
             with pytest.raises(OSError, match="disk full"):
                 initialized_project.save_graph(graph)
 
-        # Original graph.json should be intact
-        current = (initialized_project.instance_dir / "graph.json").read_text()
-        assert current == original_content
+        reloaded = initialized_project.load_graph()
+        assert reloaded.get_entity("Part", "P-1") is not None
+        assert reloaded.get_entity("Part", "P-2") is None
+        assert not (initialized_project.instance_dir / "graph.json").exists()
 
     def test_cache_invalidated_on_exception(self, initialized_project: CruxibleInstance) -> None:
         """After failed save_graph, load_graph re-reads from disk (no phantom edges)."""
@@ -375,7 +379,10 @@ class TestAtomicSaveGraph:
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-2", properties={}))
 
         # Fail the save
-        with patch("cruxible_core.cli.instance.json.dump", side_effect=OSError("disk full")):
+        def fail_save_graph(_self: SQLiteGraphRepository, _graph: EntityGraph) -> None:
+            raise OSError("disk full")
+
+        with patch.object(SQLiteGraphRepository, "save_graph", fail_save_graph):
             with pytest.raises(OSError):
                 initialized_project.save_graph(graph)
 

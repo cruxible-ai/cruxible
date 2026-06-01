@@ -96,11 +96,6 @@ class RelationshipAssertion(BaseModel):
     group_override: bool = False
 
 
-def dump_assertion(assertion: RelationshipAssertion) -> dict[str, Any]:
-    """Return the JSON-ready relationship assertion shape."""
-    return assertion.model_dump(mode="json", exclude_none=True)
-
-
 def relationship_assertion_from_metadata(value: Any) -> RelationshipAssertion:
     """Load relationship assertion state from metadata-like input."""
     if value is None:
@@ -158,7 +153,6 @@ __all__ = [
     "RelationshipReviewSource",
     "RelationshipReviewState",
     "RelationshipReviewStatus",
-    "dump_assertion",
     "relationship_assertion_from_metadata",
     "relationship_is_live",
     "relationship_lifecycle_is_active",

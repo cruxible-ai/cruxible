@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 import pytest
@@ -11,7 +10,6 @@ from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipLifecycleState,
     RelationshipReviewState,
-    dump_assertion,
     relationship_is_live,
 )
 from cruxible_core.graph.provenance import RelationshipProvenance
@@ -123,40 +121,3 @@ def test_invalid_assertion_timestamp_is_not_silently_downgraded() -> None:
                 },
             }
         )
-
-
-def test_dumped_assertion_json_is_deterministic_and_round_trips() -> None:
-    assertion = RelationshipAssertion(
-        review=RelationshipReviewState(
-            status="approved",
-            source="human",
-            updated_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
-            updated_by="feedback:approve",
-        ),
-        lifecycle=RelationshipLifecycleState(
-            status="inactive",
-            reason="replaced",
-            closed_at=datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc),
-            closed_by="workflow",
-        ),
-    )
-
-    dumped = dump_assertion(assertion)
-    assert dumped == {
-        "review": {
-            "status": "approved",
-            "source": "human",
-            "updated_at": "2026-05-17T12:00:00+00:00",
-            "updated_by": "feedback:approve",
-        },
-        "lifecycle": {
-            "status": "inactive",
-            "reason": "replaced",
-            "closed_at": "2026-05-18T12:00:00+00:00",
-            "closed_by": "workflow",
-        },
-    }
-    assert json.dumps(dumped, sort_keys=True) == json.dumps(
-        dump_assertion(RelationshipAssertion.model_validate(dumped)),
-        sort_keys=True,
-    )

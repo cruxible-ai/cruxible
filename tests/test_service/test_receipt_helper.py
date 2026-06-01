@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -36,12 +38,25 @@ class _DummyCloseable:
         self.closed = True
 
 
+class _DummyUnitOfWork:
+    def __init__(self, receipt_store: _DummyReceiptStore) -> None:
+        self.receipts = receipt_store
+
+
 class _DummyInstance:
     def __init__(self) -> None:
         self.receipt_store = _DummyReceiptStore()
+        self.uow = _DummyUnitOfWork(self.receipt_store)
 
     def get_receipt_store(self) -> _DummyReceiptStore:
         return self.receipt_store
+
+    @contextmanager
+    def write_transaction(self) -> Iterator[_DummyUnitOfWork]:
+        yield self.uow
+
+    def invalidate_graph_cache(self) -> None:
+        pass
 
 
 class TestMutationReceiptHelper:

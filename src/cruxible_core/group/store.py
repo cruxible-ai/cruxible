@@ -1,20 +1,16 @@
 """SQLite persistence for candidate groups, members, and resolutions.
 
-Shares feedback.db with FeedbackStore. Tables are created on init.
-Write methods do NOT auto-commit — use transaction() for compound writes.
+Participates in the unified state.db alongside graph, snapshots, feedback, and receipts.
+Writes participate in the instance unit of work; this store does not own commits.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
@@ -24,8 +20,6 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import GroupStoreProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import format_datetime, utc_now
-
-logger = logging.getLogger(__name__)
 
 # group_resolutions FIRST (referenced by candidate_groups.resolution_id)
 _SCHEMA = """\
@@ -77,6 +71,12 @@ CREATE INDEX IF NOT EXISTS idx_candidate_groups_status ON candidate_groups(statu
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_rel_type ON candidate_groups(relationship_type);
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature_status
     ON candidate_groups(relationship_type, signature, status);
+CREATE INDEX IF NOT EXISTS idx_candidate_groups_pending_signature
+    ON candidate_groups(relationship_type, signature)
+    WHERE status = 'pending_review' AND group_kind = 'propose';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_groups_pending_unique
+    ON candidate_groups(relationship_type, signature)
+    WHERE status = 'pending_review' AND group_kind = 'propose';
 
 CREATE TABLE IF NOT EXISTS candidate_members (
     group_id TEXT NOT NULL REFERENCES candidate_groups(group_id),
@@ -97,174 +97,27 @@ CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity
 CREATE INDEX IF NOT EXISTS idx_candidate_members_pending_tuple
     ON candidate_members(relationship_type, from_type, from_id, to_type, to_id);
 
-CREATE TABLE IF NOT EXISTS group_store_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
 """
 
 
 class GroupStore(GroupStoreProtocol):
     """Stores and retrieves candidate groups, members, and resolutions."""
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        *,
+        connection: sqlite3.Connection | None = None,
+        initialize_schema: bool = True,
+    ) -> None:
         self._db_path = str(db_path)
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
+        self._owns_connection = connection is None
         self._conn.row_factory = sqlite3.Row
         # PRAGMA must be set before executescript (separate statement)
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.executescript(_SCHEMA)
-        self._migrate_schema()
-
-    def _migrate_schema(self) -> None:
-        group_columns = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
-        }
-        additions = [
-            ("group_kind", "TEXT NOT NULL DEFAULT 'propose'"),
-            ("signal_sources_used", "TEXT NOT NULL DEFAULT '[]'"),
-            ("pending_version", "INTEGER NOT NULL DEFAULT 1"),
-            ("source_workflow_name", "TEXT"),
-            ("source_workflow_receipt_id", "TEXT"),
-            ("source_query_receipt_ids", "TEXT NOT NULL DEFAULT '[]'"),
-            ("source_trace_ids", "TEXT NOT NULL DEFAULT '[]'"),
-            ("source_step_ids", "TEXT NOT NULL DEFAULT '[]'"),
-        ]
-        for name, ddl in additions:
-            if name not in group_columns:
-                self._conn.execute(f"ALTER TABLE candidate_groups ADD COLUMN {name} {ddl}")
-
-        member_columns = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(candidate_members)").fetchall()
-        }
-        if "source_query_evidence" not in member_columns:
-            self._conn.execute(
-                "ALTER TABLE candidate_members ADD COLUMN "
-                "source_query_evidence TEXT NOT NULL DEFAULT '[]'"
-            )
-        if "evidence_refs" not in member_columns:
-            self._conn.execute(
-                "ALTER TABLE candidate_members ADD COLUMN "
-                "evidence_refs TEXT NOT NULL DEFAULT '[]'"
-            )
-        if "evidence_rationale" not in member_columns:
-            self._conn.execute(
-                "ALTER TABLE candidate_members ADD COLUMN evidence_rationale TEXT"
-            )
-
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_group_resolutions_signature_action_confirmed "
-            "ON group_resolutions(relationship_type, group_signature, action, confirmed)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_candidate_groups_pending_signature "
-            "ON candidate_groups(relationship_type, signature) "
-            "WHERE status = 'pending_review' AND group_kind = 'propose'"
-        )
-        self._conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_groups_pending_unique "
-            "ON candidate_groups(relationship_type, signature) "
-            "WHERE status = 'pending_review' AND group_kind = 'propose'"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature_status "
-            "ON candidate_groups(relationship_type, signature, status)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_candidate_members_group_identity "
-            "ON candidate_members(group_id, relationship_type, from_type, from_id, to_type, to_id)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_candidate_members_pending_tuple "
-            "ON candidate_members(relationship_type, from_type, from_id, to_type, to_id)"
-        )
-
-        self._run_signature_bucket_migration()
-        self._conn.commit()
-
-    def _run_signature_bucket_migration(self) -> None:
-        migrated = self._conn.execute(
-            "SELECT value FROM group_store_meta WHERE key = 'signature_bucket_v1'"
-        ).fetchone()
-        if migrated is not None:
-            return
-
-        dropped = self._drop_legacy_pending_groups()
-        backfilled, preserved = self._backfill_resolved_signatures()
-        self._conn.execute(
-            "INSERT OR REPLACE INTO group_store_meta(key, value) VALUES (?, ?)",
-            ("signature_bucket_v1", format_datetime(utc_now())),
-        )
-        logger.info("Group store migration: dropped %s legacy pending/transient groups", dropped)
-        logger.info("Group store migration: backfilled %s resolved signatures to sigv1", backfilled)
-        logger.info(
-            "Group store migration: preserved %s legacy resolved rows "
-            "with empty thesis_facts as read-only",
-            preserved,
-        )
-
-    def _drop_legacy_pending_groups(self) -> int:
-        rows = self._conn.execute(
-            "SELECT group_id FROM candidate_groups WHERE status IN "
-            "('pending_review', 'auto_resolved', 'applying')"
-        ).fetchall()
-        group_ids = [row["group_id"] for row in rows]
-        if not group_ids:
-            return 0
-        placeholders = ",".join("?" for _ in group_ids)
-        self._conn.execute(
-            f"DELETE FROM candidate_members WHERE group_id IN ({placeholders})",
-            tuple(group_ids),
-        )
-        self._conn.execute(
-            f"DELETE FROM candidate_groups WHERE group_id IN ({placeholders})",
-            tuple(group_ids),
-        )
-        return len(group_ids)
-
-    def _backfill_resolved_signatures(self) -> tuple[int, int]:
-        rows = self._conn.execute(
-            "SELECT resolution_id, relationship_type, thesis_facts FROM group_resolutions"
-        ).fetchall()
-        backfilled = 0
-        preserved = 0
-        for row in rows:
-            thesis_facts = json.loads(row["thesis_facts"])
-            if not thesis_facts:
-                preserved += 1
-                continue
-            signature = compute_group_signature(row["relationship_type"], thesis_facts)
-            self._conn.execute(
-                "UPDATE group_resolutions SET group_signature = ? WHERE resolution_id = ?",
-                (signature, row["resolution_id"]),
-            )
-            self._conn.execute(
-                "UPDATE candidate_groups SET signature = ? WHERE resolution_id = ?",
-                (signature, row["resolution_id"]),
-            )
-            backfilled += 1
-        return backfilled, preserved
-
-    # -----------------------------------------------------------------
-    # Transaction support
-    # -----------------------------------------------------------------
-
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        """Context manager for atomic compound writes."""
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
-
-    def commit(self) -> None:
-        """Explicit commit for callers managing their own transactions."""
-        self._conn.commit()
+        if initialize_schema:
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.executescript(_SCHEMA)
 
     # -----------------------------------------------------------------
     # Groups
@@ -495,10 +348,7 @@ class GroupStore(GroupStoreProtocol):
                 [s.model_dump(mode="json", exclude_none=True) for s in m.signals]
             )
             source_query_evidence_json = json.dumps(
-                [
-                    evidence.model_dump(mode="json")
-                    for evidence in m.source_query_evidence
-                ],
+                [evidence.model_dump(mode="json") for evidence in m.source_query_evidence],
                 sort_keys=True,
             )
             self._conn.execute(
@@ -570,9 +420,7 @@ class GroupStore(GroupStoreProtocol):
         """Return live proposal groups containing any of the given tuple identities."""
         mismatched = [item for item in tuples if item[4] != relationship_type]
         if mismatched:
-            raise ValueError(
-                "all tuple identities must match the requested relationship_type"
-            )
+            raise ValueError("all tuple identities must match the requested relationship_type")
         tuple_keys = sorted(set(tuples))
         if not tuple_keys or not statuses:
             return {}
@@ -831,4 +679,5 @@ class GroupStore(GroupStoreProtocol):
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        if self._owns_connection:
+            self._conn.close()

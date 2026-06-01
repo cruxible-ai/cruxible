@@ -305,11 +305,8 @@ def _edge_target() -> RelationshipInstance:
 
 
 def _persist_receipt(instance: CruxibleInstance, receipt) -> str:
-    store = instance.get_receipt_store()
-    try:
-        return store.save_receipt(receipt)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        return uow.receipts.save_receipt(receipt)
 
 
 def _get_receipt(instance: CruxibleInstance, receipt_id: str):

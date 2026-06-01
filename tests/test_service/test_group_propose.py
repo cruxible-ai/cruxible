@@ -759,12 +759,8 @@ class TestRelationshipTupleProposalIdentity:
             [_member(signals=_all_support_signals())],
             thesis_facts={"bucket": "first"},
         )
-        group_store = tuple_identity_instance.get_group_store()
-        try:
-            with group_store.transaction():
-                group_store.update_group_status(first.group_id, "applying")
-        finally:
-            group_store.close()
+        with tuple_identity_instance.write_transaction() as uow:
+            uow.groups.update_group_status(first.group_id, "applying")
 
         second = service_propose_group(
             tuple_identity_instance,
@@ -1717,27 +1713,22 @@ def _create_prior_resolution(
     action: str = "approve",
     confirmed: bool = True,
 ) -> str:
-    """Helper: create a prior resolution directly in the store."""
+    """Helper: create a prior resolution through the write UOW."""
     facts = thesis_facts or {}
     signature = compute_group_signature(relationship_type, facts)
-    store = instance.get_group_store()
-    try:
-        with store.transaction():
-            res_id = store.save_resolution(
-                relationship_type,
-                signature,
-                action,
-                "prior rationale",
-                "prior thesis",
-                facts,
-                {"prior_state": True},
-                "human",
-                trust_status=trust_status,
-                confirmed=confirmed,
-            )
-        return res_id
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        return uow.groups.save_resolution(
+            relationship_type,
+            signature,
+            action,
+            "prior rationale",
+            "prior thesis",
+            facts,
+            {"prior_state": True},
+            "human",
+            trust_status=trust_status,
+            confirmed=confirmed,
+        )
 
 
 class TestAutoResolve:

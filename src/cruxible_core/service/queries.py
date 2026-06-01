@@ -12,7 +12,6 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
     TraceNotFoundError,
 )
-from cruxible_core.graph.assertion_state import dump_assertion
 from cruxible_core.graph.provenance import (
     dump_provenance,
     provenance_group_id,
@@ -99,11 +98,8 @@ def service_query(
         )
 
         if result.receipt:
-            store = instance.get_receipt_store()
-            try:
-                store.save_receipt(result.receipt)
-            finally:
-                store.close()
+            with instance.write_transaction() as uow:
+                uow.receipts.save_receipt(result.receipt)
     except Exception as exc:
         record_decision_event_for_context(
             instance,
@@ -468,13 +464,11 @@ def service_get_relationship_lineage(
         )
 
     warnings: list[str] = []
-    assertion = dump_assertion(relationship.metadata.assertion)
     provenance = relationship.metadata.provenance
     if provenance is None:
         return RelationshipLineageResult(
             found=True,
             relationship=relationship,
-            assertion=assertion,
             warnings=["missing_provenance"],
         )
 
@@ -485,7 +479,6 @@ def service_get_relationship_lineage(
             found=True,
             relationship=relationship,
             provenance=dump_provenance(provenance),
-            assertion=assertion,
             warnings=warnings,
         )
 
@@ -498,7 +491,6 @@ def service_get_relationship_lineage(
                 found=True,
                 relationship=relationship,
                 provenance=dump_provenance(provenance),
-                assertion=assertion,
                 warnings=warnings,
             )
         resolution = (
@@ -510,7 +502,6 @@ def service_get_relationship_lineage(
             found=True,
             relationship=relationship,
             provenance=dump_provenance(provenance),
-            assertion=assertion,
             group=group,
             resolution=resolution,
             source_workflow_receipt_id=group.source_workflow_receipt_id,

@@ -12,19 +12,13 @@ from cruxible_core.temporal import utc_now
 
 
 def persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
-    store = instance.get_receipt_store()
-    try:
-        store.save_receipt(receipt)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_receipt(receipt)
 
 
 def persist_trace(instance: InstanceProtocol, trace: ExecutionTrace) -> None:
-    store = instance.get_receipt_store()
-    try:
-        store.save_trace(trace)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
 
 
 def build_trace(
