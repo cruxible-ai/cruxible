@@ -9,8 +9,8 @@ contract at class-definition time.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,10 +19,12 @@ if TYPE_CHECKING:
     from cruxible_core.decision.types import DecisionEvent, DecisionRecord
     from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
     from cruxible_core.graph.entity_graph import EntityGraph
+    from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
     from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+    from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
 
 class ReceiptStoreProtocol(ABC):
@@ -59,9 +61,7 @@ class ReceiptStoreProtocol(ABC):
         self, *, query_name: str | None = None, operation_type: str | None = None
     ) -> int: ...
     @abstractmethod
-    def get_receipts_for_entity(
-        self, entity_type: str, entity_id: str
-    ) -> list[str]: ...
+    def get_receipts_for_entity(self, entity_type: str, entity_id: str) -> list[str]: ...
     @abstractmethod
     def close(self) -> None: ...
 
@@ -115,13 +115,7 @@ class DecisionStoreProtocol(ABC):
         rationale: str = "",
     ) -> DecisionRecord: ...
     @abstractmethod
-    def abandon_record(
-        self, decision_record_id: str, *, reason: str = ""
-    ) -> DecisionRecord: ...
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        raise NotImplementedError
-        yield  # pragma: no cover
+    def abandon_record(self, decision_record_id: str, *, reason: str = "") -> DecisionRecord: ...
     @abstractmethod
     def close(self) -> None: ...
 
@@ -172,10 +166,6 @@ class FeedbackStoreProtocol(ABC):
     ) -> list[OutcomeRecord]: ...
     @abstractmethod
     def count_outcomes(self, *, receipt_id: str | None = None) -> int: ...
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        raise NotImplementedError
-        yield  # pragma: no cover
     @abstractmethod
     def close(self) -> None: ...
 
@@ -294,10 +284,6 @@ class GroupStoreProtocol(ABC):
     def update_resolution_trust_status(
         self, resolution_id: str, trust_status: str, trust_reason: str = ""
     ) -> bool: ...
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        raise NotImplementedError
-        yield  # pragma: no cover
     @abstractmethod
     def close(self) -> None: ...
 
@@ -322,7 +308,17 @@ class InstanceProtocol(ABC):
     @abstractmethod
     def save_graph(self, graph: EntityGraph) -> None: ...
     @abstractmethod
+    def save_graph_delta(
+        self,
+        graph: EntityGraph,
+        *,
+        entities: Sequence[EntityInstance] = (),
+        relationships: Sequence[RelationshipInstance] = (),
+    ) -> None: ...
+    @abstractmethod
     def invalidate_graph_cache(self) -> None: ...
+    @abstractmethod
+    def write_transaction(self) -> AbstractContextManager[UnitOfWorkProtocol]: ...
     @abstractmethod
     def get_head_snapshot_id(self) -> str | None: ...
     @abstractmethod
@@ -333,7 +329,12 @@ class InstanceProtocol(ABC):
     def create_snapshot(self, label: str | None = None) -> WorldSnapshot: ...
     @abstractmethod
     def commit_graph_snapshot(
-        self, graph: EntityGraph, label: str | None = None
+        self,
+        graph: EntityGraph,
+        label: str | None = None,
+        *,
+        entities: Sequence[EntityInstance] | None = None,
+        relationships: Sequence[RelationshipInstance] | None = None,
     ) -> WorldSnapshot: ...
     @abstractmethod
     def get_snapshot(self, snapshot_id: str) -> WorldSnapshot | None: ...

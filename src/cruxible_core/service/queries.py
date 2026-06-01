@@ -99,11 +99,8 @@ def service_query(
         )
 
         if result.receipt:
-            store = instance.get_receipt_store()
-            try:
-                store.save_receipt(result.receipt)
-            finally:
-                store.close()
+            with instance.write_transaction() as uow:
+                uow.receipts.save_receipt(result.receipt)
     except Exception as exc:
         record_decision_event_for_context(
             instance,

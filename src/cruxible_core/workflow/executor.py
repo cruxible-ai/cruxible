@@ -13,6 +13,7 @@ from typing import Any
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -52,7 +53,7 @@ from cruxible_core.workflow.transforms import (
     join_items,
     shape_items,
 )
-from cruxible_core.workflow.types import WorkflowExecutionResult
+from cruxible_core.workflow.types import EntitySet, RelationshipSet, WorkflowExecutionResult
 from cruxible_core.workflow_execution_types import (
     WorkflowExecutionAction,
     WorkflowResultMode,
@@ -79,6 +80,8 @@ _TRUNCATION_REASON_ORDER = (
     "max_paths",
     "max_paths_per_result",
 )
+FAILED_WORKFLOW_RECEIPT_ATTR = "_cruxible_failed_workflow_receipt"
+FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR = "_cruxible_failed_workflow_receipt_persisted"
 
 
 def execute_workflow(
@@ -132,9 +135,7 @@ def execute_workflow(
         result_mode = execution_action
     else:
         if execution_action != "run":
-            raise ConfigError(
-                f"{workflow_type} workflows only support executor action 'run'"
-            )
+            raise ConfigError(f"{workflow_type} workflows only support executor action 'run'")
         result_mode = "proposal" if workflow_type == "proposal" else "run"
     head_snapshot_id = instance.get_head_snapshot_id()
     base_graph = instance.load_graph()
@@ -153,6 +154,8 @@ def execute_workflow(
     query_receipt_ids: list[str] = []
     traces: list[ExecutionTrace] = []
     apply_previews: dict[str, Any] = {}
+    applied_entities: dict[tuple[str, str], EntityInstance] = {}
+    applied_relationships: dict[int, RelationshipInstance] = {}
     results_recorded = False
     committed_snapshot_id: str | None = None
 
@@ -267,9 +270,7 @@ def execute_workflow(
                     plan.input_payload,
                     step_outputs,
                 )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
-                    aggregated_items
-                )
+                step_outputs[compiled_step.as_name or compiled_step.step_id] = aggregated_items
                 if compiled_step.as_name is not None:
                     alias_step_ids[compiled_step.as_name] = compiled_step.step_id
                 receipt_builder.record_plan_step(
@@ -385,8 +386,8 @@ def execute_workflow(
                     plan.input_payload,
                     step_outputs,
                 )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
-                    proposal.model_dump(mode="python")
+                step_outputs[compiled_step.as_name or compiled_step.step_id] = proposal.model_dump(
+                    mode="python"
                 )
                 if compiled_step.as_name is not None:
                     alias_step_ids[compiled_step.as_name] = compiled_step.step_id
@@ -500,6 +501,12 @@ def execute_workflow(
                 if compiled_step.as_name is not None:
                     alias_step_ids[compiled_step.as_name] = compiled_step.step_id
                 receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
+                if execution_action == "apply":
+                    _collect_entity_delta(
+                        graph,
+                        step_outputs[compiled_step.apply_entities_spec.entities_from],
+                        applied_entities,
+                    )
                 continue
 
             if compiled_step.kind == "apply_relationships":
@@ -525,6 +532,12 @@ def execute_workflow(
                 if compiled_step.as_name is not None:
                     alias_step_ids[compiled_step.as_name] = compiled_step.step_id
                 receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
+                if execution_action == "apply":
+                    _collect_relationship_delta(
+                        graph,
+                        step_outputs[compiled_step.apply_relationships_spec.relationships_from],
+                        applied_relationships,
+                    )
                 continue
 
             if compiled_step.kind == "apply_all":
@@ -551,6 +564,8 @@ def execute_workflow(
                         parent_id=step_node,
                     )
                     entity_results[alias] = entity_preview.model_dump(mode="python")
+                    if execution_action == "apply":
+                        _collect_entity_delta(graph, step_outputs[alias], applied_entities)
                 for alias in spec.relationships_from:
                     relationship_preview = apply_relationship_set(
                         instance,
@@ -563,6 +578,12 @@ def execute_workflow(
                         parent_id=step_node,
                     )
                     relationship_results[alias] = relationship_preview.model_dump(mode="python")
+                    if execution_action == "apply":
+                        _collect_relationship_delta(
+                            graph,
+                            step_outputs[alias],
+                            applied_relationships,
+                        )
                 preview_payload = _apply_all_preview_payload(
                     spec.entities_from,
                     spec.relationships_from,
@@ -633,7 +654,11 @@ def execute_workflow(
         )
 
         if workflow_type == "canonical" and execution_action == "apply":
-            snapshot = instance.commit_graph_snapshot(graph)
+            snapshot = instance.commit_graph_snapshot(
+                graph,
+                entities=list(applied_entities.values()),
+                relationships=list(applied_relationships.values()),
+            )
             committed_snapshot_id = snapshot.snapshot_id
             receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id
             receipt.committed = True
@@ -647,8 +672,15 @@ def execute_workflow(
             step_outputs=step_outputs,
             query_receipt_ids=query_receipt_ids,
         )
-        if persist_receipt:
+        setattr(exc, FAILED_WORKFLOW_RECEIPT_ATTR, failed_receipt)
+        defer_failed_receipt = (
+            workflow_type == "canonical"
+            and execution_action == "apply"
+            and getattr(instance, "_active_uow", None) is not None
+        )
+        if persist_receipt and not defer_failed_receipt:
             persist_workflow_receipt(instance, failed_receipt)
+            setattr(exc, FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR, True)
         raise
 
     if persist_receipt:
@@ -693,6 +725,38 @@ def _validate_workflow_output_contract(
         subject=f"Workflow '{workflow_name}' output",
         error_factory=query_execution_error,
     )
+
+
+def _collect_entity_delta(
+    graph: EntityGraph,
+    raw_entity_set: Any,
+    target: dict[tuple[str, str], EntityInstance],
+) -> None:
+    """Collect final entity rows touched by a canonical apply step."""
+    entity_set = EntitySet.model_validate(raw_entity_set)
+    for entity in entity_set.entities:
+        persisted = graph.get_entity(entity_set.entity_type, entity.entity_id)
+        if persisted is not None:
+            target[(persisted.entity_type, persisted.entity_id)] = persisted
+
+
+def _collect_relationship_delta(
+    graph: EntityGraph,
+    raw_relationship_set: Any,
+    target: dict[int, RelationshipInstance],
+) -> None:
+    """Collect final relationship rows touched by a canonical apply step."""
+    relationship_set = RelationshipSet.model_validate(raw_relationship_set)
+    for relationship in relationship_set.relationships:
+        persisted = graph.get_relationship(
+            relationship.from_type,
+            relationship.from_id,
+            relationship.to_type,
+            relationship.to_id,
+            relationship_set.relationship_type,
+        )
+        if persisted is not None and persisted.edge_key is not None:
+            target[persisted.edge_key] = persisted
 
 
 def _annotate_workflow_receipt(
@@ -818,9 +882,7 @@ def _aggregate_workflow_read_metadata(
     return {
         "read_steps": read_steps,
         "step_counts": {
-            summary["step_id"]: summary["counts"]
-            for summary in read_steps
-            if summary["counts"]
+            summary["step_id"]: summary["counts"] for summary in read_steps if summary["counts"]
         },
         "any_read_truncated": any(
             bool(summary["metadata"].get("truncated")) for summary in read_steps
@@ -835,11 +897,7 @@ def _aggregate_workflow_read_metadata(
 
 
 def _workflow_read_step_counts(output: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: output[key]
-        for key in _WORKFLOW_READ_COUNT_KEYS
-        if key in output
-    }
+    return {key: output[key] for key in _WORKFLOW_READ_COUNT_KEYS if key in output}
 
 
 def _ordered_truncation_reasons(reasons: Any) -> list[str]:

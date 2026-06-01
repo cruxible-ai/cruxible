@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -72,22 +70,20 @@ CREATE INDEX IF NOT EXISTS idx_decision_events_status ON decision_events(status)
 class DecisionStore(DecisionStoreProtocol):
     """Stores and retrieves decision records and append-only events."""
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        *,
+        connection: sqlite3.Connection | None = None,
+        initialize_schema: bool = True,
+    ) -> None:
         self._db_path = str(db_path)
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
+        self._owns_connection = connection is None
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.executescript(_SCHEMA)
-
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        self._conn.execute("BEGIN")
-        try:
-            yield
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        if initialize_schema:
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.executescript(_SCHEMA)
 
     def save_record(self, record: DecisionRecord) -> str:
         """Create or replace a decision record."""
@@ -126,7 +122,6 @@ class DecisionStore(DecisionStoreProtocol):
                 record.model_dump_json(),
             ),
         )
-        self._conn.commit()
         return record.decision_record_id
 
     def get_record(self, decision_record_id: str) -> DecisionRecord | None:
@@ -180,9 +175,7 @@ class DecisionStore(DecisionStoreProtocol):
         if record is None:
             raise ConfigError(f"Decision record '{event.decision_record_id}' not found")
         if record.status != "open":
-            raise ConfigError(
-                f"Decision record '{event.decision_record_id}' is not open"
-            )
+            raise ConfigError(f"Decision record '{event.decision_record_id}' is not open")
         sequence = self._next_sequence(event.decision_record_id)
         event = event.model_copy(update={"sequence": sequence})
         self._conn.execute(
@@ -214,7 +207,6 @@ class DecisionStore(DecisionStoreProtocol):
                 event.model_dump_json(),
             ),
         )
-        self._conn.commit()
         return event.decision_event_id
 
     def list_events(
@@ -257,8 +249,7 @@ class DecisionStore(DecisionStoreProtocol):
             params.append(status)
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self._conn.execute(
-            f"SELECT event_json FROM decision_events{where} "
-            "ORDER BY finished_at DESC LIMIT ?",
+            f"SELECT event_json FROM decision_events{where} ORDER BY finished_at DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
         return [DecisionEvent.model_validate_json(row["event_json"]) for row in rows]
@@ -313,4 +304,5 @@ class DecisionStore(DecisionStoreProtocol):
         return int(row["max_sequence"]) + 1
 
     def close(self) -> None:
-        self._conn.close()
+        if self._owns_connection:
+            self._conn.close()

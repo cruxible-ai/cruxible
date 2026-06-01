@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
@@ -53,6 +52,7 @@ from cruxible_core.service.types import (
     SuppressedProposalMember,
     UpdateTrustStatusResult,
 )
+from cruxible_core.storage import StorageIntegrityError
 from cruxible_core.temporal import is_expired, utc_now
 
 
@@ -758,6 +758,8 @@ def _clear_pending_group(
         },
     ) as ctx:
         assert ctx.builder is not None
+        assert ctx.uow is not None
+        write_group_store = ctx.uow.groups
         ctx.builder.record_validation(
             passed=True,
             detail={
@@ -767,8 +769,7 @@ def _clear_pending_group(
                 "cleared_tuples": _summarize_tuples(old_members),
             },
         )
-        with group_store.transaction():
-            group_store.delete_group(pending_group.group_id)
+        write_group_store.delete_group(pending_group.group_id)
         ctx.set_result(
             _proposal_result(
                 group_id=None,
@@ -829,6 +830,8 @@ def _rewrite_pending_group(
         },
     ) as ctx:
         assert ctx.builder is not None
+        assert ctx.uow is not None
+        write_group_store = ctx.uow.groups
         ctx.builder.record_validation(
             passed=True,
             detail={
@@ -840,9 +843,8 @@ def _rewrite_pending_group(
                 "removed_tuples": _summarize_tuples(changes.removed),
             },
         )
-        with group_store.transaction():
-            group_store.save_group(group)
-            group_store.replace_members(group.group_id, pending_members)
+        write_group_store.save_group(group)
+        write_group_store.replace_members(group.group_id, pending_members)
         ctx.set_result(
             _proposal_result(
                 group_id=group.group_id,
@@ -894,89 +896,90 @@ def _create_group_or_rewrite_concurrent(
         },
     ) as ctx:
         assert ctx.builder is not None
+        assert ctx.uow is not None
+        write_group_store = ctx.uow.groups
         if has_override:
             ctx.builder.record_validation(
                 passed=False,
                 detail={"reason": "held_for_review_due_to_override"},
             )
-        with group_store.transaction():
-            try:
-                group_store.save_group(group)
-                group_store.save_members(group.group_id, pending_members)
-            except sqlite3.IntegrityError:
-                concurrent_pending = group_store.find_pending_group(
-                    relationship_type,
-                    signature,
+        try:
+            write_group_store.save_group(group)
+            write_group_store.save_members(group.group_id, pending_members)
+        except StorageIntegrityError:
+            concurrent_pending = write_group_store.find_pending_group(
+                relationship_type,
+                signature,
+            )
+            if concurrent_pending is None:
+                raise
+            concurrent_members = write_group_store.get_members(concurrent_pending.group_id)
+            rewritten_members = pending_members
+            if pending_refresh_mode == "retain_missing":
+                rewritten_members = _merge_pending_members(
+                    concurrent_members,
+                    delta_members,
                 )
-                if concurrent_pending is None:
-                    raise
-                concurrent_members = group_store.get_members(concurrent_pending.group_id)
-                rewritten_members = pending_members
-                if pending_refresh_mode == "retain_missing":
-                    rewritten_members = _merge_pending_members(
-                        concurrent_members,
-                        delta_members,
-                    )
-                rewritten_review_priority = _review_priority_for_members(
-                    graph=graph,
-                    members=rewritten_members,
-                    proposal_policy=proposal_policy,
-                    prior_resolution=prior_resolution,
-                    force_review=force_review,
-                )
-                changes = _member_changes(concurrent_members, rewritten_members)
-                rewritten_metadata = _metadata_with_source_query_receipts(
-                    metadata,
-                    _source_query_receipt_ids_from_members(rewritten_members),
-                )
-                rewritten = concurrent_pending.model_copy(
-                    update={
-                        **_group_update_fields(
-                            rewritten_metadata,
-                            member_count=len(rewritten_members),
-                            review_priority=rewritten_review_priority,
-                        ),
-                        "pending_version": concurrent_pending.pending_version + 1,
-                    }
-                )
-                group_store.save_group(rewritten)
-                group_store.replace_members(rewritten.group_id, rewritten_members)
-                ctx.builder.record_validation(
-                    passed=True,
-                    detail={
-                        "race_resolved_as_rewrite": True,
-                        "group_id": rewritten.group_id,
-                        "prior_version": concurrent_pending.pending_version,
-                        "new_version": rewritten.pending_version,
-                        "added_tuples": _summarize_tuples(changes.added),
-                        "removed_tuples": _summarize_tuples(changes.removed),
-                    },
-                )
-                ctx.set_result(
-                    _proposal_result(
-                        group_id=rewritten.group_id,
-                        signature=signature,
-                        status="pending_review",
-                        review_priority=rewritten_review_priority,
+            rewritten_review_priority = _review_priority_for_members(
+                graph=graph,
+                members=rewritten_members,
+                proposal_policy=proposal_policy,
+                prior_resolution=prior_resolution,
+                force_review=force_review,
+            )
+            changes = _member_changes(concurrent_members, rewritten_members)
+            rewritten_metadata = _metadata_with_source_query_receipts(
+                metadata,
+                _source_query_receipt_ids_from_members(rewritten_members),
+            )
+            rewritten = concurrent_pending.model_copy(
+                update={
+                    **_group_update_fields(
+                        rewritten_metadata,
                         member_count=len(rewritten_members),
-                        prior_resolution=prior_resolution,
-                        suppressed_members=suppressed_members,
-                        policy_summary=policy_summary,
-                    )
+                        review_priority=rewritten_review_priority,
+                    ),
+                    "pending_version": concurrent_pending.pending_version + 1,
+                }
+            )
+            write_group_store.save_group(rewritten)
+            write_group_store.replace_members(rewritten.group_id, rewritten_members)
+            ctx.builder.record_validation(
+                passed=True,
+                detail={
+                    "race_resolved_as_rewrite": True,
+                    "group_id": rewritten.group_id,
+                    "prior_version": concurrent_pending.pending_version,
+                    "new_version": rewritten.pending_version,
+                    "added_tuples": _summarize_tuples(changes.added),
+                    "removed_tuples": _summarize_tuples(changes.removed),
+                },
+            )
+            ctx.set_result(
+                _proposal_result(
+                    group_id=rewritten.group_id,
+                    signature=signature,
+                    status="pending_review",
+                    review_priority=rewritten_review_priority,
+                    member_count=len(rewritten_members),
+                    prior_resolution=prior_resolution,
+                    suppressed_members=suppressed_members,
+                    policy_summary=policy_summary,
                 )
-            else:
-                ctx.set_result(
-                    _proposal_result(
-                        group_id=group.group_id,
-                        signature=signature,
-                        status=status,
-                        review_priority=review_priority,
-                        member_count=len(pending_members),
-                        prior_resolution=prior_resolution,
-                        suppressed_members=suppressed_members,
-                        policy_summary=policy_summary,
-                    )
+            )
+        else:
+            ctx.set_result(
+                _proposal_result(
+                    group_id=group.group_id,
+                    signature=signature,
+                    status=status,
+                    review_priority=review_priority,
+                    member_count=len(pending_members),
+                    prior_resolution=prior_resolution,
+                    suppressed_members=suppressed_members,
+                    policy_summary=policy_summary,
                 )
+            )
 
     result = ctx.result
     assert result is not None
@@ -1541,24 +1544,23 @@ def _reject_group(
             "pending_version_at_resolve": group.pending_version,
         },
     )
-    with group_store.transaction():
-        resolution_id = group_store.save_resolution(
-            group.relationship_type,
-            group.signature,
-            "reject",
-            rationale,
-            group.thesis_text,
-            group.thesis_facts,
-            group.analysis_state,
-            resolved_by,
-            trust_status="watch",
-            confirmed=True,
-        )
-        group_store.update_group_status(
-            group.group_id,
-            "resolved",
-            resolution_id=resolution_id,
-        )
+    resolution_id = group_store.save_resolution(
+        group.relationship_type,
+        group.signature,
+        "reject",
+        rationale,
+        group.thesis_text,
+        group.thesis_facts,
+        group.analysis_state,
+        resolved_by,
+        trust_status="watch",
+        confirmed=True,
+    )
+    group_store.update_group_status(
+        group.group_id,
+        "resolved",
+        resolution_id=resolution_id,
+    )
     return ResolveGroupResult(
         group_id=group.group_id,
         action="reject",
@@ -1674,24 +1676,23 @@ def _start_approval_resolution(
         action="approve",
         confirmed=True,
     )
-    with group_store.transaction():
-        resolution_id = group_store.save_resolution(
-            group.relationship_type,
-            group.signature,
-            "approve",
-            rationale,
-            group.thesis_text,
-            group.thesis_facts,
-            group.analysis_state,
-            resolved_by,
-            trust_status=_inherited_trust_status(prior),
-            confirmed=False,
-        )
-        group_store.update_group_status(
-            group.group_id,
-            "applying",
-            resolution_id=resolution_id,
-        )
+    resolution_id = group_store.save_resolution(
+        group.relationship_type,
+        group.signature,
+        "approve",
+        rationale,
+        group.thesis_text,
+        group.thesis_facts,
+        group.analysis_state,
+        resolved_by,
+        trust_status=_inherited_trust_status(prior),
+        confirmed=False,
+    )
+    group_store.update_group_status(
+        group.group_id,
+        "applying",
+        resolution_id=resolution_id,
+    )
     return resolution_id
 
 
@@ -1754,12 +1755,11 @@ def _confirm_approval_resolution(
         group_store=group_store,
         group=group,
     )
-    with group_store.transaction():
-        group_store.confirm_resolution(
-            resolution_id,
-            trust_status=revalidated_trust,
-        )
-        group_store.update_group_status(group.group_id, "resolved")
+    group_store.confirm_resolution(
+        resolution_id,
+        trust_status=revalidated_trust,
+    )
+    group_store.update_group_status(group.group_id, "resolved")
 
 
 def _approve_group(
@@ -1844,9 +1844,8 @@ def service_resolve_group(
             group_id=group_id,
             action=action,
         )
-    except Exception:
+    finally:
         group_store.close()
-        raise
 
     ctx: MutationReceiptContext[ResolveGroupResult]
     with mutation_receipt(
@@ -1857,16 +1856,17 @@ def service_resolve_group(
             "action": action,
             "expected_pending_version": expected_pending_version,
         },
-        store=group_store,
     ) as ctx:
         assert ctx.builder is not None
+        assert ctx.uow is not None
+        write_group_store = ctx.uow.groups
         _validate_resolve_pending_version(
             group=target.group,
             expected_pending_version=expected_pending_version,
         )
         if action == "reject":
             result = _reject_group(
-                group_store=group_store,
+                group_store=write_group_store,
                 group=target.group,
                 members=target.members,
                 rationale=rationale,
@@ -1876,7 +1876,7 @@ def service_resolve_group(
         else:
             result = _approve_group(
                 instance=instance,
-                group_store=group_store,
+                group_store=write_group_store,
                 group=target.group,
                 members=target.members,
                 rationale=rationale,
@@ -2202,6 +2202,7 @@ def service_update_trust_status(
             },
         ) as ctx:
             assert ctx.builder is not None
+            assert ctx.uow is not None
             ctx.builder.record_validation(
                 passed=True,
                 detail={
@@ -2213,8 +2214,7 @@ def service_update_trust_status(
                     "reason": reason,
                 },
             )
-            with group_store.transaction():
-                group_store.update_resolution_trust_status(resolution_id, trust_status, reason)
+            ctx.uow.groups.update_resolution_trust_status(resolution_id, trust_status, reason)
             ctx.set_result(
                 UpdateTrustStatusResult(
                     resolution_id=resolution_id,

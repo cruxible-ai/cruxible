@@ -44,6 +44,11 @@ from cruxible_core.workflow import (
     resolve_lock_path,
     write_lock,
 )
+from cruxible_core.workflow.executor import (
+    FAILED_WORKFLOW_RECEIPT_ATTR,
+    FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR,
+)
+from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
 from cruxible_core.workflow.types import (
     RelationshipGroupProposalArtifact,
 )
@@ -79,11 +84,8 @@ def _build_workflow_execution_result(
 
 
 def _save_workflow_receipt(instance: InstanceProtocol, receipt: Receipt) -> None:
-    store = instance.get_receipt_store()
-    try:
-        store.save_receipt(receipt)
-    finally:
-        store.close()
+    with instance.write_transaction() as uow:
+        uow.receipts.save_receipt(receipt)
 
 
 def _apply_previews_from_receipt(receipt: Receipt) -> dict[str, Any]:
@@ -375,6 +377,7 @@ def service_run(
         )
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
+        _persist_deferred_failed_workflow_receipt(instance, exc)
         record_decision_event_for_context(
             instance,
             context,
@@ -405,6 +408,20 @@ def service_run(
         started_at=started_at,
     )
     return service_result
+
+
+def _persist_deferred_failed_workflow_receipt(
+    instance: InstanceProtocol,
+    exc: BaseException,
+) -> None:
+    """Persist failed canonical apply receipts after graph transaction rollback."""
+    if getattr(exc, FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR, False):
+        return
+    receipt = getattr(exc, FAILED_WORKFLOW_RECEIPT_ATTR, None)
+    if not isinstance(receipt, Receipt):
+        return
+    persist_workflow_receipt(instance, receipt)
+    setattr(exc, FAILED_WORKFLOW_RECEIPT_PERSISTED_ATTR, True)
 
 
 def service_apply_workflow(
@@ -456,17 +473,19 @@ def service_apply_workflow(
         if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
             raise ConfigError("Workflow lock changed; rerun workflow preview before apply")
 
-        result = execute_workflow(
-            instance,
-            config,
-            workflow_name,
-            input_payload,
-            mode="apply",
-            persist_receipt=True,
-            persist_traces=True,
-        )
+        with instance.write_transaction():
+            result = execute_workflow(
+                instance,
+                config,
+                workflow_name,
+                input_payload,
+                mode="apply",
+                persist_receipt=True,
+                persist_traces=True,
+            )
         service_result = _build_workflow_execution_result(result, ApplyWorkflowResult)
     except Exception as exc:
+        _persist_deferred_failed_workflow_receipt(instance, exc)
         record_decision_event_for_context(
             instance,
             context,
@@ -581,7 +600,8 @@ def service_propose_workflow(
                 group_result=no_group_result,
                 output=proposal_output,
             )
-            _save_workflow_receipt(instance, proposal_receipt)
+            with instance.write_transaction():
+                _save_workflow_receipt(instance, proposal_receipt)
             service_result = ProposeWorkflowResult(
                 workflow=result.workflow,
                 output=proposal_output,
@@ -617,9 +637,7 @@ def service_propose_workflow(
                 receipt_id=service_result.receipt_id,
                 trace_ids=service_result.trace_ids,
                 head_snapshot_id=(
-                    service_result.receipt.head_snapshot_id
-                    if service_result.receipt
-                    else None
+                    service_result.receipt.head_snapshot_id if service_result.receipt else None
                 ),
                 started_at=started_at,
             )
@@ -645,30 +663,31 @@ def service_propose_workflow(
             [*result.query_receipt_ids, *proposal_payload.query_receipt_ids]
         )
         source_trace_ids = [trace.trace_id for trace in result.traces]
-        group_result = service_propose_group(
-            instance,
-            relationship_type,
-            members,
-            thesis_text=proposal_payload.thesis_text,
-            thesis_facts=proposal_payload.thesis_facts,
-            pending_refresh_mode=proposal_payload.pending_refresh_mode,
-            analysis_state=proposal_payload.analysis_state,
-            signal_sources_used=proposal_payload.signal_sources_used,
-            proposed_by=proposal_payload.proposed_by,
-            suggested_priority=proposal_payload.suggested_priority,
-            source_workflow_name=workflow_name,
-            source_workflow_receipt_id=result.receipt.receipt_id,
-            source_query_receipt_ids=source_query_receipt_ids,
-            source_trace_ids=source_trace_ids,
-            source_step_ids=source_step_ids,
-        )
-        proposal_receipt = _finalize_proposal_receipt(
-            result.receipt,
-            head_snapshot_id=result.head_snapshot_id,
-            group_result=group_result,
-            output=proposal_output,
-        )
-        _save_workflow_receipt(instance, proposal_receipt)
+        with instance.write_transaction():
+            group_result = service_propose_group(
+                instance,
+                relationship_type,
+                members,
+                thesis_text=proposal_payload.thesis_text,
+                thesis_facts=proposal_payload.thesis_facts,
+                pending_refresh_mode=proposal_payload.pending_refresh_mode,
+                analysis_state=proposal_payload.analysis_state,
+                signal_sources_used=proposal_payload.signal_sources_used,
+                proposed_by=proposal_payload.proposed_by,
+                suggested_priority=proposal_payload.suggested_priority,
+                source_workflow_name=workflow_name,
+                source_workflow_receipt_id=result.receipt.receipt_id,
+                source_query_receipt_ids=source_query_receipt_ids,
+                source_trace_ids=source_trace_ids,
+                source_step_ids=source_step_ids,
+            )
+            proposal_receipt = _finalize_proposal_receipt(
+                result.receipt,
+                head_snapshot_id=result.head_snapshot_id,
+                group_result=group_result,
+                output=proposal_output,
+            )
+            _save_workflow_receipt(instance, proposal_receipt)
         service_result = ProposeWorkflowResult(
             workflow=result.workflow,
             output=proposal_output,
@@ -739,9 +758,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
         raise ConfigError("No workflow tests are defined in config")
     for test in tests:
         if test.workflow not in config.workflows:
-            raise ConfigError(
-                f"Test '{test.name}' references unknown workflow '{test.workflow}'"
-            )
+            raise ConfigError(f"Test '{test.name}' references unknown workflow '{test.workflow}'")
 
     cases: list[WorkflowTestCaseServiceResult] = []
     passed = 0

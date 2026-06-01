@@ -1,12 +1,9 @@
-""".cruxible/ directory management and graph serialization.
+""".cruxible/ directory management and graph storage.
 
 Manages the local instance directory structure:
     .cruxible/
-        instance.json   - metadata (config path, data dir, version)
-        graph.json      - networkx node_link_data JSON
-        receipts.db     - SQLite for receipts
-        feedback.db     - SQLite for feedback, outcomes, and groups
-        decisions.db    - SQLite for decision records and events
+    instance.json   - metadata (config path, data dir, version)
+    state.db        - SQLite live graph, audit/governance, snapshots, and head state
 """
 
 from __future__ import annotations
@@ -14,12 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import shutil
-import tempfile
 import uuid
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -30,10 +26,12 @@ from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+from cruxible_core.storage.sqlite import SQLiteStorageBackend, SQLiteUnitOfWork
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
@@ -41,12 +39,17 @@ from cruxible_core.workflow.compiler import (
     resolve_lock_path,
 )
 
+if TYPE_CHECKING:
+    from cruxible_core.storage.protocols import UnitOfWorkProtocol
+
 logger = logging.getLogger(__name__)
 
 InstanceMode = Literal["dev", "governed"]
+_HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
+_ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
 
 
-class InstanceMetadata(BaseModel):
+class InstanceMetadata(BaseModel):  # type: ignore[misc]
     """Typed contents of ``.cruxible/instance.json``."""
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
@@ -73,6 +76,7 @@ class CruxibleInstance(InstanceProtocol):
         self.instance_dir = root / self.INSTANCE_DIR
         self.metadata = self._parse_metadata(metadata)
         self._graph_cache: EntityGraph | None = None
+        self._active_uow: SQLiteUnitOfWork | None = None
 
     @classmethod
     def init(
@@ -101,15 +105,14 @@ class CruxibleInstance(InstanceProtocol):
         metadata = InstanceMetadata(
             config_path=str(config_path),
             data_dir=data_dir or ".",
-            instance_mode=instance_mode,
+            instance_mode=cast(InstanceMode, instance_mode),
             created_at=format_datetime(utc_now()),
             version=__version__,
         )
         instance = cls(root, metadata)
         instance._write_metadata()
 
-        graph_data = EntityGraph().to_dict()
-        (instance_dir / "graph.json").write_text(json.dumps(graph_data, indent=2))
+        instance.save_graph(EntityGraph())
 
         return instance
 
@@ -149,7 +152,7 @@ class CruxibleInstance(InstanceProtocol):
         save_config(config, self.get_config_path())
 
     def get_instance_mode(self) -> str:
-        """Return the persisted instance mode, defaulting legacy instances to dev."""
+        """Return the persisted instance mode for this workspace."""
         return self.metadata.instance_mode
 
     def is_dev_mode(self) -> bool:
@@ -173,45 +176,49 @@ class CruxibleInstance(InstanceProtocol):
         return config_path
 
     def load_graph(self) -> EntityGraph:
-        """Load the entity graph from graph.json. Returns cached graph if available."""
+        """Load the entity graph from SQLite. Returns cached graph if available."""
         if self._graph_cache is not None:
             return self._graph_cache
 
-        graph_path = self.instance_dir / "graph.json"
-        if not graph_path.exists():
-            logger.warning(
-                "graph.json not found in %s — returning empty graph",
-                self.instance_dir,
-            )
-            graph = EntityGraph()
+        if self._active_uow is not None:
+            graph = self._active_uow.graph.load_graph()
         else:
-            data = json.loads(graph_path.read_text())
-            graph = EntityGraph.from_dict(data)
+            self._ensure_state_initialized()
+            with self._storage_backend().graph_repository() as repo:
+                graph = repo.load_graph()
 
         self._graph_cache = graph
         return graph
 
     def save_graph(self, graph: EntityGraph) -> None:
-        """Save the entity graph to graph.json atomically.
-
-        Uses temp-file + os.replace() (atomic on POSIX). Invalidates
-        _graph_cache on exception so failed writes never leave phantom
-        edges visible to subsequent load_graph() calls.
-        """
-        data = graph.to_dict()
-        graph_path = self.instance_dir / "graph.json"
+        """Replace the live SQL graph rows with a full graph image."""
         try:
-            fd, tmp_path = tempfile.mkstemp(dir=self.instance_dir, suffix=".tmp", prefix="graph_")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(data, f, indent=2)
-                os.replace(tmp_path, graph_path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+            if self._active_uow is not None:
+                self._active_uow.graph.save_graph(graph)
+            else:
+                with self.write_transaction() as uow:
+                    uow.graph.save_graph(graph)
+        except Exception:
+            self._graph_cache = None
+            raise
+        self._graph_cache = graph
+
+    def save_graph_delta(
+        self,
+        graph: EntityGraph,
+        *,
+        entities: Sequence[EntityInstance] = (),
+        relationships: Sequence[RelationshipInstance] = (),
+    ) -> None:
+        """Persist touched live graph rows without replacing the whole graph."""
+        try:
+            if self._active_uow is not None:
+                self._active_uow.graph.upsert_entities(entities)
+                self._active_uow.graph.upsert_relationships(relationships)
+            else:
+                with self.write_transaction() as uow:
+                    uow.graph.upsert_entities(entities)
+                    uow.graph.upsert_relationships(relationships)
         except Exception:
             self._graph_cache = None
             raise
@@ -223,7 +230,8 @@ class CruxibleInstance(InstanceProtocol):
 
     def get_head_snapshot_id(self) -> str | None:
         """Return the current head snapshot identifier, if any."""
-        return self.metadata.head_snapshot_id
+        value = self._get_snapshot_state(_HEAD_SNAPSHOT_STATE_KEY)
+        return value if isinstance(value, str) else None
 
     def get_upstream_metadata(self) -> UpstreamMetadata | None:
         """Return typed upstream metadata for release-backed overlay instances."""
@@ -246,6 +254,35 @@ class CruxibleInstance(InstanceProtocol):
             )
         )
 
+    def _state_db_path(self) -> Path:
+        return self.instance_dir / "state.db"
+
+    def _storage_backend(self) -> SQLiteStorageBackend:
+        return SQLiteStorageBackend(self._state_db_path())
+
+    def _ensure_state_initialized(self) -> None:
+        self._storage_backend().initialize()
+
+    @contextmanager
+    def write_transaction(self) -> Iterator[UnitOfWorkProtocol]:
+        """Open the authoritative instance-owned write boundary."""
+        if self._active_uow is not None:
+            yield self._active_uow
+            return
+
+        self._ensure_state_initialized()
+        backend = self._storage_backend()
+        try:
+            with backend.unit_of_work() as uow:
+                self._active_uow = uow
+                try:
+                    yield uow
+                finally:
+                    self._active_uow = None
+        except Exception:
+            self._graph_cache = None
+            raise
+
     def _snapshots_dir(self) -> Path:
         path = self.instance_dir / "snapshots"
         path.mkdir(parents=True, exist_ok=True)
@@ -254,13 +291,88 @@ class CruxibleInstance(InstanceProtocol):
     def _snapshot_dir(self, snapshot_id: str) -> Path:
         return self._snapshots_dir() / snapshot_id
 
+    def _get_snapshot_state(self, key: str) -> Any | None:
+        if self._active_uow is not None:
+            return self._active_uow.snapshots.get_instance_state(key)
+        self._ensure_state_initialized()
+        with self._storage_backend().snapshot_repository() as snapshots:
+            return snapshots.get_instance_state(key)
+
+    def _get_origin_snapshot_id(self) -> str | None:
+        value = self._get_snapshot_state(_ORIGIN_SNAPSHOT_STATE_KEY)
+        return value if isinstance(value, str) else None
+
+    def _mirror_snapshot_state_to_metadata(
+        self,
+        *,
+        head_snapshot_id: str,
+        origin_snapshot_id: str | None,
+    ) -> None:
+        self.metadata.head_snapshot_id = head_snapshot_id
+        self.metadata.origin_snapshot_id = origin_snapshot_id
+        self._write_metadata()
+
+    def _after_snapshot_commit(
+        self,
+        *,
+        snapshot_id: str,
+        origin_snapshot_id: str | None,
+    ) -> None:
+        try:
+            self._mirror_snapshot_state_to_metadata(
+                head_snapshot_id=snapshot_id,
+                origin_snapshot_id=origin_snapshot_id,
+            )
+        except Exception:
+            logger.warning(
+                "Could not mirror DB snapshot head to instance.json",
+                exc_info=True,
+            )
+        try:
+            self._export_snapshot_artifacts(snapshot_id)
+        except Exception:
+            logger.warning(
+                "Could not export DB-backed snapshot artifacts",
+                exc_info=True,
+            )
+
+    def _read_snapshot_artifacts(self, snapshot_id: str) -> dict[str, bytes]:
+        if self._active_uow is not None:
+            return self._active_uow.snapshots.list_snapshot_artifacts(snapshot_id)
+        self._ensure_state_initialized()
+        with self._storage_backend().snapshot_repository() as snapshots:
+            return snapshots.list_snapshot_artifacts(snapshot_id)
+
+    def _export_snapshot_artifacts(self, snapshot_id: str) -> Path:
+        artifacts = self._read_snapshot_artifacts(snapshot_id)
+        if not artifacts:
+            raise ConfigError(f"Snapshot '{snapshot_id}' has no DB-backed artifacts")
+        snapshot_dir = self._snapshot_dir(snapshot_id)
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        for artifact_name, content in artifacts.items():
+            (snapshot_dir / artifact_name).write_bytes(content)
+        return snapshot_dir
+
     def create_snapshot(self, label: str | None = None) -> WorldSnapshot:
         """Persist an immutable full snapshot of the current graph + config state."""
         return self._write_snapshot(self.load_graph(), label=label, persist_live_graph=False)
 
-    def commit_graph_snapshot(self, graph: EntityGraph, label: str | None = None) -> WorldSnapshot:
+    def commit_graph_snapshot(
+        self,
+        graph: EntityGraph,
+        label: str | None = None,
+        *,
+        entities: Sequence[EntityInstance] | None = None,
+        relationships: Sequence[RelationshipInstance] | None = None,
+    ) -> WorldSnapshot:
         """Persist a snapshot for a provided graph, then atomically advance live state."""
-        return self._write_snapshot(graph, label=label, persist_live_graph=True)
+        return self._write_snapshot(
+            graph,
+            label=label,
+            persist_live_graph=True,
+            entities=entities,
+            relationships=relationships,
+        )
 
     def _write_snapshot(
         self,
@@ -268,26 +380,26 @@ class CruxibleInstance(InstanceProtocol):
         *,
         label: str | None = None,
         persist_live_graph: bool,
+        entities: Sequence[EntityInstance] | None = None,
+        relationships: Sequence[RelationshipInstance] | None = None,
     ) -> WorldSnapshot:
-        """Write snapshot artifacts and optionally advance the live graph/head."""
+        """Persist DB-authoritative snapshot state and export portable artifacts."""
         snapshot_id = f"snap_{uuid.uuid4().hex[:16]}"
-        snapshot_dir = self._snapshot_dir(snapshot_id)
-        snapshot_dir.mkdir(parents=True, exist_ok=False)
-
         config = self.load_config()
         config_path = self.get_config_path()
-        graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True)
-        graph_digest = f"sha256:{hashlib.sha256(graph_json.encode()).hexdigest()}"
-
-        (snapshot_dir / "graph.json").write_text(graph_json)
-        (snapshot_dir / "config.yaml").write_text(config_path.read_text())
+        graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True).encode("utf-8")
+        graph_digest = f"sha256:{hashlib.sha256(graph_json).hexdigest()}"
+        artifacts: dict[str, bytes] = {
+            "graph.json": graph_json,
+            "config.yaml": config_path.read_bytes(),
+        }
 
         lock_path = resolve_lock_path(self)
         lock_digest: str | None = None
         if lock_path.exists():
             lock_bytes = lock_path.read_bytes()
             lock_digest = f"sha256:{hashlib.sha256(lock_bytes).hexdigest()}"
-            shutil.copy2(lock_path, snapshot_dir / LOCK_FILE_NAME)
+            artifacts[LOCK_FILE_NAME] = lock_bytes
 
         snapshot = WorldSnapshot(
             snapshot_id=snapshot_id,
@@ -296,40 +408,59 @@ class CruxibleInstance(InstanceProtocol):
             config_digest=compute_lock_config_digest(config),
             lock_digest=lock_digest,
             graph_digest=graph_digest,
-            parent_snapshot_id=self.metadata.head_snapshot_id,
-            origin_snapshot_id=self.metadata.origin_snapshot_id,
+            parent_snapshot_id=self.get_head_snapshot_id(),
+            origin_snapshot_id=self._get_origin_snapshot_id(),
         )
-        (snapshot_dir / "snapshot.json").write_text(
-            json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True)
-        )
+        artifacts["snapshot.json"] = json.dumps(
+            snapshot.model_dump(mode="json"),
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+
+        def persist_snapshot(uow: UnitOfWorkProtocol) -> None:
+            if persist_live_graph and (entities is not None or relationships is not None):
+                uow.graph.upsert_entities(entities or ())
+                uow.graph.upsert_relationships(relationships or ())
+            elif persist_live_graph:
+                uow.graph.save_graph(graph)
+            uow.snapshots.save_snapshot(snapshot, artifacts)
+            uow.snapshots.set_instance_state(_HEAD_SNAPSHOT_STATE_KEY, snapshot_id)
+            uow.snapshots.set_instance_state(
+                _ORIGIN_SNAPSHOT_STATE_KEY,
+                snapshot.origin_snapshot_id,
+            )
+            uow.register_after_commit(
+                lambda: self._after_snapshot_commit(
+                    snapshot_id=snapshot_id,
+                    origin_snapshot_id=snapshot.origin_snapshot_id,
+                )
+            )
+
+        if self._active_uow is not None:
+            persist_snapshot(self._active_uow)
+        else:
+            with self.write_transaction() as uow:
+                persist_snapshot(uow)
 
         if persist_live_graph:
-            self.save_graph(graph)
-        self.metadata.head_snapshot_id = snapshot_id
-        if snapshot.origin_snapshot_id is not None:
-            self.metadata.origin_snapshot_id = snapshot.origin_snapshot_id
-        self._write_metadata()
+            self._graph_cache = graph
         return snapshot
 
     def get_snapshot(self, snapshot_id: str) -> WorldSnapshot | None:
-        """Load snapshot metadata by ID."""
-        snapshot_path = self._snapshot_dir(snapshot_id) / "snapshot.json"
-        if not snapshot_path.exists():
-            return None
-        raw = json.loads(snapshot_path.read_text())
-        return WorldSnapshot.model_validate(raw)
+        """Load DB-authoritative snapshot metadata by ID."""
+        if self._active_uow is not None:
+            return self._active_uow.snapshots.get_snapshot(snapshot_id)
+        self._ensure_state_initialized()
+        with self._storage_backend().snapshot_repository() as snapshots:
+            return snapshots.get_snapshot(snapshot_id)
 
     def list_snapshots(self) -> list[WorldSnapshot]:
-        """List local snapshots in reverse chronological order."""
-        snapshots: list[WorldSnapshot] = []
-        for path in self._snapshots_dir().glob("*/snapshot.json"):
-            raw = json.loads(path.read_text())
-            snapshots.append(WorldSnapshot.model_validate(raw))
-        return sorted(
-            snapshots,
-            key=lambda item: (item.created_at, item.snapshot_id),
-            reverse=True,
-        )
+        """List DB-authoritative snapshots in reverse chronological order."""
+        if self._active_uow is not None:
+            return self._active_uow.snapshots.list_snapshots()
+        self._ensure_state_initialized()
+        with self._storage_backend().snapshot_repository() as snapshots:
+            return snapshots.list_snapshots()
 
     @classmethod
     def clone_from_snapshot(
@@ -356,42 +487,64 @@ class CruxibleInstance(InstanceProtocol):
         if config_target.exists():
             raise ConfigError(f"config.yaml already exists at {root}")
 
-        snapshot_dir = source_instance._snapshot_dir(snapshot_id)
-        shutil.copy2(snapshot_dir / "config.yaml", config_target)
+        artifacts = source_instance._read_snapshot_artifacts(snapshot_id)
+        config_bytes = artifacts.get("config.yaml")
+        graph_bytes = artifacts.get("graph.json")
+        if config_bytes is None or graph_bytes is None:
+            raise ConfigError(f"Snapshot '{snapshot_id}' is missing required DB artifacts")
+
+        config_target.write_bytes(config_bytes)
         instance = cls.init(root, "config.yaml", instance_mode=instance_mode)
 
-        graph_data = json.loads((snapshot_dir / "graph.json").read_text())
-        instance.save_graph(EntityGraph.from_dict(graph_data))
+        graph_data = json.loads(graph_bytes.decode("utf-8"))
+        graph = EntityGraph.from_dict(graph_data)
 
-        snapshot_lock = snapshot_dir / LOCK_FILE_NAME
-        if snapshot_lock.exists():
-            shutil.copy2(snapshot_lock, instance.get_instance_dir() / LOCK_FILE_NAME)
+        lock_bytes = artifacts.get(LOCK_FILE_NAME)
+        if lock_bytes is not None:
+            (instance.get_instance_dir() / LOCK_FILE_NAME).write_bytes(lock_bytes)
 
-        instance.metadata.head_snapshot_id = snapshot.snapshot_id
-        instance.metadata.origin_snapshot_id = snapshot.origin_snapshot_id or snapshot.snapshot_id
-        instance._write_metadata()
+        origin_snapshot_id = snapshot.origin_snapshot_id or snapshot.snapshot_id
+        with instance.write_transaction() as uow:
+            uow.graph.save_graph(graph)
+            uow.snapshots.save_snapshot(snapshot, artifacts)
+            uow.snapshots.set_instance_state(_HEAD_SNAPSHOT_STATE_KEY, snapshot.snapshot_id)
+            uow.snapshots.set_instance_state(_ORIGIN_SNAPSHOT_STATE_KEY, origin_snapshot_id)
+            uow.register_after_commit(
+                lambda: instance._after_snapshot_commit(
+                    snapshot_id=snapshot.snapshot_id,
+                    origin_snapshot_id=origin_snapshot_id,
+                )
+            )
+        instance._graph_cache = graph
         return instance, snapshot
-
-    # NOTE: graph.json, receipts.db, and feedback.db are independent stores with
-    # no cross-store transactions. A crash between sequential writes (e.g. graph
-    # saved but receipt not recorded) can leave stores inconsistent. Acceptable
-    # for a single-user local tool; revisit if the runtime moves server-side.
 
     def get_receipt_store(self) -> SQLiteReceiptStore:
         """Get or create the receipt SQLite store."""
-        return SQLiteReceiptStore(self.instance_dir / "receipts.db")
+        if self._active_uow is not None:
+            return self._active_uow.receipts
+        self._ensure_state_initialized()
+        return SQLiteReceiptStore(self._state_db_path())
 
     def get_decision_store(self) -> DecisionStore:
         """Get or create the decision record SQLite store."""
-        return DecisionStore(self.instance_dir / "decisions.db")
+        if self._active_uow is not None:
+            return self._active_uow.decisions
+        self._ensure_state_initialized()
+        return DecisionStore(self._state_db_path())
 
     def get_feedback_store(self) -> FeedbackStore:
         """Get or create the feedback SQLite store."""
-        return FeedbackStore(self.instance_dir / "feedback.db")
+        if self._active_uow is not None:
+            return self._active_uow.feedback
+        self._ensure_state_initialized()
+        return FeedbackStore(self._state_db_path())
 
     def get_group_store(self) -> GroupStore:
-        """Get or create the group SQLite store (shares feedback.db)."""
-        return GroupStore(self.instance_dir / "feedback.db")
+        """Get or create the group SQLite store."""
+        if self._active_uow is not None:
+            return self._active_uow.groups
+        self._ensure_state_initialized()
+        return GroupStore(self._state_db_path())
 
     @classmethod
     def _validate_instance_mode(cls, instance_mode: str) -> None:
@@ -406,7 +559,7 @@ class CruxibleInstance(InstanceProtocol):
         if isinstance(metadata, InstanceMetadata):
             return metadata
         try:
-            return InstanceMetadata.model_validate(metadata)
+            return cast(InstanceMetadata, InstanceMetadata.model_validate(metadata))
         except ValidationError as exc:
             errors = [
                 f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"

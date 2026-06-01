@@ -133,8 +133,15 @@ def service_add_entities(
 
         added = 0
         updated = 0
+        touched_entities = []
         for validated in pending:
             apply_entity(graph, validated)
+            persisted = graph.get_entity(
+                validated.entity.entity_type,
+                validated.entity.entity_id,
+            )
+            if persisted is not None:
+                touched_entities.append(persisted)
             if builder:
                 builder.record_entity_write(
                     validated.entity.entity_type,
@@ -146,7 +153,13 @@ def service_add_entities(
             else:
                 added += 1
 
-        save_graph_for_mutation(instance, graph)
+        save_graph_for_mutation(
+            instance,
+            graph,
+            entities=touched_entities,
+            relationships=[],
+            uow=ctx.uow,
+        )
         ctx.set_result(AddEntityResult(added=added, updated=updated))
 
     result = ctx.result
@@ -265,8 +278,18 @@ def service_add_relationships(
 
         added = 0
         updated = 0
+        touched_relationships = []
         for validated, edge in pending:
             apply_relationship(graph, validated, source, source_ref)
+            persisted = graph.get_relationship(
+                edge.from_type,
+                edge.from_id,
+                edge.to_type,
+                edge.to_id,
+                edge.relationship_type,
+            )
+            if persisted is not None:
+                touched_relationships.append(persisted)
             if builder:
                 builder.record_relationship_write(
                     edge.from_type,
@@ -281,7 +304,13 @@ def service_add_relationships(
             else:
                 added += 1
 
-        save_graph_for_mutation(instance, graph)
+        save_graph_for_mutation(
+            instance,
+            graph,
+            entities=[],
+            relationships=touched_relationships,
+            uow=ctx.uow,
+        )
         ctx.set_result(AddRelationshipResult(added=added, updated=updated))
 
     result = ctx.result

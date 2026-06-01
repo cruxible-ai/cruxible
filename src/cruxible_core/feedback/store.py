@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
@@ -76,24 +74,19 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_receipt ON outcomes(receipt_id);
 class FeedbackStore(FeedbackStoreProtocol):
     """Stores and retrieves feedback and outcome records."""
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        *,
+        connection: sqlite3.Connection | None = None,
+        initialize_schema: bool = True,
+    ) -> None:
         self._db_path = str(db_path)
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
+        self._owns_connection = connection is None
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA)
-        self._migrate_feedback_schema()
-        self._migrate_outcome_schema()
-
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        """Context manager for atomic compound writes."""
-        self._conn.execute("BEGIN")
-        try:
-            yield
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        if initialize_schema:
+            self._conn.executescript(_SCHEMA)
 
     # -----------------------------------------------------------------
     # Feedback
@@ -102,7 +95,6 @@ class FeedbackStore(FeedbackStoreProtocol):
     def save_feedback(self, record: FeedbackRecord) -> str:
         """Persist a feedback record. Returns the feedback_id."""
         self._save_feedback(record)
-        self._conn.commit()
         return record.feedback_id
 
     def save_feedback_batch(self, records: list[FeedbackRecord]) -> list[str]:
@@ -254,99 +246,6 @@ class FeedbackStore(FeedbackStoreProtocol):
             created_at=row["created_at"],
         )
 
-    def _migrate_feedback_schema(self) -> None:
-        """Add newly required feedback columns to older SQLite databases."""
-        columns = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(feedback)").fetchall()
-        }
-        feedback_columns: dict[str, str] = {
-            "target_relationship": "TEXT NOT NULL DEFAULT ''",
-            "target_from_type": "TEXT NOT NULL DEFAULT ''",
-            "target_from_id": "TEXT NOT NULL DEFAULT ''",
-            "target_to_type": "TEXT NOT NULL DEFAULT ''",
-            "target_to_id": "TEXT NOT NULL DEFAULT ''",
-            "target_edge_key": "INTEGER",
-            "reason_code": "TEXT",
-            "reason_remediation_hint": "TEXT",
-            "scope_hints": "TEXT NOT NULL DEFAULT '{}'",
-            "feedback_profile_key": "TEXT",
-            "feedback_profile_version": "INTEGER",
-            "decision_context": "TEXT NOT NULL DEFAULT '{}'",
-            "context_snapshot": "TEXT NOT NULL DEFAULT '{}'",
-            "decision_surface_type": "TEXT",
-            "decision_surface_name": "TEXT",
-        }
-        for name, definition in feedback_columns.items():
-            if name in columns:
-                continue
-            self._conn.execute(f"ALTER TABLE feedback ADD COLUMN {name} {definition}")
-
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_relationship = COALESCE("
-            "json_extract(target_json, '$.relationship_type'), "
-            "json_extract(target_json, '$.relationship'), "
-            "''"
-            ") "
-            "WHERE target_relationship = ''"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_from_type = json_extract(target_json, '$.from_type') "
-            "WHERE target_from_type = ''"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_from_id = json_extract(target_json, '$.from_id') "
-            "WHERE target_from_id = ''"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_to_type = json_extract(target_json, '$.to_type') "
-            "WHERE target_to_type = ''"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_to_id = json_extract(target_json, '$.to_id') "
-            "WHERE target_to_id = ''"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET target_edge_key = json_extract(target_json, '$.edge_key') "
-            "WHERE target_edge_key IS NULL"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET decision_surface_type = json_extract(decision_context, '$.surface_type') "
-            "WHERE decision_surface_type IS NULL"
-        )
-        self._conn.execute(
-            "UPDATE feedback "
-            "SET decision_surface_name = json_extract(decision_context, '$.surface_name') "
-            "WHERE decision_surface_name IS NULL"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feedback_target_relationship "
-            "ON feedback(target_relationship)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feedback_reason_code ON feedback(reason_code)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_type "
-            "ON feedback(decision_surface_type)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feedback_decision_surface_name "
-            "ON feedback(decision_surface_name)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feedback_relationship_action_created "
-            "ON feedback(target_relationship, action, created_at)"
-        )
-        self._conn.commit()
-
     # -----------------------------------------------------------------
     # Outcomes
     # -----------------------------------------------------------------
@@ -384,7 +283,6 @@ class FeedbackStore(FeedbackStoreProtocol):
                 format_datetime(record.created_at),
             ),
         )
-        self._conn.commit()
         return record.outcome_id
 
     def get_outcome(self, outcome_id: str) -> OutcomeRecord | None:
@@ -471,66 +369,6 @@ class FeedbackStore(FeedbackStoreProtocol):
             created_at=row["created_at"],
         )
 
-    def _migrate_outcome_schema(self) -> None:
-        """Add newly required outcome columns to older SQLite databases."""
-        columns = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(outcomes)").fetchall()
-        }
-        outcome_columns: dict[str, str] = {
-            "anchor_type": "TEXT NOT NULL DEFAULT 'receipt'",
-            "anchor_id": "TEXT NOT NULL DEFAULT ''",
-            "outcome_code": "TEXT",
-            "outcome_remediation_hint": "TEXT",
-            "scope_hints": "TEXT NOT NULL DEFAULT '{}'",
-            "outcome_profile_key": "TEXT",
-            "outcome_profile_version": "INTEGER",
-            "decision_context": "TEXT NOT NULL DEFAULT '{}'",
-            "lineage_snapshot": "TEXT NOT NULL DEFAULT '{}'",
-            "relationship_type": "TEXT",
-            "decision_surface_type": "TEXT",
-            "decision_surface_name": "TEXT",
-            "source": "TEXT NOT NULL DEFAULT 'human'",
-        }
-        for name, definition in outcome_columns.items():
-            if name in columns:
-                continue
-            self._conn.execute(f"ALTER TABLE outcomes ADD COLUMN {name} {definition}")
-
-        self._conn.execute(
-            "UPDATE outcomes SET anchor_id = receipt_id WHERE anchor_id = ''"
-        )
-        self._conn.execute(
-            "UPDATE outcomes "
-            "SET decision_surface_type = json_extract(decision_context, '$.surface_type') "
-            "WHERE decision_surface_type IS NULL"
-        )
-        self._conn.execute(
-            "UPDATE outcomes "
-            "SET decision_surface_name = json_extract(decision_context, '$.surface_name') "
-            "WHERE decision_surface_name IS NULL"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_anchor_type ON outcomes(anchor_type)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_anchor_id ON outcomes(anchor_id)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_outcome ON outcomes(outcome)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_outcome_code ON outcomes(outcome_code)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_created_at ON outcomes(created_at)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_outcomes_anchor_outcome_created "
-            "ON outcomes(anchor_type, outcome, created_at)"
-        )
-        self._conn.commit()
-
     def _index_feedback_entities(self, record: FeedbackRecord) -> None:
         """Index entity identifiers touched by a feedback record."""
         self._conn.execute(
@@ -550,4 +388,5 @@ class FeedbackStore(FeedbackStoreProtocol):
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        if self._owns_connection:
+            self._conn.close()

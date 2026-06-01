@@ -29,6 +29,7 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -219,9 +220,7 @@ def _validate_feedback_inputs(
                 f"Feedback for relationship '{relationship_type}' uses unknown reason_code "
                 f"'{reason_code}'"
             )
-        missing_scope = [
-            key for key in reason_schema.required_scope_keys if key not in scope_hints
-        ]
+        missing_scope = [key for key in reason_schema.required_scope_keys if key not in scope_hints]
         if missing_scope:
             missing_str = ", ".join(sorted(missing_scope))
             raise ConfigError(
@@ -301,9 +300,7 @@ def _build_context_snapshot(
                 if prop_name in props:
                     to_props[prop_name] = props[prop_name]
             elif (
-                side == "EDGE"
-                and relationship is not None
-                and prop_name in relationship.properties
+                side == "EDGE" and relationship is not None and prop_name in relationship.properties
             ):
                 edge_props[prop_name] = relationship.properties[prop_name]
 
@@ -468,9 +465,7 @@ def _validate_outcome_inputs(
             raise ConfigError(
                 f"Outcome for profile '{profile_key}' uses unknown outcome_code '{outcome_code}'"
             )
-        missing_scope = [
-            key for key in code_schema.required_scope_keys if key not in scope_hints
-        ]
+        missing_scope = [key for key in code_schema.required_scope_keys if key not in scope_hints]
         if missing_scope:
             missing_str = ", ".join(sorted(missing_scope))
             raise ConfigError(
@@ -481,8 +476,7 @@ def _validate_outcome_inputs(
     if unexpected_scope:
         unexpected_str = ", ".join(unexpected_scope)
         raise ConfigError(
-            f"Outcome for profile '{profile_key}' uses undeclared scope_hints: "
-            f"{unexpected_str}"
+            f"Outcome for profile '{profile_key}' uses undeclared scope_hints: {unexpected_str}"
         )
 
 
@@ -552,9 +546,7 @@ def _iter_thesis_scope_keys(profile: OutcomeProfileSchema | None) -> set[str]:
     if profile is None:
         return set()
     return {
-        path.partition(".")[2]
-        for path in profile.scope_keys.values()
-        if path.startswith("THESIS.")
+        path.partition(".")[2] for path in profile.scope_keys.values() if path.startswith("THESIS.")
     }
 
 
@@ -606,9 +598,7 @@ def _build_resolution_lineage_snapshot(
     """Capture a bounded resolution-time lineage snapshot."""
     thesis_keys = _iter_thesis_scope_keys(profile)
     thesis_facts = {
-        key: resolution.thesis_facts[key]
-        for key in thesis_keys
-        if key in resolution.thesis_facts
+        key: resolution.thesis_facts[key] for key in thesis_keys if key in resolution.thesis_facts
     }
     return {
         "resolution": {
@@ -843,9 +833,7 @@ def _feedback_target_from_query_result(
     if "values" in row and "source" in row:
         source = row.get("source")
         if source is None:
-            raise ConfigError(
-                "Projected query row does not contain source relationship evidence"
-            )
+            raise ConfigError("Projected query row does not contain source relationship evidence")
         if not isinstance(source, dict):
             raise ConfigError("Projected query row source is not an object")
         row = source
@@ -894,7 +882,7 @@ def _feedback_target_from_query_result(
 
 
 def _apply_feedback_record(
-    graph,
+    graph: EntityGraph,
     record: FeedbackRecord,
     *,
     group_override: bool,
@@ -912,9 +900,7 @@ def _apply_feedback_record(
             edge_key=target.edge_key,
         )
         if relationship is not None:
-            assertion = relationship.metadata.assertion.model_copy(
-                update={"group_override": True}
-            )
+            assertion = relationship.metadata.assertion.model_copy(update={"group_override": True})
             metadata = relationship.metadata.model_copy(update={"assertion": assertion})
             graph.update_relationship_state(
                 target.from_type,
@@ -926,6 +912,21 @@ def _apply_feedback_record(
                 edge_key=target.edge_key,
             )
     return applied
+
+
+def _feedback_relationship_after_apply(
+    graph: EntityGraph,
+    target: RelationshipInstance,
+) -> RelationshipInstance | None:
+    """Return the final relationship row touched by feedback, when present."""
+    return graph.get_relationship(
+        target.from_type,
+        target.from_id,
+        target.to_type,
+        target.to_id,
+        target.relationship_type,
+        edge_key=target.edge_key,
+    )
 
 
 def service_feedback_input(
@@ -1062,7 +1063,6 @@ def service_feedback(
         group_override=group_override,
     )
 
-    feedback_store = instance.get_feedback_store()
     ctx: MutationReceiptContext[FeedbackServiceResult]
     receipt_parameters: dict[str, Any] = {
         "receipt_id": receipt_id,
@@ -1076,24 +1076,30 @@ def service_feedback(
         instance,
         "feedback",
         receipt_parameters,
-        store=feedback_store,
     ) as ctx:
         assert ctx.builder is not None
-        with feedback_store.transaction():
-            feedback_store.save_feedback_batch([record])
+        assert ctx.uow is not None
+        ctx.uow.feedback.save_feedback_batch([record])
 
-            applied = _apply_feedback_record(
-                graph,
-                record,
-                group_override=group_override,
-            )
-            ctx.builder.record_feedback_applied(
-                _feedback_target_label(record.target),
-                action,
-                applied,
-            )
+        applied = _apply_feedback_record(
+            graph,
+            record,
+            group_override=group_override,
+        )
+        ctx.builder.record_feedback_applied(
+            _feedback_target_label(record.target),
+            action,
+            applied,
+        )
 
-            save_graph_for_mutation(instance, graph)
+        touched = _feedback_relationship_after_apply(graph, record.target)
+        save_graph_for_mutation(
+            instance,
+            graph,
+            entities=[],
+            relationships=[touched] if touched is not None else [],
+            uow=ctx.uow,
+        )
 
         ctx.set_result(FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied))
 
@@ -1159,15 +1165,14 @@ def service_feedback_batch(
         for item in items
     ]
 
-    feedback_store = instance.get_feedback_store()
     ctx: MutationReceiptContext[FeedbackBatchServiceResult]
     with mutation_receipt(
         instance,
         "feedback_batch",
         {"count": len(items), "source": source},
-        store=feedback_store,
     ) as ctx:
         assert ctx.builder is not None
+        assert ctx.uow is not None
         for index, record in enumerate(records, start=1):
             ctx.builder.record_validation(
                 passed=True,
@@ -1178,25 +1183,34 @@ def service_feedback_batch(
                 },
             )
 
-        with feedback_store.transaction():
-            feedback_store.save_feedback_batch(records)
+        ctx.uow.feedback.save_feedback_batch(records)
 
-            applied_count = 0
-            for record, item in zip(records, items, strict=True):
-                applied = _apply_feedback_record(
-                    graph,
-                    record,
-                    group_override=item.group_override,
-                )
-                if applied:
-                    applied_count += 1
-                ctx.builder.record_feedback_applied(
-                    _feedback_target_label(record.target),
-                    record.action,
-                    applied,
-                )
+        applied_count = 0
+        touched_relationships: list[RelationshipInstance] = []
+        for record, item in zip(records, items, strict=True):
+            applied = _apply_feedback_record(
+                graph,
+                record,
+                group_override=item.group_override,
+            )
+            if applied:
+                applied_count += 1
+            ctx.builder.record_feedback_applied(
+                _feedback_target_label(record.target),
+                record.action,
+                applied,
+            )
+            touched = _feedback_relationship_after_apply(graph, record.target)
+            if touched is not None:
+                touched_relationships.append(touched)
 
-            save_graph_for_mutation(instance, graph)
+        save_graph_for_mutation(
+            instance,
+            graph,
+            entities=[],
+            relationships=touched_relationships,
+            uow=ctx.uow,
+        )
 
         ctx.set_result(
             FeedbackBatchServiceResult(
@@ -1320,10 +1334,7 @@ def service_outcome(
         source=source,
         detail=detail or {},
     )
-    feedback_store = instance.get_feedback_store()
-    try:
-        feedback_store.save_outcome(record)
-    finally:
-        feedback_store.close()
+    with instance.write_transaction() as uow:
+        uow.feedback.save_outcome(record)
 
     return OutcomeServiceResult(outcome_id=record.outcome_id)
