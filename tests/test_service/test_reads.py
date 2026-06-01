@@ -770,9 +770,9 @@ class TestGetRelationship:
 
         assert lineage.found is True
         assert lineage.relationship is not None
-        assert lineage.assertion is not None
-        assert lineage.assertion["review"]["status"] == "unreviewed"
-        assert lineage.assertion["lifecycle"]["status"] == "active"
+        assertion = lineage.relationship.metadata.assertion
+        assert assertion.review.status == "unreviewed"
+        assert assertion.lifecycle.status == "active"
         assert lineage.warnings == ["missing_provenance"]
 
     def test_lineage_warns_when_relationship_not_found(
@@ -790,7 +790,6 @@ class TestGetRelationship:
 
         assert lineage.found is False
         assert lineage.relationship is None
-        assert lineage.assertion is None
         assert lineage.warnings == ["relationship_not_found"]
 
     def test_lineage_warns_on_non_group_provenance(
@@ -831,8 +830,8 @@ class TestGetRelationship:
             "source": "workflow_apply",
             "source_ref": "workflow:canonical-fitment",
         }
-        assert lineage.assertion is not None
-        assert lineage.assertion["review"]["status"] == "unreviewed"
+        assertion = lineage.relationship.metadata.assertion
+        assert assertion.review.status == "unreviewed"
         assert lineage.group is None
         assert lineage.warnings == ["non_group_provenance"]
 

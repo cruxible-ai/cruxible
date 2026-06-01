@@ -301,12 +301,13 @@ class TestApproveBasic:
         )
 
         assert lineage.found is True
+        assert lineage.relationship is not None
         assert lineage.provenance is not None
         assert lineage.provenance["source_ref"] == f"group:{proposed.group_id}"
-        assert lineage.assertion is not None
-        assert lineage.assertion["review"]["status"] == "approved"
-        assert lineage.assertion["review"]["source"] == "group"
-        assert lineage.assertion["lifecycle"]["status"] == "active"
+        assertion = lineage.relationship.metadata.assertion
+        assert assertion.review.status == "approved"
+        assert assertion.review.source == "group"
+        assert assertion.lifecycle.status == "active"
         assert lineage.group is not None
         assert lineage.group.group_id == proposed.group_id
         assert lineage.resolution is not None

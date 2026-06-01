@@ -813,7 +813,6 @@ class RelationshipLineageResult:
     found: bool
     relationship: RelationshipInstance | None = None
     provenance: dict[str, Any] | None = None
-    assertion: dict[str, Any] | None = None
     group: CandidateGroup | None = None
     resolution: GroupResolution | None = None
     source_workflow_receipt_id: str | None = None

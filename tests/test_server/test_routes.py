@@ -1160,7 +1160,11 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert lineage.status_code == 200
     lineage_payload = lineage.json()
     assert lineage_payload["group"]["group_id"] == group_id
-    assert lineage_payload["assertion"]["review"]["status"] == "approved"
+    assert "assertion" not in lineage_payload
+    assert (
+        lineage_payload["relationship"]["metadata"]["assertion"]["review"]["status"]
+        == "approved"
+    )
     assert lineage_payload["source_trace_ids"]
 
     snapshot = app_client.post(f"/api/v1/{instance_id}/snapshots", json={"label": "baseline"})

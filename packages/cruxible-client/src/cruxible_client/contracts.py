@@ -297,7 +297,6 @@ class RelationshipLineageResult(BaseModel):
     found: bool
     relationship: dict[str, Any] | None = None
     provenance: dict[str, Any] | None = None
-    assertion: dict[str, Any] | None = None
     group: dict[str, Any] | None = None
     resolution: dict[str, Any] | None = None
     source_workflow_receipt_id: str | None = None

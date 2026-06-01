@@ -755,7 +755,11 @@ class TestReadPermissions:
         assert result["found"] is True
         assert result["group"]["group_id"] == proposed["group_id"]
         assert result["provenance"]["source_ref"] == f"group:{proposed['group_id']}"
-        assert result["assertion"]["review"]["status"] == "approved"
+        assert "assertion" not in result
+        assert (
+            result["relationship"]["metadata"]["assertion"]["review"]["status"]
+            == "approved"
+        )
 
 
 class TestFeedbackGroupOverride:

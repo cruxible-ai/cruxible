@@ -2359,8 +2359,10 @@ class TestGroupGetCLI:
         assert payload["found"] is True
         assert payload["group"]["group_id"] == group_id
         assert payload["provenance"]["source_ref"] == f"group:{group_id}"
-        assert payload["assertion"]["review"]["status"] == "approved"
-        assert payload["assertion"]["review"]["source"] == "group"
+        assert "assertion" not in payload
+        assertion = payload["relationship"]["metadata"]["assertion"]
+        assert assertion["review"]["status"] == "approved"
+        assert assertion["review"]["source"] == "group"
 
 
 class TestGroupListCLI:

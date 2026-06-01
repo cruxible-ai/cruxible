@@ -1735,7 +1735,6 @@ def get_relationship_lineage(
             else None
         ),
         provenance=result.provenance,
-        assertion=result.assertion,
         group=result.group.model_dump(mode="json") if result.group is not None else None,
         resolution=(
             result.resolution.model_dump(mode="json")
