@@ -227,10 +227,12 @@ def write_runtime_composed_config(
 def compose_config_files(
     *,
     base_path: Path,
-    overlay_path: Path,
+    overlay_path: Path | None = None,
 ) -> CoreConfig:
-    """Compose two config files without writing the merged result to disk."""
+    """Compose config files without writing the merged result to disk."""
     base = load_config(base_path)
+    if overlay_path is None:
+        return compose_config_sequence(resolve_config_layers(base, config_path=base_path))
     overlay = load_config(overlay_path)
     return compose_configs(
         base,

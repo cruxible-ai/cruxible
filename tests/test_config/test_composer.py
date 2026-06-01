@@ -449,6 +449,30 @@ class TestDecisionPoliciesComposition:
 
 
 class TestArtifactUriComposition:
+    def test_compose_config_files_accepts_single_config_file(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            """\
+version: "1.0"
+name: standalone
+kind: world_model
+entity_types:
+  Case:
+    properties:
+      case_id:
+        type: string
+        primary_key: true
+relationships: []
+"""
+        )
+
+        composed = compose_config_files(base_path=config_path)
+
+        assert composed.name == "standalone"
+        assert "Case" in composed.entity_types
+
     def test_compose_config_files_rebases_relative_artifacts(self, tmp_path: Path) -> None:
         base_path = tmp_path / "base" / "config.yaml"
         overlay_path = tmp_path / "overlay" / "config.yaml"
