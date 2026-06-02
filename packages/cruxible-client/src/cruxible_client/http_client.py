@@ -15,6 +15,11 @@ from cruxible_client.errors import ConfigError, CoreError, ErrorResponse, respon
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+def _query_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Return query params with absent optional values removed."""
+    return {key: value for key, value in params.items() if value is not None}
+
+
 class CruxibleClient:
     """Thin sync client for local UDS or remote HTTP transports."""
 
@@ -179,7 +184,7 @@ class CruxibleClient:
     ) -> contracts.DecisionRecordResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/decision-records/{decision_record_id}",
-            params={"include_events": include_events},
+            params=_query_params({"include_events": include_events}),
         )
         return self._parse_model(response, contracts.DecisionRecordResult)
 
@@ -195,13 +200,15 @@ class CruxibleClient:
     ) -> contracts.DecisionRecordListResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/decision-records",
-            params={
-                "status": status,
-                "subject_type": subject_type,
-                "subject_id": subject_id,
-                "decision_class": decision_class,
-                "limit": limit,
-            },
+            params=_query_params(
+                {
+                    "status": status,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "decision_class": decision_class,
+                    "limit": limit,
+                }
+            ),
         )
         return self._parse_model(response, contracts.DecisionRecordListResult)
 
@@ -217,13 +224,15 @@ class CruxibleClient:
     ) -> contracts.DecisionEventListResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/decision-records/events",
-            params={
-                "decision_record_id": decision_record_id,
-                "receipt_id": receipt_id,
-                "trace_id": trace_id,
-                "status": status,
-                "limit": limit,
-            },
+            params=_query_params(
+                {
+                    "decision_record_id": decision_record_id,
+                    "receipt_id": receipt_id,
+                    "trace_id": trace_id,
+                    "status": status,
+                    "limit": limit,
+                }
+            ),
         )
         return self._parse_model(response, contracts.DecisionEventListResult)
 
@@ -300,12 +309,14 @@ class CruxibleClient:
     ) -> contracts.TraceListResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/traces",
-            params={
-                "workflow_name": workflow_name,
-                "provider_name": provider_name,
-                "limit": limit,
-                "offset": offset,
-            },
+            params=_query_params(
+                {
+                    "workflow_name": workflow_name,
+                    "provider_name": provider_name,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            ),
         )
         return self._parse_model(response, contracts.TraceListResult)
 
@@ -452,7 +463,10 @@ class CruxibleClient:
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)
-        response = self._client.get(f"/api/v1/{instance_id}/list/{resource_type}", params=params)
+        response = self._client.get(
+            f"/api/v1/{instance_id}/list/{resource_type}",
+            params=_query_params(params),
+        )
         return self._parse_model(response, contracts.ListResult)
 
     def evaluate(
@@ -518,7 +532,10 @@ class CruxibleClient:
             "surface_type": surface_type,
             "surface_name": surface_name,
         }
-        response = self._client.get(f"/api/v1/{instance_id}/outcome/profile", params=params)
+        response = self._client.get(
+            f"/api/v1/{instance_id}/outcome/profile",
+            params=_query_params(params),
+        )
         return self._parse_model(response, contracts.OutcomeProfileResult)
 
     def analyze_feedback(
@@ -609,11 +626,13 @@ class CruxibleClient:
     ) -> contracts.InspectEntityResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}",
-            params={
-                "direction": direction,
-                "relationship_type": relationship_type,
-                "limit": limit,
-            },
+            params=_query_params(
+                {
+                    "direction": direction,
+                    "relationship_type": relationship_type,
+                    "limit": limit,
+                }
+            ),
         )
         return self._parse_model(response, contracts.InspectEntityResult)
 
@@ -910,14 +929,16 @@ class CruxibleClient:
     ) -> contracts.GetRelationshipResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/relationships/lookup",
-            params={
-                "from_type": from_type,
-                "from_id": from_id,
-                "relationship_type": relationship_type,
-                "to_type": to_type,
-                "to_id": to_id,
-                "edge_key": edge_key,
-            },
+            params=_query_params(
+                {
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "relationship_type": relationship_type,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "edge_key": edge_key,
+                }
+            ),
         )
         return self._parse_model(response, contracts.GetRelationshipResult)
 
@@ -934,14 +955,16 @@ class CruxibleClient:
     ) -> contracts.RelationshipLineageResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/relationships/lineage",
-            params={
-                "from_type": from_type,
-                "from_id": from_id,
-                "relationship_type": relationship_type,
-                "to_type": to_type,
-                "to_id": to_id,
-                "edge_key": edge_key,
-            },
+            params=_query_params(
+                {
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "relationship_type": relationship_type,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "edge_key": edge_key,
+                }
+            ),
         )
         return self._parse_model(response, contracts.RelationshipLineageResult)
 

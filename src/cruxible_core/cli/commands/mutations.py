@@ -66,7 +66,10 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
     )
 
     label = f"{entity_type}:{entity_id}"
-    if result.updated:
+    updated_count = getattr(result, "updated", None)
+    if updated_count is None:
+        updated_count = getattr(result, "entities_updated", 0)
+    if updated_count:
         click.echo(f"Entity {label} updated.")
     else:
         click.echo(f"Entity {label} added.")

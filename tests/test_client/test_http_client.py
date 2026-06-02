@@ -141,6 +141,154 @@ def test_trace_methods_call_trace_routes():
     assert seen[1][1] == expected_url
 
 
+def test_get_requests_omit_none_optional_query_params():
+    captured: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        captured.append((path, dict(request.url.params)))
+        if path.endswith("/list/edges") or path.endswith("/list/receipts"):
+            return httpx.Response(200, json={"items": [], "total": 0})
+        if path.endswith("/inspect/entity/Vehicle/V-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "entity_type": "Vehicle",
+                    "entity_id": "V-1",
+                    "properties": {},
+                    "neighbors": [],
+                    "total_neighbors": 0,
+                },
+            )
+        if path.endswith("/relationships/lookup"):
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "from_type": "Vehicle",
+                    "from_id": "V-1",
+                    "relationship_type": "has_part",
+                    "to_type": "Part",
+                    "to_id": "P-1",
+                    "properties": {},
+                },
+            )
+        if path.endswith("/relationships/lineage"):
+            return httpx.Response(200, json={"found": False, "warnings": []})
+        if path.endswith("/traces"):
+            return httpx.Response(200, json={"traces": [], "count": 0})
+        if path.endswith("/decision-records/events"):
+            return httpx.Response(200, json={"events": []})
+        if path.endswith("/decision-records"):
+            return httpx.Response(200, json={"records": []})
+        if path.endswith("/outcome/profile"):
+            return httpx.Response(
+                200,
+                json={"found": False, "anchor_type": "receipt", "profile": {}},
+            )
+        raise AssertionError(f"Unexpected path: {path}")
+
+    client = _build_client(handler)
+    client.list("inst_123", resource_type="edges")
+    client.inspect_entity("inst_123", "Vehicle", "V-1", limit=None, relationship_type=None)
+    client.get_relationship(
+        "inst_123",
+        from_type="Vehicle",
+        from_id="V-1",
+        relationship_type="has_part",
+        to_type="Part",
+        to_id="P-1",
+        edge_key=None,
+    )
+    client.get_relationship_lineage(
+        "inst_123",
+        from_type="Vehicle",
+        from_id="V-1",
+        relationship_type="has_part",
+        to_type="Part",
+        to_id="P-1",
+        edge_key=None,
+    )
+    client.list_traces("inst_123")
+    client.list_decision_records("inst_123")
+    client.list_decision_events("inst_123")
+    client.get_outcome_profile("inst_123", anchor_type="receipt")
+    client.list("inst_123", resource_type="receipts", query_name=None, operation_type=None)
+
+    assert captured[0] == ("/api/v1/inst_123/list/edges", {"limit": "50"})
+    assert captured[1] == (
+        "/api/v1/inst_123/inspect/entity/Vehicle/V-1",
+        {"direction": "both"},
+    )
+    assert captured[2] == (
+        "/api/v1/inst_123/relationships/lookup",
+        {
+            "from_type": "Vehicle",
+            "from_id": "V-1",
+            "relationship_type": "has_part",
+            "to_type": "Part",
+            "to_id": "P-1",
+        },
+    )
+    assert captured[3] == (
+        "/api/v1/inst_123/relationships/lineage",
+        {
+            "from_type": "Vehicle",
+            "from_id": "V-1",
+            "relationship_type": "has_part",
+            "to_type": "Part",
+            "to_id": "P-1",
+        },
+    )
+    assert captured[4] == ("/api/v1/inst_123/traces", {"limit": "100", "offset": "0"})
+    assert captured[5] == ("/api/v1/inst_123/decision-records", {"limit": "100"})
+    assert captured[6] == (
+        "/api/v1/inst_123/decision-records/events",
+        {"limit": "100"},
+    )
+    assert captured[7] == (
+        "/api/v1/inst_123/outcome/profile",
+        {"anchor_type": "receipt"},
+    )
+    assert captured[8] == ("/api/v1/inst_123/list/receipts", {"limit": "50"})
+
+
+def test_get_requests_preserve_explicit_falsey_query_params():
+    captured: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append((request.url.path, dict(request.url.params)))
+        if request.url.path.endswith("/decision-records/DR-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "record": {
+                        "decision_record_id": "DR-1",
+                        "question": "Should we act?",
+                        "status": "open",
+                    },
+                    "events": [],
+                },
+            )
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    client = _build_client(handler)
+    client.get_decision_record("inst_123", "DR-1", include_events=False)
+    client.list(
+        "inst_123",
+        resource_type="edges",
+        relationship_type="",
+        limit=0,
+    )
+
+    assert captured[0][1]["include_events"].lower() == "false"
+    assert captured[1] == (
+        "/api/v1/inst_123/list/edges",
+        {"relationship_type": "", "limit": "0"},
+    )
+
+
 def test_feedback_from_query_uses_expected_route_and_payload():
     captured: dict[str, Any] = {}
 

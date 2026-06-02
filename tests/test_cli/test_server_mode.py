@@ -145,6 +145,58 @@ def test_server_mode_init_no_activate_leaves_active_instance(
     assert json.loads(shown.output)["instance_id"] == "inst_old"
 
 
+@pytest.mark.parametrize(
+    ("entities_added", "entities_updated", "expected"),
+    [
+        (1, 0, "Entity Vehicle:V-1 added."),
+        (0, 1, "Entity Vehicle:V-1 updated."),
+    ],
+)
+def test_server_mode_add_entity_formats_public_contract_result(
+    monkeypatch,
+    runner: CliRunner,
+    entities_added: int,
+    entities_updated: int,
+    expected: str,
+):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def add_entities(self, instance_id, entities):
+            captured["instance_id"] = instance_id
+            captured["entities"] = entities
+            return contracts.AddEntityResult(
+                entities_added=entities_added,
+                entities_updated=entities_updated,
+                receipt_id="RCP-entity-1",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add-entity",
+            "--type",
+            "Vehicle",
+            "--id",
+            "V-1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["instance_id"] == "inst_123"
+    entities = captured["entities"]
+    assert isinstance(entities, list)
+    assert entities[0].entity_type == "Vehicle"
+    assert entities[0].entity_id == "V-1"
+    assert expected in result.output
+    assert "Receipt: RCP-entity-1" in result.output
+
+
 def test_server_mode_init_defaults_root_dir_to_cwd(
     monkeypatch,
     runner: CliRunner,
