@@ -47,20 +47,9 @@ def get_lock_path(instance: InstanceProtocol) -> Path:
     return instance.get_instance_dir() / LOCK_FILE_NAME
 
 
-def get_legacy_lock_path(instance: InstanceProtocol) -> Path:
-    """Return the legacy config-adjacent workflow lock path for an instance."""
-    return instance.get_config_path().parent / LOCK_FILE_NAME
-
-
 def resolve_lock_path(instance: InstanceProtocol) -> Path:
-    """Resolve the active workflow lock path, preferring the instance-local location."""
-    current = get_lock_path(instance)
-    if current.exists():
-        return current
-    legacy = get_legacy_lock_path(instance)
-    if legacy.exists():
-        return legacy
-    return current
+    """Resolve the active workflow lock path."""
+    return get_lock_path(instance)
 
 
 def build_lock(

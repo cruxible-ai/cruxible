@@ -29,6 +29,15 @@ from cruxible_core.service.types import (
     ReloadConfigResult,
     ValidateServiceResult,
 )
+from cruxible_core.workflow.compiler import (
+    LOCK_FILE_NAME,
+    build_lock,
+    compute_lock_config_digest,
+    compute_lock_digest,
+    get_lock_path,
+    load_lock,
+    write_lock,
+)
 
 _MANAGED_CONFIG_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "configs" / "active.yaml"
 
@@ -138,6 +147,9 @@ def service_init(
             _cleanup_managed_config(root)
         raise
 
+    if normalized_kit is not None:
+        _install_instance_lock_from_materialized_kit(instance)
+
     loaded = instance.load_config()
     warnings = validate_config(loaded)
 
@@ -188,7 +200,44 @@ def service_init_governed_upload(
     )
     if copied_kit_runtime_files:
         write_materialized_kit_metadata(governed_root)
+        _install_instance_lock_from_materialized_kit(result.instance)
     return result
+
+
+def _install_instance_lock_from_materialized_kit(instance: CruxibleInstance) -> None:
+    root = instance.get_root_path()
+    bundled_lock_path = root / LOCK_FILE_NAME
+    if not bundled_lock_path.exists():
+        return
+
+    instance_lock_path = get_lock_path(instance)
+    instance_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    config = instance.load_config()
+    config_digest = compute_lock_config_digest(config)
+
+    try:
+        bundled_lock = load_lock(bundled_lock_path)
+    except Exception as exc:
+        raise ConfigError(f"Bundled kit lock is invalid: {bundled_lock_path}") from exc
+
+    if (
+        bundled_lock.config_digest == config_digest
+        and bundled_lock.lock_digest == compute_lock_digest(bundled_lock)
+    ):
+        instance_lock_path.write_bytes(bundled_lock_path.read_bytes())
+        return
+
+    try:
+        regenerated_lock = build_lock(
+            config,
+            instance.get_config_path().parent,
+        )
+        write_lock(regenerated_lock, instance_lock_path)
+    except Exception as exc:
+        raise ConfigError(
+            "Bundled kit lock does not match the active instance config or lock "
+            "digest, and regenerating the instance-local lock failed"
+        ) from exc
 
 
 def _save_managed_config(root: Path, config: CoreConfig) -> str:

@@ -11,9 +11,6 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
-    execute_workflow,
-    get_legacy_lock_path,
-    write_lock,
 )
 
 
@@ -461,23 +458,3 @@ class TestWorkflowCompiler:
 
         assert lock.artifacts["canonical_bundle"].sha256 != "sha256:bad"
         assert lock.artifacts["canonical_bundle"].sha256.startswith("sha256:")
-
-    def test_executor_uses_legacy_lock_path_as_fallback(
-        self, workflow_instance: CruxibleInstance
-    ) -> None:
-        config = workflow_instance.load_config()
-        legacy_path = get_legacy_lock_path(workflow_instance)
-        write_lock(build_lock(config, workflow_instance.get_config_path().parent), legacy_path)
-
-        result = execute_workflow(
-            workflow_instance,
-            config,
-            "evaluate_promo",
-            {
-                "sku": "SKU-123",
-                "start_date": "2026-03-01",
-                "end_date": "2026-03-07",
-            },
-        )
-
-        assert result.output["decision"] == "approve"

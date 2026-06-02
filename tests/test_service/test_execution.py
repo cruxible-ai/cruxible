@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
@@ -19,6 +20,7 @@ from cruxible_core.service import (
     service_clone_snapshot,
     service_create_snapshot,
     service_find_apply_preview,
+    service_init,
     service_list_snapshots,
     service_lock,
     service_plan,
@@ -29,6 +31,7 @@ from cruxible_core.service import (
     service_test,
 )
 from cruxible_core.storage.sqlite import SQLiteGraphRepository, SQLiteSnapshotRepository
+from cruxible_core.workflow.compiler import build_lock, write_lock
 from tests.support import workflow_test_providers
 
 QUERY_EVIDENCE_PROPOSAL_CONFIG_YAML = """\
@@ -446,6 +449,62 @@ class TestWorkflowExecutionServices:
         assert result.providers_locked == 2
         assert result.artifacts_locked == 1
         assert Path(result.lock_path).exists()
+
+    def test_kit_init_imports_root_lock_to_instance_lock(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "kit-source"
+        target = tmp_path / "instance"
+        source.mkdir()
+        monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path / "kit-cache"))
+        source.joinpath("cruxible-kit.yaml").write_text(
+            "schema_version: cruxible.kit.v1\n"
+            "kit_id: no-op\n"
+            "version: 0.2.0\n"
+            "role: standalone\n"
+            "entry_config: config.yaml\n"
+            "provider_paths: []\n"
+            "copy_paths: []\n"
+            "requires_extras: []\n"
+        )
+        source.joinpath("config.yaml").write_text(
+            'version: "1.0"\n'
+            "name: kit_lock_runtime\n"
+            "entity_types:\n"
+            "  Demo:\n"
+            "    properties:\n"
+            "      demo_id: {type: string, primary_key: true}\n"
+            "relationships: []\n"
+            "named_queries:\n"
+            "  all_demos:\n"
+            "    mode: collection\n"
+            "    returns: Demo\n"
+            "    result_shape: entity\n"
+            "contracts:\n"
+            "  EmptyInput:\n"
+            "    fields: {}\n"
+            "workflows:\n"
+            "  no_op:\n"
+            "    type: utility\n"
+            "    contract_in: EmptyInput\n"
+            "    returns: demos\n"
+            "    steps:\n"
+            "      - id: load\n"
+            "        query: all_demos\n"
+            "        as: demos\n"
+        )
+        config = load_config(source / "config.yaml")
+        write_lock(build_lock(config, source), source / "cruxible.lock.yaml")
+
+        result = service_init(target, kit=f"file://{source}")
+        instance_lock = result.instance.get_instance_dir() / "cruxible.lock.yaml"
+        (target / "cruxible.lock.yaml").unlink()
+        plan = service_plan(result.instance, "no_op", {})
+
+        assert instance_lock.exists()
+        assert plan.plan.workflow == "no_op"
 
     def test_service_plan_returns_compiled_plan(self, workflow_instance: CruxibleInstance) -> None:
         service_lock(workflow_instance)

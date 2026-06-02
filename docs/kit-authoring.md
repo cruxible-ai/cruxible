@@ -56,8 +56,15 @@ Bundle behavior:
   `${XDG_CACHE_HOME:-~/.cache}/cruxible/kits`.
 - Cache installs are locked and atomic by bundle digest.
 - Materialization copies the cached kit into the instance root.
-- Consumers should not silently regenerate bundled locks. Rebuild the kit lock
-  before publishing or distributing a changed kit.
+- Kit bundles carry `cruxible.lock.yaml` at the kit root as a portable bundle
+  artifact.
+- Initialized Cruxible instances execute workflows from
+  `.cruxible/cruxible.lock.yaml`; kit-backed initialization imports the bundled
+  lock there when it matches the active config, or regenerates the instance-local
+  lock when an active runtime config has been composed from the bundle.
+- Runtime workflow execution does not fall back to arbitrary config-root locks.
+- Consumers should not silently regenerate published bundled locks. Rebuild the
+  kit lock before publishing or distributing a changed kit.
 
 Built-in aliases such as `kev-reference` resolve to versioned OCI kit refs in
 installed packages, with local source-checkout kits overriding those aliases
