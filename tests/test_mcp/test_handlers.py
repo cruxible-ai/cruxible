@@ -245,6 +245,35 @@ def test_trace_tools_work_locally_for_dev_instance(
     assert fetched["output_payload"]["rows"] == 4
     assert listed["traces"][0]["trace_id"] == trace.trace_id
 
+    large_payload = {"body": "x" * 40000}
+    large_trace = ExecutionTrace(
+        trace_id="TRC-mcp-large",
+        workflow_name="wf",
+        step_id="large",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload=large_payload,
+        output_payload=large_payload,
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(large_trace)
+
+    preview = call_tool(
+        server,
+        "cruxible_get_trace",
+        {"instance_id": dev_graph_instance_id, "trace_id": large_trace.trace_id},
+    )
+    assert preview["input_payload"] != large_payload
+    assert preview["input_payload_metadata"]["retention"] == "preview"
+    assert preview["input_payload_metadata"]["stored_inline"] is False
+
 
 def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
     server,

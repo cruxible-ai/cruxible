@@ -69,6 +69,30 @@ def _save_trace(instance: CruxibleInstance, trace_id: str = "TRC-cli-001") -> st
     return trace.trace_id
 
 
+def _save_large_trace(instance: CruxibleInstance) -> tuple[str, dict[str, str]]:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    payload = {"body": "x" * 40000}
+    trace = ExecutionTrace(
+        trace_id="TRC-cli-large",
+        workflow_name="wf",
+        step_id="large",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload=payload,
+        output_payload=payload,
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
+    return trace.trace_id, payload
+
+
 @pytest.fixture
 def governed_view_instance(
     tmp_path: Path,
@@ -451,6 +475,24 @@ class TestStatsInspectReload:
         payload = json.loads(result.output)
         assert payload["trace_id"] == trace_id
         assert payload["output_payload"]["rows"] == 5
+
+    def test_inspect_trace_returns_large_payload_preview(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id, large_payload = _save_large_trace(populated_instance)
+        preview = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "trace", trace_id, "--json"],
+        )
+
+        assert preview.exit_code == 0
+        preview_payload = json.loads(preview.output)
+        assert preview_payload["input_payload"] != large_payload
+        assert preview_payload["input_payload_metadata"]["retention"] == "preview"
+        assert preview_payload["input_payload_metadata"]["stored_inline"] is False
 
     def test_reload_config_repoints_instance(
         self,

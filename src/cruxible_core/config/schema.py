@@ -23,6 +23,7 @@ Hierarchy:
     ├── artifacts: dict[str, ProviderArtifactSchema]
     ├── providers: dict[str, ProviderSchema]
     ├── workflows: dict[str, WorkflowSchema]
+    ├── runtime: RuntimeConfigSchema
     └── tests: list[WorkflowTestSchema]
 """
 
@@ -47,6 +48,7 @@ _OUTCOME_PATH_PATTERN = (
 
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
 QueryMode = Literal["collection", "traversal"]
+TracePayloadRetention = Literal["full", "preview", "metadata"]
 PropertyType = Literal[
     "string",
     "int",
@@ -1821,6 +1823,14 @@ class WorkflowTestSchema(BaseModel):
     expect: WorkflowTestExpectSchema = Field(default_factory=WorkflowTestExpectSchema)
 
 
+class RuntimeConfigSchema(BaseModel):
+    """Runtime behavior options for local execution and audit capture."""
+
+    trace_payloads: TracePayloadRetention = "preview"
+
+    model_config = {"extra": "forbid"}
+
+
 # ---------------------------------------------------------------------------
 # Top-Level Config
 # ---------------------------------------------------------------------------
@@ -1853,6 +1863,7 @@ class CoreConfig(BaseModel):
     artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)
     providers: dict[str, ProviderSchema] = Field(default_factory=dict)
     workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
+    runtime: RuntimeConfigSchema = Field(default_factory=RuntimeConfigSchema)
     tests: list[WorkflowTestSchema] = Field(default_factory=list)
 
     model_config = {"extra": "forbid"}

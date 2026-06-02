@@ -138,7 +138,9 @@ group resolution, feedback operation, or other state transition. It records the
 operation and evidence chain.
 
 An **execution trace** proves what provider ran: provider ref, version, runtime,
-artifact hash, input/output summary, status, error, and timing.
+artifact hash, retained input/output payload evidence, status, error, and
+timing. Full provider payload bodies are retained only when allowed by the
+instance config's `runtime.trace_payloads` policy.
 
 A **decision record** groups receipts, traces, and events around a higher-level
 question so an agent or reviewer can reconstruct the decision history.

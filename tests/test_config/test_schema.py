@@ -30,6 +30,7 @@ from cruxible_core.config.schema import (
     RelatedExclusionSpec,
     RelationshipPropertyConsistencyQualityCheck,
     RelationshipSchema,
+    RuntimeConfigSchema,
     SignalPolicySchema,
     TraversalStep,
     UniquenessQualityCheck,
@@ -1781,13 +1782,13 @@ class TestWorkflowSchema:
         assert workflow.type == workflow_type
 
     @pytest.mark.parametrize(
-        "legacy_field",
+        "removed_field",
         [{"purpose": "proposal"}, {"canonical": True}],
     )
-    def test_workflow_rejects_legacy_type_fields(self, legacy_field: dict[str, object]):
+    def test_workflow_rejects_removed_type_fields(self, removed_field: dict[str, object]):
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             WorkflowSchema(
-                **legacy_field,
+                **removed_field,
                 contract_in="PromoInput",
                 steps=[
                     WorkflowStepSchema(
@@ -2162,6 +2163,19 @@ class TestCoreConfig:
         assert config.kind == "world_model"
         assert config.named_queries == {}
         assert config.constraints == []
+        assert config.runtime.trace_payloads == "preview"
+
+    @pytest.mark.parametrize("retention", ["full", "preview", "metadata"])
+    def test_runtime_trace_payload_retention_accepts_supported_values(
+        self,
+        retention: str,
+    ):
+        runtime = RuntimeConfigSchema(trace_payloads=retention)
+        assert runtime.trace_payloads == retention
+
+    def test_runtime_trace_payload_retention_rejects_unknown_value(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            RuntimeConfigSchema(trace_payloads="external")
 
     def test_get_relationship(self):
         config = CoreConfig(

@@ -22,6 +22,11 @@ def store() -> SQLiteReceiptStore:
 
 
 @pytest.fixture
+def preview_store() -> SQLiteReceiptStore:
+    return SQLiteReceiptStore(":memory:", trace_payload_inline_bytes=128)
+
+
+@pytest.fixture
 def sample_receipt() -> Receipt:
     builder = ReceiptBuilder(query_name="parts_for_vehicle", parameters={"vehicle_id": "V-1"})
     builder.record_entity_lookup(entity_type="Vehicle", entity_id="V-1")
@@ -246,6 +251,187 @@ class TestSQLiteReceiptStore:
         assert loaded.trace_id == trace.trace_id
         assert loaded.provider_name == "lift_predictor"
         assert loaded.output_payload["predicted_lift_pct"] == 0.12
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.stored_inline is True
+
+    def test_large_trace_payload_uses_default_preview_retention(
+        self,
+        preview_store: SQLiteReceiptStore,
+    ):
+        large_payload = {
+            "items": [{"id": f"row-{i}", "text": "x" * 40} for i in range(20)],
+            "source": "fixture",
+        }
+        trace = ExecutionTrace(
+            workflow_name="evaluate_promo",
+            step_id="large",
+            provider_name="large_provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.large_provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            input_payload=large_payload,
+            output_payload=large_payload,
+            **_trace_timing(),
+        )
+
+        trace_id = preview_store.save_trace(trace)
+        loaded = preview_store.get_trace(trace_id)
+        raw = preview_store._conn.execute(
+            "SELECT trace_json FROM execution_traces WHERE trace_id = ?",
+            (trace_id,),
+        ).fetchone()
+
+        assert loaded is not None
+        assert loaded.input_payload != large_payload
+        assert loaded.output_payload != large_payload
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.retention == "preview"
+        assert loaded.input_payload_metadata.stored_inline is False
+        assert loaded.input_payload_metadata.byte_count > 128
+        assert loaded.input_payload_metadata.sha256.startswith("sha256:")
+        assert loaded.input_payload_metadata.truncated is True
+        assert loaded.input_payload["_cruxible_payload_preview"]["omitted_count"] == 0
+        assert raw is not None
+        assert "row-19" not in raw["trace_json"]
+
+    def test_metadata_retention_omits_payload_body(self):
+        store = SQLiteReceiptStore(
+            ":memory:",
+            trace_payload_inline_bytes=128,
+            trace_payload_retention="metadata",
+        )
+        large_payload = {"items": [{"id": i, "text": "x" * 50} for i in range(16)]}
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="metadata",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            input_payload=large_payload,
+            output_payload=large_payload,
+            **_trace_timing(),
+        )
+
+        store.save_trace(trace)
+        loaded = store.get_trace(trace.trace_id)
+
+        assert loaded is not None
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.retention == "metadata"
+        assert loaded.input_payload_metadata.stored_inline is False
+        assert loaded.input_payload == {
+            "_cruxible_payload_omitted": {
+                "retention": "metadata",
+                "sha256": loaded.input_payload_metadata.sha256,
+                "byte_count": loaded.input_payload_metadata.byte_count,
+            }
+        }
+
+    def test_full_retention_stores_large_payload_inline(self):
+        store = SQLiteReceiptStore(
+            ":memory:",
+            trace_payload_inline_bytes=128,
+            trace_payload_retention="full",
+        )
+        large_payload = {"items": [{"id": i, "text": "x" * 50} for i in range(16)]}
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="full",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            input_payload=large_payload,
+            output_payload=large_payload,
+            **_trace_timing(),
+        )
+
+        store.save_trace(trace)
+        loaded = store.get_trace(trace.trace_id)
+
+        assert loaded is not None
+        assert loaded.input_payload == large_payload
+        assert loaded.output_payload == large_payload
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.retention == "full"
+        assert loaded.input_payload_metadata.stored_inline is True
+
+    def test_trace_payload_blob_table_is_not_created(self, store: SQLiteReceiptStore):
+        row = store._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'trace_payload_blobs'",
+        ).fetchone()
+        assert row is None
+
+    def test_error_trace_payloads_use_preview_retention(
+        self,
+        preview_store: SQLiteReceiptStore,
+    ):
+        large_payload = {"input": "x" * 512}
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="error",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            input_payload=large_payload,
+            output_payload={"partial": "y" * 512},
+            status="error",
+            error="provider failed",
+            **_trace_timing(),
+        )
+
+        preview_store.save_trace(trace)
+        loaded = preview_store.get_trace(trace.trace_id)
+
+        assert loaded is not None
+        assert loaded.status == "error"
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.stored_inline is False
+        assert loaded.output_payload_metadata is not None
+        assert loaded.output_payload_metadata.stored_inline is False
+
+    def test_trace_row_is_not_written_if_persistence_fails(
+        self,
+        preview_store: SQLiteReceiptStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        trace = ExecutionTrace(
+            workflow_name="wf",
+            step_id="large",
+            provider_name="provider",
+            provider_version="1.0.0",
+            provider_ref="tests.support.workflow_test_providers.provider",
+            runtime="python",
+            deterministic=True,
+            side_effects=False,
+            input_payload={"input": "x" * 512},
+            output_payload={},
+            **_trace_timing(),
+        )
+
+        def fail_insert_trace_row(_trace: ExecutionTrace) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(preview_store, "_insert_trace_row", fail_insert_trace_row)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            preview_store.save_trace(trace)
+
+        row = preview_store._conn.execute(
+            "SELECT COUNT(*) AS count FROM execution_traces",
+        ).fetchone()
+        assert row["count"] == 0
 
     def test_list_traces(self, store: SQLiteReceiptStore):
         trace_a = ExecutionTrace(
@@ -276,3 +462,4 @@ class TestSQLiteReceiptStore:
         listed = store.list_traces(workflow_name="wf_a")
         assert len(listed) == 1
         assert listed[0]["provider_name"] == "provider_a"
+        assert listed[0]["input_payload_metadata"]["stored_inline"] is True

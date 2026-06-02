@@ -35,6 +35,7 @@ from cruxible_core.workflow.step_helpers import (
     source_read_metadata_from_template,
 )
 from cruxible_core.workflow.tracing import (
+    apply_trace_payload_retention,
     build_trace,
     persist_trace,
 )
@@ -327,8 +328,12 @@ def execute_provider_step(
             started_at=started_at,
             duration_ms=(time.monotonic_ns() - started) / 1_000_000,
         )
+        trace = apply_trace_payload_retention(
+            trace,
+            retention=config.runtime.trace_payloads,
+        )
         if persist_traces:
-            persist_trace(instance, trace)
+            trace = persist_trace(instance, trace)
         traces.append(trace)
         step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)
         receipt_builder.record_plan_step(
@@ -361,8 +366,12 @@ def execute_provider_step(
         started_at=started_at,
         duration_ms=(time.monotonic_ns() - started) / 1_000_000,
     )
+    trace = apply_trace_payload_retention(
+        trace,
+        retention=config.runtime.trace_payloads,
+    )
     if persist_traces:
-        persist_trace(instance, trace)
+        trace = persist_trace(instance, trace)
     traces.append(trace)
     step_outputs[compiled_step.as_name or compiled_step.step_id] = provider_output
     step_trace_ids.setdefault(compiled_step.step_id, []).append(trace.trace_id)

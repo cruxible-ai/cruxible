@@ -498,6 +498,33 @@ def test_trace_routes_return_trace_payloads(
     assert missing.status_code == 404
     assert missing.json()["error_type"] == "TraceNotFoundError"
 
+    large_payload = {"body": "x" * 40000}
+    large_trace = ExecutionTrace(
+        trace_id="TRC-route-large",
+        workflow_name="wf",
+        step_id="large",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload=large_payload,
+        output_payload=large_payload,
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    with get_manager().get(instance_id).write_transaction() as uow:
+        uow.receipts.save_trace(large_trace)
+
+    preview = app_client.get(f"/api/v1/{instance_id}/traces/{large_trace.trace_id}")
+
+    assert preview.status_code == 200
+    assert preview.json()["input_payload"] != large_payload
+    assert preview.json()["input_payload_metadata"]["retention"] == "preview"
+    assert preview.json()["input_payload_metadata"]["stored_inline"] is False
+
 
 def test_workflow_run_route_rejects_proposal_workflows(
     app_client: TestClient,

@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_core.instance_protocol import ReceiptStoreProtocol
+from cruxible_core.provider.trace_payloads import (
+    DEFAULT_TRACE_PAYLOAD_INLINE_BYTES,
+    TracePayloadMetadata,
+    TracePayloadRetention,
+    retain_payload,
+)
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.temporal import format_datetime
@@ -66,10 +72,14 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         *,
         connection: sqlite3.Connection | None = None,
         initialize_schema: bool = True,
+        trace_payload_inline_bytes: int = DEFAULT_TRACE_PAYLOAD_INLINE_BYTES,
+        trace_payload_retention: TracePayloadRetention = "preview",
     ) -> None:
         self._db_path = str(db_path)
         self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
         self._owns_connection = connection is None
+        self._trace_payload_inline_bytes = trace_payload_inline_bytes
+        self._trace_payload_retention = trace_payload_retention
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.executescript(_SCHEMA)
@@ -122,6 +132,31 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
 
     def save_trace(self, trace: ExecutionTrace) -> str:
         """Persist an execution trace. Returns the trace_id."""
+        input_payload, input_metadata = self._retain_payload_field(
+            trace.input_payload,
+            trace.input_payload_metadata,
+        )
+        output_payload, output_metadata = self._retain_payload_field(
+            trace.output_payload,
+            trace.output_payload_metadata,
+        )
+        retained_trace = trace.model_copy(
+            update={
+                "input_payload": input_payload,
+                "input_payload_metadata": input_metadata,
+                "output_payload": output_payload,
+                "output_payload_metadata": output_metadata,
+            },
+            deep=True,
+        )
+        self._insert_trace_row(retained_trace)
+        trace.input_payload = input_payload
+        trace.output_payload = output_payload
+        trace.input_payload_metadata = input_metadata
+        trace.output_payload_metadata = output_metadata
+        return trace.trace_id
+
+    def _insert_trace_row(self, trace: ExecutionTrace) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO execution_traces "
             "(trace_id, workflow_name, step_id, provider_name, provider_version, provider_ref, "
@@ -143,7 +178,19 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 format_datetime(trace.started_at),
             ),
         )
-        return trace.trace_id
+
+    def _retain_payload_field(
+        self,
+        payload: dict[str, Any],
+        metadata: TracePayloadMetadata | None,
+    ) -> tuple[dict[str, Any], TracePayloadMetadata]:
+        if metadata is not None:
+            return payload, metadata
+        return retain_payload(
+            payload,
+            retention=self._trace_payload_retention,
+            inline_byte_limit=self._trace_payload_inline_bytes,
+        )
 
     def get_trace(self, trace_id: str) -> ExecutionTrace | None:
         """Load an execution trace by ID."""
@@ -217,12 +264,14 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         params.extend([limit, offset])
         rows = self._conn.execute(
             "SELECT trace_id, workflow_name, step_id, provider_name, provider_version, "
-            "runtime, created_at "
+            "runtime, created_at, trace_json "
             f"FROM execution_traces{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             params,
         ).fetchall()
-        return [
-            {
+        summaries: list[dict[str, Any]] = []
+        for row in rows:
+            trace = ExecutionTrace.model_validate_json(row["trace_json"])
+            summary = {
                 "trace_id": row["trace_id"],
                 "workflow_name": row["workflow_name"],
                 "step_id": row["step_id"],
@@ -231,8 +280,16 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 "runtime": row["runtime"],
                 "created_at": row["created_at"],
             }
-            for row in rows
-        ]
+            if trace.input_payload_metadata is not None:
+                summary["input_payload_metadata"] = trace.input_payload_metadata.model_dump(
+                    mode="json",
+                )
+            if trace.output_payload_metadata is not None:
+                summary["output_payload_metadata"] = trace.output_payload_metadata.model_dump(
+                    mode="json",
+                )
+            summaries.append(summary)
+        return summaries
 
     def count_receipts(
         self,

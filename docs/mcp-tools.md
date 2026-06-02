@@ -329,7 +329,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Fetch a full provider execution trace by `trace_id`.
+**Purpose:** Fetch a provider execution trace by `trace_id`.
 
 **Arguments:**
 
@@ -338,7 +338,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `instance_id` | yes | string | Governed instance ID or local instance root. |
 | `trace_id` | yes | string | Provider execution trace ID, usually returned by workflow run/apply/propose results. |
 
-**Returns:** Returns the full persisted trace payload with provider metadata, input/output payloads, status, timings, and error details when present.
+**Returns:** Returns the persisted trace with provider metadata, retained input/output payload fields, payload digest/size metadata, status, timings, and error details when present. Payload fields follow the instance config's `runtime.trace_payloads` retention policy.
 
 **Side Effects:** Read-only.
 

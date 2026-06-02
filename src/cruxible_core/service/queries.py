@@ -530,10 +530,7 @@ def service_get_receipt(
     return receipt
 
 
-def service_get_trace(
-    instance: InstanceProtocol,
-    trace_id: str,
-) -> ExecutionTrace:
+def service_get_trace(instance: InstanceProtocol, trace_id: str) -> ExecutionTrace:
     """Retrieve a stored provider execution trace by ID.
 
     Raises TraceNotFoundError if not found.
@@ -734,11 +731,11 @@ def _input_params_from_value(value: Any) -> set[str]:
             params.update(_input_params_from_value(item))
         return params
     if isinstance(value, dict):
-        params: set[str] = set()
+        mapping_params: set[str] = set()
         for key, item in value.items():
-            params.update(_input_params_from_value(key))
-            params.update(_input_params_from_value(item))
-        return params
+            mapping_params.update(_input_params_from_value(key))
+            mapping_params.update(_input_params_from_value(item))
+        return mapping_params
     return set()
 
 

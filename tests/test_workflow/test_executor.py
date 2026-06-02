@@ -30,7 +30,13 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance, Rela
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
-from cruxible_core.workflow import build_lock, compile_workflow, execute_workflow
+from cruxible_core.workflow import (
+    build_lock,
+    compile_workflow,
+    execute_workflow,
+    get_lock_path,
+    write_lock,
+)
 
 USER_INDEX_FIELD = "_query_result_index"
 
@@ -72,6 +78,43 @@ class TestWorkflowExecutor:
         rendered = to_markdown(result.receipt)
         assert "**Workflow:** evaluate_promo" in rendered
         assert "## Plan Steps" in rendered
+
+    def test_execute_workflow_applies_trace_payload_retention_policy(
+        self,
+        workflow_instance: CruxibleInstance,
+    ) -> None:
+        config = workflow_instance.load_config()
+        config.runtime.trace_payloads = "metadata"
+        write_lock(
+            build_lock(config, workflow_instance.get_config_path().parent),
+            get_lock_path(workflow_instance),
+        )
+
+        result = execute_workflow(
+            workflow_instance,
+            config,
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+        trace = result.traces[0]
+
+        assert trace.input_payload_metadata is not None
+        assert trace.input_payload_metadata.retention == "metadata"
+        assert trace.input_payload_metadata.stored_inline is False
+        assert "_cruxible_payload_omitted" in trace.input_payload
+        store = workflow_instance.get_receipt_store()
+        try:
+            loaded = store.get_trace(trace.trace_id)
+        finally:
+            store.close()
+        assert loaded is not None
+        assert loaded.input_payload == trace.input_payload
+        assert loaded.input_payload_metadata is not None
+        assert loaded.input_payload_metadata.retention == "metadata"
 
     def test_query_step_inherits_related_edge_exclusion(
         self, proposal_workflow_instance: CruxibleInstance

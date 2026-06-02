@@ -1098,7 +1098,7 @@ def inspect_entity_cmd(
 @json_option
 @handle_errors
 def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
-    """Inspect a full provider execution trace by ID."""
+    """Inspect a provider execution trace by ID."""
     payload = _dispatch_cli_instance(
         lambda client, instance_id: client.get_trace(instance_id, trace_id),
         lambda instance: service_get_trace(instance, trace_id).model_dump(mode="json"),

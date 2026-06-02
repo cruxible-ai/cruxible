@@ -217,7 +217,7 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         trace_id: str,
     ) -> dict[str, Any]:
-        """Fetch a full provider execution trace by `trace_id`."""
+        """Fetch a provider execution trace by `trace_id`."""
         return handlers.handle_get_trace(instance_id, trace_id)
 
     @_tool

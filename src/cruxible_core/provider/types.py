@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field
 
 from cruxible_core.primitives import new_id
+from cruxible_core.provider.trace_payloads import TracePayloadMetadata
 
 ProviderRuntime = Literal["python", "http_json", "command"]
 """How the provider callable is invoked.
@@ -63,6 +64,8 @@ class ExecutionTrace(BaseModel):
     artifact_sha256: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
+    input_payload_metadata: TracePayloadMetadata | None = None
+    output_payload_metadata: TracePayloadMetadata | None = None
     status: Literal["success", "error"] = "success"
     error: str | None = None
     started_at: datetime

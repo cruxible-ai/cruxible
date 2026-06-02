@@ -265,6 +265,9 @@ def _compose_mapping(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str,
         if key in {"name", "description"}:
             result[key] = overlay_value
             continue
+        if key == "runtime":
+            result[key] = {**dict(base.get(key, {})), **dict(overlay_value)}
+            continue
         if key in _SAFE_LIST_KEYS:
             result[key] = list(base.get(key, [])) + list(overlay_value)
             continue

@@ -29,6 +29,8 @@ contracts: { ... }
 artifacts: { ... }
 providers: { ... }
 workflows: { ... }
+runtime:
+  trace_payloads: preview
 tests: [ ... ]
 ```
 
@@ -53,7 +55,37 @@ tests: [ ... ]
 | `artifacts` | dict | no | `{}` | Pinned external artifacts referenced by providers |
 | `providers` | dict | no | `{}` | Versioned executable leaves used by workflow steps |
 | `workflows` | dict | no | `{}` | Declarative step-based execution plans |
+| `runtime` | dict | no | `{trace_payloads: preview}` | Local runtime behavior options, including provider trace payload retention |
 | `tests` | list | no | `[]` | Fixture-based workflow tests |
+
+---
+
+## Runtime Options
+
+`runtime` controls local execution and audit-capture behavior that is not part
+of the world model itself.
+
+```yaml
+runtime:
+  trace_payloads: preview
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `trace_payloads` | string | no | `"preview"` | Provider trace payload retention: `"full"`, `"preview"`, or `"metadata"` |
+
+Trace payload retention controls what is persisted in provider execution traces:
+
+- `full` stores full provider `input_payload` and `output_payload` bodies inline
+  in local SQLite trace rows.
+- `preview` stores small payload bodies inline, but replaces large payloads with
+  bounded deterministic previews plus sha256/byte-count metadata.
+- `metadata` stores no full provider payload bodies; trace payload fields contain
+  omission placeholders plus sha256/byte-count metadata.
+
+Local SQLite does not provide cold storage or later hydration for omitted
+payload bodies. Choose `full` only when local full-body provider provenance is
+more important than trace database size.
 
 ---
 
@@ -91,6 +123,7 @@ relationships:
 | Field category | Fields | Behavior |
 |----------------|--------|----------|
 | Metadata | `name`, `description` | Overlay overrides base |
+| Runtime options | `runtime` | Overlay runtime options override base runtime options |
 | Safe lists | `constraints`, `quality_checks`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
 | Keyed maps | `entity_types`, `named_queries`, `enums`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |

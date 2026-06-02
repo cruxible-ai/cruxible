@@ -314,6 +314,7 @@ class TestInit:
 
         assert (governed_root / "cruxible-kit.yaml").exists()
         assert (governed_root / "cruxible.lock.yaml").exists()
+        assert (governed_root / ".cruxible" / "cruxible.lock.yaml").exists()
         assert (governed_root / "providers" / "main.py").exists()
         assert (governed_root / ".cruxible" / "kit.json").exists()
 
@@ -949,6 +950,24 @@ class TestTraceReads:
 
         assert loaded.trace_id == trace.trace_id
         assert loaded.output_payload["rows"] == 2
+
+    def test_get_trace_returns_large_payload_preview_by_default(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        large_payload = {"body": "x" * 40000, "source": "fixture"}
+        trace = _trace(trace_id="TRC-service-large")
+        trace.input_payload = large_payload
+        trace.output_payload = large_payload
+        with populated_instance.write_transaction() as uow:
+            uow.receipts.save_trace(trace)
+
+        preview = service_get_trace(populated_instance, trace.trace_id)
+
+        assert preview.input_payload != large_payload
+        assert preview.input_payload_metadata is not None
+        assert preview.input_payload_metadata.retention == "preview"
+        assert preview.input_payload_metadata.stored_inline is False
 
     def test_get_trace_not_found(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(TraceNotFoundError):

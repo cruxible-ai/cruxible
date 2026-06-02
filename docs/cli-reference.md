@@ -961,7 +961,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
 - `cruxible inspect queries` - Show the canonical query view for the current instance config.
 - `cruxible inspect relationship-lineage` - Inspect a relationship's stored provenance lineage.
-- `cruxible inspect trace` - Inspect a full provider execution trace by ID.
+- `cruxible inspect trace` - Inspect a provider execution trace by ID.
 - `cruxible inspect workflows` - Show the canonical workflow view for the current instance config.
 
 **Output And Side Effects:**
@@ -1022,7 +1022,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 
 **Usage:** `cruxible inspect trace [OPTIONS] TRACE_ID`
 
-**Purpose:** Inspect a full provider execution trace by ID.
+**Purpose:** Inspect a provider execution trace by ID.
 
 **Options And Arguments:**
 
@@ -1032,7 +1032,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only. Returns the full persisted provider execution trace, including provider metadata, input/output payloads, status, timings, and error details when present.
+- Read-only. Returns the persisted provider execution trace, including provider metadata, retained input/output payload fields, payload digest/size metadata, status, timings, and error details when present. Payload fields follow the instance config's `runtime.trace_payloads` retention policy.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
