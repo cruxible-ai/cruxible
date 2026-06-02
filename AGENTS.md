@@ -1,12 +1,12 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
 **GitHub:** https://github.com/cruxible-ai/cruxible-core
 
-Cruxible Core is a deterministic decision engine with receipts. AI agents (Claude Code, etc.) write configs and orchestrate workflows. Core executes deterministically with proof — no LLM inside.
+Cruxible Core is a deterministic decision engine with receipts. AI agents (Codex, etc.) write configs and orchestrate workflows. Core executes deterministically with proof — no LLM inside.
 
 Four primitives: **Config**, **Ingest**, **Query**, **Feedback**.
 
@@ -100,11 +100,18 @@ The concrete implementation is `CruxibleInstance` in `cli/instance.py`, which ma
 
 ```
 .cruxible/
-  instance.json     # Metadata (config path, version)
-  graph.json        # NetworkX node_link_data JSON
-  receipts.db       # SQLite (receipts + execution traces)
-  feedback.db       # SQLite (feedback, outcomes, groups, entity proposals)
+  instance.json     # Bootstrap metadata (config path, version, compatibility mirror)
+  state.db          # SQLite live graph, audit/governance stores, snapshots, artifacts, head/origin
+  snapshots/
+    <snapshot_id>/
+      graph.json    # Portable export/cache materialized from DB snapshot artifacts
+      config.yaml
+      snapshot.json
 ```
+
+Snapshot metadata, snapshot artifacts, and authoritative head/origin state live
+in `state.db`. `.cruxible/snapshots/` is a portable export/cache, and
+`.cruxible/graph.json` is not live authority.
 
 ### Workflow System (`workflow/`)
 
@@ -119,7 +126,7 @@ Three execution modes: `run` (non-canonical), `preview` (canonical dry-run), `ap
 
 ### Provider System (`provider/`)
 
-External provider execution with tracing. Providers are callables resolved by the registry (`provider/registry.py`). Each execution produces an `ExecutionTrace` (input/output, duration, status, artifact hash) persisted to receipts.db.
+External provider execution with tracing. Providers are callables resolved by the registry (`provider/registry.py`). Each execution produces an `ExecutionTrace` (input/output, duration, status, artifact hash) persisted to `state.db`.
 
 ### Groups and Entity Proposals
 
@@ -127,11 +134,11 @@ Two parallel governed-mutation systems:
 
 - **Groups** (`group/`) — Relationship proposals using tri-state signals (support/contradict/unsure) from integrations. `CandidateGroup` tracks status: pending_review → auto_resolved/applying → resolved.
 
-Both stored in feedback.db via their respective stores.
+Both are persisted in the unified `state.db` via their respective stores.
 
 ### Key Design Decisions
 
-- **Zero LLM dependencies.** Purely deterministic runtime. Claude Code provides all intelligence via MCP tools.
+- **Zero LLM dependencies.** Purely deterministic runtime. Codex provides all intelligence via MCP tools.
 - **Pydantic for all models.** Config schema, runtime types, receipts — all validated.
 - **Polars for data operations.** Ingestion and candidate detection use Polars DataFrames.
 - **NetworkX for graph.** EntityGraph wraps networkx DiGraph for entity/relationship storage.
