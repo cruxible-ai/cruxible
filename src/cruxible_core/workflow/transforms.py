@@ -790,14 +790,7 @@ def _stable_json_key(value: Any) -> str:
     try:
         return canonical_json(value)
     except (TypeError, ValueError):
-        return json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-            default=str,
-        )
+        return canonical_json(value, default=str)
 
 
 def _ensure_item_mapping(

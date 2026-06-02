@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from cruxible_core.primitives import canonical_json, new_id
+from cruxible_core.primitives import canonical_json, json_type_name, new_id
 
 
 class TestCanonicalJson:
@@ -64,6 +64,17 @@ class TestCanonicalJson:
         raise AssertionError("expected ValueError on Infinity")
 
 
+class TestJsonTypeName:
+    def test_json_compatible_type_names(self) -> None:
+        assert json_type_name(None) == "null"
+        assert json_type_name(True) == "boolean"
+        assert json_type_name({"a": 1}) == "object"
+        assert json_type_name([1, 2]) == "array"
+        assert json_type_name("x") == "string"
+        assert json_type_name(1) == "number"
+        assert json_type_name(1.5) == "number"
+
+
 class TestNewId:
     _ID_PATTERN = re.compile(r"^[A-Z]+-[0-9a-f]{12}$")
 
@@ -88,3 +99,11 @@ class TestNewId:
         # The helper does not enforce a prefix shape; callers own that convention.
         assert new_id("X").startswith("X-")
         assert new_id("ABCDE").startswith("ABCDE-")
+
+    def test_custom_length_and_separator(self) -> None:
+        result = new_id("inst", length=16, separator="_")
+        prefix, suffix = result.split("_", 1)
+
+        assert prefix == "inst"
+        assert len(suffix) == 16
+        assert all(c in "0123456789abcdef" for c in suffix)

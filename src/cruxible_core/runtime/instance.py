@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,6 +28,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.primitives import new_id
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
 from cruxible_core.storage.sqlite import SQLiteStorageBackend, SQLiteUnitOfWork
@@ -384,7 +384,7 @@ class CruxibleInstance(InstanceProtocol):
         relationships: Sequence[RelationshipInstance] | None = None,
     ) -> WorldSnapshot:
         """Persist DB-authoritative snapshot state and export portable artifacts."""
-        snapshot_id = f"snap_{uuid.uuid4().hex[:16]}"
+        snapshot_id = new_id("snap", length=16, separator="_")
         config = self.load_config()
         config_path = self.get_config_path()
         graph_json = json.dumps(graph.to_dict(), indent=2, sort_keys=True).encode("utf-8")

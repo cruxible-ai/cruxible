@@ -20,8 +20,8 @@ _CANONICAL_JSON_INLINE = re.compile(
     re.DOTALL,
 )
 
-# Match the canonical 12-char record-ID pattern.
-_RECORD_ID_INLINE = re.compile(r"uuid\.uuid4\(\)\.hex\[:12\]")
+# Match inline UUID hex ID minting.
+_RECORD_ID_INLINE = re.compile(r"uuid\.uuid4\(\)\.hex(?:\[:\d+\])?")
 
 
 def _python_sources() -> list[Path]:
@@ -52,7 +52,7 @@ def test_no_record_id_inline_outside_primitives() -> None:
         if _RECORD_ID_INLINE.search(text):
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
-        "Inline 12-char record-ID minting detected. "
-        "Use cruxible_core.primitives.new_id(prefix) instead. Offenders:\n  - "
+        "Inline UUID-hex ID minting detected. "
+        "Use cruxible_core.primitives.new_id(...) instead. Offenders:\n  - "
         + "\n  - ".join(offenders)
     )

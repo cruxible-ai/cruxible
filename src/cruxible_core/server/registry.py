@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from cruxible_core.primitives import new_id
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.temporal import format_datetime, utc_now
 
@@ -126,7 +126,7 @@ class InstanceRegistry:
         *,
         workspace_root: str | None,
     ) -> RegisteredInstance:
-        instance_id = f"inst_{uuid.uuid4().hex[:16]}"
+        instance_id = new_id("inst", length=16, separator="_")
         location = str((get_server_state_dir() / "instances" / instance_id).resolve())
         return self._insert_instance(
             backend=GOVERNED_DAEMON_BACKEND,
@@ -144,7 +144,7 @@ class InstanceRegistry:
         preferred_instance_id: str | None = None,
     ) -> RegisteredInstance:
         created_at = format_datetime(utc_now())
-        instance_id = preferred_instance_id or f"inst_{uuid.uuid4().hex[:16]}"
+        instance_id = preferred_instance_id or new_id("inst", length=16, separator="_")
         with self._connect() as conn:
             conn.execute(
                 """
