@@ -16,7 +16,9 @@ from tests.support.workflow_helpers import (
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.schema import (
+    CandidateEvidenceSpec,
     ContractSchema,
+    MakeRelationshipsSpec,
     NamedQuerySchema,
     PropertySchema,
     RelationshipSchema,
@@ -26,6 +28,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.receipt.serializer import to_markdown
 from cruxible_core.service import service_list
@@ -37,6 +40,7 @@ from cruxible_core.workflow import (
     get_lock_path,
     write_lock,
 )
+from cruxible_core.workflow.apply import make_relationship_set
 
 USER_INDEX_FIELD = "_query_result_index"
 
@@ -47,6 +51,60 @@ def _review_metadata(status: str) -> RelationshipMetadata:
             review=RelationshipReviewState(status=status),
         )
     )
+
+
+def test_make_relationship_set_attaches_typed_evidence_refs(
+    proposal_workflow_instance: CruxibleInstance,
+) -> None:
+    spec = MakeRelationshipsSpec(
+        relationship_type="recommended_for",
+        items=[
+            {
+                "product_sku": "SKU-123",
+                "source_record_id": "row-1",
+            }
+        ],
+        from_type="Campaign",
+        from_id="CMP-1",
+        to_type="Product",
+        to_id="$item.product_sku",
+        properties={"reason": "catalog"},
+        evidence=CandidateEvidenceSpec(
+            refs=[
+                {
+                    "source": "catalog",
+                    "source_record_id": "$item.source_record_id",
+                    "label": "catalog match",
+                }
+            ],
+            rationale="catalog recommendation",
+        ),
+    )
+
+    result = make_relationship_set(
+        proposal_workflow_instance.load_config(),
+        "relationships",
+        spec,
+        {},
+        {},
+    )
+
+    evidence = result.relationships[0].metadata.evidence
+    assert evidence is not None
+    assert evidence.evidence_refs == [
+        EvidenceRef(
+            source="catalog",
+            source_record_id="row-1",
+            label="catalog match",
+        )
+    ]
+    assert evidence.model_dump(mode="json")["evidence_refs"] == [
+        {
+            "source": "catalog",
+            "source_record_id": "row-1",
+            "label": "catalog match",
+        }
+    ]
 
 
 class TestWorkflowExecutor:

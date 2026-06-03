@@ -107,22 +107,28 @@ def evidence_ref_payload(value: EvidenceRef | Mapping[str, Any]) -> dict[str, An
     return normalize_evidence_ref(value).to_payload()
 
 
-def merge_evidence_refs(
+def merge_evidence_ref_objects(
     *groups: Iterable[EvidenceRef | Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """Merge evidence reference groups with deterministic first-seen dedupe."""
-    merged: list[dict[str, Any]] = []
+) -> list[EvidenceRef]:
+    """Merge evidence reference groups as validated objects with first-seen dedupe."""
+    merged: list[EvidenceRef] = []
     seen: set[str] = set()
     for group in groups:
         for ref in group:
             evidence = normalize_evidence_ref(ref)
-            payload = evidence.to_payload()
             key = _evidence_ref_key(evidence)
             if key in seen:
                 continue
             seen.add(key)
-            merged.append(payload)
+            merged.append(evidence)
     return merged
+
+
+def merge_evidence_refs(
+    *groups: Iterable[EvidenceRef | Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge evidence reference groups with deterministic first-seen dedupe."""
+    return [evidence.to_payload() for evidence in merge_evidence_ref_objects(*groups)]
 
 
 def _evidence_ref_key(ref: EvidenceRef) -> str:
@@ -142,6 +148,7 @@ __all__ = [
     "EvidenceRef",
     "RelationshipEvidence",
     "evidence_ref_payload",
+    "merge_evidence_ref_objects",
     "merge_evidence_refs",
     "normalize_evidence_ref",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_core.graph.evidence import merge_evidence_ref_objects
 from cruxible_core.provider.payloads import (
     EvidenceRef,
     JsonItems,
@@ -97,6 +98,20 @@ def test_merge_evidence_refs_preserves_order_and_dedupes() -> None:
     second = evidence_ref("scanner", "finding-2")
 
     assert merge_evidence_refs([first], [duplicate, second]) == [first, second]
+
+
+def test_merge_evidence_ref_objects_matches_compact_payload_merge() -> None:
+    first = evidence_ref("inventory", "row-1", observed_at="2026-05-24")
+    duplicate = evidence_ref("inventory", "row-1", observed_at="2026-05-25")
+    second = EvidenceRef(source="scanner", source_record_id="finding-2")
+
+    refs = merge_evidence_ref_objects([first], [duplicate, second])
+
+    assert refs == [EvidenceRef.model_validate(first), second]
+    assert [ref.to_payload() for ref in refs] == merge_evidence_refs(
+        [first],
+        [duplicate, second],
+    )
 
 
 def test_evidence_ref_collects_extra_fields_into_metadata() -> None:

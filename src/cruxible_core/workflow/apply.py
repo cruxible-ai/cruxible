@@ -16,7 +16,11 @@ from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
 from cruxible_core.errors import DataValidationError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.evidence import RelationshipEvidence, merge_evidence_refs
+from cruxible_core.graph.evidence import (
+    EvidenceRef,
+    RelationshipEvidence,
+    merge_evidence_ref_objects,
+)
 from cruxible_core.graph.operations import (
     apply_relationship,
     validate_entity,
@@ -150,7 +154,7 @@ def make_relationship_set(
     for item in items:
         relationship_evidence: RelationshipEvidence | None = None
         if spec.evidence is not None:
-            evidence_refs: list[dict[str, Any]] = []
+            evidence_refs: list[EvidenceRef] = []
             rationale: str | None = None
             if spec.evidence.refs is not None:
                 evidence_refs = _resolve_evidence_refs(
@@ -483,7 +487,7 @@ def _resolve_evidence_refs(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
     item: Any,
-) -> list[dict[str, Any]]:
+) -> list[EvidenceRef]:
     resolved = resolve_value(
         template,
         input_payload,
@@ -495,7 +499,8 @@ def _resolve_evidence_refs(
         return []
     refs = resolved if isinstance(resolved, list) else [resolved]
     try:
-        return merge_evidence_refs(refs)
+        evidence_refs: list[EvidenceRef] = merge_evidence_ref_objects(refs)
+        return evidence_refs
     except (TypeError, ValueError) as exc:
         raise QueryExecutionError(
             f"Workflow step '{step_id}' evidence refs must be evidence objects"
