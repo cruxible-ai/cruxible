@@ -13,47 +13,17 @@ from typing import Any
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.workflow.apply import (
-    apply_entity_set,
-    apply_relationship_set,
-    compute_apply_digest,
-    make_entity_set,
-    make_relationship_set,
-)
+from cruxible_core.workflow.apply import compute_apply_digest
 from cruxible_core.workflow.compiler import compile_workflow, load_lock, resolve_lock_path
 from cruxible_core.workflow.contracts import query_execution_error, validate_contract_payload
-from cruxible_core.workflow.io import (
-    execute_assert_count_step,
-    execute_assert_exists_step,
-    execute_assert_not_truncated_step,
-    execute_assert_step,
-    execute_provider_step,
-    execute_query_step,
-)
-from cruxible_core.workflow.proposals import (
-    build_relationship_group_proposal,
-    make_candidate_set,
-    map_signal_batch,
-    signal_mapping_snapshot,
-)
-from cruxible_core.workflow.step_helpers import (
-    extract_read_metadata,
-    resolve_step_items,
-)
+from cruxible_core.workflow.execution_context import WorkflowExecutionContext
+from cruxible_core.workflow.step_handlers import DEFAULT_STEP_HANDLER_REGISTRY
+from cruxible_core.workflow.step_helpers import extract_read_metadata
 from cruxible_core.workflow.tracing import persist_receipt as persist_workflow_receipt
-from cruxible_core.workflow.transforms import (
-    aggregate_items,
-    dedupe_items,
-    filter_items,
-    join_items,
-    shape_items,
-)
-from cruxible_core.workflow.types import EntitySet, RelationshipSet, WorkflowExecutionResult
+from cruxible_core.workflow.types import WorkflowExecutionResult
 from cruxible_core.workflow_execution_types import (
     WorkflowExecutionAction,
     WorkflowResultMode,
@@ -114,12 +84,13 @@ def execute_workflow(
     lock = load_lock(resolve_lock_path(instance))
     if persist_query_receipts is None:
         persist_query_receipts = persist_receipt
+    config_base_path = instance.get_config_path().parent
     plan = compile_workflow(
         config,
         lock,
         workflow_name,
         input_payload,
-        config_base_path=instance.get_config_path().parent,
+        config_base_path=config_base_path,
     )
     workflow = config.workflows[workflow_name]
     workflow_type = workflow.type
@@ -148,487 +119,31 @@ def execute_workflow(
         workflow_mode=result_mode,
     )
 
-    step_outputs: dict[str, Any] = {}
-    alias_step_ids: dict[str, str] = {}
-    step_trace_ids: dict[str, list[str]] = {}
-    query_receipt_ids: list[str] = []
-    traces: list[ExecutionTrace] = []
-    apply_previews: dict[str, Any] = {}
-    applied_entities: dict[tuple[str, str], EntityInstance] = {}
-    applied_relationships: dict[int, RelationshipInstance] = {}
+    context = WorkflowExecutionContext(
+        instance=instance,
+        config=config,
+        workflow_name=workflow_name,
+        workflow=workflow,
+        lock=lock,
+        plan=plan,
+        graph=graph,
+        receipt_builder=receipt_builder,
+        execution_action=execution_action,
+        result_mode=result_mode,
+        persist_receipt=persist_receipt,
+        persist_query_receipts=persist_query_receipts,
+        persist_traces=persist_traces,
+        config_base_path=config_base_path,
+        head_snapshot_id=head_snapshot_id,
+    )
     results_recorded = False
     committed_snapshot_id: str | None = None
 
     try:
-        for compiled_step in plan.steps:
-            if compiled_step.kind == "query":
-                execute_query_step(
-                    instance,
-                    config,
-                    graph,
-                    plan,
-                    compiled_step,
-                    step_outputs,
-                    alias_step_ids,
-                    query_receipt_ids,
-                    receipt_builder,
-                    persist_receipt=persist_query_receipts,
-                )
-                continue
+        for compiled_step in context.plan.steps:
+            DEFAULT_STEP_HANDLER_REGISTRY.execute(context, compiled_step)
 
-            if compiled_step.kind == "provider":
-                execute_provider_step(
-                    instance,
-                    config,
-                    lock,
-                    plan,
-                    compiled_step,
-                    step_outputs,
-                    alias_step_ids,
-                    traces,
-                    step_trace_ids,
-                    receipt_builder,
-                    workflow_name=workflow_name,
-                    persist_traces=persist_traces,
-                    config_base_path=instance.get_config_path().parent,
-                )
-                continue
-
-            if compiled_step.kind == "shape_items":
-                assert compiled_step.shape_items_spec is not None
-                shaped_items = shape_items(
-                    compiled_step.step_id,
-                    compiled_step.shape_items_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = shaped_items
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "shape_items",
-                    detail={
-                        "input_count": shaped_items["input_count"],
-                        "output_count": shaped_items["output_count"],
-                        "dropped_count": shaped_items["dropped_count"],
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "join_items":
-                assert compiled_step.join_items_spec is not None
-                joined_items = join_items(
-                    compiled_step.step_id,
-                    compiled_step.join_items_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = joined_items
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "join_items",
-                    detail={
-                        "left_count": joined_items["left_count"],
-                        "right_count": joined_items["right_count"],
-                        "skipped_right_count": joined_items["skipped_right_count"],
-                        "matched_left_count": joined_items["matched_left_count"],
-                        "output_count": joined_items["output_count"],
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "filter_items":
-                assert compiled_step.filter_items_spec is not None
-                filtered_items = filter_items(
-                    compiled_step.step_id,
-                    compiled_step.filter_items_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = filtered_items
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "filter_items",
-                    detail={
-                        "input_count": filtered_items["input_count"],
-                        "output_count": filtered_items["output_count"],
-                        "filtered_count": filtered_items["filtered_count"],
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "aggregate_items":
-                assert compiled_step.aggregate_items_spec is not None
-                aggregated_items = aggregate_items(
-                    compiled_step.step_id,
-                    compiled_step.aggregate_items_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = aggregated_items
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "aggregate_items",
-                    detail={
-                        "input_count": aggregated_items["input_count"],
-                        "group_count": aggregated_items["group_count"],
-                        "output_count": aggregated_items["output_count"],
-                        "measures": {
-                            name: measure.operation
-                            for name, measure in (
-                                compiled_step.aggregate_items_spec.measures.items()
-                            )
-                        },
-                        "source_metadata": aggregated_items.get("source_metadata", {}),
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "dedupe_items":
-                assert compiled_step.dedupe_items_spec is not None
-                deduped_items = dedupe_items(
-                    compiled_step.step_id,
-                    compiled_step.dedupe_items_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = deduped_items
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "dedupe_items",
-                    detail={
-                        "input_count": deduped_items["input_count"],
-                        "output_count": deduped_items["output_count"],
-                        "duplicate_count": deduped_items["duplicate_count"],
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "make_candidates":
-                assert compiled_step.make_candidates_spec is not None
-                candidate_set = make_candidate_set(
-                    config,
-                    compiled_step.step_id,
-                    compiled_step.make_candidates_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
-                    candidate_set.model_dump(mode="python")
-                )
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "make_candidates",
-                    detail={
-                        "relationship_type": candidate_set.relationship_type,
-                        "candidate_count": len(candidate_set.candidates),
-                        "duplicate_input_count": candidate_set.duplicate_input_count,
-                        "conflicting_duplicate_count": candidate_set.conflicting_duplicate_count,
-                        "duplicate_examples": candidate_set.duplicate_examples,
-                        "item_count": len(
-                            resolve_step_items(
-                                compiled_step.make_candidates_spec.items,
-                                plan.input_payload,
-                                step_outputs,
-                            )
-                        ),
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "map_signals":
-                assert compiled_step.map_signals_spec is not None
-                signal_batch = map_signal_batch(
-                    compiled_step.step_id,
-                    compiled_step.map_signals_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
-                    signal_batch.model_dump(mode="python")
-                )
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "map_signals",
-                    detail={
-                        "signal_source": signal_batch.signal_source,
-                        "signal_count": len(signal_batch.signals),
-                        "mapping": signal_mapping_snapshot(compiled_step.map_signals_spec),
-                        "item_count": len(
-                            resolve_step_items(
-                                compiled_step.map_signals_spec.items,
-                                plan.input_payload,
-                                step_outputs,
-                            )
-                        ),
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "propose_relationship_group":
-                assert compiled_step.propose_relationship_group_spec is not None
-                proposal = build_relationship_group_proposal(
-                    compiled_step.step_id,
-                    compiled_step.propose_relationship_group_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = proposal.model_dump(
-                    mode="python"
-                )
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "propose_relationship_group",
-                    detail={
-                        "relationship_type": proposal.relationship_type,
-                        "candidates_from": (
-                            compiled_step.propose_relationship_group_spec.candidates_from
-                        ),
-                        "signals_from": (
-                            compiled_step.propose_relationship_group_spec.signals_from
-                        ),
-                        "member_count": len(proposal.members),
-                        "candidate_count": proposal.candidate_count,
-                        "on_empty": proposal.on_empty,
-                        "group_created": proposal.group_created,
-                        "status": proposal.status,
-                        "signal_sources_used": proposal.signal_sources_used,
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "make_entities":
-                assert compiled_step.make_entities_spec is not None
-                entity_set = make_entity_set(
-                    config,
-                    compiled_step.step_id,
-                    compiled_step.make_entities_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = (
-                    entity_set.model_dump(mode="python")
-                )
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "make_entities",
-                    detail={
-                        "entity_type": entity_set.entity_type,
-                        "entity_count": len(entity_set.entities),
-                        "item_count": len(
-                            resolve_step_items(
-                                compiled_step.make_entities_spec.items,
-                                plan.input_payload,
-                                step_outputs,
-                            )
-                        ),
-                        "duplicate_input_count": entity_set.duplicate_input_count,
-                        "conflicting_duplicate_count": entity_set.conflicting_duplicate_count,
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "make_relationships":
-                assert compiled_step.make_relationships_spec is not None
-                relationship_set = make_relationship_set(
-                    config,
-                    compiled_step.step_id,
-                    compiled_step.make_relationships_spec,
-                    plan.input_payload,
-                    step_outputs,
-                )
-                alias = compiled_step.as_name or compiled_step.step_id
-                step_outputs[alias] = relationship_set.model_dump(mode="python")
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "make_relationships",
-                    detail={
-                        "relationship_type": relationship_set.relationship_type,
-                        "relationship_count": len(relationship_set.relationships),
-                        "item_count": len(
-                            resolve_step_items(
-                                compiled_step.make_relationships_spec.items,
-                                plan.input_payload,
-                                step_outputs,
-                            )
-                        ),
-                        "duplicate_input_count": relationship_set.duplicate_input_count,
-                        "conflicting_duplicate_count": (
-                            relationship_set.conflicting_duplicate_count
-                        ),
-                    },
-                )
-                continue
-
-            if compiled_step.kind == "apply_entities":
-                assert compiled_step.apply_entities_spec is not None
-                step_node = receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "apply_entities",
-                    detail={},
-                )
-                entity_preview = apply_entity_set(
-                    instance,
-                    graph,
-                    compiled_step.step_id,
-                    step_outputs[compiled_step.apply_entities_spec.entities_from],
-                    receipt_builder,
-                    persist_writes=execution_action == "apply",
-                    parent_id=step_node,
-                )
-                preview_payload = entity_preview.model_dump(mode="python")
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = preview_payload
-                apply_previews[compiled_step.step_id] = preview_payload
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
-                if execution_action == "apply":
-                    _collect_entity_delta(
-                        graph,
-                        step_outputs[compiled_step.apply_entities_spec.entities_from],
-                        applied_entities,
-                    )
-                continue
-
-            if compiled_step.kind == "apply_relationships":
-                assert compiled_step.apply_relationships_spec is not None
-                step_node = receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "apply_relationships",
-                    detail={},
-                )
-                relationship_preview = apply_relationship_set(
-                    instance,
-                    graph,
-                    workflow_name,
-                    compiled_step.step_id,
-                    step_outputs[compiled_step.apply_relationships_spec.relationships_from],
-                    receipt_builder,
-                    persist_writes=execution_action == "apply",
-                    parent_id=step_node,
-                )
-                preview_payload = relationship_preview.model_dump(mode="python")
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = preview_payload
-                apply_previews[compiled_step.step_id] = preview_payload
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
-                if execution_action == "apply":
-                    _collect_relationship_delta(
-                        graph,
-                        step_outputs[compiled_step.apply_relationships_spec.relationships_from],
-                        applied_relationships,
-                    )
-                continue
-
-            if compiled_step.kind == "apply_all":
-                assert compiled_step.apply_all_spec is not None
-                spec = compiled_step.apply_all_spec
-                step_node = receipt_builder.record_plan_step(
-                    compiled_step.step_id,
-                    "apply_all",
-                    detail={
-                        "entities_from": spec.entities_from,
-                        "relationships_from": spec.relationships_from,
-                    },
-                )
-                entity_results: dict[str, Any] = {}
-                relationship_results: dict[str, Any] = {}
-                for alias in spec.entities_from:
-                    entity_preview = apply_entity_set(
-                        instance,
-                        graph,
-                        compiled_step.step_id,
-                        step_outputs[alias],
-                        receipt_builder,
-                        persist_writes=execution_action == "apply",
-                        parent_id=step_node,
-                    )
-                    entity_results[alias] = entity_preview.model_dump(mode="python")
-                    if execution_action == "apply":
-                        _collect_entity_delta(graph, step_outputs[alias], applied_entities)
-                for alias in spec.relationships_from:
-                    relationship_preview = apply_relationship_set(
-                        instance,
-                        graph,
-                        workflow_name,
-                        compiled_step.step_id,
-                        step_outputs[alias],
-                        receipt_builder,
-                        persist_writes=execution_action == "apply",
-                        parent_id=step_node,
-                    )
-                    relationship_results[alias] = relationship_preview.model_dump(mode="python")
-                    if execution_action == "apply":
-                        _collect_relationship_delta(
-                            graph,
-                            step_outputs[alias],
-                            applied_relationships,
-                        )
-                preview_payload = _apply_all_preview_payload(
-                    spec.entities_from,
-                    spec.relationships_from,
-                    entity_results,
-                    relationship_results,
-                )
-                step_outputs[compiled_step.as_name or compiled_step.step_id] = preview_payload
-                apply_previews[compiled_step.step_id] = preview_payload
-                if compiled_step.as_name is not None:
-                    alias_step_ids[compiled_step.as_name] = compiled_step.step_id
-                receipt_builder.record_validation(True, detail=preview_payload, parent_id=step_node)
-                continue
-
-            if compiled_step.kind == "assert":
-                execute_assert_step(
-                    compiled_step,
-                    plan.input_payload,
-                    step_outputs,
-                    receipt_builder,
-                )
-                continue
-            if compiled_step.kind == "assert_not_truncated":
-                execute_assert_not_truncated_step(
-                    compiled_step,
-                    step_outputs,
-                    receipt_builder,
-                )
-                continue
-            if compiled_step.kind == "assert_count":
-                execute_assert_count_step(
-                    compiled_step,
-                    plan.input_payload,
-                    step_outputs,
-                    receipt_builder,
-                )
-                continue
-            assert compiled_step.kind == "assert_exists"
-            execute_assert_exists_step(
-                compiled_step,
-                plan.input_payload,
-                step_outputs,
-                receipt_builder,
-            )
-
-        output = step_outputs[plan.returns]
+        output = context.step_outputs[context.plan.returns]
         output = _validate_workflow_output_contract(
             config,
             workflow_name,
@@ -636,41 +151,45 @@ def execute_workflow(
             output,
         )
         read_metadata = _aggregate_workflow_read_metadata(
-            plan,
-            step_outputs,
-            query_receipt_ids,
+            context.plan,
+            context.step_outputs,
+            context.query_receipt_ids,
         )
         success_results = [{"output": output}]
-        receipt_builder.record_results(success_results)
+        context.receipt_builder.record_results(success_results)
         results_recorded = True
-        receipt = receipt_builder.build(results=success_results)
-        apply_digest = compute_apply_digest(plan, head_snapshot_id, apply_previews)
+        receipt = context.receipt_builder.build(results=success_results)
+        apply_digest = compute_apply_digest(
+            context.plan,
+            context.head_snapshot_id,
+            context.apply_previews,
+        )
         _annotate_workflow_receipt(
             receipt,
-            plan=plan,
-            result_mode=result_mode,
+            plan=context.plan,
+            result_mode=context.result_mode,
             apply_digest=apply_digest,
             read_metadata=read_metadata,
         )
 
-        if workflow_type == "canonical" and execution_action == "apply":
+        if workflow_type == "canonical" and context.execution_action == "apply":
             snapshot = instance.commit_graph_snapshot(
-                graph,
-                entities=list(applied_entities.values()),
-                relationships=list(applied_relationships.values()),
+                context.graph,
+                entities=list(context.applied_entities.values()),
+                relationships=list(context.applied_relationships.values()),
             )
             committed_snapshot_id = snapshot.snapshot_id
             receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id
             receipt.committed = True
     except Exception as exc:
         failed_receipt = _build_failed_workflow_receipt(
-            receipt_builder,
-            plan=plan,
-            result_mode=result_mode,
+            context.receipt_builder,
+            plan=context.plan,
+            result_mode=context.result_mode,
             error=exc,
             results_recorded=results_recorded,
-            step_outputs=step_outputs,
-            query_receipt_ids=query_receipt_ids,
+            step_outputs=context.step_outputs,
+            query_receipt_ids=context.query_receipt_ids,
         )
         setattr(exc, FAILED_WORKFLOW_RECEIPT_ATTR, failed_receipt)
         defer_failed_receipt = (
@@ -690,18 +209,18 @@ def execute_workflow(
         workflow=workflow_name,
         output=output,
         receipt=receipt,
-        mode=result_mode,
+        mode=context.result_mode,
         workflow_type=workflow_type,
         apply_digest=apply_digest,
-        head_snapshot_id=head_snapshot_id,
+        head_snapshot_id=context.head_snapshot_id,
         committed_snapshot_id=committed_snapshot_id,
-        apply_previews=apply_previews,
-        query_receipt_ids=query_receipt_ids,
+        apply_previews=context.apply_previews,
+        query_receipt_ids=context.query_receipt_ids,
         read_metadata=read_metadata,
-        traces=traces,
-        step_outputs=step_outputs,
-        alias_step_ids=alias_step_ids,
-        step_trace_ids=step_trace_ids,
+        traces=context.traces,
+        step_outputs=context.step_outputs,
+        alias_step_ids=context.alias_step_ids,
+        step_trace_ids=context.step_trace_ids,
     )
 
 
@@ -725,38 +244,6 @@ def _validate_workflow_output_contract(
         subject=f"Workflow '{workflow_name}' output",
         error_factory=query_execution_error,
     )
-
-
-def _collect_entity_delta(
-    graph: EntityGraph,
-    raw_entity_set: Any,
-    target: dict[tuple[str, str], EntityInstance],
-) -> None:
-    """Collect final entity rows touched by a canonical apply step."""
-    entity_set = EntitySet.model_validate(raw_entity_set)
-    for entity in entity_set.entities:
-        persisted = graph.get_entity(entity_set.entity_type, entity.entity_id)
-        if persisted is not None:
-            target[(persisted.entity_type, persisted.entity_id)] = persisted
-
-
-def _collect_relationship_delta(
-    graph: EntityGraph,
-    raw_relationship_set: Any,
-    target: dict[int, RelationshipInstance],
-) -> None:
-    """Collect final relationship rows touched by a canonical apply step."""
-    relationship_set = RelationshipSet.model_validate(raw_relationship_set)
-    for relationship in relationship_set.relationships:
-        persisted = graph.get_relationship(
-            relationship.from_type,
-            relationship.from_id,
-            relationship.to_type,
-            relationship.to_id,
-            relationship_set.relationship_type,
-        )
-        if persisted is not None and persisted.edge_key is not None:
-            target[persisted.edge_key] = persisted
 
 
 def _annotate_workflow_receipt(
@@ -816,31 +303,6 @@ def _build_failed_workflow_receipt(
         error=error,
     )
     return receipt
-
-
-def _apply_all_preview_payload(
-    entities_from: list[str],
-    relationships_from: list[str],
-    entity_results: dict[str, Any],
-    relationship_results: dict[str, Any],
-) -> dict[str, Any]:
-    previews = [entity_results[alias] for alias in entities_from]
-    previews.extend(relationship_results[alias] for alias in relationships_from)
-    return {
-        "entities_from": list(entities_from),
-        "relationships_from": list(relationships_from),
-        "entity_results": entity_results,
-        "relationship_results": relationship_results,
-        "create_count": sum(int(preview.get("create_count", 0)) for preview in previews),
-        "update_count": sum(int(preview.get("update_count", 0)) for preview in previews),
-        "noop_count": sum(int(preview.get("noop_count", 0)) for preview in previews),
-        "duplicate_input_count": sum(
-            int(preview.get("duplicate_input_count", 0)) for preview in previews
-        ),
-        "conflicting_duplicate_count": sum(
-            int(preview.get("conflicting_duplicate_count", 0)) for preview in previews
-        ),
-    }
 
 
 def _aggregate_workflow_read_metadata(

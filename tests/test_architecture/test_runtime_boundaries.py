@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 import tomllib
 from pathlib import Path
+from typing import get_args
 
 from cruxible_client import CruxibleClient
 from cruxible_client import contracts as client_contracts
 from cruxible_core.cli.instance import CruxibleInstance as CliCruxibleInstance
 from cruxible_core.client import CruxibleClient as CoreCompatClient
+from cruxible_core.config.schema import StepKind
 from cruxible_core.mcp import contracts as core_contracts
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp import permissions as mcp_permissions
@@ -18,6 +20,7 @@ from cruxible_core.runtime import api
 from cruxible_core.runtime import permissions as runtime_permissions
 from cruxible_core.runtime.instance import CruxibleInstance as RuntimeCruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager as runtime_get_manager
+from cruxible_core.workflow.step_handlers import DEFAULT_STEP_HANDLER_REGISTRY
 
 
 def _repo_root() -> Path:
@@ -192,3 +195,39 @@ def test_core_and_client_package_versions_are_locked_together():
 
     assert core_version == client_version
     assert f"cruxible-client=={client_version}" in dependencies
+
+
+def test_workflow_executor_uses_step_handler_registry():
+    path = _repo_root() / "src/cruxible_core/workflow/executor.py"
+    source = path.read_text()
+    tree = ast.parse(source, filename=str(path))
+    execute_fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "execute_workflow"
+    )
+    direct_kind_checks = [
+        node.lineno
+        for node in ast.walk(execute_fn)
+        if isinstance(node, ast.Compare) and _compares_compiled_step_kind(node)
+    ]
+
+    assert direct_kind_checks == []
+    assert "DEFAULT_STEP_HANDLER_REGISTRY.execute" in source
+    assert set(DEFAULT_STEP_HANDLER_REGISTRY.registered_kinds) == set(get_args(StepKind))
+
+
+def _compares_compiled_step_kind(node: ast.Compare) -> bool:
+    return any(
+        _is_compiled_step_kind_ref(expression)
+        for expression in [node.left, *node.comparators]
+    )
+
+
+def _is_compiled_step_kind_ref(expression: ast.expr) -> bool:
+    return (
+        isinstance(expression, ast.Attribute)
+        and expression.attr == "kind"
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == "compiled_step"
+    )
