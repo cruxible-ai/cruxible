@@ -227,13 +227,7 @@ def make_relationship_set(
                 f"{member.from_type}->{member.to_type} which do not match "
                 f"'{spec.relationship_type}' ({rel_schema.from_entity}->{rel_schema.to_entity})"
             )
-        key = (
-            spec.relationship_type,
-            member.from_type,
-            member.from_id,
-            member.to_type,
-            member.to_id,
-        )
+        key = member.identity_tuple()
         if key in seen:
             duplicate_input_count += 1
             conflicting = seen[key] != member.properties

@@ -220,13 +220,7 @@ def service_add_relationships(
         pending = []
 
         for i, edge in enumerate(relationships, start=1):
-            key = (
-                edge.from_type,
-                edge.from_id,
-                edge.to_type,
-                edge.to_id,
-                edge.relationship_type,
-            )
+            key = edge.identity_tuple()
             if key in batch_seen:
                 errors.append(
                     f"Edge {i}: duplicate in batch "

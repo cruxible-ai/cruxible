@@ -487,7 +487,7 @@ class TestGroupResolveReceipts:
 
         with (
             patch(
-                "cruxible_core.service.groups._apply_resolved_relationships",
+                "cruxible_core.service.group_transitions._apply_resolved_relationships",
                 side_effect=RuntimeError("graph replay failed"),
             ),
             pytest.raises(MutationError, match="Unexpected failure: graph replay failed"),

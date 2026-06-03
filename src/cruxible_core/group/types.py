@@ -119,6 +119,17 @@ class CandidateMember(RelationshipInstance):
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     evidence_rationale: str | None = None
 
+    def as_relationship(self) -> RelationshipInstance:
+        """Return this candidate as a graph relationship without governance fields."""
+        return RelationshipInstance(
+            relationship_type=self.relationship_type,
+            from_type=self.from_type,
+            from_id=self.from_id,
+            to_type=self.to_type,
+            to_id=self.to_id,
+            properties=dict(self.properties),
+        )
+
 
 class GroupResolution(BaseModel):
     """Persisted resolution of a candidate group (approve or reject)."""

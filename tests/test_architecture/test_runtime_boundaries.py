@@ -217,6 +217,70 @@ def test_workflow_executor_uses_step_handler_registry():
     assert set(DEFAULT_STEP_HANDLER_REGISTRY.registered_kinds) == set(get_args(StepKind))
 
 
+def test_governance_internals_do_not_import_surface_or_presentation_layers() -> None:
+    src_root = _repo_root() / "src/cruxible_core"
+    service_dir = src_root / "service"
+    paths = {
+        *(src_root / "group").rglob("*.py"),
+        service_dir / "groups.py",
+        *service_dir.glob("group_*.py"),
+    }
+    forbidden_prefixes = (
+        "cruxible_core.cli",
+        "cruxible_core.client",
+        "cruxible_core.mcp",
+        "cruxible_core.server",
+        "cruxible_core.wiki",
+        "cruxible_core.presentation",
+        "cruxible_core.presentations",
+    )
+    violations: list[str] = []
+
+    for path in sorted(paths):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            imported_modules: list[str] = []
+            if isinstance(node, ast.Import):
+                imported_modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported_modules = [node.module]
+            for module in imported_modules:
+                if any(
+                    module == prefix or module.startswith(f"{prefix}.")
+                    for prefix in forbidden_prefixes
+                ):
+                    line_number = getattr(node, "lineno", 0)
+                    violations.append(
+                        f"{path.relative_to(_repo_root())}:{line_number}:{module}"
+                    )
+
+    assert violations == []
+
+
+def test_governance_does_not_reintroduce_relationship_identity_wrappers() -> None:
+    src_root = _repo_root() / "src/cruxible_core"
+    service_dir = src_root / "service"
+    paths = {
+        *(src_root / "group").rglob("*.py"),
+        service_dir / "groups.py",
+        *service_dir.glob("group_*.py"),
+    }
+    forbidden_class_names = {
+        "RelationshipIdentity",
+        "RelationshipKey",
+        "RelationshipRef",
+    }
+    violations: list[str] = []
+
+    for path in sorted(paths):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in forbidden_class_names:
+                violations.append(f"{path.relative_to(_repo_root())}:{node.lineno}:{node.name}")
+
+    assert violations == []
+
+
 def _compares_compiled_step_kind(node: ast.Compare) -> bool:
     return any(
         _is_compiled_step_kind_ref(expression)

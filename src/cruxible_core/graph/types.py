@@ -96,6 +96,37 @@ class RelationshipInstance(BaseModel):
         """Return the target node ID."""
         return make_node_id(self.to_type, self.to_id)
 
+    def identity_tuple(self) -> tuple[str, str, str, str, str]:
+        """Return the stable relationship identity tuple."""
+        return (
+            self.from_type,
+            self.from_id,
+            self.to_type,
+            self.to_id,
+            self.relationship_type,
+        )
+
+    def identity_payload(self) -> dict[str, str]:
+        """Return the public relationship identity payload."""
+        return {
+            "from_type": self.from_type,
+            "from_id": self.from_id,
+            "to_type": self.to_type,
+            "to_id": self.to_id,
+            "relationship_type": self.relationship_type,
+        }
+
+    def endpoint_label(self) -> str:
+        """Return a compact source-to-target endpoint label."""
+        return f"{self.from_type}:{self.from_id}->{self.to_type}:{self.to_id}"
+
+    def relationship_label(self) -> str:
+        """Return a compact relationship tuple label."""
+        return (
+            f"{self.from_type}:{self.from_id} -[{self.relationship_type}]-> "
+            f"{self.to_type}:{self.to_id}"
+        )
+
 
 __all__ = [
     "EntityInstance",
