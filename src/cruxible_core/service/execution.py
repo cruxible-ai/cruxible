@@ -866,4 +866,4 @@ def _contains_subset(actual: Any, expected_subset: Any) -> bool:
             for actual_item, expected_item in zip(actual, expected_subset, strict=False)
         )
 
-    return actual == expected_subset
+    return bool(actual == expected_subset)

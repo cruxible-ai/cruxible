@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -34,11 +33,7 @@ from cruxible_core.group.types import (
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import ordered_unique
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service.mutation_receipts import (
-    MutationReceiptContext,
-    mutation_receipt,
-    save_graph_for_mutation,
-)
+from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import ResolveGroupResult, UpdateTrustStatusResult
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
@@ -101,17 +96,14 @@ def resolve_group_transition(
 
     target = _load_group_for_resolve(instance, group_id=group_id, action=action)
 
-    with cast(
-        AbstractContextManager[MutationReceiptContext[ResolveGroupResult]],
-        mutation_receipt(
-            instance,
-            "group_resolve",
-            {
-                "group_id": group_id,
-                "action": action,
-                "expected_pending_version": expected_pending_version,
-            },
-        ),
+    with mutation_receipt(
+        instance,
+        "group_resolve",
+        {
+            "group_id": group_id,
+            "action": action,
+            "expected_pending_version": expected_pending_version,
+        },
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -142,7 +134,7 @@ def resolve_group_transition(
         ctx.set_result(resolved)
 
     final_result = ctx.result
-    assert final_result is not None
+    assert isinstance(final_result, ResolveGroupResult)
     return final_result
 
 
@@ -187,17 +179,14 @@ def update_trust_status_transition(
     finally:
         group_store.close()
 
-    with cast(
-        AbstractContextManager[MutationReceiptContext[UpdateTrustStatusResult]],
-        mutation_receipt(
-            instance,
-            "group_trust_update",
-            {
-                "resolution_id": resolution_id,
-                "trust_status": trust_status,
-                "reason": reason,
-            },
-        ),
+    with mutation_receipt(
+        instance,
+        "group_trust_update",
+        {
+            "resolution_id": resolution_id,
+            "trust_status": trust_status,
+            "reason": reason,
+        },
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -221,7 +210,7 @@ def update_trust_status_transition(
         )
 
     final_result = ctx.result
-    assert final_result is not None
+    assert isinstance(final_result, UpdateTrustStatusResult)
     return final_result
 
 

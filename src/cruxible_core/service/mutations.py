@@ -14,11 +14,7 @@ from cruxible_core.graph.operations import (
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.service.mutation_receipts import (
-    MutationReceiptContext,
-    mutation_receipt,
-    save_graph_for_mutation,
-)
+from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -79,7 +75,6 @@ def service_add_entities(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    ctx: MutationReceiptContext[AddEntityResult]
     with mutation_receipt(
         instance,
         "add_entity",
@@ -163,7 +158,7 @@ def service_add_entities(
         ctx.set_result(AddEntityResult(added=added, updated=updated))
 
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, AddEntityResult)
     return result
 
 
@@ -207,7 +202,6 @@ def service_add_relationships(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    ctx: MutationReceiptContext[AddRelationshipResult]
     with mutation_receipt(
         instance,
         "add_relationship",
@@ -308,5 +302,5 @@ def service_add_relationships(
         ctx.set_result(AddRelationshipResult(added=added, updated=updated))
 
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, AddRelationshipResult)
     return result

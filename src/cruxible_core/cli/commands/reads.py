@@ -223,6 +223,17 @@ def _overview_view_from_payload(payload: dict[str, Any]) -> OverviewView:
     )
 
 
+def _policy_summary_payload(policy_summary: Any) -> dict[str, int] | None:
+    if not policy_summary:
+        return None
+    model_dump = getattr(policy_summary, "model_dump", None)
+    if callable(model_dump):
+        return dict(model_dump(mode="python"))
+    if isinstance(policy_summary, dict):
+        return dict(policy_summary)
+    return None
+
+
 def _run_query_command(
     *,
     query_name: str,
@@ -245,7 +256,7 @@ def _run_query_command(
         instance_id = _require_instance_id()
         try:
             if effective_relationship_state is None:
-                result = client.query(
+                remote_result = client.query(
                     instance_id,
                     query_name,
                     params,
@@ -253,7 +264,7 @@ def _run_query_command(
                     decision_record_id=resolved_decision_record_id,
                 )
             else:
-                result = client.query(
+                remote_result = client.query(
                     instance_id,
                     query_name,
                     params,
@@ -269,25 +280,25 @@ def _run_query_command(
             )
             _print_query_param_hints(hints)
             raise
-        projected_results = any("values" in item for item in result.results)
+        projected_results = any("values" in item for item in remote_result.results)
         entity_results = (
-            _entities_from_payload(result.results)
-            if result.result_shape == "entity" and not projected_results
+            _entities_from_payload(remote_result.results)
+            if remote_result.result_shape == "entity" and not projected_results
             else []
         )
         structured_results = (
-            list(result.results)
-            if result.result_shape != "entity" or projected_results
+            list(remote_result.results)
+            if remote_result.result_shape != "entity" or projected_results
             else []
         )
-        total = result.total_results
+        total = remote_result.total_results
         if output_json:
             items = (
                 []
                 if count_only
                 else (
                     [r.model_dump(mode="python") for r in entity_results]
-                    if result.result_shape == "entity" and not projected_results
+                    if remote_result.result_shape == "entity" and not projected_results
                     else structured_results
                 )
             )
@@ -296,58 +307,58 @@ def _run_query_command(
             _emit_json({
                 "results": items,
                 "total_results": total,
-                "limit": result.limit,
-                "truncated": result.truncated,
-                "limit_truncated": getattr(result, "limit_truncated", False),
-                "path_truncated": getattr(result, "path_truncated", False),
-                "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
-                "max_paths": getattr(result, "max_paths", None),
-                "max_paths_per_result": getattr(result, "max_paths_per_result", None),
-                "total_path_count": getattr(result, "total_path_count", None),
-                "retained_path_count": getattr(result, "retained_path_count", None),
-                "steps_executed": result.steps_executed,
-                "result_shape": result.result_shape,
-                "dedupe": result.dedupe,
-                "relationship_state": result.relationship_state,
-                "receipt_id": result.receipt_id,
+                "limit": remote_result.limit,
+                "truncated": remote_result.truncated,
+                "limit_truncated": getattr(remote_result, "limit_truncated", False),
+                "path_truncated": getattr(remote_result, "path_truncated", False),
+                "truncation_reasons": list(getattr(remote_result, "truncation_reasons", [])),
+                "max_paths": getattr(remote_result, "max_paths", None),
+                "max_paths_per_result": getattr(remote_result, "max_paths_per_result", None),
+                "total_path_count": getattr(remote_result, "total_path_count", None),
+                "retained_path_count": getattr(remote_result, "retained_path_count", None),
+                "steps_executed": remote_result.steps_executed,
+                "result_shape": remote_result.result_shape,
+                "dedupe": remote_result.dedupe,
+                "relationship_state": remote_result.relationship_state,
+                "receipt_id": remote_result.receipt_id,
                 "param_hints": (
-                    result.param_hints.model_dump(mode="python")
-                    if result.param_hints
+                    remote_result.param_hints.model_dump(mode="python")
+                    if remote_result.param_hints
                     else None
                 ),
-                "policy_summary": (
-                    result.policy_summary.model_dump(mode="python")
-                    if hasattr(result, "policy_summary") and result.policy_summary
-                    else None
+                "policy_summary": _policy_summary_payload(
+                    getattr(remote_result, "policy_summary", None)
                 ),
             })
             return
-        click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+        click.echo(f"{total} result(s), {remote_result.steps_executed} step(s) executed.")
         if count_only:
-            _print_query_param_hints(result.param_hints)
-        elif limit is not None and result.truncated:
-            if result.result_shape == "entity" and not projected_results:
+            _print_query_param_hints(remote_result.param_hints)
+        elif limit is not None and remote_result.truncated:
+            if remote_result.result_shape == "entity" and not projected_results:
                 console.print(entities_table(entity_results, query_name))
             else:
                 _print_structured_query_rows(structured_results)
             visible_count = (
-                len(entity_results) if result.result_shape == "entity" else len(structured_results)
+                len(entity_results)
+                if remote_result.result_shape == "entity"
+                else len(structured_results)
             )
             click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
-        elif result.result_shape == "entity" and not projected_results:
+        elif remote_result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
         else:
             _print_structured_query_rows(structured_results)
         if total == 0 and not count_only:
-            _print_query_param_hints(result.param_hints)
-        if result.receipt_id:
-            click.echo(f"Receipt: {result.receipt_id}")
+            _print_query_param_hints(remote_result.param_hints)
+        if remote_result.receipt_id:
+            click.echo(f"Receipt: {remote_result.receipt_id}")
         return
 
     instance = CruxibleInstance.load()
     response_limit = 1 if count_only and limit is None else limit
     try:
-        result = service_query_surface(
+        local_result = service_query_surface(
             instance,
             query_name,
             params,
@@ -359,7 +370,7 @@ def _run_query_command(
         _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
         raise
 
-    results = result.results
+    results = local_result.results
     projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
     entity_results = [
         row
@@ -367,7 +378,7 @@ def _run_query_command(
         if isinstance(row, EntityInstance) and not projected_results
     ]
     structured_results = _query_rows_payload(results)
-    total = result.total_results
+    total = local_result.total_results
     if output_json:
         items = (
             []
@@ -381,63 +392,67 @@ def _run_query_command(
                     }
                     for e in entity_results
                 ]
-                if result.result_shape == "entity" and not projected_results
+                if local_result.result_shape == "entity" and not projected_results
                 else structured_results
             )
         )
         _emit_json({
             "results": items,
             "total_results": total,
-            "limit": result.limit,
-            "truncated": result.truncated,
-            "limit_truncated": getattr(result, "limit_truncated", False),
-            "path_truncated": getattr(result, "path_truncated", False),
-            "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
-            "max_paths": getattr(result, "max_paths", None),
-            "max_paths_per_result": getattr(result, "max_paths_per_result", None),
-            "total_path_count": getattr(result, "total_path_count", None),
-            "retained_path_count": getattr(result, "retained_path_count", None),
-            "steps_executed": result.steps_executed,
-            "result_shape": result.result_shape,
-            "dedupe": result.dedupe,
-            "relationship_state": result.relationship_state,
-            "receipt_id": result.receipt_id,
-            "param_hints": asdict(result.param_hints) if result.param_hints is not None else None,
-            "policy_summary": result.policy_summary if result.policy_summary else None,
+            "limit": local_result.limit,
+            "truncated": local_result.truncated,
+            "limit_truncated": getattr(local_result, "limit_truncated", False),
+            "path_truncated": getattr(local_result, "path_truncated", False),
+            "truncation_reasons": list(getattr(local_result, "truncation_reasons", [])),
+            "max_paths": getattr(local_result, "max_paths", None),
+            "max_paths_per_result": getattr(local_result, "max_paths_per_result", None),
+            "total_path_count": getattr(local_result, "total_path_count", None),
+            "retained_path_count": getattr(local_result, "retained_path_count", None),
+            "steps_executed": local_result.steps_executed,
+            "result_shape": local_result.result_shape,
+            "dedupe": local_result.dedupe,
+            "relationship_state": local_result.relationship_state,
+            "receipt_id": local_result.receipt_id,
+            "param_hints": (
+                asdict(local_result.param_hints)
+                if local_result.param_hints is not None
+                else None
+            ),
+            "policy_summary": local_result.policy_summary if local_result.policy_summary else None,
         })
         return
-    click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+    click.echo(f"{total} result(s), {local_result.steps_executed} step(s) executed.")
     if count_only:
         hints = None
-        if result.param_hints is not None:
+        if local_result.param_hints is not None:
             hints = contracts.QueryParamHints(
-                entry_point=result.param_hints.entry_point,
-                required_params=result.param_hints.required_params,
-                primary_key=result.param_hints.primary_key,
-                example_ids=result.param_hints.example_ids,
+                entry_point=local_result.param_hints.entry_point,
+                required_params=local_result.param_hints.required_params,
+                primary_key=local_result.param_hints.primary_key,
+                example_ids=local_result.param_hints.example_ids,
             )
         _print_query_param_hints(hints)
-    elif limit is not None and result.truncated:
-        if result.result_shape == "entity" and not projected_results:
+    elif limit is not None and local_result.truncated:
+        if local_result.result_shape == "entity" and not projected_results:
             console.print(entities_table(entity_results, query_name))
         else:
             _print_structured_query_rows(structured_results)
         click.echo(f"Showing {len(results)} of {total} results (use --limit to adjust).")
-    elif result.result_shape == "entity" and not projected_results:
+    elif local_result.result_shape == "entity" and not projected_results:
         console.print(entities_table(entity_results, query_name))
     else:
         _print_structured_query_rows(structured_results)
-    if total == 0 and not count_only and result.param_hints is not None:
+    if total == 0 and not count_only and local_result.param_hints is not None:
         _print_query_param_hints(
             contracts.QueryParamHints(
-                entry_point=result.param_hints.entry_point,
-                required_params=result.param_hints.required_params,
-                primary_key=result.param_hints.primary_key,
-                example_ids=result.param_hints.example_ids,
+                entry_point=local_result.param_hints.entry_point,
+                required_params=local_result.param_hints.required_params,
+                primary_key=local_result.param_hints.primary_key,
+                example_ids=local_result.param_hints.example_ids,
             )
         )
-    if result.receipt_id:
-        click.echo(f"Receipt: {result.receipt_id}")
+    if local_result.receipt_id:
+        click.echo(f"Receipt: {local_result.receipt_id}")
 
 
 @click.group(invoke_without_command=True)
@@ -1334,7 +1349,7 @@ def analyze_feedback_cmd(
 
     client = _get_client()
     if client is not None:
-        result = client.analyze_feedback(
+        remote_result = client.analyze_feedback(
             _require_instance_id(),
             relationship_type=relationship_type,
             limit=limit,
@@ -1343,10 +1358,10 @@ def analyze_feedback_cmd(
             decision_surface_name=decision_surface_name,
             property_pairs=property_pairs or None,
         )
-        payload = result.model_dump(mode="json")
+        payload = remote_result.model_dump(mode="json")
     else:
         instance = CruxibleInstance.load()
-        result = service_analyze_feedback(
+        local_result = service_analyze_feedback(
             instance,
             relationship_type,
             limit=limit,
@@ -1356,7 +1371,7 @@ def analyze_feedback_cmd(
             property_pairs=[(pair.from_property, pair.to_property) for pair in property_pairs]
             or None,
         )
-        payload = asdict(result)
+        payload = asdict(local_result)
 
     click.echo(f"Feedback analyzed: {payload['feedback_count']} row(s)")
     if payload["action_counts"]:
@@ -1445,7 +1460,7 @@ def analyze_outcomes_cmd(
     """Analyze structured outcomes and print trust/debugging suggestions."""
     client = _get_client()
     if client is not None:
-        result = client.analyze_outcomes(
+        remote_result = client.analyze_outcomes(
             _require_instance_id(),
             anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
             relationship_type=relationship_type,
@@ -1456,10 +1471,10 @@ def analyze_outcomes_cmd(
             limit=limit,
             min_support=min_support,
         )
-        payload = result.model_dump(mode="json")
+        payload = remote_result.model_dump(mode="json")
     else:
         instance = CruxibleInstance.load()
-        result = service_analyze_outcomes(
+        local_result = service_analyze_outcomes(
             instance,
             anchor_type=cast(contracts.OutcomeAnchorType, anchor_type),
             relationship_type=relationship_type,
@@ -1470,6 +1485,6 @@ def analyze_outcomes_cmd(
             limit=limit,
             min_support=min_support,
         )
-        payload = asdict(result)
+        payload = asdict(local_result)
 
     click.echo(yaml.safe_dump(payload, sort_keys=False))

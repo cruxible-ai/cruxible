@@ -6,7 +6,7 @@ import json as _json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import click
 import yaml
@@ -31,7 +31,8 @@ from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service import OperationContext, service_sample, service_schema
 
 console = Console()
-ResultT = TypeVar("ResultT")
+LocalResultT = TypeVar("LocalResultT")
+RemoteResultT = TypeVar("RemoteResultT")
 
 json_option = click.option(
     "--json", "output_json", is_flag=True, default=False, help="Output as JSON.",
@@ -75,7 +76,7 @@ def _root_ctx_obj() -> dict[str, Any]:
         return {}
     root = ctx.find_root()
     root.ensure_object(dict)
-    return root.obj
+    return cast(dict[str, Any], root.obj)
 
 
 def _get_client() -> CruxibleClient | None:
@@ -163,12 +164,12 @@ def _load_persisted_cli_context() -> CliContextState:
 
 
 def _dispatch_cli(
-    remote_call: Callable[[CruxibleClient], ResultT],
-    local_call: Callable[[], ResultT],
+    remote_call: Callable[[CruxibleClient], RemoteResultT],
+    local_call: Callable[[], LocalResultT],
     *,
     allow_local: bool = True,
     command_name: str | None = None,
-) -> ResultT:
+) -> RemoteResultT | LocalResultT:
     client = _get_client()
     if client is not None:
         return remote_call(client)
@@ -180,12 +181,12 @@ def _dispatch_cli(
 
 
 def _dispatch_cli_instance(
-    remote_call: Callable[[CruxibleClient, str], ResultT],
-    local_call: Callable[[CruxibleInstance], ResultT],
+    remote_call: Callable[[CruxibleClient, str], RemoteResultT],
+    local_call: Callable[[CruxibleInstance], LocalResultT],
     *,
     allow_local: bool = True,
     command_name: str | None = None,
-) -> ResultT:
+) -> RemoteResultT | LocalResultT:
     return _dispatch_cli(
         lambda client: remote_call(client, _require_instance_id()),
         lambda: local_call(CruxibleInstance.load()),

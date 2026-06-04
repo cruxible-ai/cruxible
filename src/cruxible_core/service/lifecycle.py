@@ -204,7 +204,7 @@ def service_init_governed_upload(
     return result
 
 
-def _install_instance_lock_from_materialized_kit(instance: CruxibleInstance) -> None:
+def _install_instance_lock_from_materialized_kit(instance: InstanceProtocol) -> None:
     root = instance.get_root_path()
     bundled_lock_path = root / LOCK_FILE_NAME
     if not bundled_lock_path.exists():

@@ -17,7 +17,7 @@ from cruxible_core.config.schema import (
     ProposeRelationshipGroupSpec,
 )
 from cruxible_core.errors import QueryExecutionError
-from cruxible_core.graph.evidence import merge_evidence_refs
+from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
 from cruxible_core.group.types import (
     CandidateMember,
     CandidateSignal,
@@ -85,7 +85,7 @@ def make_candidate_set(
     duplicate_examples: list[dict[str, Any]] = []
 
     for item in items:
-        evidence_refs: list[dict[str, Any]] = []
+        evidence_refs: list[EvidenceRef] = []
         evidence_rationale: str | None = None
         if spec.evidence is not None:
             if spec.evidence.refs is not None:
@@ -208,22 +208,24 @@ def _query_source_evidence(
             query_receipt_id = source.get("query_receipt_id")
             if not isinstance(query_receipt_id, str):
                 continue
-            evidence: dict[str, Any] = {"query_receipt_id": query_receipt_id}
+            lineage_evidence: dict[str, Any] = {"query_receipt_id": query_receipt_id}
             row_index = source.get("row_index")
             if isinstance(row_index, int):
-                evidence["row_index"] = row_index
+                lineage_evidence["row_index"] = row_index
             else:
-                evidence["feedback_addressable"] = False
+                lineage_evidence["feedback_addressable"] = False
             source_step = source.get("source_step")
             if isinstance(source_step, str):
-                evidence["source_step"] = source_step
-            row = source.get("row")
-            row_evidence = _query_row_evidence(row) if isinstance(row, dict) else {}
+                lineage_evidence["source_step"] = source_step
+            lineage_row = source.get("row")
+            row_evidence = (
+                _query_row_evidence(lineage_row) if isinstance(lineage_row, dict) else {}
+            )
             if row_evidence:
-                evidence.update(row_evidence)
+                lineage_evidence.update(row_evidence)
             else:
-                evidence["row_shape"] = "unknown"
-            evidence_items.append(QuerySourceEvidence.model_validate(evidence))
+                lineage_evidence["row_shape"] = "unknown"
+            evidence_items.append(QuerySourceEvidence.model_validate(lineage_evidence))
         return evidence_items
     if not isinstance(receipt_id, str):
         return [
@@ -238,23 +240,23 @@ def _query_source_evidence(
             for query_receipt_id in _metadata_query_receipt_ids(source_metadata)
         ]
 
-    source = item.get("source")
-    row: dict[str, Any] = source if isinstance(source, dict) else item
-    evidence: dict[str, Any] = {"query_receipt_id": receipt_id}
+    source_payload = item.get("source")
+    row_payload: dict[str, Any] = source_payload if isinstance(source_payload, dict) else item
+    fallback_evidence: dict[str, Any] = {"query_receipt_id": receipt_id}
     original_row_index = query_result_index(item)
     if original_row_index is not None:
-        evidence["row_index"] = original_row_index
+        fallback_evidence["row_index"] = original_row_index
     else:
-        evidence["feedback_addressable"] = False
+        fallback_evidence["feedback_addressable"] = False
     if isinstance(source_metadata.get("source_step"), str):
-        evidence["source_step"] = source_metadata["source_step"]
+        fallback_evidence["source_step"] = source_metadata["source_step"]
 
-    row_evidence = _query_row_evidence(row)
-    if row_evidence:
-        evidence.update(row_evidence)
+    fallback_row_evidence = _query_row_evidence(row_payload)
+    if fallback_row_evidence:
+        fallback_evidence.update(fallback_row_evidence)
     else:
-        evidence["row_shape"] = "unknown"
-    return [QuerySourceEvidence.model_validate(evidence)]
+        fallback_evidence["row_shape"] = "unknown"
+    return [QuerySourceEvidence.model_validate(fallback_evidence)]
 
 
 def _query_row_evidence(row: dict[str, Any]) -> dict[str, Any]:
@@ -352,7 +354,7 @@ def _resolve_evidence_refs(
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
     item: Any,
-) -> list[dict[str, Any]]:
+) -> list[EvidenceRef]:
     resolved = resolve_value(
         template,
         input_payload,
@@ -364,7 +366,7 @@ def _resolve_evidence_refs(
         return []
     refs = resolved if isinstance(resolved, list) else [resolved]
     try:
-        return merge_evidence_refs(refs)
+        return merge_evidence_ref_objects(refs)
     except (TypeError, ValueError) as exc:
         raise QueryExecutionError(
             f"Workflow step '{step_id}' evidence refs must be evidence objects"
@@ -442,7 +444,7 @@ def map_signal_batch(
             )
             if resolved_evidence is not None:
                 evidence = str(resolved_evidence)
-        evidence_refs: list[dict[str, Any]] = []
+        evidence_refs: list[EvidenceRef] = []
         if spec.evidence_refs is not None:
             evidence_refs = _resolve_evidence_refs(
                 step_id,

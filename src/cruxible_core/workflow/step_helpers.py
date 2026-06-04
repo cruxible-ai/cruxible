@@ -120,7 +120,7 @@ def query_source_lineage(row: Any) -> list[dict[str, Any]]:
     return []
 
 
-class WorkflowIndexedRow(dict):
+class WorkflowIndexedRow(dict[str, Any]):
     """Workflow row carrying internal lineage outside the public keyspace."""
 
     def __init__(

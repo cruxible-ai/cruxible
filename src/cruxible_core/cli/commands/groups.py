@@ -23,6 +23,8 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.group.types import (
     CandidateGroup,
     GroupResolution,
+    GroupStatus,
+    ResolutionAction,
 )
 from cruxible_core.service import (
     GroupMemberInput,
@@ -40,6 +42,30 @@ from cruxible_core.service import (
 @click.group("group")
 def group_group() -> None:
     """Manage candidate groups for batch edge review."""
+
+
+def _group_status_filter(status: str | None) -> GroupStatus | None:
+    if status is None:
+        return None
+    if status == "pending_review":
+        return "pending_review"
+    if status == "auto_resolved":
+        return "auto_resolved"
+    if status == "applying":
+        return "applying"
+    if status == "resolved":
+        return "resolved"
+    raise click.BadParameter(f"Invalid group status: {status}")
+
+
+def _resolution_action_filter(action: str | None) -> ResolutionAction | None:
+    if action is None:
+        return None
+    if action == "approve":
+        return "approve"
+    if action == "reject":
+        return "reject"
+    raise click.BadParameter(f"Invalid resolution action: {action}")
 
 
 @group_group.command("propose")
@@ -384,7 +410,7 @@ def group_list(relationship: str | None, status: str | None, limit: int, output_
         lambda instance: service_list_groups(
             instance,
             relationship_type=relationship,
-            status=status,
+            status=_group_status_filter(status),
             limit=limit,
         ),
     )
@@ -432,7 +458,7 @@ def group_resolutions(
         lambda instance: service_list_resolutions(
             instance,
             relationship_type=relationship,
-            action=action,
+            action=_resolution_action_filter(action),
             limit=limit,
         ),
     )

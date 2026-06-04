@@ -13,7 +13,17 @@ from typing import Any
 from pydantic import BaseModel
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
-from cruxible_core.config.schema import BUILTIN_CONTRACTS, ContractSchema, CoreConfig
+from cruxible_core.config.schema import (
+    BUILTIN_CONTRACTS,
+    BoundsQualityCheck,
+    CardinalityQualityCheck,
+    ContractSchema,
+    CoreConfig,
+    JsonContentQualityCheck,
+    PropertyQualityCheck,
+    RelationshipPropertyConsistencyQualityCheck,
+    UniquenessQualityCheck,
+)
 from cruxible_core.errors import ConfigError
 from cruxible_core.predicate import COMPARISON_SYMBOL_PATTERN
 
@@ -569,34 +579,34 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
             continue
         seen_names.add(check.name)
 
-        kind = getattr(check, "kind", "")
-
-        if kind == "property":
+        if isinstance(check, PropertyQualityCheck):
             if check.target == "entity":
-                if check.entity_type not in entity_names:
+                entity_type = check.entity_type
+                if entity_type is None or entity_type not in entity_names:
                     errors.append(
                         f"Quality check '{check.name}': entity_type "
-                        f"'{check.entity_type}' not defined in entity_types"
+                        f"'{entity_type}' not defined in entity_types"
                     )
                     continue
-                if check.property not in config.entity_types[check.entity_type].properties:
+                if check.property not in config.entity_types[entity_type].properties:
                     errors.append(
                         f"Quality check '{check.name}': property '{check.property}' "
-                        f"not found on entity type '{check.entity_type}'"
+                        f"not found on entity type '{entity_type}'"
                     )
             else:
-                if check.relationship_type not in relationship_names:
+                relationship_type = check.relationship_type
+                if relationship_type is None or relationship_type not in relationship_names:
                     errors.append(
                         f"Quality check '{check.name}': relationship_type "
-                        f"'{check.relationship_type}' not defined in relationships"
+                        f"'{relationship_type}' not defined in relationships"
                     )
                     continue
-                rel = config.get_relationship(check.relationship_type)
+                rel = config.get_relationship(relationship_type)
                 assert rel is not None
                 if check.property not in rel.properties:
                     errors.append(
                         f"Quality check '{check.name}': property '{check.property}' "
-                        f"not found on relationship '{check.relationship_type}'"
+                        f"not found on relationship '{relationship_type}'"
                     )
             if check.rule == "pattern":
                 try:
@@ -608,23 +618,25 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                         f"'{check.pattern}': {exc}"
                     )
 
-        elif kind == "json_content":
+        elif isinstance(check, JsonContentQualityCheck):
             if check.target == "entity":
-                if check.entity_type not in entity_names:
+                entity_type = check.entity_type
+                if entity_type is None or entity_type not in entity_names:
                     errors.append(
                         f"Quality check '{check.name}': entity_type "
-                        f"'{check.entity_type}' not defined in entity_types"
+                        f"'{entity_type}' not defined in entity_types"
                     )
                     continue
-                prop = config.entity_types[check.entity_type].properties.get(check.property)
+                prop = config.entity_types[entity_type].properties.get(check.property)
             else:
-                if check.relationship_type not in relationship_names:
+                relationship_type = check.relationship_type
+                if relationship_type is None or relationship_type not in relationship_names:
                     errors.append(
                         f"Quality check '{check.name}': relationship_type "
-                        f"'{check.relationship_type}' not defined in relationships"
+                        f"'{relationship_type}' not defined in relationships"
                     )
                     continue
-                rel = config.get_relationship(check.relationship_type)
+                rel = config.get_relationship(relationship_type)
                 assert rel is not None
                 prop = rel.properties.get(check.property)
             if prop is None:
@@ -638,7 +650,7 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                     f"'{check.property}' to have type 'json'"
                 )
 
-        elif kind == "uniqueness":
+        elif isinstance(check, UniquenessQualityCheck):
             if check.entity_type not in entity_names:
                 errors.append(
                     f"Quality check '{check.name}': entity_type "
@@ -653,20 +665,23 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                         f"not found on entity type '{check.entity_type}'"
                     )
 
-        elif kind == "bounds":
+        elif isinstance(check, BoundsQualityCheck):
             if check.target == "entity_count":
-                if check.entity_type not in entity_names:
+                entity_type = check.entity_type
+                if entity_type is None or entity_type not in entity_names:
                     errors.append(
                         f"Quality check '{check.name}': entity_type "
-                        f"'{check.entity_type}' not defined in entity_types"
+                        f"'{entity_type}' not defined in entity_types"
                     )
-            elif check.relationship_type not in relationship_names:
-                errors.append(
-                    f"Quality check '{check.name}': relationship_type "
-                    f"'{check.relationship_type}' not defined in relationships"
-                )
+            else:
+                relationship_type = check.relationship_type
+                if relationship_type is None or relationship_type not in relationship_names:
+                    errors.append(
+                        f"Quality check '{check.name}': relationship_type "
+                        f"'{relationship_type}' not defined in relationships"
+                    )
 
-        elif kind == "cardinality":
+        elif isinstance(check, CardinalityQualityCheck):
             if check.entity_type not in entity_names:
                 errors.append(
                     f"Quality check '{check.name}': entity_type "
@@ -693,7 +708,7 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                     f"not '{check.entity_type}'"
                 )
 
-        elif kind == "relationship_property_consistency":
+        elif isinstance(check, RelationshipPropertyConsistencyQualityCheck):
             if check.entity_type not in entity_names:
                 errors.append(
                     f"Quality check '{check.name}': entity_type "

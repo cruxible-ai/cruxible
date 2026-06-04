@@ -260,7 +260,7 @@ def render_governed_relationship_table_markdown(config: CoreConfig) -> str:
 def render_signal_policy_catalog_markdown(config: CoreConfig) -> str:
     """Render governed proposal signal-source policies from relationship config."""
     used_by: dict[str, set[str]] = {}
-    policy_rows: dict[str, tuple[str, str]] = {}
+    policy_rows: dict[str, tuple[str, str, str]] = {}
     for relationship in config.relationships:
         if relationship.proposal_policy is None:
             continue

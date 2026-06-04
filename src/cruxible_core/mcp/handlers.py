@@ -86,6 +86,12 @@ def _dispatch_remote_or_local(
     return local_call()
 
 
+def _required_pending_version(expected_pending_version: int | None) -> int:
+    if expected_pending_version is None:
+        raise ConfigError("expected_pending_version is required when resolving via server mode")
+    return expected_pending_version
+
+
 def _config_yaml_for_upload(config_path: str, *, root_dir: str | None = None) -> str:
     """Read a config file and compose overlays before uploading to the daemon."""
     path = Path(config_path)
@@ -1319,7 +1325,7 @@ def handle_resolve_group(
             action=action,
             rationale=rationale,
             resolved_by=resolved_by,
-            expected_pending_version=expected_pending_version,
+            expected_pending_version=_required_pending_version(expected_pending_version),
         ),
         lambda: api.resolve_group(
             instance_id,

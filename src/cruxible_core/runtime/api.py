@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
+from cruxible_core.group.types import GroupStatus
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1204,7 +1205,7 @@ def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.Analy
                 description=suggestion.description,
                 relationship_type=suggestion.relationship_type,
                 rule=suggestion.rule,
-                severity=suggestion.severity,  # type: ignore[arg-type]
+                severity=suggestion.severity,
                 support_count=suggestion.support_count,
                 feedback_ids=suggestion.feedback_ids,
                 sample_value_pairs=suggestion.sample_value_pairs,
@@ -1216,8 +1217,8 @@ def _analyze_feedback_contract(result: AnalyzeFeedbackResult) -> contracts.Analy
                 name=suggestion.name,
                 description=suggestion.description,
                 relationship_type=suggestion.relationship_type,
-                applies_to=suggestion.applies_to,  # type: ignore[arg-type]
-                effect=suggestion.effect,  # type: ignore[arg-type]
+                applies_to=suggestion.applies_to,
+                effect=suggestion.effect,
                 rationale=suggestion.rationale,
                 match=suggestion.match,
                 query_name=suggestion.query_name,
@@ -1283,13 +1284,13 @@ def analyze_outcomes(
 def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.AnalyzeOutcomesResult:
     """Convert a service outcome analysis result into the shared daemon contract."""
     return contracts.AnalyzeOutcomesResult(
-        anchor_type=result.anchor_type,  # type: ignore[arg-type]
+        anchor_type=result.anchor_type,
         outcome_count=result.outcome_count,
         outcome_counts=result.outcome_counts,
         outcome_code_counts=result.outcome_code_counts,
         coded_groups=[
             contracts.OutcomeGroupSummary(
-                anchor_type=group.anchor_type,  # type: ignore[arg-type]
+                anchor_type=group.anchor_type,
                 outcome_code=group.outcome_code,
                 remediation_hint=group.remediation_hint,
                 decision_context=group.decision_context,
@@ -1304,9 +1305,9 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
         uncoded_examples=[
             contracts.UncodedOutcomeExample(
                 outcome_id=example.outcome_id,
-                anchor_type=example.anchor_type,  # type: ignore[arg-type]
+                anchor_type=example.anchor_type,
                 anchor_id=example.anchor_id,
-                outcome=example.outcome,  # type: ignore[arg-type]
+                outcome=example.outcome,
                 detail=example.detail,
                 decision_context=example.decision_context,
                 scope_hints=example.scope_hints,
@@ -1318,8 +1319,8 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
                 resolution_id=suggestion.resolution_id,
                 relationship_type=suggestion.relationship_type,
                 group_signature=suggestion.group_signature,
-                current_trust_status=suggestion.current_trust_status,  # type: ignore[arg-type]
-                suggested_trust_status=suggestion.suggested_trust_status,  # type: ignore[arg-type]
+                current_trust_status=suggestion.current_trust_status,
+                suggested_trust_status=suggestion.suggested_trust_status,
                 support_count=suggestion.support_count,
                 rationale=suggestion.rationale,
                 outcome_ids=suggestion.outcome_ids,
@@ -1331,8 +1332,8 @@ def _analyze_outcomes_contract(result: AnalyzeOutcomesResult) -> contracts.Analy
                 name=suggestion.name,
                 description=suggestion.description,
                 relationship_type=suggestion.relationship_type,
-                applies_to=suggestion.applies_to,  # type: ignore[arg-type]
-                effect=suggestion.effect,  # type: ignore[arg-type]
+                applies_to=suggestion.applies_to,
+                effect=suggestion.effect,
                 rationale=suggestion.rationale,
                 match=suggestion.match,
                 query_name=suggestion.query_name,
@@ -1435,7 +1436,7 @@ def inspect_entity(
         metadata=result.metadata,
         neighbors=[
             contracts.InspectNeighborResult(
-                direction=neighbor.direction,  # type: ignore[arg-type]
+                direction=neighbor.direction,
                 relationship_type=neighbor.relationship_type,
                 edge_key=neighbor.edge_key,
                 properties=neighbor.properties,
@@ -1897,17 +1898,32 @@ def list_groups(
     """List candidate groups with optional filters."""
     check_permission("cruxible_list_groups", instance_id=instance_id)
     instance = get_manager().get(instance_id)
+    service_status = _service_group_status_filter(status)
 
     result = service_list_groups(
         instance,
         relationship_type=relationship_type,
-        status=status,
+        status=service_status,
         limit=limit,
     )
     return contracts.ListGroupsToolResult(
         groups=[group.model_dump(mode="json") for group in result.groups],
         total=result.total,
     )
+
+
+def _service_group_status_filter(status: contracts.GroupStatus | None) -> GroupStatus | None:
+    if status is None:
+        return None
+    if status == "suppressed":
+        raise ConfigError("Suppressed proposal members are not persisted group statuses")
+    if status == "pending_review":
+        return "pending_review"
+    if status == "auto_resolved":
+        return "auto_resolved"
+    if status == "applying":
+        return "applying"
+    return "resolved"
 
 
 def get_group_status(

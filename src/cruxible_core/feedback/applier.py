@@ -48,7 +48,9 @@ def _read_provenance(
     """Read existing provenance from an edge."""
     existing = _read_relationship(graph, t, relationship, edge_key)
     if existing:
-        return existing.metadata.provenance
+        provenance = existing.metadata.provenance
+        if isinstance(provenance, RelationshipProvenance):
+            return provenance
     return None
 
 

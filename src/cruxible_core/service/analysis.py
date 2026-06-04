@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from cruxible_core.config.schema import FeedbackRemediationHint, OutcomeRemediationHint
+from cruxible_core.config.schema import (
+    CoreConfig,
+    FeedbackProfileSchema,
+    FeedbackRemediationHint,
+    OutcomeRemediationHint,
+    SurfaceType,
+)
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.group.types import TrustStatus
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.evaluate import EvaluationReport, evaluate_graph
 from cruxible_core.service.types import (
@@ -30,6 +37,12 @@ from cruxible_core.service.types import (
     UncodedFeedbackExample,
     UncodedOutcomeExample,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.graph.entity_graph import EntityGraph
+
+DecisionPolicyAppliesTo = Literal["query", "workflow"]
+DecisionPolicyEffect = Literal["suppress", "require_review"]
 
 
 def service_evaluate(
@@ -104,14 +117,14 @@ def service_lint(
 
     outcome_reports: list[AnalyzeOutcomesResult] = []
     for anchor_type in ("receipt", "resolution"):
-        report = service_analyze_outcomes(
+        outcome_report = service_analyze_outcomes(
             instance,
             anchor_type=anchor_type,
             limit=analysis_limit,
             min_support=min_support,
         )
-        if _outcome_report_has_issues(report):
-            outcome_reports.append(report)
+        if _outcome_report_has_issues(outcome_report):
+            outcome_reports.append(outcome_report)
 
     summary = LintSummary(
         config_warning_count=len(config_warnings),
@@ -500,7 +513,11 @@ def _freeze_mapping(mapping: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple(sorted((key, _freeze_value(value)) for key, value in mapping.items()))
 
 
-def _compute_config_compatibility_warnings(*, config, graph) -> list[str]:
+def _compute_config_compatibility_warnings(
+    *,
+    config: CoreConfig,
+    graph: EntityGraph,
+) -> list[str]:
     """Check if graph contents are compatible with the current config."""
     warnings: list[str] = []
 
@@ -567,7 +584,7 @@ def _normalize_outcome_surface_filters(
     workflow_name: str | None,
     surface_type: str | None,
     surface_name: str | None,
-) -> tuple[str | None, str | None]:
+) -> tuple[SurfaceType | None, str | None]:
     """Normalize analyze-outcomes surface filters into one exact surface pair."""
     if query_name is not None and workflow_name is not None:
         raise ConfigError("Specify at most one of query_name or workflow_name")
@@ -586,7 +603,22 @@ def _normalize_outcome_surface_filters(
             raise ConfigError("surface_name must match workflow_name when both are provided")
         return "workflow", workflow_name
 
-    return surface_type, surface_name
+    if surface_type is None:
+        return None, surface_name
+    normalized_surface_type = _surface_type(surface_type)
+    if normalized_surface_type is None:
+        raise ConfigError("surface_type must be 'query', 'workflow', or 'operation'")
+    return normalized_surface_type, surface_name
+
+
+def _surface_type(value: Any) -> SurfaceType | None:
+    if value == "query":
+        return "query"
+    if value == "workflow":
+        return "workflow"
+    if value == "operation":
+        return "operation"
+    return None
 
 
 def _freeze_value(value: Any) -> Any:
@@ -600,9 +632,9 @@ def _freeze_value(value: Any) -> Any:
 
 def _build_decision_policy_suggestion(
     *,
-    config,
+    config: CoreConfig,
     relationship_type: str,
-    profile,
+    profile: FeedbackProfileSchema | None,
     used_names: set[str],
     reason_code: str,
     decision_context: dict[str, Any],
@@ -614,9 +646,12 @@ def _build_decision_policy_suggestion(
         return None
 
     surface_type = decision_context.get("surface_type")
-    surface_name = decision_context.get("surface_name")
-    if surface_type not in {"query", "workflow"} or not surface_name:
+    surface_name_value = decision_context.get("surface_name")
+    if surface_type not in {"query", "workflow"}:
         return None
+    if not isinstance(surface_name_value, str) or not surface_name_value:
+        return None
+    surface_name = surface_name_value
 
     match: dict[str, Any] = {"from": {}, "to": {}, "edge": {}, "context": {}}
     for scope_key, value in scope_hints.items():
@@ -631,6 +666,8 @@ def _build_decision_policy_suggestion(
         else:
             match["edge"][prop_name] = value
 
+    applies_to: DecisionPolicyAppliesTo
+    effect: DecisionPolicyEffect
     if surface_type == "query":
         applies_to = "query"
         effect = "suppress"
@@ -671,7 +708,7 @@ def _build_decision_policy_suggestion(
 
 def _build_constraint_suggestions(
     *,
-    config,
+    config: CoreConfig,
     relationship_type: str,
     rows: list[FeedbackRecord],
     property_pairs: list[tuple[str, str]] | None,
@@ -762,7 +799,7 @@ def _build_constraint_suggestions(
 def _resolve_group_remediation_hint(
     *,
     relationship_type: str,
-    profile,
+    profile: FeedbackProfileSchema | None,
     reason_code: str,
     rows: list[FeedbackRecord],
     warnings: list[str],
@@ -806,7 +843,7 @@ def _resolve_group_remediation_hint(
 
 def _resolve_outcome_group_remediation_hint(
     *,
-    config,
+    config: CoreConfig,
     outcome_code: str,
     rows: list[OutcomeRecord],
     warnings: list[str],
@@ -849,7 +886,7 @@ def _resolve_outcome_group_remediation_hint(
 
 def _resolve_outcome_row_remediation_hint(
     *,
-    config,
+    config: CoreConfig,
     outcome_code: str,
     row: OutcomeRecord,
     warnings: list[str],
@@ -986,7 +1023,7 @@ def _build_trust_adjustment_suggestion(
     current_trust = latest.trust_status
     if current_trust == "invalidated":
         return None
-    suggested = "watch" if current_trust == "trusted" else "invalidated"
+    suggested: TrustStatus = "watch" if current_trust == "trusted" else "invalidated"
     return TrustAdjustmentSuggestion(
         resolution_id=latest.resolution_id,
         relationship_type=relationship_type,
@@ -1075,9 +1112,9 @@ def _build_outcome_provider_fix_candidate(
 ) -> OutcomeProviderFixCandidate | None:
     """Build a provider/workflow fix candidate from receipt outcomes."""
     first = rows[0]
-    surface_type = str(first.decision_context.get("surface_type") or "")
+    surface_type = _surface_type(first.decision_context.get("surface_type"))
     surface_name = str(first.decision_context.get("surface_name") or "")
-    if not surface_type or not surface_name:
+    if surface_type is None or not surface_name:
         return None
     return OutcomeProviderFixCandidate(
         surface_type=surface_type,
@@ -1214,7 +1251,7 @@ def _common_trace_patterns(rows: list[OutcomeRecord]) -> list[str]:
 def _resolve_row_remediation_hint(
     *,
     relationship_type: str,
-    profile,
+    profile: FeedbackProfileSchema | None,
     reason_code: str,
     row: FeedbackRecord,
     warnings: list[str],

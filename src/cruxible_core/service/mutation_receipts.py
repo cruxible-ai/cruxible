@@ -6,7 +6,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol
 
 import structlog
 
@@ -18,7 +18,6 @@ from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
-ResultT = TypeVar("ResultT", bound="SupportsReceiptId")
 
 
 class SupportsReceiptId(Protocol):
@@ -34,14 +33,14 @@ class Closeable(Protocol):
 
 
 @dataclass
-class MutationReceiptContext(Generic[ResultT]):
+class MutationReceiptContext:
     """Mutable state shared between a mutation call site and receipt wrapper."""
 
     builder: ReceiptBuilder | None
     uow: Any | None = None
-    result: ResultT | None = None
+    result: SupportsReceiptId | None = None
 
-    def set_result(self, result: ResultT) -> None:
+    def set_result(self, result: SupportsReceiptId) -> None:
         self.result = result
 
 
@@ -99,12 +98,12 @@ def mutation_receipt(
     *,
     store: Closeable | None = None,
     enabled: bool = True,
-) -> Iterator[MutationReceiptContext[ResultT]]:
+) -> Iterator[MutationReceiptContext]:
     """Wrap local governed mutation execution with receipt persistence and tagging."""
     builder = (
         ReceiptBuilder(operation_type=operation_type, parameters=parameters) if enabled else None
     )
-    ctx: MutationReceiptContext[ResultT] = MutationReceiptContext(builder=builder)
+    ctx = MutationReceiptContext(builder=builder)
     exc_to_tag: CoreError | None = None
     tx_manager: Any | None = None
     uow: Any | None = None

@@ -66,7 +66,12 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
     )
 
     label = f"{entity_type}:{entity_id}"
-    if result.updated:
+    updated = (
+        result.entities_updated > 0
+        if isinstance(result, contracts.AddEntityResult)
+        else result.updated
+    )
+    if updated:
         click.echo(f"Entity {label} updated.")
     else:
         click.echo(f"Entity {label} added.")

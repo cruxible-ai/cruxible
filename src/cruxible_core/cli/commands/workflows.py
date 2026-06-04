@@ -9,7 +9,7 @@ from typing import Any
 import click
 from pydantic import ValidationError
 
-from cruxible_client import contracts
+from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
@@ -190,19 +190,17 @@ def init(
     if client is not None and effective_root_dir is None:
         effective_root_dir = str(Path.cwd())
 
-    def _remote_init(client) -> contracts.InitResult:
-        kwargs = {
-            "root_dir": effective_root_dir or str(Path.cwd()),
-            "config_yaml": (
+    def _remote_init(client: CruxibleClient) -> contracts.InitResult:
+        return client.init(
+            root_dir=effective_root_dir or str(Path.cwd()),
+            config_yaml=(
                 _common._read_validation_yaml_or_error(config_path)
                 if config_path is not None
                 else None
             ),
-            "data_dir": data_dir,
-        }
-        if kit is not None:
-            kwargs["kit"] = kit
-        return client.init(**kwargs)
+            data_dir=data_dir,
+            kit=kit,
+        )
 
     result = _dispatch_cli(
         _remote_init,

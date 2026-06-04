@@ -27,7 +27,7 @@ from cruxible_core.errors import (
     QueryNotFoundError,
     RelationshipNotFoundError,
 )
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipMetadata
 from cruxible_core.predicate import (
     COMPARISON_SYMBOL_PATTERN,
     PredicateValueType,
@@ -785,7 +785,7 @@ def _entity_collection_predicate_context(entity: EntityInstance) -> Any:
         to_type=entity.entity_type,
         to_id=entity.entity_id,
         properties={},
-        metadata={},
+        metadata=RelationshipMetadata(),
     )
     return build_predicate_context(
         entry=entity,

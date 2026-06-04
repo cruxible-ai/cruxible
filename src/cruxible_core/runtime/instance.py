@@ -49,7 +49,7 @@ _HEAD_SNAPSHOT_STATE_KEY = "head_snapshot_id"
 _ORIGIN_SNAPSHOT_STATE_KEY = "origin_snapshot_id"
 
 
-class InstanceMetadata(BaseModel):  # type: ignore[misc]
+class InstanceMetadata(BaseModel):
     """Typed contents of ``.cruxible/instance.json``."""
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
@@ -559,7 +559,7 @@ class CruxibleInstance(InstanceProtocol):
         if isinstance(metadata, InstanceMetadata):
             return metadata
         try:
-            return cast(InstanceMetadata, InstanceMetadata.model_validate(metadata))
+            return InstanceMetadata.model_validate(metadata)
         except ValidationError as exc:
             errors = [
                 f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"

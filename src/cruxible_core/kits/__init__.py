@@ -580,7 +580,7 @@ def _ensure_synthetic_packages(package_root: str, kit_root: Path, parts: tuple[s
     root_module = sys.modules.get(package_root)
     if root_module is None:
         root_module = ModuleType(package_root)
-        root_module.__path__ = [str(kit_root)]  # type: ignore[attr-defined]
+        root_module.__path__ = [str(kit_root)]
         sys.modules[package_root] = root_module
     current_path = kit_root
     module_name = package_root
@@ -590,7 +590,7 @@ def _ensure_synthetic_packages(package_root: str, kit_root: Path, parts: tuple[s
         if module_name in sys.modules:
             continue
         module = ModuleType(module_name)
-        module.__path__ = [str(current_path)]  # type: ignore[attr-defined]
+        module.__path__ = [str(current_path)]
         sys.modules[module_name] = module
 
 

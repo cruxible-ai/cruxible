@@ -534,7 +534,7 @@ class _WikiGenerator:
             if workflow is None:
                 continue
             for step in workflow.steps:
-                if step.query is not None:
+                if isinstance(step.query, str):
                     expanded_queries.add(step.query)
                 if step.provider is not None:
                     expanded_providers.add(step.provider)

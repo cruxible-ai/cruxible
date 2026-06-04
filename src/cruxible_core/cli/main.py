@@ -143,45 +143,45 @@ from cruxible_core.cli.commands import (  # noqa: E402
     world_group,
 )  # re-exported from cli.commands submodules
 
-cli.add_command(init)  # type: ignore[has-type]
-cli.add_command(validate)  # type: ignore[has-type]
-cli.add_command(config_views_cmd, "config-views")  # type: ignore[has-type]
-cli.add_command(connect_group, "context")  # type: ignore[has-type]
-cli.add_command(decision_records_cmd, "decision-record")  # type: ignore[has-type]
-cli.add_command(lock_cmd)  # type: ignore[has-type]
-cli.add_command(world_group, "world")  # type: ignore[has-type]
-cli.add_command(plan_cmd)  # type: ignore[has-type]
-cli.add_command(run_cmd)  # type: ignore[has-type]
-cli.add_command(apply_cmd)  # type: ignore[has-type]
-cli.add_command(test_cmd)  # type: ignore[has-type]
-cli.add_command(propose_cmd)  # type: ignore[has-type]
-cli.add_command(snapshot_group, "snapshot")  # type: ignore[has-type]
-cli.add_command(clone_cmd, "clone")  # type: ignore[has-type]
-cli.add_command(query)  # type: ignore[has-type]
-cli.add_command(render_wiki_cmd, "render-wiki")  # type: ignore[has-type]
-cli.add_command(reload_config_cmd, "reload-config")  # type: ignore[has-type]
-cli.add_command(server_group, "server")  # type: ignore[has-type]
-cli.add_command(explain)  # type: ignore[has-type]
-cli.add_command(feedback_cmd, "feedback")  # type: ignore[has-type]
-cli.add_command(feedback_batch_cmd, "feedback-batch")  # type: ignore[has-type]
-cli.add_command(feedback_from_query_cmd, "feedback-from-query")  # type: ignore[has-type]
-cli.add_command(feedback_profile_cmd, "feedback-profile")  # type: ignore[has-type]
-cli.add_command(analyze_feedback_cmd, "analyze-feedback")  # type: ignore[has-type]
-cli.add_command(outcome_cmd, "outcome")  # type: ignore[has-type]
-cli.add_command(outcome_profile_cmd, "outcome-profile")  # type: ignore[has-type]
-cli.add_command(analyze_outcomes_cmd, "analyze-outcomes")  # type: ignore[has-type]
-cli.add_command(list_group, "list")  # type: ignore[has-type]
-cli.add_command(schema)  # type: ignore[has-type]
-cli.add_command(stats_cmd, "stats")  # type: ignore[has-type]
-cli.add_command(sample)  # type: ignore[has-type]
-cli.add_command(evaluate)  # type: ignore[has-type]
-cli.add_command(lint_cmd, "lint")  # type: ignore[has-type]
-cli.add_command(inspect_group, "inspect")  # type: ignore[has-type]
-cli.add_command(get_entity_cmd, "get-entity")  # type: ignore[has-type]
-cli.add_command(get_relationship_cmd, "get-relationship")  # type: ignore[has-type]
-cli.add_command(add_entity_cmd, "add-entity")  # type: ignore[has-type]
-cli.add_command(add_relationship_cmd, "add-relationship")  # type: ignore[has-type]
-cli.add_command(add_constraint_cmd, "add-constraint")  # type: ignore[has-type]
-cli.add_command(add_decision_policy_cmd, "add-decision-policy")  # type: ignore[has-type]
-cli.add_command(export_group, "export")  # type: ignore[has-type]
-cli.add_command(group_group, "group")  # type: ignore[has-type]
+cli.add_command(init)
+cli.add_command(validate)
+cli.add_command(config_views_cmd, "config-views")
+cli.add_command(connect_group, "context")
+cli.add_command(decision_records_cmd, "decision-record")
+cli.add_command(lock_cmd)
+cli.add_command(world_group, "world")
+cli.add_command(plan_cmd)
+cli.add_command(run_cmd)
+cli.add_command(apply_cmd)
+cli.add_command(test_cmd)
+cli.add_command(propose_cmd)
+cli.add_command(snapshot_group, "snapshot")
+cli.add_command(clone_cmd, "clone")
+cli.add_command(query)
+cli.add_command(render_wiki_cmd, "render-wiki")
+cli.add_command(reload_config_cmd, "reload-config")
+cli.add_command(server_group, "server")
+cli.add_command(explain)
+cli.add_command(feedback_cmd, "feedback")
+cli.add_command(feedback_batch_cmd, "feedback-batch")
+cli.add_command(feedback_from_query_cmd, "feedback-from-query")
+cli.add_command(feedback_profile_cmd, "feedback-profile")
+cli.add_command(analyze_feedback_cmd, "analyze-feedback")
+cli.add_command(outcome_cmd, "outcome")
+cli.add_command(outcome_profile_cmd, "outcome-profile")
+cli.add_command(analyze_outcomes_cmd, "analyze-outcomes")
+cli.add_command(list_group, "list")
+cli.add_command(schema)
+cli.add_command(stats_cmd, "stats")
+cli.add_command(sample)
+cli.add_command(evaluate)
+cli.add_command(lint_cmd, "lint")
+cli.add_command(inspect_group, "inspect")
+cli.add_command(get_entity_cmd, "get-entity")
+cli.add_command(get_relationship_cmd, "get-relationship")
+cli.add_command(add_entity_cmd, "add-entity")
+cli.add_command(add_relationship_cmd, "add-relationship")
+cli.add_command(add_constraint_cmd, "add-constraint")
+cli.add_command(add_decision_policy_cmd, "add-decision-policy")
+cli.add_command(export_group, "export")
+cli.add_command(group_group, "group")

@@ -15,7 +15,9 @@ from cruxible_core.config.property_validation import (
 from cruxible_core.config.schema import (
     CoreConfig,
     FeedbackProfileSchema,
+    FeedbackRemediationHint,
     OutcomeProfileSchema,
+    OutcomeRemediationHint,
 )
 from cruxible_core.errors import (
     ConfigError,
@@ -31,14 +33,10 @@ from cruxible_core.feedback.types import (
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
-from cruxible_core.group.types import GroupResolution
+from cruxible_core.group.types import CandidateGroup, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.service.mutation_receipts import (
-    MutationReceiptContext,
-    mutation_receipt,
-    save_graph_for_mutation,
-)
+from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.queries import service_get_receipt
 from cruxible_core.service.types import (
     FeedbackBatchServiceResult,
@@ -73,7 +71,7 @@ def _validate_feedback_request_values(
 def _normalize_feedback_record(
     *,
     config: CoreConfig,
-    graph,
+    graph: EntityGraph,
     receipt: Receipt,
     receipt_id: str,
     action: Literal["approve", "reject", "correct", "flag"],
@@ -144,7 +142,7 @@ def _normalize_feedback_record(
                 )
 
     profile = config.get_feedback_profile(target.relationship_type)
-    reason_remediation_hint: str | None = None
+    reason_remediation_hint: FeedbackRemediationHint | None = None
     if profile is not None:
         _validate_feedback_inputs(
             profile=profile,
@@ -258,7 +256,7 @@ def _build_decision_context(receipt: Receipt) -> dict[str, Any]:
 def _build_context_snapshot(
     *,
     config: CoreConfig,
-    graph,
+    graph: EntityGraph,
     profile: FeedbackProfileSchema | None,
     target: RelationshipInstance,
     decision_context: dict[str, Any],
@@ -592,7 +590,7 @@ def _build_resolution_lineage_snapshot(
     *,
     profile: OutcomeProfileSchema | None,
     resolution: GroupResolution,
-    group,
+    group: CandidateGroup,
     trace_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Capture a bounded resolution-time lineage snapshot."""
@@ -1063,7 +1061,6 @@ def service_feedback(
         group_override=group_override,
     )
 
-    ctx: MutationReceiptContext[FeedbackServiceResult]
     receipt_parameters: dict[str, Any] = {
         "receipt_id": receipt_id,
         "action": action,
@@ -1104,7 +1101,7 @@ def service_feedback(
         ctx.set_result(FeedbackServiceResult(feedback_id=record.feedback_id, applied=applied))
 
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, FeedbackServiceResult)
     return result
 
 
@@ -1165,7 +1162,6 @@ def service_feedback_batch(
         for item in items
     ]
 
-    ctx: MutationReceiptContext[FeedbackBatchServiceResult]
     with mutation_receipt(
         instance,
         "feedback_batch",
@@ -1221,7 +1217,7 @@ def service_feedback_batch(
         )
 
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, FeedbackBatchServiceResult)
     return result
 
 
@@ -1250,11 +1246,14 @@ def service_outcome(
     )
     normalized_scope_hints = dict(scope_hints or {})
     config = instance.load_config()
+    normalized_receipt_id: str
+    normalized_anchor_id: str | None
 
     if anchor_type == "receipt":
-        normalized_receipt_id = anchor_id or receipt_id
-        if not normalized_receipt_id:
+        receipt_id_candidate = anchor_id or receipt_id
+        if not receipt_id_candidate:
             raise ConfigError("Receipt outcomes require receipt_id or anchor_id")
+        normalized_receipt_id = receipt_id_candidate
         receipt, decision_context, trace_summaries = _resolve_receipt_outcome_context(
             instance,
             receipt_id=normalized_receipt_id,
@@ -1314,7 +1313,7 @@ def service_outcome(
         relationship_type = resolution.relationship_type
         normalized_receipt_id = receipt.receipt_id
 
-    outcome_remediation_hint: str | None = None
+    outcome_remediation_hint: OutcomeRemediationHint | None = None
     if profile is not None and outcome_code is not None:
         outcome_remediation_hint = profile.outcome_codes[outcome_code].remediation_hint
 

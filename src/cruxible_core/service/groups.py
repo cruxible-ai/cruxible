@@ -8,6 +8,7 @@ from typing import Any, Literal
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.group.governance import (
     apply_workflow_policies,
     build_agent_proposal_signature_facts,
@@ -54,7 +55,7 @@ from cruxible_core.service.group_transitions import (
     resolve_group_transition,
     update_trust_status_transition,
 )
-from cruxible_core.service.mutation_receipts import MutationReceiptContext, mutation_receipt
+from cruxible_core.service.mutation_receipts import mutation_receipt
 from cruxible_core.service.types import (
     GetGroupResult,
     GroupMemberInput,
@@ -180,7 +181,6 @@ def _clear_pending_group(
     suppressed_members: list[SuppressedProposalMember],
     policy_summary: dict[str, int],
 ) -> ProposeGroupResult:
-    ctx: MutationReceiptContext[ProposeGroupResult]
     with mutation_receipt(
         instance,
         "group_clear",
@@ -217,7 +217,7 @@ def _clear_pending_group(
             )
         )
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, ProposeGroupResult)
     return result
 
 
@@ -251,7 +251,6 @@ def _rewrite_pending_group(
         }
     )
 
-    ctx: MutationReceiptContext[ProposeGroupResult]
     with mutation_receipt(
         instance,
         "group_rewrite",
@@ -291,7 +290,7 @@ def _rewrite_pending_group(
             )
         )
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, ProposeGroupResult)
     return result
 
 
@@ -316,7 +315,6 @@ def _create_group_or_rewrite_concurrent(
     suppressed_members: list[SuppressedProposalMember],
     policy_summary: dict[str, int],
 ) -> ProposeGroupResult:
-    ctx: MutationReceiptContext[ProposeGroupResult]
     with mutation_receipt(
         instance,
         "group_propose",
@@ -415,7 +413,7 @@ def _create_group_or_rewrite_concurrent(
             )
 
     result = ctx.result
-    assert result is not None
+    assert isinstance(result, ProposeGroupResult)
     return result
 
 
@@ -447,7 +445,7 @@ def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
         signal_source=signal.signal_source,
         signal=signal.signal,
         evidence=signal.evidence,
-        evidence_refs=signal.evidence_refs,
+        evidence_refs=_evidence_refs_from_input(signal.evidence_refs),
         basis=(
             SignalBucketBasis.model_validate(signal.basis)
             if signal.basis is not None
@@ -467,7 +465,7 @@ def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
         source_query_evidence=_query_source_evidence_from_input(
             member.source_query_evidence
         ),
-        evidence_refs=member.evidence_refs,
+        evidence_refs=_evidence_refs_from_input(member.evidence_refs),
         evidence_rationale=member.evidence_rationale,
         properties=member.properties,
     )
@@ -477,6 +475,10 @@ def _query_source_evidence_from_input(
     evidence: list[QuerySourceEvidence | dict[str, Any]],
 ) -> list[QuerySourceEvidence]:
     return [QuerySourceEvidence.model_validate(item) for item in evidence]
+
+
+def _evidence_refs_from_input(evidence_refs: list[dict[str, Any]]) -> list[EvidenceRef]:
+    return [EvidenceRef.model_validate(ref) for ref in evidence_refs]
 
 
 def service_propose_group_inputs(
