@@ -84,6 +84,8 @@ def publish_kev_release(
         copy_kit_runtime_files(kit_root, workspace)
 
         data_dir = workspace / "data"
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         populate_data_dir(data_dir, api_key=nvd_api_key)
 
