@@ -1000,6 +1000,44 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_list_snapshots(instance_id)
 
     @_tool
+    def cruxible_register_source_artifact(
+        instance_id: str,
+        source_path: str,
+        source_kind: contracts.SourceKind = "markdown",
+        source_retention: contracts.SourceRetention = "manifest_only",
+        original_uri: str | None = None,
+        label: str | None = None,
+    ) -> contracts.RegisterSourceArtifactResult:
+        """Register a local source document for source-backed proposal evidence."""
+        return handlers.handle_register_source_artifact(
+            instance_id,
+            source_path=source_path,
+            source_kind=source_kind,
+            source_retention=source_retention,
+            original_uri=original_uri,
+            label=label,
+        )
+
+    @_tool
+    def cruxible_dereference_source_evidence(
+        instance_id: str,
+        source_artifact_id: str,
+        chunk_id: str | None = None,
+        heading_path: list[str] | None = None,
+        block_selector: str | None = None,
+        expected_content_hash: str | None = None,
+    ) -> contracts.DereferenceSourceEvidenceResult:
+        """Return source text for a registered source-evidence locator."""
+        return handlers.handle_dereference_source_evidence(
+            instance_id,
+            source_artifact_id=source_artifact_id,
+            chunk_id=chunk_id,
+            heading_path=heading_path,
+            block_selector=block_selector,
+            expected_content_hash=expected_content_hash,
+        )
+
+    @_tool
     def cruxible_clone_snapshot(
         instance_id: str,
         snapshot_id: str,

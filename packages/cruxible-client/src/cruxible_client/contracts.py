@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
 
@@ -23,7 +23,7 @@ OutcomeAnchorType = Literal["resolution", "receipt"]
 ResourceType = Literal["entities", "edges", "receipts", "feedback", "outcomes"]
 GroupAction = Literal["approve", "reject"]
 GroupResolvedBy = Literal["human", "agent"]
-GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved", "suppressed"]
+GroupStatus = Literal["pending_review", "auto_resolved", "applying", "resolved"]
 GroupProposedBy = Literal["human", "agent"]
 GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
@@ -60,11 +60,92 @@ class SignalBucketBasis(BaseModel):
     matched: str
 
 
+SourceKind = Literal["markdown"]
+SourceRetention = Literal["manifest_only", "archive"]
+DereferenceStatus = Literal["available", "drifted", "unavailable"]
+DereferenceBodyOrigin = Literal["archive", "local_path"]
+
+
+class EvidenceRef(BaseModel):
+    source: str
+    source_record_id: str
+    artifact_id: str | None = None
+    table: str | None = None
+    row_index: int | None = None
+    label: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceEvidenceInput(BaseModel):
+    source_artifact_id: str
+    chunk_id: str | None = None
+    heading_path: list[str] | None = None
+    block_selector: str | None = None
+    label: str | None = None
+    expected_content_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_locator(self) -> SourceEvidenceInput:
+        if not self.source_artifact_id.strip():
+            raise ValueError("source_artifact_id is required")
+        if self.chunk_id is not None:
+            if not self.chunk_id.strip():
+                raise ValueError("chunk_id must be non-empty when provided")
+            return self
+        if not self.heading_path or self.block_selector is None:
+            raise ValueError(
+                "source evidence requires chunk_id or heading_path plus block_selector"
+            )
+        if not self.block_selector.strip():
+            raise ValueError("block_selector must be non-empty when provided")
+        return self
+
+
+class SourceArtifactChunk(BaseModel):
+    chunk_id: str
+    heading_path: list[str] = Field(default_factory=list)
+    block_selector: str
+    block_type: str
+    content_hash: str
+    line_start: int
+    line_end: int
+    preview: str | None = None
+    label: str | None = None
+
+
+class RegisterSourceArtifactResult(BaseModel):
+    source_artifact_id: str
+    source_kind: SourceKind
+    source_retention: SourceRetention
+    original_uri: str | None = None
+    label: str | None = None
+    content_hash: str
+    byte_count: int
+    parser_version: str
+    archived: bool = False
+    archive_content_hash: str | None = None
+    chunks: list[SourceArtifactChunk] = Field(default_factory=list)
+
+
+class DereferenceSourceEvidenceResult(BaseModel):
+    status: DereferenceStatus
+    source_artifact_id: str
+    chunk_id: str
+    content_hash: str
+    expected_artifact_hash: str
+    current_artifact_hash: str | None = None
+    body_origin: DereferenceBodyOrigin | None = None
+    body: str | None = None
+    reason: str | None = None
+    chunk: SourceArtifactChunk | None = None
+
+
 class SignalInput(BaseModel):
     signal_source: str
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
-    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
     basis: SignalBucketBasis | None = None
 
 
@@ -85,7 +166,8 @@ class MemberInput(BaseModel):
     relationship_type: str
     signals: list[SignalInput] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
-    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
     evidence_rationale: str | None = None
 
 

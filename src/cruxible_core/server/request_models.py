@@ -121,6 +121,38 @@ class UpdateTrustStatusRequest(BaseModel):
     reason: str = ""
 
 
+class RegisterSourceArtifactRequest(BaseModel):
+    source_path: str
+    source_kind: contracts.SourceKind = "markdown"
+    source_retention: contracts.SourceRetention = "manifest_only"
+    original_uri: str | None = None
+    label: str | None = None
+
+
+class DereferenceSourceEvidenceRequest(BaseModel):
+    source_artifact_id: str
+    chunk_id: str | None = None
+    heading_path: list[str] | None = None
+    block_selector: str | None = None
+    expected_content_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_locator(self) -> DereferenceSourceEvidenceRequest:
+        if not self.source_artifact_id.strip():
+            raise ValueError("source_artifact_id is required")
+        if self.chunk_id is not None:
+            if not self.chunk_id.strip():
+                raise ValueError("chunk_id must be non-empty when provided")
+            return self
+        if not self.heading_path or self.block_selector is None:
+            raise ValueError(
+                "source evidence requires chunk_id or heading_path plus block_selector"
+            )
+        if not self.block_selector.strip():
+            raise ValueError("block_selector must be non-empty when provided")
+        return self
+
+
 class EvaluateRequest(BaseModel):
     max_findings: int = 100
     exclude_orphan_types: list[str] | None = None

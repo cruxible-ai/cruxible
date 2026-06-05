@@ -189,6 +189,87 @@ def test_feedback_from_query_uses_expected_route_and_payload():
     }
 
 
+def test_source_artifact_methods_use_expected_routes_and_payloads():
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "payload": json.loads(request.content.decode()),
+            }
+        )
+        if request.url.path.endswith("/source-artifacts/register"):
+            return httpx.Response(
+                200,
+                json={
+                    "source_artifact_id": "SRC-1",
+                    "source_kind": "markdown",
+                    "source_retention": "archive",
+                    "content_hash": "sha256:abc",
+                    "byte_count": 10,
+                    "parser_version": "markdown_chunks_v1",
+                    "archived": True,
+                    "archive_content_hash": "sha256:abc",
+                    "chunks": [],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": "available",
+                "source_artifact_id": "SRC-1",
+                "chunk_id": "mdchunk_1",
+                "content_hash": "sha256:def",
+                "expected_artifact_hash": "sha256:abc",
+                "body_origin": "archive",
+                "body": "source text",
+            },
+        )
+
+    client = _build_client(handler)
+    registered = client.register_source_artifact(
+        "inst_123",
+        source_path="docs/evidence.md",
+        source_retention="archive",
+        original_uri="docs/evidence.md",
+        label="Evidence",
+    )
+    dereferenced = client.dereference_source_evidence(
+        "inst_123",
+        source_artifact_id=registered.source_artifact_id,
+        heading_path=["Evidence"],
+        block_selector="paragraph:1",
+        expected_content_hash="sha256:def",
+    )
+
+    assert registered.archived is True
+    assert dereferenced.body == "source text"
+    assert captured[0] == {
+        "method": "POST",
+        "path": "/api/v1/inst_123/source-artifacts/register",
+        "payload": {
+            "source_path": "docs/evidence.md",
+            "source_kind": "markdown",
+            "source_retention": "archive",
+            "original_uri": "docs/evidence.md",
+            "label": "Evidence",
+        },
+    }
+    assert captured[1] == {
+        "method": "POST",
+        "path": "/api/v1/inst_123/source-evidence/dereference",
+        "payload": {
+            "source_artifact_id": "SRC-1",
+            "chunk_id": None,
+            "heading_path": ["Evidence"],
+            "block_selector": "paragraph:1",
+            "expected_content_hash": "sha256:def",
+        },
+    }
+
+
 def test_client_includes_bearer_token_header_when_configured():
     captured: dict[str, Any] = {}
 

@@ -91,6 +91,10 @@ from cruxible_core.service.snapshots import (
     service_create_snapshot,
     service_list_snapshots,
 )
+from cruxible_core.service.source_artifacts import (
+    service_dereference_source_evidence,
+    service_register_source_artifact,
+)
 from cruxible_core.service.types import (
     AddConstraintServiceResult,
     AddDecisionPolicyServiceResult,
@@ -281,6 +285,7 @@ __all__ = [
     "service_run",
     "service_test",
     "service_create_snapshot",
+    "service_dereference_source_evidence",
     "service_clone_snapshot",
     "service_list_snapshots",
     "service_explain_receipt",
@@ -341,6 +346,7 @@ __all__ = [
     "service_describe_query",
     "service_query",
     "service_query_surface",
+    "service_register_source_artifact",
     "service_reload_config",
     "service_sample",
     "service_schema",

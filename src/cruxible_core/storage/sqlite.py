@@ -19,6 +19,7 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.source_artifacts.store import SourceArtifactStore
 from cruxible_core.storage.protocols import (
     GraphRepositoryProtocol,
     SnapshotRepositoryProtocol,
@@ -400,6 +401,11 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
+        self.source_artifacts = SourceArtifactStore(
+            self.db_path,
+            connection=self._conn,
+            initialize_schema=False,
+        )
         self._entered = False
         self._started_transaction = False
         self._after_commit: list[Any] = []
@@ -547,6 +553,7 @@ class SQLiteStorageBackend:
         FeedbackStore(self.db_path, connection=conn)
         GroupStore(self.db_path, connection=conn)
         DecisionStore(self.db_path, connection=conn)
+        SourceArtifactStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",

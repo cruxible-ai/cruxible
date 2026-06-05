@@ -119,6 +119,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_world_status": PermissionMode.READ_ONLY,
     "cruxible_world_pull_preview": PermissionMode.READ_ONLY,
     "cruxible_list_snapshots": PermissionMode.READ_ONLY,
+    "cruxible_dereference_source_evidence": PermissionMode.READ_ONLY,
     "cruxible_plan_workflow": PermissionMode.READ_ONLY,
     # GOVERNED_WRITE tools
     "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
@@ -136,6 +137,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
     "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
     "cruxible_world_pull_apply": PermissionMode.GOVERNED_WRITE,
+    "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,

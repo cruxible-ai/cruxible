@@ -137,6 +137,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     schema,
     server_group,
     snapshot_group,
+    source_group,
     stats_cmd,
     test_cmd,
     validate,
@@ -156,6 +157,7 @@ cli.add_command(apply_cmd)
 cli.add_command(test_cmd)
 cli.add_command(propose_cmd)
 cli.add_command(snapshot_group, "snapshot")
+cli.add_command(source_group, "source")
 cli.add_command(clone_cmd, "clone")
 cli.add_command(query)
 cli.add_command(render_wiki_cmd, "render-wiki")

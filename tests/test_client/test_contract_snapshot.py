@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import BaseModel
@@ -37,6 +37,57 @@ def test_client_contract_snapshot_is_current() -> None:
         "`tests/goldens/cruxible_client/contracts_snapshot.json`."
         + (f"\n\nDetected changes:\n{detail_text}" if detail_text else "")
     )
+
+
+def test_group_status_contract_is_persisted_lifecycle_only() -> None:
+    assert set(get_args(contracts.GroupStatus)) == {
+        "pending_review",
+        "auto_resolved",
+        "applying",
+        "resolved",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"source_artifact_id": "SRC-1"},
+        {"source_artifact_id": "SRC-1", "chunk_id": ""},
+        {"source_artifact_id": "SRC-1", "heading_path": ["Evidence"]},
+        {
+            "source_artifact_id": "SRC-1",
+            "heading_path": [],
+            "block_selector": "paragraph:1",
+        },
+        {
+            "source_artifact_id": "SRC-1",
+            "heading_path": ["Evidence"],
+            "block_selector": "",
+        },
+        {"source_artifact_id": "", "chunk_id": "chunk-1"},
+    ],
+)
+def test_source_evidence_contract_rejects_incomplete_locators(
+    payload: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        contracts.SourceEvidenceInput.model_validate(payload)
+
+
+def test_source_evidence_contract_accepts_supported_locator_forms() -> None:
+    by_chunk = contracts.SourceEvidenceInput(
+        source_artifact_id="SRC-1",
+        chunk_id="chunk-1",
+    )
+    by_heading = contracts.SourceEvidenceInput(
+        source_artifact_id="SRC-1",
+        heading_path=["Evidence"],
+        block_selector="paragraph:1",
+    )
+
+    assert by_chunk.chunk_id == "chunk-1"
+    assert by_heading.heading_path == ["Evidence"]
+    assert by_heading.block_selector == "paragraph:1"
 
 
 def test_client_methods_parse_contract_return_models() -> None:

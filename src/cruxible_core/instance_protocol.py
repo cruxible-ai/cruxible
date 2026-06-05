@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from cruxible_core.provider.types import ExecutionTrace
     from cruxible_core.receipt.types import Receipt
     from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+    from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
 
@@ -348,3 +349,5 @@ class InstanceProtocol(ABC):
     def get_feedback_store(self) -> FeedbackStoreProtocol: ...
     @abstractmethod
     def get_group_store(self) -> GroupStoreProtocol: ...
+    @abstractmethod
+    def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

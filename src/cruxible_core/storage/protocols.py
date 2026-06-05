@@ -15,6 +15,7 @@ from cruxible_core.instance_protocol import (
     ReceiptStoreProtocol,
 )
 from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 
 class GraphRepositoryProtocol(Protocol):
@@ -52,6 +53,7 @@ class UnitOfWorkProtocol(Protocol):
     feedback: FeedbackStoreProtocol
     groups: GroupStoreProtocol
     decisions: DecisionStoreProtocol
+    source_artifacts: SourceArtifactStoreProtocol
 
     def register_after_commit(self, callback: Any) -> None: ...
     def register_after_rollback(self, callback: Any) -> None: ...

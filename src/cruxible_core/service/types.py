@@ -40,6 +40,7 @@ from cruxible_core.snapshot.types import (
     WorldCompatibility,
     WorldSnapshot,
 )
+from cruxible_core.source_artifacts.types import SourceEvidenceInput
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
@@ -751,6 +752,9 @@ class GroupSignalInput:
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(
+        default_factory=list
+    )
     basis: dict[str, Any] | None = None
 
 
@@ -767,6 +771,9 @@ class GroupMemberInput:
         default_factory=list
     )
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(
+        default_factory=list
+    )
     evidence_rationale: str | None = None
 
 

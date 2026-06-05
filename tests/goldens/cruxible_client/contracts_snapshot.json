@@ -26,6 +26,19 @@
         "require_review"
       ]
     },
+    "DereferenceBodyOrigin": {
+      "values": [
+        "archive",
+        "local_path"
+      ]
+    },
+    "DereferenceStatus": {
+      "values": [
+        "available",
+        "drifted",
+        "unavailable"
+      ]
+    },
     "FeedbackAction": {
       "values": [
         "approve",
@@ -63,8 +76,7 @@
         "pending_review",
         "auto_resolved",
         "applying",
-        "resolved",
-        "suppressed"
+        "resolved"
       ]
     },
     "GroupTrustStatus": {
@@ -103,6 +115,17 @@
         "receipts",
         "feedback",
         "outcomes"
+      ]
+    },
+    "SourceKind": {
+      "values": [
+        "markdown"
+      ]
+    },
+    "SourceRetention": {
+      "values": [
+        "manifest_only",
+        "archive"
       ]
     },
     "WorkflowMode": {
@@ -2633,6 +2656,347 @@
         "record"
       ]
     },
+    "DereferenceSourceEvidenceResult": {
+      "fields": {
+        "body": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "body",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body"
+          }
+        },
+        "body_origin": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "body_origin",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "archive",
+                  "local_path"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Origin"
+          }
+        },
+        "chunk": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "chunk",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SourceArtifactChunk"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "chunk_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chunk_id",
+          "required": true,
+          "schema": {
+            "title": "Chunk Id",
+            "type": "string"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "current_artifact_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "current_artifact_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Artifact Hash"
+          }
+        },
+        "expected_artifact_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expected_artifact_hash",
+          "required": true,
+          "schema": {
+            "title": "Expected Artifact Hash",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "source_artifact_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_artifact_id",
+          "required": true,
+          "schema": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "available",
+              "drifted",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SourceArtifactChunk": {
+            "properties": {
+              "block_selector": {
+                "title": "Block Selector",
+                "type": "string"
+              },
+              "block_type": {
+                "title": "Block Type",
+                "type": "string"
+              },
+              "chunk_id": {
+                "title": "Chunk Id",
+                "type": "string"
+              },
+              "content_hash": {
+                "title": "Content Hash",
+                "type": "string"
+              },
+              "heading_path": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Heading Path",
+                "type": "array"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "line_end": {
+                "title": "Line End",
+                "type": "integer"
+              },
+              "line_start": {
+                "title": "Line Start",
+                "type": "integer"
+              },
+              "preview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Preview"
+              }
+            },
+            "required": [
+              "chunk_id",
+              "block_selector",
+              "block_type",
+              "content_hash",
+              "line_start",
+              "line_end"
+            ],
+            "title": "SourceArtifactChunk",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body"
+          },
+          "body_origin": {
+            "anyOf": [
+              {
+                "enum": [
+                  "archive",
+                  "local_path"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Origin"
+          },
+          "chunk": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SourceArtifactChunk"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "current_artifact_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Artifact Hash"
+          },
+          "expected_artifact_hash": {
+            "title": "Expected Artifact Hash",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "source_artifact_id": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "drifted",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source_artifact_id",
+          "chunk_id",
+          "content_hash",
+          "expected_artifact_hash"
+        ],
+        "title": "DereferenceSourceEvidenceResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "chunk_id",
+        "content_hash",
+        "expected_artifact_hash",
+        "source_artifact_id",
+        "status"
+      ]
+    },
     "EdgeTargetInput": {
       "fields": {
         "edge_key": {
@@ -2967,6 +3331,196 @@
         "entity_count",
         "findings",
         "summary"
+      ]
+    },
+    "EvidenceRef": {
+      "fields": {
+        "artifact_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Id"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "row_index": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "row_index",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Index"
+          }
+        },
+        "source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": true,
+          "schema": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "source_record_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_record_id",
+          "required": true,
+          "schema": {
+            "title": "Source Record Id",
+            "type": "string"
+          }
+        },
+        "table": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "table",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "row_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Index"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_record_id": {
+            "title": "Source Record Id",
+            "type": "string"
+          },
+          "table": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table"
+          }
+        },
+        "required": [
+          "source",
+          "source_record_id"
+        ],
+        "title": "EvidenceRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "source",
+        "source_record_id"
       ]
     },
     "FeedbackBatchItemInput": {
@@ -6566,8 +7120,15 @@
           "required": false,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -6627,6 +7188,19 @@
             "type": "array"
           }
         },
+        "source_evidence": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "source_evidence",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          }
+        },
         "to_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -6650,6 +7224,77 @@
       },
       "json_schema": {
         "$defs": {
+          "EvidenceRef": {
+            "properties": {
+              "artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Id"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "row_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Row Index"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "source_record_id": {
+                "title": "Source Record Id",
+                "type": "string"
+              },
+              "table": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Table"
+              }
+            },
+            "required": [
+              "source",
+              "source_record_id"
+            ],
+            "title": "EvidenceRef",
+            "type": "object"
+          },
           "SignalBucketBasis": {
             "properties": {
               "matched": {
@@ -6712,8 +7357,15 @@
               },
               "evidence_refs": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/EvidenceRef"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
                 },
                 "title": "Evidence Refs",
                 "type": "array"
@@ -6730,6 +7382,13 @@
               "signal_source": {
                 "title": "Signal Source",
                 "type": "string"
+              },
+              "source_evidence": {
+                "items": {
+                  "$ref": "#/$defs/SourceEvidenceInput"
+                },
+                "title": "Source Evidence",
+                "type": "array"
               }
             },
             "required": [
@@ -6737,6 +7396,82 @@
               "signal"
             ],
             "title": "SignalInput",
+            "type": "object"
+          },
+          "SourceEvidenceInput": {
+            "properties": {
+              "block_selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Selector"
+              },
+              "chunk_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chunk Id"
+              },
+              "expected_content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Content Hash"
+              },
+              "heading_path": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Heading Path"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id"
+            ],
+            "title": "SourceEvidenceInput",
             "type": "object"
           }
         },
@@ -6755,8 +7490,15 @@
           },
           "evidence_refs": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -6783,6 +7525,13 @@
               "$ref": "#/$defs/SignalInput"
             },
             "title": "Signals",
+            "type": "array"
+          },
+          "source_evidence": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
             "type": "array"
           },
           "to_id": {
@@ -9617,6 +10366,331 @@
         "total_results"
       ]
     },
+    "RegisterSourceArtifactResult": {
+      "fields": {
+        "archive_content_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "archive_content_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archive Content Hash"
+          }
+        },
+        "archived": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "archived",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          }
+        },
+        "byte_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "byte_count",
+          "required": true,
+          "schema": {
+            "title": "Byte Count",
+            "type": "integer"
+          }
+        },
+        "chunks": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "chunks",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactChunk"
+            },
+            "title": "Chunks",
+            "type": "array"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "original_uri": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "original_uri",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          }
+        },
+        "parser_version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "parser_version",
+          "required": true,
+          "schema": {
+            "title": "Parser Version",
+            "type": "string"
+          }
+        },
+        "source_artifact_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_artifact_id",
+          "required": true,
+          "schema": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "source_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_kind",
+          "required": true,
+          "schema": {
+            "const": "markdown",
+            "title": "Source Kind",
+            "type": "string"
+          }
+        },
+        "source_retention": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_retention",
+          "required": true,
+          "schema": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Source Retention",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "SourceArtifactChunk": {
+            "properties": {
+              "block_selector": {
+                "title": "Block Selector",
+                "type": "string"
+              },
+              "block_type": {
+                "title": "Block Type",
+                "type": "string"
+              },
+              "chunk_id": {
+                "title": "Chunk Id",
+                "type": "string"
+              },
+              "content_hash": {
+                "title": "Content Hash",
+                "type": "string"
+              },
+              "heading_path": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Heading Path",
+                "type": "array"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "line_end": {
+                "title": "Line End",
+                "type": "integer"
+              },
+              "line_start": {
+                "title": "Line Start",
+                "type": "integer"
+              },
+              "preview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Preview"
+              }
+            },
+            "required": [
+              "chunk_id",
+              "block_selector",
+              "block_type",
+              "content_hash",
+              "line_start",
+              "line_end"
+            ],
+            "title": "SourceArtifactChunk",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "archive_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archive Content Hash"
+          },
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/$defs/SourceArtifactChunk"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "original_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Uri"
+          },
+          "parser_version": {
+            "title": "Parser Version",
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "const": "markdown",
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_retention": {
+            "enum": [
+              "manifest_only",
+              "archive"
+            ],
+            "title": "Source Retention",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_artifact_id",
+          "source_kind",
+          "source_retention",
+          "content_hash",
+          "byte_count",
+          "parser_version"
+        ],
+        "title": "RegisterSourceArtifactResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "byte_count",
+        "content_hash",
+        "parser_version",
+        "source_artifact_id",
+        "source_kind",
+        "source_retention"
+      ]
+    },
     "RelationshipInput": {
       "fields": {
         "from_id": {
@@ -10468,8 +11542,15 @@
           "required": false,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -10499,10 +11580,94 @@
             "title": "Signal Source",
             "type": "string"
           }
+        },
+        "source_evidence": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "source_evidence",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
         "$defs": {
+          "EvidenceRef": {
+            "properties": {
+              "artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Id"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "row_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Row Index"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "source_record_id": {
+                "title": "Source Record Id",
+                "type": "string"
+              },
+              "table": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Table"
+              }
+            },
+            "required": [
+              "source",
+              "source_record_id"
+            ],
+            "title": "EvidenceRef",
+            "type": "object"
+          },
           "SignalBucketBasis": {
             "properties": {
               "matched": {
@@ -10544,6 +11709,82 @@
             ],
             "title": "SignalBucketBasis",
             "type": "object"
+          },
+          "SourceEvidenceInput": {
+            "properties": {
+              "block_selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Selector"
+              },
+              "chunk_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chunk Id"
+              },
+              "expected_content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Content Hash"
+              },
+              "heading_path": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Heading Path"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id"
+            ],
+            "title": "SourceEvidenceInput",
+            "type": "object"
           }
         },
         "properties": {
@@ -10565,8 +11806,15 @@
           },
           "evidence_refs": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -10583,6 +11831,13 @@
           "signal_source": {
             "title": "Signal Source",
             "type": "string"
+          },
+          "source_evidence": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
           }
         },
         "required": [
@@ -11016,6 +12271,396 @@
         "created_at",
         "graph_digest",
         "snapshot_id"
+      ]
+    },
+    "SourceArtifactChunk": {
+      "fields": {
+        "block_selector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "block_selector",
+          "required": true,
+          "schema": {
+            "title": "Block Selector",
+            "type": "string"
+          }
+        },
+        "block_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "block_type",
+          "required": true,
+          "schema": {
+            "title": "Block Type",
+            "type": "string"
+          }
+        },
+        "chunk_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chunk_id",
+          "required": true,
+          "schema": {
+            "title": "Chunk Id",
+            "type": "string"
+          }
+        },
+        "content_hash": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "content_hash",
+          "required": true,
+          "schema": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "heading_path": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "heading_path",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "line_end": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_end",
+          "required": true,
+          "schema": {
+            "title": "Line End",
+            "type": "integer"
+          }
+        },
+        "line_start": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_start",
+          "required": true,
+          "schema": {
+            "title": "Line Start",
+            "type": "integer"
+          }
+        },
+        "preview": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "preview",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "block_selector": {
+            "title": "Block Selector",
+            "type": "string"
+          },
+          "block_type": {
+            "title": "Block Type",
+            "type": "string"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "heading_path": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "line_end": {
+            "title": "Line End",
+            "type": "integer"
+          },
+          "line_start": {
+            "title": "Line Start",
+            "type": "integer"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "block_selector",
+          "block_type",
+          "content_hash",
+          "line_start",
+          "line_end"
+        ],
+        "title": "SourceArtifactChunk",
+        "type": "object"
+      },
+      "required_fields": [
+        "block_selector",
+        "block_type",
+        "chunk_id",
+        "content_hash",
+        "line_end",
+        "line_start"
+      ]
+    },
+    "SourceEvidenceInput": {
+      "fields": {
+        "block_selector": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "block_selector",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Block Selector"
+          }
+        },
+        "chunk_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "chunk_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Chunk Id"
+          }
+        },
+        "expected_content_hash": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "expected_content_hash",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Content Hash"
+          }
+        },
+        "heading_path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "heading_path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Heading Path"
+          }
+        },
+        "label": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          }
+        },
+        "source_artifact_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_artifact_id",
+          "required": true,
+          "schema": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "block_selector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Block Selector"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Chunk Id"
+          },
+          "expected_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Content Hash"
+          },
+          "heading_path": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Heading Path"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "source_artifact_id": {
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_artifact_id"
+        ],
+        "title": "SourceEvidenceInput",
+        "type": "object"
+      },
+      "required_fields": [
+        "source_artifact_id"
       ]
     },
     "StatsResult": {

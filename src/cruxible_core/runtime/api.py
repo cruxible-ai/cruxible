@@ -7,6 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar
 
+from pydantic import BaseModel
+
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
 from cruxible_core.group.types import GroupStatus
@@ -34,6 +36,7 @@ from cruxible_core.service import (
     service_create_decision_record,
     service_create_snapshot,
     service_create_world_overlay,
+    service_dereference_source_evidence,
     service_describe_query,
     service_evaluate,
     service_feedback_batch_inputs,
@@ -72,6 +75,7 @@ from cruxible_core.service import (
     service_pull_world_apply,
     service_pull_world_preview,
     service_query_surface,
+    service_register_source_artifact,
     service_reload_config,
     service_render_wiki,
     service_resolve_group,
@@ -1775,13 +1779,29 @@ def propose_group(
                     signal_source=signal.signal_source,
                     signal=signal.signal,
                     evidence=signal.evidence,
-                    evidence_refs=signal.evidence_refs,
+                    evidence_refs=[
+                        ref.model_dump(mode="python")
+                        if isinstance(ref, BaseModel)
+                        else ref
+                        for ref in signal.evidence_refs
+                    ],
+                    source_evidence=[
+                        ref.model_dump(mode="python") for ref in signal.source_evidence
+                    ],
                     basis=signal.basis.model_dump(mode="python") if signal.basis else None,
                 )
                 for signal in member.signals
             ],
             properties=member.properties,
-            evidence_refs=member.evidence_refs,
+            evidence_refs=[
+                ref.model_dump(mode="python")
+                if isinstance(ref, BaseModel)
+                else ref
+                for ref in member.evidence_refs
+            ],
+            source_evidence=[
+                ref.model_dump(mode="python") for ref in member.source_evidence
+            ],
             evidence_rationale=member.evidence_rationale,
         )
         for member in members
@@ -1816,6 +1836,77 @@ def propose_group(
         ],
         policy_summary=result.policy_summary,
         receipt_id=result.receipt_id,
+    )
+
+
+def register_source_artifact(
+    instance_id: str,
+    source_path: str,
+    source_kind: contracts.SourceKind = "markdown",
+    source_retention: contracts.SourceRetention = "manifest_only",
+    original_uri: str | None = None,
+    label: str | None = None,
+) -> contracts.RegisterSourceArtifactResult:
+    """Register a local source artifact for source-backed proposal evidence."""
+    check_permission("cruxible_register_source_artifact", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    record = get_registry().get(instance_id)
+    workspace_root = (
+        Path(record.workspace_root)
+        if record is not None and record.workspace_root is not None
+        else instance.get_root_path()
+    ).resolve()
+    requested_path = Path(source_path).expanduser()
+    if requested_path.is_absolute():
+        path = requested_path.resolve()
+        resolved_original_uri = original_uri
+        if resolved_original_uri is None:
+            try:
+                resolved_original_uri = path.relative_to(workspace_root).as_posix()
+            except ValueError:
+                resolved_original_uri = path.name
+    else:
+        path = (workspace_root / requested_path).resolve()
+        try:
+            workspace_relative_uri = path.relative_to(workspace_root).as_posix()
+        except ValueError as exc:
+            raise ConfigError(
+                "source_path must stay within the registered workspace"
+            ) from exc
+        resolved_original_uri = original_uri or workspace_relative_uri
+    validate_root_dir(str(path))
+    result = service_register_source_artifact(
+        instance,
+        source_path=str(path),
+        source_kind=source_kind,
+        source_retention=source_retention,
+        original_uri=resolved_original_uri,
+        label=label,
+    )
+    return contracts.RegisterSourceArtifactResult.model_validate(result.model_dump(mode="json"))
+
+
+def dereference_source_evidence(
+    instance_id: str,
+    source_artifact_id: str,
+    chunk_id: str | None = None,
+    heading_path: list[str] | None = None,
+    block_selector: str | None = None,
+    expected_content_hash: str | None = None,
+) -> contracts.DereferenceSourceEvidenceResult:
+    """Dereference registered source evidence with drift reporting."""
+    check_permission("cruxible_dereference_source_evidence", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_dereference_source_evidence(
+        instance,
+        source_artifact_id=source_artifact_id,
+        chunk_id=chunk_id,
+        heading_path=heading_path,
+        block_selector=block_selector,
+        expected_content_hash=expected_content_hash,
+    )
+    return contracts.DereferenceSourceEvidenceResult.model_validate(
+        result.model_dump(mode="json")
     )
 
 
@@ -1912,11 +2003,11 @@ def list_groups(
     )
 
 
-def _service_group_status_filter(status: contracts.GroupStatus | None) -> GroupStatus | None:
+def _service_group_status_filter(
+    status: contracts.GroupStatus | None,
+) -> GroupStatus | None:
     if status is None:
         return None
-    if status == "suppressed":
-        raise ConfigError("Suppressed proposal members are not persisted group statuses")
     if status == "pending_review":
         return "pending_review"
     if status == "auto_resolved":

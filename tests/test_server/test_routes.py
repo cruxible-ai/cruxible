@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -592,6 +593,206 @@ def test_server_init_creates_daemon_owned_governed_instance(
         expected_root / ".cruxible" / "configs" / "active.yaml"
     )
     assert instance.load_config().name == "car_parts_compatibility"
+
+
+def test_source_artifact_relative_path_resolves_from_workspace_root(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    evidence_path = docs_dir / "evidence.md"
+    evidence_path.write_text("# Evidence\n\nWorkspace-local source text.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": "docs/evidence.md",
+            "source_retention": "manifest_only",
+            "label": "workspace evidence",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["original_uri"] == "docs/evidence.md"
+    assert payload["chunks"]
+
+    instance = get_manager().get(instance_id)
+    store = instance.get_source_artifact_store()
+    try:
+        artifact = store.get_artifact(payload["source_artifact_id"])
+    finally:
+        store.close()
+    assert artifact is not None
+    assert artifact.local_path == str(evidence_path.resolve())
+    assert Path(artifact.local_path).is_file()
+
+    paragraph_chunk = next(
+        chunk for chunk in payload["chunks"] if chunk["block_selector"] == "paragraph:1"
+    )
+    dereferenced = app_client.post(
+        f"/api/v1/{instance_id}/source-evidence/dereference",
+        json={
+            "source_artifact_id": payload["source_artifact_id"],
+            "chunk_id": paragraph_chunk["chunk_id"],
+        },
+    )
+
+    assert dereferenced.status_code == 200
+    dereferenced_payload = dereferenced.json()
+    assert dereferenced_payload["status"] == "available"
+    assert dereferenced_payload["body_origin"] == "local_path"
+    assert dereferenced_payload["body"] == "Workspace-local source text."
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"source_artifact_id": "SRC-1"},
+        {"source_artifact_id": "SRC-1", "chunk_id": ""},
+        {"source_artifact_id": "SRC-1", "heading_path": ["Evidence"]},
+        {
+            "source_artifact_id": "SRC-1",
+            "heading_path": [],
+            "block_selector": "paragraph:1",
+        },
+        {
+            "source_artifact_id": "SRC-1",
+            "heading_path": ["Evidence"],
+            "block_selector": "",
+        },
+        {"source_artifact_id": "", "chunk_id": "chunk-1"},
+    ],
+)
+def test_source_artifact_dereference_rejects_incomplete_locators(
+    app_client: TestClient,
+    server_project: Path,
+    payload: dict[str, object],
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-evidence/dereference",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
+def test_source_artifact_relative_path_preserves_original_uri(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    evidence_path = docs_dir / "evidence.md"
+    evidence_path.write_text("# Evidence\n\nWorkspace-local source text.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": "docs/evidence.md",
+            "source_retention": "manifest_only",
+            "original_uri": "https://example.test/evidence.md",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["original_uri"] == "https://example.test/evidence.md"
+
+    instance = get_manager().get(instance_id)
+    store = instance.get_source_artifact_store()
+    try:
+        artifact = store.get_artifact(payload["source_artifact_id"])
+    finally:
+        store.close()
+    assert artifact is not None
+    assert artifact.local_path == str(evidence_path.resolve())
+    assert artifact.original_uri == "https://example.test/evidence.md"
+
+
+def test_source_artifact_relative_path_cannot_escape_workspace(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    outside_path = tmp_path / "outside.md"
+    outside_path.write_text("# Outside\n\nShould not be registered.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": "../outside.md",
+            "source_retention": "manifest_only",
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_type"] == "ConfigError"
+    assert "source_path must stay within the registered workspace" in payload["message"]
+
+    instance = get_manager().get(instance_id)
+    with sqlite3.connect(instance.get_instance_dir() / "state.db") as conn:
+        artifact_count = conn.execute("SELECT COUNT(*) FROM source_artifacts").fetchone()[0]
+        chunk_count = conn.execute("SELECT COUNT(*) FROM source_artifact_chunks").fetchone()[0]
+        archive_count = conn.execute(
+            "SELECT COUNT(*) FROM source_artifact_archives"
+        ).fetchone()[0]
+    assert artifact_count == 0
+    assert chunk_count == 0
+    assert archive_count == 0
+
+
+def test_source_artifact_group_propose_rejects_malformed_source_evidence(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/groups/propose",
+        json={
+            "relationship_type": "fits",
+            "members": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1001",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-CIVIC-EX",
+                    "relationship_type": "fits",
+                    "source_evidence": [{"source_artifact_id": "SRC-1"}],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_list_groups_status_filter_rejects_suppressed(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+
+    accepted = app_client.get(
+        f"/api/v1/{instance_id}/groups",
+        params={"status": "pending_review"},
+    )
+    rejected = app_client.get(
+        f"/api/v1/{instance_id}/groups",
+        params={"status": "suppressed"},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["total"] == 0
+    assert rejected.status_code == 422
 
 
 def test_server_init_rejects_uploaded_config_with_unmaterialized_kit_refs(

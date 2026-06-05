@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     schema: Any
     server_group: Any
     snapshot_group: Any
+    source_group: Any
     stats_cmd: Any
     test_cmd: Any
     validate: Any
@@ -90,6 +91,7 @@ else:
         stats_cmd,
     )
     from cruxible_core.cli.commands.server import server_group
+    from cruxible_core.cli.commands.source_artifacts import source_group
     from cruxible_core.cli.commands.wiki import render_wiki_cmd
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
@@ -144,6 +146,7 @@ __all__ = [
     "schema",
     "server_group",
     "snapshot_group",
+    "source_group",
     "stats_cmd",
     "test_cmd",
     "validate",

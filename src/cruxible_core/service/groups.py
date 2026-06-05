@@ -8,7 +8,7 @@ from typing import Any, Literal
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.evidence import EvidenceRef
+from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
 from cruxible_core.group.governance import (
     apply_workflow_policies,
     build_agent_proposal_signature_facts,
@@ -56,6 +56,7 @@ from cruxible_core.service.group_transitions import (
     update_trust_status_transition,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt
+from cruxible_core.service.source_artifacts import resolve_source_evidence_refs
 from cruxible_core.service.types import (
     GetGroupResult,
     GroupMemberInput,
@@ -440,12 +441,18 @@ def _source_query_receipt_ids_from_members(members: list[CandidateMember]) -> li
     return list(ordered_unique(receipt_ids))
 
 
-def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
+def _candidate_signal_from_input(
+    instance: InstanceProtocol,
+    signal: GroupSignalInput,
+) -> CandidateSignal:
     return CandidateSignal(
         signal_source=signal.signal_source,
         signal=signal.signal,
         evidence=signal.evidence,
-        evidence_refs=_evidence_refs_from_input(signal.evidence_refs),
+        evidence_refs=merge_evidence_ref_objects(
+            _evidence_refs_from_input(signal.evidence_refs),
+            resolve_source_evidence_refs(instance, signal.source_evidence),
+        ),
         basis=(
             SignalBucketBasis.model_validate(signal.basis)
             if signal.basis is not None
@@ -454,18 +461,26 @@ def _candidate_signal_from_input(signal: GroupSignalInput) -> CandidateSignal:
     )
 
 
-def _candidate_member_from_input(member: GroupMemberInput) -> CandidateMember:
+def _candidate_member_from_input(
+    instance: InstanceProtocol,
+    member: GroupMemberInput,
+) -> CandidateMember:
     return CandidateMember(
         from_type=member.from_type,
         from_id=member.from_id,
         to_type=member.to_type,
         to_id=member.to_id,
         relationship_type=member.relationship_type,
-        signals=[_candidate_signal_from_input(signal) for signal in member.signals],
+        signals=[
+            _candidate_signal_from_input(instance, signal) for signal in member.signals
+        ],
         source_query_evidence=_query_source_evidence_from_input(
             member.source_query_evidence
         ),
-        evidence_refs=_evidence_refs_from_input(member.evidence_refs),
+        evidence_refs=merge_evidence_ref_objects(
+            _evidence_refs_from_input(member.evidence_refs),
+            resolve_source_evidence_refs(instance, member.source_evidence),
+        ),
         evidence_rationale=member.evidence_rationale,
         properties=member.properties,
     )
@@ -502,7 +517,7 @@ def service_propose_group_inputs(
     return service_propose_group(
         instance,
         relationship_type,
-        [_candidate_member_from_input(member) for member in members],
+        [_candidate_member_from_input(instance, member) for member in members],
         thesis_text=thesis_text,
         thesis_facts=thesis_facts,
         pending_refresh_mode=pending_refresh_mode,

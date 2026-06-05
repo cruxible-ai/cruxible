@@ -783,6 +783,50 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/snapshots")
         return self._parse_model(response, contracts.SnapshotListResult)
 
+    def register_source_artifact(
+        self,
+        instance_id: str,
+        *,
+        source_path: str,
+        source_kind: contracts.SourceKind = "markdown",
+        source_retention: contracts.SourceRetention = "manifest_only",
+        original_uri: str | None = None,
+        label: str | None = None,
+    ) -> contracts.RegisterSourceArtifactResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/source-artifacts/register",
+            json={
+                "source_path": source_path,
+                "source_kind": source_kind,
+                "source_retention": source_retention,
+                "original_uri": original_uri,
+                "label": label,
+            },
+        )
+        return self._parse_model(response, contracts.RegisterSourceArtifactResult)
+
+    def dereference_source_evidence(
+        self,
+        instance_id: str,
+        *,
+        source_artifact_id: str,
+        chunk_id: str | None = None,
+        heading_path: builtins.list[str] | None = None,
+        block_selector: str | None = None,
+        expected_content_hash: str | None = None,
+    ) -> contracts.DereferenceSourceEvidenceResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/source-evidence/dereference",
+            json={
+                "source_artifact_id": source_artifact_id,
+                "chunk_id": chunk_id,
+                "heading_path": heading_path,
+                "block_selector": block_selector,
+                "expected_content_hash": expected_content_hash,
+            },
+        )
+        return self._parse_model(response, contracts.DereferenceSourceEvidenceResult)
+
     def clone_snapshot(
         self,
         instance_id: str,
