@@ -174,7 +174,11 @@ class TestQuery:
 
         assert len(result.results) == 1
         assert result.total_results >= 1
+        assert result.limit == 1
         assert result.truncated is (result.total_results > 1)
+        assert result.limit_truncated is (result.total_results > 1)
+        if result.total_results > 1:
+            assert "response_limit" in result.truncation_reasons
         assert result.receipt_id is not None
         store = populated_instance.get_receipt_store()
         try:
@@ -273,7 +277,11 @@ class TestQuery:
 
         assert len(result.results) == 1
         assert result.total_results >= 1
+        assert result.limit == 1
         assert result.truncated is (result.total_results > 1)
+        assert result.limit_truncated is (result.total_results > 1)
+        if result.total_results > 1:
+            assert "response_limit" in result.truncation_reasons
         assert result.receipt_id is not None
 
     def test_surface_query_rejects_invalid_limit(

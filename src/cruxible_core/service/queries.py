@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig
@@ -56,7 +57,6 @@ from cruxible_core.service.types import (
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
-    QuerySurfaceServiceResult,
     RelationshipLineageResult,
     StatsServiceResult,
     TraceListResult,
@@ -170,7 +170,7 @@ def service_query_surface(
     limit: int | None = None,
     relationship_state: QueryRelationshipState | None = None,
     context: OperationContext | None = None,
-) -> QuerySurfaceServiceResult:
+) -> QueryServiceResult:
     """Execute a named query and apply caller-facing result truncation."""
     surface_limit = limit
     if surface_limit is not None and surface_limit < 1:
@@ -183,34 +183,7 @@ def service_query_surface(
         relationship_state=relationship_state,
         context=context,
     )
-    visible, effective_limit, truncated, response_truncated = _apply_response_limit(
-        result,
-        surface_limit=surface_limit,
-    )
-    return QuerySurfaceServiceResult(
-        results=visible,
-        receipt_id=result.receipt_id,
-        receipt=result.receipt,
-        total_results=result.total_results,
-        limit=effective_limit,
-        truncated=truncated,
-        steps_executed=result.steps_executed,
-        limit_truncated=result.limit_truncated or response_truncated,
-        path_truncated=result.path_truncated,
-        truncation_reasons=_merge_truncation_reasons(
-            result.truncation_reasons,
-            "response_limit" if response_truncated else None,
-        ),
-        max_paths=result.max_paths,
-        max_paths_per_result=result.max_paths_per_result,
-        total_path_count=result.total_path_count,
-        retained_path_count=result.retained_path_count,
-        result_shape=result.result_shape,
-        dedupe=result.dedupe,
-        relationship_state=result.relationship_state,
-        param_hints=result.param_hints,
-        policy_summary=result.policy_summary,
-    )
+    return _query_result_with_response_limit(result, surface_limit=surface_limit)
 
 
 def service_evaluate_query_surface(
@@ -220,7 +193,7 @@ def service_evaluate_query_surface(
     *,
     limit: int | None = None,
     relationship_state: QueryRelationshipState | None = None,
-) -> QuerySurfaceServiceResult:
+) -> QueryServiceResult:
     """Evaluate a named query with caller-facing truncation and no persisted receipt."""
     surface_limit = limit
     if surface_limit is not None and surface_limit < 1:
@@ -232,34 +205,7 @@ def service_evaluate_query_surface(
         params,
         relationship_state=relationship_state,
     )
-    visible, effective_limit, truncated, response_truncated = _apply_response_limit(
-        result,
-        surface_limit=surface_limit,
-    )
-    return QuerySurfaceServiceResult(
-        results=visible,
-        receipt_id=result.receipt_id,
-        receipt=result.receipt,
-        total_results=result.total_results,
-        limit=effective_limit,
-        truncated=truncated,
-        steps_executed=result.steps_executed,
-        limit_truncated=result.limit_truncated or response_truncated,
-        path_truncated=result.path_truncated,
-        truncation_reasons=_merge_truncation_reasons(
-            result.truncation_reasons,
-            "response_limit" if response_truncated else None,
-        ),
-        max_paths=result.max_paths,
-        max_paths_per_result=result.max_paths_per_result,
-        total_path_count=result.total_path_count,
-        retained_path_count=result.retained_path_count,
-        result_shape=result.result_shape,
-        dedupe=result.dedupe,
-        relationship_state=result.relationship_state,
-        param_hints=result.param_hints,
-        policy_summary=result.policy_summary,
-    )
+    return _query_result_with_response_limit(result, surface_limit=surface_limit)
 
 
 def _evaluate_query_result(
@@ -802,6 +748,28 @@ def _apply_response_limit(
     limits = [value for value in (query_limit, surface_limit) if value is not None]
     effective_limit = min(limits) if limits else None
     return visible, effective_limit, result.truncated or response_truncated, response_truncated
+
+
+def _query_result_with_response_limit(
+    result: QueryServiceResult,
+    *,
+    surface_limit: int | None,
+) -> QueryServiceResult:
+    visible, effective_limit, truncated, response_truncated = _apply_response_limit(
+        result,
+        surface_limit=surface_limit,
+    )
+    return replace(
+        result,
+        results=visible,
+        limit=effective_limit,
+        truncated=truncated,
+        limit_truncated=result.limit_truncated or response_truncated,
+        truncation_reasons=_merge_truncation_reasons(
+            result.truncation_reasons,
+            "response_limit" if response_truncated else None,
+        ),
+    )
 
 
 def _merge_truncation_reasons(

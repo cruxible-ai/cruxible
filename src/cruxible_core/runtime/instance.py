@@ -31,8 +31,11 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
-from cruxible_core.source_artifacts.store import SourceArtifactStore
-from cruxible_core.storage.sqlite import SQLiteStorageBackend, SQLiteUnitOfWork
+from cruxible_core.storage.sqlite import (
+    SQLiteSourceArtifactStore,
+    SQLiteStorageBackend,
+    SQLiteUnitOfWork,
+)
 from cruxible_core.temporal import format_datetime, utc_now
 from cruxible_core.workflow.compiler import (
     LOCK_FILE_NAME,
@@ -547,12 +550,12 @@ class CruxibleInstance(InstanceProtocol):
         self._ensure_state_initialized()
         return GroupStore(self._state_db_path())
 
-    def get_source_artifact_store(self) -> SourceArtifactStore:
+    def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
         """Get or create the source artifact SQLite store."""
         if self._active_uow is not None:
             return self._active_uow.source_artifacts
         self._ensure_state_initialized()
-        return SourceArtifactStore(self._state_db_path())
+        return SQLiteSourceArtifactStore(self._state_db_path())
 
     @classmethod
     def _validate_instance_mode(cls, instance_mode: str) -> None:

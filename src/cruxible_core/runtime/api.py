@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
-from cruxible_core.group.types import GroupStatus
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1989,32 +1988,17 @@ def list_groups(
     """List candidate groups with optional filters."""
     check_permission("cruxible_list_groups", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    service_status = _service_group_status_filter(status)
 
     result = service_list_groups(
         instance,
         relationship_type=relationship_type,
-        status=service_status,
+        status=status,
         limit=limit,
     )
     return contracts.ListGroupsToolResult(
         groups=[group.model_dump(mode="json") for group in result.groups],
         total=result.total,
     )
-
-
-def _service_group_status_filter(
-    status: contracts.GroupStatus | None,
-) -> GroupStatus | None:
-    if status is None:
-        return None
-    if status == "pending_review":
-        return "pending_review"
-    if status == "auto_resolved":
-        return "auto_resolved"
-    if status == "applying":
-        return "applying"
-    return "resolved"
 
 
 def get_group_status(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from cruxible_core.config.schema import (
     CoreConfig,
@@ -171,27 +171,7 @@ class QueryServiceResult:
     policy_summary: dict[str, int] = field(default_factory=dict)
 
 
-@dataclass
-class QuerySurfaceServiceResult:
-    results: list[QueryRow]
-    receipt_id: str | None
-    receipt: Receipt | None
-    total_results: int
-    limit: int | None
-    truncated: bool
-    steps_executed: int
-    limit_truncated: bool = False
-    path_truncated: bool = False
-    truncation_reasons: list[str] = field(default_factory=list)
-    max_paths: int | None = None
-    max_paths_per_result: int | None = None
-    total_path_count: int | None = None
-    retained_path_count: int | None = None
-    result_shape: QueryResultShape = "path"
-    dedupe: QueryDedupe = "path"
-    relationship_state: QueryRelationshipState = "live"
-    param_hints: QueryParamHints | None = None
-    policy_summary: dict[str, int] = field(default_factory=dict)
+QuerySurfaceServiceResult: TypeAlias = QueryServiceResult
 
 
 @dataclass

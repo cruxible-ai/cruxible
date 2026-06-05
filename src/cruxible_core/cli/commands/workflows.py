@@ -191,16 +191,18 @@ def init(
         effective_root_dir = str(Path.cwd())
 
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
-        return client.init(
-            root_dir=effective_root_dir or str(Path.cwd()),
-            config_yaml=(
+        init_kwargs: dict[str, Any] = {
+            "root_dir": effective_root_dir or str(Path.cwd()),
+            "config_yaml": (
                 _common._read_validation_yaml_or_error(config_path)
                 if config_path is not None
                 else None
             ),
-            data_dir=data_dir,
-            kit=kit,
-        )
+            "data_dir": data_dir,
+        }
+        if kit is not None:
+            init_kwargs["kit"] = kit
+        return client.init(**init_kwargs)
 
     result = _dispatch_cli(
         _remote_init,
