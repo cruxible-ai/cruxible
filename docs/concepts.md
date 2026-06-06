@@ -84,6 +84,44 @@ declare:
 Use workflow-based loading for source artifacts. Providers parse external data,
 dataflow steps shape it, and canonical apply steps write accepted graph state.
 
+## Source Evidence
+
+Source artifacts let agents attach governed proposal evidence to stable
+document locations without putting the whole document into every proposal.
+Register a local Markdown file with `cruxible source register`; Cruxible stores
+the document hash, parser version, parsed chunks, and a source artifact ID.
+
+Source-evidence locators use one of two shapes:
+
+```yaml
+source_evidence:
+  - source_artifact_id: SRC-...
+    chunk_id: CHK-...
+```
+
+or:
+
+```yaml
+source_evidence:
+  - source_artifact_id: SRC-...
+    heading_path: ["Compatibility Evidence"]
+    block_selector: paragraph:1
+```
+
+Use `chunk_id` when copying a locator from the registration output. Use
+`heading_path` plus `block_selector` when the source should remain readable in a
+hand-authored proposal. `source_artifact_id` is always required, and one locator
+form must be complete.
+
+Retention controls whether Cruxible keeps only the parsed manifest or also a
+deep copy of the source bytes:
+
+- `manifest_only` stores chunk metadata, hashes, and the local path. Dereference
+  rereads the local file and reports drift if the content no longer matches.
+- `archive` stores the manifest plus source bytes in the runtime state DB.
+  Dereference can use the archived copy even if the original local file moves or
+  changes.
+
 ## Workflows
 
 Workflows are repeatable procedures declared in config.

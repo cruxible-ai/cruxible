@@ -1715,6 +1715,122 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible source
+
+**Usage:** `cruxible source [OPTIONS] COMMAND [ARGS]...`
+
+**Purpose:** Register local source documents and dereference source-backed
+evidence locators.
+
+**Subcommands:**
+
+- `cruxible source register` - Parse and register a local Markdown source artifact.
+- `cruxible source dereference` - Resolve a registered source-evidence locator back to source text.
+
+**Output And Side Effects:**
+- `source register` writes a source artifact manifest, parsed chunk metadata, and
+  optional archived source bytes into the current instance.
+- `source dereference` is read-only.
+
+**Common Errors:**
+- Missing local instance or stale daemon `--instance-id`.
+- Permission mode too low for governed write/read operations.
+- Unsupported source kind, missing local source path, incomplete locator, or
+  drifted source content hash.
+
+## cruxible source register
+
+**Usage:** `cruxible source register [OPTIONS]`
+
+**Purpose:** Register a Markdown document as source-backed proposal evidence.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--path` | yes | `Sentinel.UNSET` | text | Local Markdown source path. Relative paths resolve from the current workspace. |
+| `--kind` | no | `markdown` | choice | Source parser kind. |
+| `--retention` | no | `manifest_only` | choice | Source retention mode: `manifest_only` or `archive`. |
+| `--original-uri` | no | `` | text | Optional display/provenance URI to preserve in the manifest. |
+| `--label` | no | `` | text | Optional display label. |
+| `--json` | no | `False` | boolean | Output the registered artifact and chunk manifest as JSON. |
+
+**Examples:**
+
+```bash
+cruxible source register \
+  --path docs/vendor-evidence.md \
+  --original-uri https://vendor.example/evidence.md \
+  --label "Vendor evidence" \
+  --json
+```
+
+```bash
+cruxible source register \
+  --path docs/vendor-evidence.md \
+  --retention archive
+```
+
+**Output And Side Effects:**
+- Persists a source artifact ID, document hash, parser version, byte count, and
+  deterministic chunk IDs in `state.db`.
+- With `manifest_only`, Cruxible stores the manifest and local path but not a
+  deep copy of the source bytes.
+- With `archive`, Cruxible also stores the source bytes so later dereference can
+  use the archived body if the local file is missing or changed.
+
+**Common Errors:**
+- Missing source path, unsupported source kind, path outside the registered
+  workspace in daemon mode, or unreadable source file.
+
+## cruxible source dereference
+
+**Usage:** `cruxible source dereference [OPTIONS]`
+
+**Purpose:** Resolve a registered source-evidence locator back to source text.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--artifact` | yes | `Sentinel.UNSET` | text | Source artifact ID returned by `source register`. |
+| `--chunk` | no | `` | text | Deterministic chunk ID from the registered manifest. |
+| `--heading` | no | `` | text | Heading path segment. Repeat for nested headings. |
+| `--block-selector` | no | `` | text | Block selector under the heading path, such as `paragraph:1`. |
+| `--expected-content-hash` | no | `` | text | Optional expected chunk content hash for drift checks. |
+| `--json` | no | `False` | boolean | Output dereference status, chunk metadata, and body as JSON. |
+
+Source-evidence locators must use one of two forms:
+
+- `--chunk <chunk-id>`
+- `--heading <heading> [--heading <nested-heading> ...] --block-selector <selector>`
+
+**Examples:**
+
+```bash
+cruxible source dereference \
+  --artifact SRC-... \
+  --chunk CHK-... \
+  --json
+```
+
+```bash
+cruxible source dereference \
+  --artifact SRC-... \
+  --heading "Compatibility Evidence" \
+  --block-selector paragraph:1
+```
+
+**Output And Side Effects:**
+- Read-only. Returns `available`, `drifted`, or `unavailable` plus source body
+  when Cruxible can safely dereference the locator.
+- `body_origin` is `archive` when archived bytes are used, or `local_path` when
+  Cruxible rereads the registered local file.
+
+**Common Errors:**
+- Missing artifact, incomplete locator, unknown chunk, unavailable local source
+  file for `manifest_only`, or content drift against the stored manifest/hash.
+
 ## cruxible stats
 
 **Usage:** `cruxible stats [OPTIONS]`
