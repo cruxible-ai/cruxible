@@ -2366,6 +2366,159 @@ def test_local_mutation_commands_require_server_mode(
     assert f"Local mutation disabled for {label}" in result.output
 
 
+def test_add_relationship_passes_evidence_fields_to_server_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def add_relationships(self, instance_id, relationships):
+            captured["instance_id"] = instance_id
+            captured["relationships"] = relationships
+            return contracts.AddRelationshipResult(
+                added=1,
+                updated=0,
+                receipt_id="RCP-add",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add-relationship",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--props",
+            '{"verified": true}',
+            "--evidence-ref",
+            '{"source":"roadmap_doc","source_record_id":"section-p0"}',
+            "--source-evidence",
+            '{"source_artifact_id":"SRC-1","chunk_id":"CHK-1"}',
+            "--evidence-rationale",
+            "Accepted direct source-backed assertion.",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    relationships = captured["relationships"]
+    assert isinstance(relationships, list)
+    relationship = relationships[0]
+    assert isinstance(relationship, contracts.RelationshipInput)
+    assert relationship.properties == {"verified": True}
+    assert relationship.evidence_refs[0].source == "roadmap_doc"
+    assert relationship.evidence_refs[0].source_record_id == "section-p0"
+    assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
+    assert relationship.source_evidence[0].chunk_id == "CHK-1"
+    assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
+    assert "Relationship added:" in result.output
+
+
+@pytest.mark.parametrize(
+    ("raw_ref", "expected_message"),
+    [
+        ('["not", "object"]', "--evidence-ref must be a JSON object"),
+        ('{"source":"doc"}', "--evidence-ref is invalid"),
+        (
+            '{"source":"","source_record_id":"section-1"}',
+            "--evidence-ref is invalid",
+        ),
+        (
+            '{"source":"doc","source_record_id":"section-1","metadata":"bad"}',
+            "--evidence-ref is invalid",
+        ),
+    ],
+)
+def test_add_relationship_rejects_malformed_evidence_flag(
+    runner: CliRunner,
+    raw_ref: str,
+    expected_message: str,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add-relationship",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--evidence-ref",
+            raw_ref,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert expected_message in result.output
+
+
+@pytest.mark.parametrize(
+    ("raw_source_evidence", "expected_message"),
+    [
+        ('["not", "object"]', "--source-evidence must be a JSON object"),
+        ('{"source_artifact_id":"SRC-1"}', "--source-evidence is invalid"),
+        ('{"source_artifact_id":"","chunk_id":"CHK-1"}', "--source-evidence is invalid"),
+        ('{"source_artifact_id":"SRC-1","chunk_id":""}', "--source-evidence is invalid"),
+        (
+            '{"source_artifact_id":"SRC-1","heading_path":["Evidence"]}',
+            "--source-evidence is invalid",
+        ),
+    ],
+)
+def test_add_relationship_rejects_malformed_source_evidence_flag(
+    runner: CliRunner,
+    raw_source_evidence: str,
+    expected_message: str,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add-relationship",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--source-evidence",
+            raw_source_evidence,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert expected_message in result.output
+
+
 def test_server_mode_uses_env_bearer_token_for_client_construction(monkeypatch, runner: CliRunner):
     monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "local-secret")
     captured: dict[str, object] = {}

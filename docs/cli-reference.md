@@ -103,9 +103,28 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
 | `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
 | `--props` | no | `` | text | JSON object of edge properties. |
+| `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
+| `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
+| `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Writes live relationship state and records a mutation receipt. Evidence refs
+  and source-evidence locators are persisted as relationship evidence metadata.
+  Direct adds are not group-reviewed accepted relationships; use `group propose`
+  and `group resolve --action approve` when review/acceptance state matters.
+
+**Example:**
+
+```bash
+cruxible add-relationship \
+  --from-type RoadmapItem \
+  --from-id ri-compact-workflow-trace-payloads \
+  --relationship roadmap_item_depends_on_roadmap_item \
+  --to-type RoadmapItem \
+  --to-id ri-transactional-sqlite-state \
+  --source-evidence '{"source_artifact_id":"SRC-...","chunk_id":"CHK-..."}' \
+  --evidence-rationale "Extracted from the P0 section."
+```
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

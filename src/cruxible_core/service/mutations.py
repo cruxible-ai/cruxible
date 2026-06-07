@@ -6,14 +6,20 @@ from collections.abc import Sequence
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.errors import DataValidationError
+from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.operations import (
     apply_entity,
     apply_relationship,
     validate_entity,
     validate_relationship,
 )
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
+)
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import (
     AddEntityResult,
@@ -32,7 +38,23 @@ def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
     )
 
 
-def _relationship_from_input(value: RelationshipWriteInput) -> RelationshipInstance:
+def _relationship_from_input(
+    instance: InstanceProtocol,
+    value: RelationshipWriteInput,
+) -> RelationshipInstance:
+    evidence_refs = resolve_evidence_refs(
+        instance,
+        evidence_refs=value.evidence_refs,
+        source_evidence=value.source_evidence,
+    )
+    metadata = RelationshipMetadata()
+    if evidence_refs or value.evidence_rationale is not None:
+        metadata = RelationshipMetadata(
+            evidence=RelationshipEvidence(
+                evidence_refs=evidence_refs,
+                rationale=value.evidence_rationale,
+            )
+        )
     return RelationshipInstance(
         from_type=value.from_type,
         from_id=value.from_id,
@@ -40,6 +62,7 @@ def _relationship_from_input(value: RelationshipWriteInput) -> RelationshipInsta
         to_type=value.to_type,
         to_id=value.to_id,
         properties=value.properties,
+        metadata=metadata,
     )
 
 
@@ -173,7 +196,7 @@ def service_add_relationship_inputs(
     """Normalize relationship write inputs, then add or update graph relationships."""
     return service_add_relationships(
         instance,
-        [_relationship_from_input(relationship) for relationship in relationships],
+        [_relationship_from_input(instance, relationship) for relationship in relationships],
         source=source,
         source_ref=source_ref,
         _create_receipt=_create_receipt,
@@ -279,6 +302,18 @@ def service_add_relationships(
             if persisted is not None:
                 touched_relationships.append(persisted)
             if builder:
+                evidence_detail: dict[str, object] = {}
+                if edge.metadata.evidence is not None:
+                    evidence_detail = {
+                        "evidence_refs": [
+                            ref.to_payload()
+                            for ref in edge.metadata.evidence.evidence_refs
+                        ],
+                    }
+                    if edge.metadata.evidence.rationale is not None:
+                        evidence_detail["evidence_rationale"] = (
+                            edge.metadata.evidence.rationale
+                        )
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,
@@ -286,6 +321,7 @@ def service_add_relationships(
                     edge.to_id,
                     edge.relationship_type,
                     is_update=validated.is_update,
+                    detail=evidence_detail,
                 )
             if validated.is_update:
                 updated += 1

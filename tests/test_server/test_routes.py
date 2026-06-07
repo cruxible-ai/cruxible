@@ -1162,6 +1162,13 @@ def test_add_relationship_stamps_http_api_provenance(
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
+                    "evidence_refs": [
+                        {
+                            "source": "roadmap_doc",
+                            "source_record_id": "section-p0",
+                        }
+                    ],
+                    "evidence_rationale": "Accepted direct source-backed assertion.",
                 }
             ]
         },
@@ -1182,6 +1189,38 @@ def test_add_relationship_stamps_http_api_provenance(
     metadata = lookup.json()["metadata"]
     assert metadata["provenance"]["source"] == "http_api"
     assert metadata["provenance"]["source_ref"] == "cruxible_add_relationship"
+    assert metadata["evidence"]["rationale"] == "Accepted direct source-backed assertion."
+    assert metadata["evidence"]["evidence_refs"] == [
+        {
+            "source": "roadmap_doc",
+            "source_record_id": "section-p0",
+        }
+    ]
+
+
+def test_add_relationship_rejects_malformed_evidence_ref(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1",
+                    "relationship": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                    "evidence_refs": [{"source": "roadmap_doc"}],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code in {400, 422}
 
 
 def test_feedback_batch_route(

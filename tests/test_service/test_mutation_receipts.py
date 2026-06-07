@@ -14,7 +14,9 @@ from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
+    RelationshipWriteInput,
     service_add_entities,
+    service_add_relationship_inputs,
     service_add_relationships,
     service_feedback,
     service_propose_group,
@@ -169,6 +171,55 @@ class TestAddRelationshipReceipts:
 
         node_types = {n.node_type for n in receipt.nodes}
         assert "relationship_write" in node_types
+
+    def test_add_relationships_receipt_records_evidence_detail(
+        self,
+        populated_instance: CruxibleInstance,
+    ):
+        result = service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"verified": True, "source": "test"},
+                    evidence_refs=[
+                        {
+                            "source": "roadmap_doc",
+                            "source_record_id": "section-p0",
+                        }
+                    ],
+                    evidence_rationale="Accepted direct source-backed assertion.",
+                )
+            ],
+            source="test",
+            source_ref="test_receipts_evidence",
+        )
+        assert result.receipt_id is not None
+
+        store = populated_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        write_nodes = [
+            node for node in receipt.nodes if node.node_type == "relationship_write"
+        ]
+        assert len(write_nodes) == 1
+        assert write_nodes[0].detail["evidence_refs"] == [
+            {
+                "source": "roadmap_doc",
+                "source_record_id": "section-p0",
+            }
+        ]
+        assert (
+            write_nodes[0].detail["evidence_rationale"]
+            == "Accepted direct source-backed assertion."
+        )
 
     def test_add_relationships_failure_receipt(self, populated_instance: CruxibleInstance):
         with pytest.raises(DataValidationError) as exc_info:

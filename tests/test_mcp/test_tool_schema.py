@@ -82,6 +82,14 @@ class TestInputSchema:
         rel_def = schema["$defs"][def_name]
         required = set(rel_def["required"])
         assert {"from_type", "from_id", "relationship", "to_type", "to_id"} <= required
+        assert {
+            "evidence_refs",
+            "source_evidence",
+            "evidence_rationale",
+        } <= set(rel_def["properties"])
+        assert "evidence_refs" not in required
+        assert "source_evidence" not in required
+        assert "evidence_rationale" not in required
 
     def test_add_entity_schema(self, server):
         """EntityInput fields appear as required in the entities array schema."""

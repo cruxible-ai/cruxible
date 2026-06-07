@@ -90,6 +90,37 @@ def test_source_evidence_contract_accepts_supported_locator_forms() -> None:
     assert by_heading.block_selector == "paragraph:1"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"source": "doc"},
+        {"source": "", "source_record_id": "section-1"},
+        {"source": "doc", "source_record_id": ""},
+        {"source": "doc", "source_record_id": "section-1", "metadata": "bad"},
+    ],
+)
+def test_evidence_ref_contract_rejects_malformed_refs(
+    payload: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        contracts.EvidenceRef.model_validate(payload)
+
+
+def test_evidence_ref_contract_preserves_extra_metadata() -> None:
+    ref = contracts.EvidenceRef.model_validate(
+        {
+            "source": "doc",
+            "source_record_id": "section-1",
+            "confidence": 0.9,
+            "metadata": {"kind": "roadmap"},
+        }
+    )
+
+    assert ref.source == "doc"
+    assert ref.source_record_id == "section-1"
+    assert ref.metadata == {"kind": "roadmap", "confidence": 0.9}
+
+
 def test_client_methods_parse_contract_return_models() -> None:
     tree = ast.parse(CLIENT_PATH.read_text(encoding="utf-8"))
     client_class = next(

@@ -11,9 +11,10 @@ from typing import Any
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
+from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.mcp.handlers import handle_query
+from cruxible_core.mcp.handlers import handle_add_relationship, handle_query
 from cruxible_core.mcp.server import create_server
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -32,6 +33,59 @@ def call_tool_expect_error(server, name: str, args: dict[str, Any]) -> str:
     with pytest.raises(ToolError) as exc_info:
         asyncio.run(server.call_tool(name, args))
     return str(exc_info.value)
+
+
+def test_handle_add_relationship_preserves_evidence_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def add_relationships(self, instance_id, relationships):
+            captured["instance_id"] = instance_id
+            captured["relationships"] = relationships
+            return contracts.AddRelationshipResult(
+                added=1,
+                updated=0,
+                receipt_id="RCP-add",
+            )
+
+    monkeypatch.setattr("cruxible_core.mcp.handlers._get_client", lambda: StubClient())
+    result = handle_add_relationship(
+        "inst_123",
+        [
+            contracts.RelationshipInput(
+                from_type="Part",
+                from_id="BP-1",
+                relationship="fits",
+                to_type="Vehicle",
+                to_id="V-1",
+                evidence_refs=[
+                    contracts.EvidenceRef(
+                        source="roadmap_doc",
+                        source_record_id="section-p0",
+                    )
+                ],
+                source_evidence=[
+                    contracts.SourceEvidenceInput(
+                        source_artifact_id="SRC-1",
+                        chunk_id="CHK-1",
+                    )
+                ],
+                evidence_rationale="Accepted direct source-backed assertion.",
+            )
+        ],
+    )
+
+    assert result.added == 1
+    assert captured["instance_id"] == "inst_123"
+    relationships = captured["relationships"]
+    assert isinstance(relationships, list)
+    relationship = relationships[0]
+    assert isinstance(relationship, contracts.RelationshipInput)
+    assert relationship.evidence_refs[0].source == "roadmap_doc"
+    assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
+    assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
 
 
 @pytest.fixture

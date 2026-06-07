@@ -122,6 +122,11 @@ deep copy of the source bytes:
   Dereference can use the archived copy even if the original local file moves or
   changes.
 
+Direct relationship writes can attach `evidence_refs` or `source_evidence` so a
+live edge has durable provenance. That is not the same as governed acceptance:
+direct evidence-backed adds remain unreviewed relationship state. Use candidate
+groups when a human or policy needs to approve the relationship judgment.
+
 ## Workflows
 
 Workflows are repeatable procedures declared in config.

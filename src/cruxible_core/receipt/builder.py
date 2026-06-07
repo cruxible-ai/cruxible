@@ -234,19 +234,23 @@ class ReceiptBuilder:
         to_id: str,
         relationship: str,
         is_update: bool,
+        detail: dict[str, Any] | None = None,
         parent_id: str | None = None,
     ) -> str:
         """Record that a relationship was written to the graph."""
+        node_detail: dict[str, Any] = {
+            "from_type": from_type,
+            "from_id": from_id,
+            "to_type": to_type,
+            "to_id": to_id,
+            "relationship": relationship,
+            "is_update": is_update,
+        }
+        if detail:
+            node_detail.update(detail)
         node_id = self._add_node(
             node_type="relationship_write",
-            detail={
-                "from_type": from_type,
-                "from_id": from_id,
-                "to_type": to_type,
-                "to_id": to_id,
-                "relationship": relationship,
-                "is_update": is_update,
-            },
+            detail=node_detail,
         )
         self._add_edge(parent_id or self._root_id, node_id, "mutated")
         return node_id

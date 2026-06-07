@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypeAlias
@@ -17,6 +18,7 @@ from cruxible_core.config.schema import (
     WorkflowType,
 )
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
+from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
     CandidateGroup,
@@ -96,6 +98,11 @@ class RelationshipWriteInput:
     to_type: str
     to_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
+    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(
+        default_factory=list
+    )
+    evidence_rationale: str | None = None
 
 
 @dataclass

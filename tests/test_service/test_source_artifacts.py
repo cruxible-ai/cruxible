@@ -12,6 +12,7 @@ from cruxible_core.service import (
     service_propose_group_inputs,
     service_register_source_artifact,
 )
+from cruxible_core.service.evidence import resolve_evidence_refs
 
 SOURCE_CONFIG_YAML = """\
 version: "1.0"
@@ -107,6 +108,37 @@ def test_archive_source_artifact_dereferences_after_local_file_changes(
     assert dereferenced.chunk is not None
     assert dereferenced.chunk.chunk_id == paragraph.chunk_id
     assert dereferenced.body == "Archived BP-1001 evidence."
+
+
+def test_resolve_evidence_refs_merges_explicit_and_source_refs(
+    tmp_path: Path,
+) -> None:
+    instance = _instance(tmp_path)
+    source_path = tmp_path / "fitment.md"
+    source_path.write_text("# Fitment\n\nBP-1001 evidence row.\n")
+    registered = service_register_source_artifact(instance, source_path=str(source_path))
+    paragraph = next(
+        chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
+    )
+
+    refs = resolve_evidence_refs(
+        instance,
+        evidence_refs=[
+            {"source": "doc", "source_record_id": "section-1"},
+            {"source": "doc", "source_record_id": "section-1"},
+        ],
+        source_evidence=[
+            {
+                "source_artifact_id": registered.source_artifact_id,
+                "chunk_id": paragraph.chunk_id,
+            }
+        ],
+    )
+
+    assert [ref.source for ref in refs] == ["doc", "source_artifact"]
+    assert refs[0].source_record_id == "section-1"
+    assert refs[1].artifact_id == registered.source_artifact_id
+    assert refs[1].source_record_id == paragraph.chunk_id
 
 
 def test_source_evidence_resolves_to_stored_group_evidence_refs(

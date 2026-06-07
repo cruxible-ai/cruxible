@@ -7,9 +7,10 @@ FastMCP auto-generates outputSchema from the BaseModel return annotations.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
 
@@ -44,6 +45,9 @@ class RelationshipInput(BaseModel):
     to_type: str
     to_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
+    evidence_rationale: str | None = None
 
 
 class EntityInput(BaseModel):
@@ -74,6 +78,33 @@ class EvidenceRef(BaseModel):
     row_index: int | None = None
     label: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_extra_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        known = set(cls.model_fields)
+        payload = dict(value)
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, Mapping):
+            raise ValueError("EvidenceRef metadata must be an object")
+        extra = {
+            str(key): payload.pop(key)
+            for key in list(payload)
+            if key not in known
+        }
+        payload["metadata"] = {**dict(metadata), **extra}
+        return payload
+
+    @field_validator("source", "source_record_id")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("EvidenceRef source and source_record_id must be non-empty")
+        return value
 
 
 class SourceEvidenceInput(BaseModel):

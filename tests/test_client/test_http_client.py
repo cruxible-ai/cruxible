@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from cruxible_client import CruxibleClient
+from cruxible_client import CruxibleClient, contracts
 from cruxible_client.errors import ConstraintViolationError, DataValidationError
 
 
@@ -266,6 +266,85 @@ def test_source_artifact_methods_use_expected_routes_and_payloads():
             "heading_path": ["Evidence"],
             "block_selector": "paragraph:1",
             "expected_content_hash": "sha256:def",
+        },
+    }
+
+
+def test_add_relationships_serializes_evidence_fields():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={"added": 1, "updated": 0, "receipt_id": "RCP-add"},
+        )
+
+    client = _build_client(handler)
+    result = client.add_relationships(
+        "inst_123",
+        [
+            contracts.RelationshipInput(
+                from_type="Part",
+                from_id="BP-1",
+                relationship="fits",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"verified": True},
+                evidence_refs=[
+                    contracts.EvidenceRef(
+                        source="roadmap_doc",
+                        source_record_id="section-p0",
+                    )
+                ],
+                source_evidence=[
+                    contracts.SourceEvidenceInput(
+                        source_artifact_id="SRC-1",
+                        chunk_id="CHK-1",
+                    )
+                ],
+                evidence_rationale="Accepted direct source-backed assertion.",
+            )
+        ],
+    )
+
+    assert result.added == 1
+    assert captured == {
+        "path": "/api/v1/inst_123/relationships",
+        "payload": {
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1",
+                    "relationship": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                    "properties": {"verified": True},
+                    "evidence_refs": [
+                        {
+                            "source": "roadmap_doc",
+                            "source_record_id": "section-p0",
+                            "artifact_id": None,
+                            "table": None,
+                            "row_index": None,
+                            "label": None,
+                            "metadata": {},
+                        }
+                    ],
+                    "source_evidence": [
+                        {
+                            "source_artifact_id": "SRC-1",
+                            "chunk_id": "CHK-1",
+                            "heading_path": None,
+                            "block_selector": None,
+                            "label": None,
+                            "expected_content_hash": None,
+                        }
+                    ],
+                    "evidence_rationale": "Accepted direct source-backed assertion.",
+                }
+            ]
         },
     }
 

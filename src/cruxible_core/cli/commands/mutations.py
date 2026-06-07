@@ -4,9 +4,10 @@ add-decision-policy, and reload-config."""
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import Any, cast
 
 import click
+from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.cli.commands import _common
@@ -24,6 +25,34 @@ from cruxible_core.service import (
     service_add_relationship_inputs,
     service_reload_config,
 )
+
+
+def _parse_json_object(raw: str, *, option_name: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter(f"{option_name} must be valid JSON") from exc
+    if not isinstance(value, dict):
+        raise click.BadParameter(f"{option_name} must be a JSON object")
+    return cast(dict[str, Any], value)
+
+
+def _parse_evidence_ref(raw: str) -> contracts.EvidenceRef:
+    try:
+        return contracts.EvidenceRef.model_validate(
+            _parse_json_object(raw, option_name="--evidence-ref")
+        )
+    except ValidationError as exc:
+        raise click.BadParameter(f"--evidence-ref is invalid: {exc}") from exc
+
+
+def _parse_source_evidence(raw: str) -> contracts.SourceEvidenceInput:
+    try:
+        return contracts.SourceEvidenceInput.model_validate(
+            _parse_json_object(raw, option_name="--source-evidence")
+        )
+    except ValidationError as exc:
+        raise click.BadParameter(f"--source-evidence is invalid: {exc}") from exc
 
 
 @click.command("add-entity")
@@ -86,6 +115,23 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
 @click.option("--to-type", required=True, help="Target entity type.")
 @click.option("--to-id", required=True, help="Target entity ID.")
 @click.option("--props", default=None, help="JSON object of edge properties.")
+@click.option(
+    "--evidence-ref",
+    "evidence_refs",
+    multiple=True,
+    help="JSON evidence ref object. Repeat to attach multiple refs.",
+)
+@click.option(
+    "--source-evidence",
+    "source_evidence",
+    multiple=True,
+    help="JSON source-evidence locator. Repeat to attach multiple locators.",
+)
+@click.option(
+    "--evidence-rationale",
+    default=None,
+    help="Optional rationale for the attached relationship evidence.",
+)
 @handle_errors
 def add_relationship_cmd(
     from_type: str,
@@ -94,6 +140,9 @@ def add_relationship_cmd(
     to_type: str,
     to_id: str,
     props: str | None,
+    evidence_refs: tuple[str, ...],
+    source_evidence: tuple[str, ...],
+    evidence_rationale: str | None,
 ) -> None:
     """Add or update a relationship in the graph."""
     try:
@@ -102,6 +151,14 @@ def add_relationship_cmd(
         raise click.BadParameter("--props must be valid JSON") from exc
     if not isinstance(properties, dict):
         raise click.BadParameter("--props must be a JSON object")
+    parsed_evidence_refs = [_parse_evidence_ref(raw) for raw in evidence_refs]
+    parsed_source_evidence = [_parse_source_evidence(raw) for raw in source_evidence]
+    local_evidence_refs = [
+        item.model_dump(mode="python") for item in parsed_evidence_refs
+    ]
+    local_source_evidence = [
+        item.model_dump(mode="python") for item in parsed_source_evidence
+    ]
 
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.add_relationships(
@@ -114,6 +171,9 @@ def add_relationship_cmd(
                     to_type=to_type,
                     to_id=to_id,
                     properties=properties,
+                    evidence_refs=parsed_evidence_refs,
+                    source_evidence=parsed_source_evidence,
+                    evidence_rationale=evidence_rationale,
                 )
             ],
         ),
@@ -127,6 +187,9 @@ def add_relationship_cmd(
                     to_type=to_type,
                     to_id=to_id,
                     properties=properties,
+                    evidence_refs=local_evidence_refs,
+                    source_evidence=local_source_evidence,
+                    evidence_rationale=evidence_rationale,
                 )
             ],
             source="cli_add",

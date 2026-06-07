@@ -1530,6 +1530,14 @@ def add_relationships_with_provenance(
             to_type=edge.to_type,
             to_id=edge.to_id,
             properties=edge.properties,
+            evidence_refs=[
+                ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+                for ref in edge.evidence_refs
+            ],
+            source_evidence=[
+                ref.model_dump(mode="python") for ref in edge.source_evidence
+            ],
+            evidence_rationale=edge.evidence_rationale,
         )
         for edge in relationships
     ]

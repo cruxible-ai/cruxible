@@ -8,7 +8,6 @@ from typing import Any, Literal
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
 from cruxible_core.group.governance import (
     apply_workflow_policies,
     build_agent_proposal_signature_facts,
@@ -45,6 +44,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.primitives import canonical_json, new_id, ordered_unique
+from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.group_read_models import (
     get_group_read_model,
     group_status_read_model,
@@ -56,7 +56,6 @@ from cruxible_core.service.group_transitions import (
     update_trust_status_transition,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt
-from cruxible_core.service.source_artifacts import resolve_source_evidence_refs
 from cruxible_core.service.types import (
     GetGroupResult,
     GroupMemberInput,
@@ -449,9 +448,10 @@ def _candidate_signal_from_input(
         signal_source=signal.signal_source,
         signal=signal.signal,
         evidence=signal.evidence,
-        evidence_refs=merge_evidence_ref_objects(
-            _evidence_refs_from_input(signal.evidence_refs),
-            resolve_source_evidence_refs(instance, signal.source_evidence),
+        evidence_refs=resolve_evidence_refs(
+            instance,
+            evidence_refs=signal.evidence_refs,
+            source_evidence=signal.source_evidence,
         ),
         basis=(
             SignalBucketBasis.model_validate(signal.basis)
@@ -477,9 +477,10 @@ def _candidate_member_from_input(
         source_query_evidence=_query_source_evidence_from_input(
             member.source_query_evidence
         ),
-        evidence_refs=merge_evidence_ref_objects(
-            _evidence_refs_from_input(member.evidence_refs),
-            resolve_source_evidence_refs(instance, member.source_evidence),
+        evidence_refs=resolve_evidence_refs(
+            instance,
+            evidence_refs=member.evidence_refs,
+            source_evidence=member.source_evidence,
         ),
         evidence_rationale=member.evidence_rationale,
         properties=member.properties,
@@ -490,10 +491,6 @@ def _query_source_evidence_from_input(
     evidence: list[QuerySourceEvidence | dict[str, Any]],
 ) -> list[QuerySourceEvidence]:
     return [QuerySourceEvidence.model_validate(item) for item in evidence]
-
-
-def _evidence_refs_from_input(evidence_refs: list[dict[str, Any]]) -> list[EvidenceRef]:
-    return [EvidenceRef.model_validate(ref) for ref in evidence_refs]
 
 
 def service_propose_group_inputs(

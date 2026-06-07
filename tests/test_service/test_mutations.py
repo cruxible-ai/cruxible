@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
     EntityWriteInput,
@@ -16,6 +16,7 @@ from cruxible_core.service import (
     service_add_entity_inputs,
     service_add_relationship_inputs,
     service_add_relationships,
+    service_register_source_artifact,
 )
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 
@@ -201,6 +202,275 @@ class TestAddRelationships:
         graph = populated_instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1002", "Vehicle", "V-2024-ACCORD-SPORT", "fits")
         assert rel is not None
+
+    def test_input_wrapper_persists_explicit_evidence_refs(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"verified": True},
+                    evidence_refs=[
+                        {
+                            "source": "roadmap_doc",
+                            "source_record_id": "section-p0",
+                        }
+                    ],
+                    evidence_rationale="Accepted direct source-backed assertion.",
+                )
+            ],
+            source="test",
+            source_ref="test_input_wrapper_evidence",
+        )
+
+        assert result.added == 1
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-2024-ACCORD-SPORT",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "unreviewed"
+        assert rel.metadata.evidence is not None
+        assert rel.metadata.evidence.rationale == "Accepted direct source-backed assertion."
+        assert [ref.source for ref in rel.metadata.evidence.evidence_refs] == [
+            "roadmap_doc"
+        ]
+        assert rel.metadata.evidence.evidence_refs[0].source_record_id == "section-p0"
+
+    def test_input_wrapper_persists_source_evidence_refs(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        source_path = populated_instance.root / "fitment.md"
+        source_path.write_text("# Fitment\n\nBP-1002 fits Accord Sport.\n")
+        registered = service_register_source_artifact(
+            populated_instance,
+            source_path=str(source_path),
+        )
+        paragraph = next(
+            chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
+        )
+
+        result = service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-ACCORD-SPORT",
+                    properties={"verified": True},
+                    source_evidence=[
+                        {
+                            "source_artifact_id": registered.source_artifact_id,
+                            "chunk_id": paragraph.chunk_id,
+                        }
+                    ],
+                )
+            ],
+            source="test",
+            source_ref="test_input_wrapper_source_evidence",
+        )
+
+        assert result.added == 1
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-2024-ACCORD-SPORT",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        evidence_ref = rel.metadata.evidence.evidence_refs[0]
+        assert evidence_ref.source == "source_artifact"
+        assert evidence_ref.artifact_id == registered.source_artifact_id
+        assert evidence_ref.source_record_id == paragraph.chunk_id
+        assert evidence_ref.metadata["content_hash"] == paragraph.content_hash
+
+    def test_update_preserves_or_replaces_relationship_evidence(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        target = RelationshipWriteInput(
+            from_type="Part",
+            from_id="BP-1002",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
+            properties={"verified": True},
+            evidence_refs=[{"source": "doc", "source_record_id": "first"}],
+        )
+        service_add_relationship_inputs(
+            populated_instance,
+            [target],
+            source="test",
+            source_ref="initial",
+        )
+
+        service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type=target.from_type,
+                    from_id=target.from_id,
+                    relationship_type=target.relationship_type,
+                    to_type=target.to_type,
+                    to_id=target.to_id,
+                    properties={"verified": True, "source": "updated"},
+                )
+            ],
+            source="test",
+            source_ref="preserve",
+        )
+        rel = populated_instance.load_graph().get_relationship(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship_type,
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        assert rel.metadata.evidence.evidence_refs[0].source_record_id == "first"
+
+        service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type=target.from_type,
+                    from_id=target.from_id,
+                    relationship_type=target.relationship_type,
+                    to_type=target.to_type,
+                    to_id=target.to_id,
+                    properties={"verified": True, "source": "replaced"},
+                    evidence_refs=[{"source": "doc", "source_record_id": "second"}],
+                    evidence_rationale="Replacement evidence.",
+                )
+            ],
+            source="test",
+            source_ref="replace",
+        )
+        rel = populated_instance.load_graph().get_relationship(
+            target.from_type,
+            target.from_id,
+            target.to_type,
+            target.to_id,
+            target.relationship_type,
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        assert rel.metadata.evidence.evidence_refs[0].source_record_id == "second"
+        assert rel.metadata.evidence.rationale == "Replacement evidence."
+
+    def test_missing_source_evidence_does_not_commit_relationship(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(ConfigError, match="Source artifact 'SRC-missing' not found"):
+            service_add_relationship_inputs(
+                populated_instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-ACCORD-SPORT",
+                        properties={"verified": True},
+                        source_evidence=[
+                            {
+                                "source_artifact_id": "SRC-missing",
+                                "chunk_id": "chunk-missing",
+                            }
+                        ],
+                    )
+                ],
+                source="test",
+                source_ref="missing_source",
+            )
+
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-2024-ACCORD-SPORT",
+            "fits",
+        )
+        assert rel is None
+
+    def test_malformed_evidence_ref_does_not_commit_relationship(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(DataValidationError, match="Invalid evidence_ref"):
+            service_add_relationship_inputs(
+                populated_instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-ACCORD-SPORT",
+                        properties={"verified": True},
+                        evidence_refs=[{"source": "roadmap_doc"}],
+                    )
+                ],
+                source="test",
+                source_ref="malformed_evidence",
+            )
+
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-2024-ACCORD-SPORT",
+            "fits",
+        )
+        assert rel is None
+
+    def test_malformed_source_evidence_does_not_commit_relationship(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(DataValidationError, match="Invalid source_evidence"):
+            service_add_relationship_inputs(
+                populated_instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2024-ACCORD-SPORT",
+                        properties={"verified": True},
+                        source_evidence=[{"source_artifact_id": "SRC-1"}],
+                    )
+                ],
+                source="test",
+                source_ref="malformed_source_evidence",
+            )
+
+        rel = populated_instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-2024-ACCORD-SPORT",
+            "fits",
+        )
+        assert rel is None
 
     def test_batch(self, populated_instance: CruxibleInstance) -> None:
         result = service_add_relationships(
