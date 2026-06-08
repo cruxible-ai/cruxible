@@ -20,6 +20,7 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     JsonContentQualityCheck,
+    NamedQueryResultCountQualityCheck,
     PropertyQualityCheck,
     RelationshipPropertyConsistencyQualityCheck,
     UniquenessQualityCheck,
@@ -755,6 +756,13 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                         f"Quality check '{check.name}': target_property "
                         f"'{target_property}' not found on entity type '{target_type}'"
                     )
+
+        elif isinstance(check, NamedQueryResultCountQualityCheck):
+            if check.query_name not in config.named_queries:
+                errors.append(
+                    f"Quality check '{check.name}': query_name "
+                    f"'{check.query_name}' not defined in named_queries"
+                )
 
 
 def _validate_kind(config: CoreConfig, errors: list[str]) -> None:

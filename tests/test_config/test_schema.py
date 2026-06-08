@@ -21,6 +21,7 @@ from cruxible_core.config.schema import (
     EntityTypeSchema,
     EnumSchema,
     JsonContentQualityCheck,
+    NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
     PropertyQualityCheck,
     PropertySchema,
@@ -1573,6 +1574,22 @@ class TestQualityCheckSchema:
             target_property="vendor_id",
         )
         assert check.kind == "relationship_property_consistency"
+
+    def test_named_query_result_count_check_parses(self):
+        check = NamedQueryResultCountQualityCheck(
+            name="no_deferred_release_gating_work",
+            query_name="deferred_release_gating_work_items",
+            params={"release_line_id": "release-0.2"},
+            max_count=0,
+        )
+        assert check.kind == "named_query_result_count"
+
+    def test_named_query_result_count_requires_a_limit(self):
+        with pytest.raises(ValidationError, match="min_count, max_count, or both"):
+            NamedQueryResultCountQualityCheck(
+                name="missing_limit",
+                query_name="some_query",
+            )
 
 
 class TestWorkflowSchema:

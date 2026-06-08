@@ -1121,6 +1121,23 @@ class RelationshipPropertyConsistencyQualityCheck(QualityCheckBase):
     allow_missing_source: bool = False
 
 
+class NamedQueryResultCountQualityCheck(QualityCheckBase):
+    """Check that a named query returns a count within expected bounds."""
+
+    kind: Literal["named_query_result_count"] = "named_query_result_count"
+    query_name: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    min_count: int | None = None
+    max_count: int | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> NamedQueryResultCountQualityCheck:
+        if self.min_count is None and self.max_count is None:
+            msg = "Named-query result count checks require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
 QualityCheckSchema = Annotated[
     (
         PropertyQualityCheck
@@ -1129,6 +1146,7 @@ QualityCheckSchema = Annotated[
         | BoundsQualityCheck
         | CardinalityQualityCheck
         | RelationshipPropertyConsistencyQualityCheck
+        | NamedQueryResultCountQualityCheck
     ),
     Field(discriminator="kind"),
 ]

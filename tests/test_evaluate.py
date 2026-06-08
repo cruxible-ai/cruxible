@@ -9,6 +9,8 @@ from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
     JsonContentQualityCheck,
+    NamedQueryResultCountQualityCheck,
+    NamedQuerySchema,
     PropertyQualityCheck,
     PropertySchema,
     ProposalPolicySchema,
@@ -845,6 +847,45 @@ class TestQualityChecks:
         assert len(quality) == 1
         assert quality[0].detail["entity_id"] == "P1"
         assert report.quality_summary["parts_need_fitment"] == 1
+
+    def test_named_query_result_count_check_reports_out_of_bounds_results(self):
+        config = _minimal_config(
+            named_queries={
+                "deferred_parts": NamedQuerySchema(
+                    mode="collection",
+                    result_shape="entity",
+                    returns="Part",
+                    where={"result.properties.category": {"eq": "deferred"}},
+                )
+            },
+            quality_checks=[
+                NamedQueryResultCountQualityCheck(
+                    name="no_deferred_parts",
+                    query_name="deferred_parts",
+                    max_count=0,
+                    severity="error",
+                )
+            ],
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P1",
+                properties={"category": "deferred"},
+            )
+        )
+
+        report = evaluate_graph(config, graph)
+
+        quality = [f for f in report.findings if f.category == "quality_check_failed"]
+        assert len(quality) == 1
+        assert quality[0].severity == "error"
+        assert quality[0].detail["check_kind"] == "named_query_result_count"
+        assert quality[0].detail["query_name"] == "deferred_parts"
+        assert quality[0].detail["count"] == 1
+        assert quality[0].detail["result_ids"] == ["Part:P1"]
+        assert report.quality_summary["no_deferred_parts"] == 1
 
     def test_relationship_property_consistency_passes_when_values_match(self):
         config = _minimal_config(

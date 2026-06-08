@@ -79,6 +79,8 @@ def _quality_check_target_label(check: Any) -> str:
             f"{humanize_label(check.entity_type)}.{check.source_property} -> "
             f"{humanize_label(check.relationship_type)}"
         )
+    if kind == "named_query_result_count":
+        return f"Named query `{check.query_name}`"
     return "-"
 
 
@@ -106,6 +108,8 @@ def _quality_check_rule_label(check: Any) -> str:
         return _bounds_rule_label(check.min_count, check.max_count)
     if kind == "relationship_property_consistency":
         return f"Matches related `{check.target_property or 'entity_id'}`"
+    if kind == "named_query_result_count":
+        return _bounds_rule_label(check.min_count, check.max_count)
     return "-"
 
 

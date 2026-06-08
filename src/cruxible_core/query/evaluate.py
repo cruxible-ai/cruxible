@@ -26,6 +26,7 @@ from cruxible_core.graph.types import (
     split_node_id,
 )
 from cruxible_core.predicate import evaluate_typed_comparison
+from cruxible_core.query.engine import execute_query
 
 if TYPE_CHECKING:
     from cruxible_core.group.types import CandidateMember
@@ -619,6 +620,10 @@ def _check_quality_rules(
                 findings,
                 quality_summary,
             )
+        elif kind == "named_query_result_count":
+            _run_named_query_result_count_quality_check(
+                config, graph, check, findings, quality_summary
+            )
 
 
 def _run_property_quality_check(
@@ -947,6 +952,47 @@ def _run_relationship_property_consistency_quality_check(
                     expected_value=expected_value,
                     target_property=target_property,
                 )
+
+
+def _run_named_query_result_count_quality_check(
+    config: CoreConfig,
+    graph: EntityGraph,
+    check: Any,
+    findings: list[EvaluationFinding],
+    quality_summary: dict[str, int],
+) -> None:
+    result = execute_query(config, graph, check.query_name, check.params)
+    count = result.total_results if result.total_results is not None else len(result.results)
+    if _violates_bounds(count, check.min_count, check.max_count):
+        _append_quality_finding(
+            findings,
+            quality_summary,
+            check,
+            message=(
+                f"Quality check '{check.name}' failed: named query "
+                f"'{check.query_name}' returned {count} result(s)"
+            ),
+            detail={
+                "query_name": check.query_name,
+                "params": check.params,
+                "count": count,
+                "min_count": check.min_count,
+                "max_count": check.max_count,
+                "result_ids": _quality_query_result_ids(result.results[:25]),
+                "truncated_result_ids": len(result.results) > 25,
+            },
+        )
+
+
+def _quality_query_result_ids(results: list[Any]) -> list[str]:
+    result_ids: list[str] = []
+    for row in results:
+        entity = getattr(row, "result", row)
+        entity_type = getattr(entity, "entity_type", None)
+        entity_id = getattr(entity, "entity_id", None)
+        if entity_type is not None and entity_id is not None:
+            result_ids.append(f"{entity_type}:{entity_id}")
+    return result_ids
 
 
 def _append_relationship_property_consistency_finding(

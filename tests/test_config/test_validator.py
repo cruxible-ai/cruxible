@@ -15,6 +15,7 @@ from cruxible_core.config.schema import (
     EntityTypeSchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
@@ -275,6 +276,24 @@ class TestValidateNamedQueries:
             "source-side traversal constraints are not supported" in e
             for e in exc_info.value.errors
         )
+
+
+class TestValidateQualityChecks:
+    def test_named_query_result_count_references_known_query(self):
+        config = _minimal_config(
+            quality_checks=[
+                NamedQueryResultCountQualityCheck(
+                    name="missing_query_check",
+                    query_name="missing_query",
+                    max_count=0,
+                )
+            ]
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("missing_query" in e for e in exc_info.value.errors)
 
 
 class TestValidateLoopOneControls:
