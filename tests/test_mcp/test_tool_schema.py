@@ -71,6 +71,19 @@ class TestInputSchema:
         )
         assert enum_schema["enum"] == ["live", "accepted", "pending", "reviewable"]
 
+    def test_query_inline_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_query_inline"].inputSchema
+        required = set(schema["required"])
+        assert {"instance_id", "definition"} <= required
+        assert "params" in schema["properties"]
+        assert "limit" in schema["properties"]
+        definition = schema["properties"]["definition"]
+        ref = definition["$ref"]
+        def_name = ref.split("/")[-1]
+        definition_schema = schema["$defs"][def_name]
+        assert {"name", "mode", "returns"} <= set(definition_schema["required"])
+
     def test_add_relationship_schema(self, server):
         """RelationshipInput fields appear as required in the relationships array schema."""
         schemas = _get_tool_schemas(server)

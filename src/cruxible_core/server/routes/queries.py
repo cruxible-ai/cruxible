@@ -12,6 +12,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     EvaluateRequest,
+    InlineQueryRequest,
     LintRequest,
     QueryRequest,
     RenderWikiRequest,
@@ -39,6 +40,23 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
     return api.query(
         instance_id=resolved_instance_id,
         query_name=req.query_name,
+        params=req.params,
+        limit=req.limit,
+        relationship_state=req.relationship_state,
+        decision_record_id=req.decision_record_id,
+        surface="http",
+    )
+
+
+@router.post("/{instance_id}/query/inline", response_model=contracts.QueryToolResult)
+async def query_inline(
+    instance_id: str,
+    req: InlineQueryRequest,
+) -> contracts.QueryToolResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.query_inline(
+        instance_id=resolved_instance_id,
+        definition=req.definition,
         params=req.params,
         limit=req.limit,
         relationship_state=req.relationship_state,

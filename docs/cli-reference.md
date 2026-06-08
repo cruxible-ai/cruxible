@@ -1468,6 +1468,7 @@ cruxible add-relationship \
 **Subcommands:**
 
 - `cruxible query describe` - Describe one named query with required params and example IDs.
+- `cruxible query inline` - Execute a bounded inline query definition for exploration.
 - `cruxible query list` - List named queries with entry points and required params.
 
 **Options And Arguments:**
@@ -1489,6 +1490,43 @@ cruxible add-relationship \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible query inline
+
+**Usage:** `cruxible query inline [OPTIONS]`
+
+**Purpose:** Execute a bounded inline query definition without persisting it to config.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--definition-json` | no | `` | text | Inline query definition as a JSON object. |
+| `--definition-file` | no | `` | path | Path to a JSON or YAML inline query definition. |
+| `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
+| `--limit` | no | `` | integer range | Max results to display. |
+| `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, `pending`, or `reviewable`. The inline definition must set `allow_relationship_state_override: true`. |
+| `--count` | no | `False` | boolean | Show only summary metadata. |
+| `--decision-record` | no | `` | text | Decision record ID for audit logging. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Example:**
+
+```bash
+cruxible query inline \
+  --definition-json '{"name":"brake_parts","mode":"collection","returns":"Part","result_shape":"entity","where":{"result.properties.category":{"eq":"brakes"}}}' \
+  --json
+```
+
+**Output And Side Effects:**
+- Read-only graph access. Inline queries persist query receipts and optional
+  decision events, but they do not modify or persist config.
+
+**Common Errors:**
+- Provide exactly one of `--definition-json` or `--definition-file`.
+- Inline query definitions use the same shape as configured named queries plus
+  required `name`; repeated or workflow-critical inline queries should be
+  promoted into config as named queries.
 
 ## cruxible query describe
 

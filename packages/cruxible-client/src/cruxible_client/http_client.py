@@ -150,6 +150,27 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.QueryToolResult)
 
+    def query_inline(
+        self,
+        instance_id: str,
+        definition: contracts.InlineQueryDefinition,
+        params: dict[str, Any] | None = None,
+        limit: int | None = None,
+        relationship_state: contracts.QueryRelationshipState | None = None,
+        decision_record_id: str | None = None,
+    ) -> contracts.QueryToolResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/query/inline",
+            json={
+                "definition": definition.model_dump(mode="json", exclude_none=True),
+                "params": params,
+                "limit": limit,
+                "relationship_state": relationship_state,
+                "decision_record_id": decision_record_id,
+            },
+        )
+        return self._parse_model(response, contracts.QueryToolResult)
+
     def create_decision_record(
         self,
         instance_id: str,

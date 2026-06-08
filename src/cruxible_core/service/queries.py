@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Literal, cast
 
-from cruxible_core.config.schema import CoreConfig
+from pydantic import ValidationError
+
+from cruxible_core.config.schema import CoreConfig, NamedQuerySchema
 from cruxible_core.errors import (
     ConfigError,
     QueryNotFoundError,
@@ -20,6 +23,7 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.enums import QueryRelationshipState
 from cruxible_core.query.read_surface import (
     get_entity as read_get_entity,
@@ -65,6 +69,13 @@ from cruxible_core.temporal import utc_now
 
 _INPUT_REF_RE = re.compile(r"\$input\.([A-Za-z_][\w-]*)")
 _CONSTRAINT_PARAM_RE = re.compile(r"\$([A-Za-z_][\w-]*)(?:\.([A-Za-z_][\w-]*))?")
+_INLINE_QUERY_PREFIX = "inline:"
+_INLINE_DEFAULT_LIMIT = 50
+_INLINE_MAX_LIMIT = 500
+_INLINE_DEFAULT_MAX_PATHS = 1000
+_INLINE_MAX_PATHS = 5000
+_INLINE_DEFAULT_MAX_PATHS_PER_RESULT = 25
+_INLINE_MAX_PATHS_PER_RESULT = 100
 
 # ---------------------------------------------------------------------------
 # Query
@@ -119,26 +130,7 @@ def service_query(
         command=f"query:{query_name}",
         status="success",
         input_payload=input_event,
-        output_payload={
-            "results": [
-                dump_query_row(row, mode="json")
-                for row in result.results
-            ],
-            "total_results": result.total_results,
-            "limit": result.limit,
-            "truncated": result.truncated,
-            "limit_truncated": result.limit_truncated,
-            "path_truncated": result.path_truncated,
-            "truncation_reasons": list(result.truncation_reasons),
-            "max_paths": result.max_paths,
-            "max_paths_per_result": result.max_paths_per_result,
-            "total_path_count": result.total_path_count,
-            "retained_path_count": result.retained_path_count,
-            "steps_executed": result.steps_executed,
-            "result_shape": result.result_shape,
-            "dedupe": result.dedupe,
-            "relationship_state": result.relationship_state,
-        },
+        output_payload=_query_output_payload(result),
         receipt_id=result.receipt_id,
         head_snapshot_id=receipt_head_snapshot_id,
         started_at=started_at,
@@ -182,6 +174,68 @@ def service_query_surface(
         params,
         relationship_state=relationship_state,
         context=context,
+    )
+    return _query_result_with_response_limit(result, surface_limit=surface_limit)
+
+
+def service_query_inline_surface(
+    instance: InstanceProtocol,
+    definition: Mapping[str, Any],
+    params: dict[str, Any],
+    *,
+    limit: int | None = None,
+    relationship_state: QueryRelationshipState | None = None,
+    context: OperationContext | None = None,
+) -> QueryServiceResult:
+    """Execute a bounded inline query definition without persisting it to config."""
+    surface_limit = limit
+    if surface_limit is not None and surface_limit < 1:
+        raise ConfigError("limit must be a positive integer")
+
+    inline_name, query_schema = _inline_query_schema(definition)
+    query_name = f"{_INLINE_QUERY_PREFIX}{inline_name}"
+    started_at = utc_now()
+    input_event = {
+        "query_name": query_name,
+        "definition": _inline_query_definition_payload(inline_name, query_schema),
+        "params": params,
+        "relationship_state": relationship_state,
+    }
+    try:
+        result = _evaluate_inline_query_result(
+            instance,
+            query_name,
+            query_schema,
+            params,
+            relationship_state=relationship_state,
+        )
+
+        if result.receipt:
+            with instance.write_transaction() as uow:
+                uow.receipts.save_receipt(result.receipt)
+    except Exception as exc:
+        record_decision_event_for_context(
+            instance,
+            context,
+            command=f"query_inline:{inline_name}",
+            status="error",
+            input_payload=input_event,
+            error=exc,
+            started_at=started_at,
+        )
+        raise
+
+    receipt_head_snapshot_id = result.receipt.head_snapshot_id if result.receipt else None
+    record_decision_event_for_context(
+        instance,
+        context,
+        command=f"query_inline:{inline_name}",
+        status="success",
+        input_payload=input_event,
+        output_payload=_query_output_payload(result),
+        receipt_id=result.receipt_id,
+        head_snapshot_id=receipt_head_snapshot_id,
+        started_at=started_at,
     )
     return _query_result_with_response_limit(result, surface_limit=surface_limit)
 
@@ -248,6 +302,145 @@ def _evaluate_query_result(
         param_hints=_query_param_hints(config, graph, query_name),
         policy_summary=query_result.policy_summary,
     )
+
+
+def _evaluate_inline_query_result(
+    instance: InstanceProtocol,
+    query_name: str,
+    query_schema: NamedQuerySchema,
+    params: dict[str, Any],
+    *,
+    relationship_state: QueryRelationshipState | None = None,
+) -> QueryServiceResult:
+    config = instance.load_config()
+    graph = instance.load_graph()
+    query_result = execute_query_definition(
+        config,
+        graph,
+        query_name,
+        query_schema,
+        params,
+        relationship_state=relationship_state,
+    )
+    if query_result.receipt:
+        query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
+    total = query_result.total_results or len(query_result.results)
+    return QueryServiceResult(
+        results=query_result.results,
+        receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
+        receipt=query_result.receipt,
+        total_results=total,
+        limit=query_result.limit,
+        truncated=query_result.truncated,
+        steps_executed=query_result.steps_executed,
+        limit_truncated=query_result.limit_truncated,
+        path_truncated=query_result.path_truncated,
+        truncation_reasons=list(query_result.truncation_reasons),
+        max_paths=query_result.max_paths,
+        max_paths_per_result=query_result.max_paths_per_result,
+        total_path_count=query_result.total_path_count,
+        retained_path_count=query_result.retained_path_count,
+        result_shape=query_result.result_shape,
+        dedupe=query_result.dedupe,
+        relationship_state=query_result.relationship_state,
+        param_hints=_query_param_hints_for_schema(config, graph, query_schema),
+        policy_summary=query_result.policy_summary,
+    )
+
+
+def _inline_query_schema(definition: Mapping[str, Any]) -> tuple[str, NamedQuerySchema]:
+    payload = {
+        key: value
+        for key, value in dict(definition).items()
+        if value is not None
+    }
+    raw_name = payload.pop("name", None)
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        raise ConfigError("inline query definition requires non-empty name")
+    inline_name = raw_name.strip()
+    if payload.get("limit") is None:
+        payload["limit"] = _INLINE_DEFAULT_LIMIT
+    try:
+        query_schema = NamedQuerySchema.model_validate(payload)
+    except ValidationError as exc:
+        errors = [
+            f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error['msg']}"
+            if error.get("loc")
+            else str(error["msg"])
+            for error in exc.errors()
+        ]
+        raise ConfigError("Invalid inline query definition", errors=errors) from exc
+
+    _validate_inline_query_bound("limit", query_schema.limit, _INLINE_MAX_LIMIT)
+    _validate_inline_query_bound("max_paths", query_schema.max_paths, _INLINE_MAX_PATHS)
+    _validate_inline_query_bound(
+        "max_paths_per_result",
+        query_schema.max_paths_per_result,
+        _INLINE_MAX_PATHS_PER_RESULT,
+    )
+
+    supports_path_budgets = (
+        query_schema.mode == "traversal"
+        and query_schema.result_shape in {"path", "relationship"}
+    )
+    if not supports_path_budgets:
+        return inline_name, query_schema
+
+    update: dict[str, Any] = query_schema.model_dump(mode="python")
+    changed = False
+    if query_schema.max_paths is None:
+        update["max_paths"] = _INLINE_DEFAULT_MAX_PATHS
+        changed = True
+    if query_schema.max_paths_per_result is None:
+        update["max_paths_per_result"] = _INLINE_DEFAULT_MAX_PATHS_PER_RESULT
+        changed = True
+    if not changed:
+        return inline_name, query_schema
+    return inline_name, NamedQuerySchema.model_validate(update)
+
+
+def _validate_inline_query_bound(
+    field_name: str,
+    value: int | None,
+    maximum: int,
+) -> None:
+    if value is None:
+        return
+    if value > maximum:
+        raise ConfigError(f"inline query {field_name} must be <= {maximum}")
+
+
+def _inline_query_definition_payload(
+    inline_name: str,
+    query_schema: NamedQuerySchema,
+) -> dict[str, Any]:
+    return {
+        "name": inline_name,
+        **query_schema.model_dump(mode="json", by_alias=True, exclude_none=True),
+    }
+
+
+def _query_output_payload(result: QueryServiceResult) -> dict[str, Any]:
+    return {
+        "results": [
+            dump_query_row(row, mode="json")
+            for row in result.results
+        ],
+        "total_results": result.total_results,
+        "limit": result.limit,
+        "truncated": result.truncated,
+        "limit_truncated": result.limit_truncated,
+        "path_truncated": result.path_truncated,
+        "truncation_reasons": list(result.truncation_reasons),
+        "max_paths": result.max_paths,
+        "max_paths_per_result": result.max_paths_per_result,
+        "total_path_count": result.total_path_count,
+        "retained_path_count": result.retained_path_count,
+        "steps_executed": result.steps_executed,
+        "result_shape": result.result_shape,
+        "dedupe": result.dedupe,
+        "relationship_state": result.relationship_state,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +797,14 @@ def _query_param_hints(
     query_schema = config.named_queries.get(query_name)
     if query_schema is None:
         return None
+    return _query_param_hints_for_schema(config, graph, query_schema)
+
+
+def _query_param_hints_for_schema(
+    config: CoreConfig,
+    graph: Any,
+    query_schema: NamedQuerySchema,
+) -> QueryParamHints:
     if query_schema.entry_point is None:
         required_params = _infer_query_required_params(query_schema, primary_key=None)
         return QueryParamHints(

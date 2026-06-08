@@ -3,11 +3,14 @@ inspect, analysis, and lookups."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import click
 import yaml
+from pydantic import ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.canonical_views import (
@@ -83,6 +86,7 @@ from cruxible_core.service import (
     service_inspect_view,
     service_lint,
     service_list_queries,
+    service_query_inline_surface,
     service_query_surface,
     service_sample,
     service_schema,
@@ -232,6 +236,133 @@ def _policy_summary_payload(policy_summary: Any) -> dict[str, int] | None:
     if isinstance(policy_summary, dict):
         return dict(policy_summary)
     return None
+
+
+def _load_inline_query_definition(
+    *,
+    definition_json: str | None,
+    definition_file: Path | None,
+) -> contracts.InlineQueryDefinition:
+    if (definition_json is None) == (definition_file is None):
+        raise click.UsageError(
+            "Provide exactly one of --definition-json or --definition-file"
+    )
+    try:
+        if definition_json is not None:
+            payload = json.loads(definition_json)
+        else:
+            assert definition_file is not None
+            payload = yaml.safe_load(definition_file.read_text())
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("inline query definition must be valid JSON") from exc
+    except yaml.YAMLError as exc:
+        raise click.BadParameter("inline query definition must be valid JSON/YAML") from exc
+    if not isinstance(payload, dict):
+        raise click.BadParameter("inline query definition must be a JSON/YAML object")
+    try:
+        return contracts.InlineQueryDefinition.model_validate(payload)
+    except ValidationError as exc:
+        raise click.BadParameter(f"inline query definition is invalid: {exc}") from exc
+
+
+def _emit_query_command_result(
+    result: Any,
+    *,
+    query_name: str,
+    limit: int | None,
+    count_only: bool,
+    output_json: bool,
+) -> None:
+    results = list(result.results)
+    rows_are_payloads = all(isinstance(row, dict) for row in results)
+    if rows_are_payloads:
+        payload_rows = cast(list[dict[str, Any]], results)
+        projected_results = any("values" in item for item in payload_rows)
+        entity_results = (
+            _entities_from_payload(payload_rows)
+            if result.result_shape == "entity" and not projected_results
+            else []
+        )
+        structured_results = (
+            payload_rows
+            if result.result_shape != "entity" or projected_results
+            else []
+        )
+    else:
+        projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
+        entity_results = [
+            row
+            for row in results
+            if isinstance(row, EntityInstance) and not projected_results
+        ]
+        structured_results = _query_rows_payload(results)
+
+    total = result.total_results
+    if output_json:
+        items = (
+            []
+            if count_only
+            else (
+                [r.model_dump(mode="python") for r in entity_results]
+                if result.result_shape == "entity" and not projected_results
+                else structured_results
+            )
+        )
+        if limit is not None and not count_only:
+            items = items[:limit]
+        param_hints = result.param_hints
+        _emit_json({
+            "results": items,
+            "total_results": total,
+            "limit": result.limit,
+            "truncated": result.truncated,
+            "limit_truncated": getattr(result, "limit_truncated", False),
+            "path_truncated": getattr(result, "path_truncated", False),
+            "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
+            "max_paths": getattr(result, "max_paths", None),
+            "max_paths_per_result": getattr(result, "max_paths_per_result", None),
+            "total_path_count": getattr(result, "total_path_count", None),
+            "retained_path_count": getattr(result, "retained_path_count", None),
+            "steps_executed": result.steps_executed,
+            "result_shape": result.result_shape,
+            "dedupe": result.dedupe,
+            "relationship_state": result.relationship_state,
+            "receipt_id": result.receipt_id,
+            "param_hints": (
+                param_hints.model_dump(mode="python")
+                if hasattr(param_hints, "model_dump")
+                else asdict(param_hints)
+                if param_hints is not None
+                else None
+            ),
+            "policy_summary": _policy_summary_payload(
+                getattr(result, "policy_summary", None)
+            ),
+        })
+        return
+
+    click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
+    if count_only:
+        _print_query_param_hints(result.param_hints)
+    elif limit is not None and result.truncated:
+        if result.result_shape == "entity" and not projected_results:
+            console.print(entities_table(entity_results, query_name))
+        else:
+            _print_structured_query_rows(structured_results)
+        visible_count = (
+            len(entity_results)
+            if result.result_shape == "entity"
+            else len(structured_results)
+        )
+        click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
+    elif result.result_shape == "entity" and not projected_results:
+        console.print(entities_table(entity_results, query_name))
+    else:
+        _print_structured_query_rows(structured_results)
+    if total == 0 and not count_only:
+        _print_query_param_hints(result.param_hints)
+    if result.receipt_id:
+        click.echo(f"Receipt: {result.receipt_id}")
 
 
 def _run_query_command(
@@ -493,6 +624,83 @@ def query(
         count_only=count_only,
         output_json=output_json,
         decision_record_id=decision_record_id,
+    )
+
+
+@query.command("inline")
+@click.option(
+    "--definition-json",
+    default=None,
+    help="Inline query definition as a JSON object.",
+)
+@click.option(
+    "--definition-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to a JSON or YAML inline query definition.",
+)
+@click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
+@click.option(
+    "--relationship-state",
+    type=click.Choice(["live", "accepted", "pending", "reviewable"]),
+    default=None,
+    help="Override query relationship visibility state.",
+)
+@click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
+@decision_record_option
+@json_option
+@handle_errors
+def query_inline_cmd(
+    definition_json: str | None,
+    definition_file: Path | None,
+    param: tuple[str, ...],
+    limit: int | None,
+    relationship_state: str | None,
+    count_only: bool,
+    decision_record_id: str | None,
+    output_json: bool,
+) -> None:
+    """Execute a bounded inline query without persisting it to config."""
+    definition = _load_inline_query_definition(
+        definition_json=definition_json,
+        definition_file=definition_file,
+    )
+    params = _parse_params(param)
+    resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
+    effective_relationship_state = cast(
+        contracts.QueryRelationshipState | None,
+        relationship_state,
+    )
+    response_limit = 1 if count_only and limit is None else limit
+    query_name = f"inline:{definition.name}"
+    client = _common._get_client()
+    result: Any
+    if client is not None:
+        result = client.query_inline(
+            _require_instance_id(),
+            definition,
+            params,
+            limit=response_limit,
+            relationship_state=effective_relationship_state,
+            decision_record_id=resolved_decision_record_id,
+        )
+    else:
+        instance = CruxibleInstance.load()
+        result = service_query_inline_surface(
+            instance,
+            definition.model_dump(mode="python", exclude_none=True),
+            params,
+            limit=response_limit,
+            relationship_state=effective_relationship_state,
+            context=_operation_context(resolved_decision_record_id),
+        )
+    _emit_query_command_result(
+        result,
+        query_name=query_name,
+        limit=limit,
+        count_only=count_only,
+        output_json=output_json,
     )
 
 

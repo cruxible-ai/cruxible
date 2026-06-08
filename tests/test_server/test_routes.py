@@ -328,6 +328,92 @@ def test_init_then_seed_then_query_round_trip(
     assert "evaluation" in lint_payload
 
 
+def test_inline_query_route_executes_without_persisting_config(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/query/inline",
+        json={
+            "definition": {
+                "name": "brake_parts",
+                "mode": "collection",
+                "returns": "Part",
+                "result_shape": "entity",
+                "where": {"result.properties.category": {"eq": "brakes"}},
+            },
+            "params": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_results"] == 2
+    assert payload["receipt_id"]
+    assert payload["limit"] == 50
+
+    queries = app_client.get(f"/api/v1/{instance_id}/queries")
+    assert queries.status_code == 200
+    assert "brake_parts" not in [query["name"] for query in queries.json()["queries"]]
+
+
+def test_inline_query_route_rejects_malformed_definition(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/query/inline",
+        json={
+            "definition": {
+                "name": "broken",
+                "mode": "collection",
+                "result_shape": "entity",
+            },
+            "params": {},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_inline_query_route_rejects_stringified_budget_caps(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/query/inline",
+        json={
+            "definition": {
+                "name": "too_many_paths",
+                "mode": "traversal",
+                "entry_point": "Vehicle",
+                "traversal": [
+                    {
+                        "relationship": "fits",
+                        "direction": "incoming",
+                    }
+                ],
+                "returns": "Part",
+                "result_shape": "path",
+                "limit": "501",
+                "max_paths": "5001",
+                "max_paths_per_result": "101",
+            },
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "inline query limit must be <= 500"
+
+
 def test_decision_record_routes_and_query_context_round_trip(
     app_client: TestClient,
     server_project: Path,

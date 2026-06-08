@@ -127,6 +127,17 @@ live edge has durable provenance. That is not the same as governed acceptance:
 direct evidence-backed adds remain unreviewed relationship state. Use candidate
 groups when a human or policy needs to approve the relationship judgment.
 
+## Inline Queries
+
+Named queries remain the canonical query contract for workflows, docs, and
+repeatable operating procedures. Agents can also run bounded inline queries for
+one-off filtering and candidate discovery. Inline query definitions use the same
+shape as named queries plus a required `name`, persist receipts for auditability,
+and are never written back into `config.named_queries`.
+
+Promote an inline query into config once it becomes workflow-critical or
+repeated enough that humans should review and name the surface.
+
 ## Workflows
 
 Workflows are repeatable procedures declared in config.

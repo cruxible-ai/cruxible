@@ -472,6 +472,97 @@ def test_query_uses_explicit_decision_record_flag(
     assert captured["decision_record_id"] == "DR-flag"
 
 
+def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def query_inline(
+            self,
+            instance_id,
+            definition,
+            params,
+            *,
+            limit=None,
+            relationship_state=None,
+            decision_record_id=None,
+        ):
+            captured["instance_id"] = instance_id
+            captured["definition"] = definition
+            captured["params"] = params
+            captured["limit"] = limit
+            captured["relationship_state"] = relationship_state
+            captured["decision_record_id"] = decision_record_id
+            return contracts.QueryToolResult(
+                results=[],
+                receipt_id="RCP-inline",
+                receipt=None,
+                total_results=0,
+                limit=50,
+                truncated=False,
+                steps_executed=0,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "inline",
+            "--definition-json",
+            (
+                '{"name":"brake_parts","mode":"collection","returns":"Part",'
+                '"result_shape":"entity"}'
+            ),
+            "--param",
+            "category=brakes",
+            "--limit",
+            "25",
+            "--relationship-state",
+            "reviewable",
+            "--decision-record",
+            "DR-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    definition = captured["definition"]
+    assert isinstance(definition, contracts.InlineQueryDefinition)
+    assert captured == {
+        "instance_id": "inst_123",
+        "definition": definition,
+        "params": {"category": "brakes"},
+        "limit": 25,
+        "relationship_state": "reviewable",
+        "decision_record_id": "DR-1",
+    }
+    assert definition.name == "brake_parts"
+    assert json.loads(result.output)["receipt_id"] == "RCP-inline"
+
+
+def test_query_inline_rejects_malformed_definition(runner: CliRunner):
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "inline",
+            "--definition-json",
+            '{"name":"broken","mode":"collection"}',
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "inline query definition is invalid" in result.output
+
+
 def test_decision_record_commands_delegate_to_client_in_server_mode(
     monkeypatch,
     runner: CliRunner,

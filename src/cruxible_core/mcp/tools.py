@@ -190,6 +190,31 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_query_inline(
+        instance_id: str,
+        definition: contracts.InlineQueryDefinition,
+        params: dict[str, Any] | None = None,
+        limit: int | None = None,
+        relationship_state: contracts.QueryRelationshipState | None = None,
+        decision_record_id: str | None = None,
+    ) -> contracts.QueryToolResult:
+        """Run a bounded inline graph query for read-only agent exploration.
+
+        Inline query definitions use the same JSON shape as configured named
+        queries plus a required `name`, but they are not persisted to config.
+        Use this for one-off filtering and candidate discovery. Promote repeated
+        or workflow-critical queries into config as named queries.
+        """
+        return handlers.handle_query_inline(
+            instance_id,
+            definition,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+            decision_record_id=decision_record_id,
+        )
+
+    @_tool
     def cruxible_list_queries(
         instance_id: str,
     ) -> contracts.QueryListResult:

@@ -355,6 +355,36 @@ def handle_query(
     )
 
 
+def handle_query_inline(
+    instance_id: str,
+    definition: contracts.InlineQueryDefinition,
+    params: dict[str, Any] | None = None,
+    limit: int | None = None,
+    relationship_state: contracts.QueryRelationshipState | None = None,
+    decision_record_id: str | None = None,
+) -> contracts.QueryToolResult:
+    """Execute a bounded inline query definition without persisting it to config."""
+    return _dispatch_remote_or_local(
+        lambda client: client.query_inline(
+            instance_id,
+            definition,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+            decision_record_id=decision_record_id,
+        ),
+        lambda: api.query_inline(
+            instance_id,
+            definition,
+            params,
+            limit=limit,
+            relationship_state=relationship_state,
+            decision_record_id=decision_record_id,
+            surface="mcp",
+        ),
+    )
+
+
 def _client_query(
     client: CruxibleClient,
     *,

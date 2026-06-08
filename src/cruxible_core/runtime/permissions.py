@@ -85,6 +85,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_validate": PermissionMode.READ_ONLY,
     "cruxible_schema": PermissionMode.READ_ONLY,
     "cruxible_query": PermissionMode.READ_ONLY,
+    "cruxible_query_inline": PermissionMode.READ_ONLY,
     "cruxible_list_queries": PermissionMode.READ_ONLY,
     "cruxible_describe_query": PermissionMode.READ_ONLY,
     "cruxible_receipt": PermissionMode.READ_ONLY,

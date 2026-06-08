@@ -13,6 +13,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
+QueryMode = Literal["collection", "traversal"]
+QueryResultShape = Literal["entity", "path", "relationship"]
+QueryDedupe = Literal["entity", "path", "none"]
 
 # ── Constrained input types ───────────────────────────────────────────
 
@@ -293,6 +296,33 @@ class QueryToolResult(BaseModel):
     relationship_state: QueryRelationshipState = "live"
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
+
+
+class InlineQueryDefinition(BaseModel):
+    name: str
+    mode: QueryMode
+    description: str | None = None
+    entry_point: str | None = None
+    traversal: list[dict[str, Any]] = Field(default_factory=list)
+    returns: str
+    result_shape: QueryResultShape = "path"
+    dedupe: QueryDedupe | None = None
+    relationship_state: QueryRelationshipState = "live"
+    allow_relationship_state_override: bool = False
+    where: dict[str, Any] | None = None
+    select: dict[str, Any] | None = None
+    order_by: list[dict[str, Any]] = Field(default_factory=list)
+    include: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    limit: int | None = Field(default=None, ge=0)
+    max_paths: int | None = Field(default=None, gt=0)
+    max_paths_per_result: int | None = Field(default=None, gt=0)
+
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("inline query name must be non-empty")
+        return value
 
 
 class DecisionRecordResult(BaseModel):

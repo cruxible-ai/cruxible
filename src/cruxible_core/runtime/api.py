@@ -73,6 +73,7 @@ from cruxible_core.service import (
     service_publish_world,
     service_pull_world_apply,
     service_pull_world_preview,
+    service_query_inline_surface,
     service_query_surface,
     service_register_source_artifact,
     service_reload_config,
@@ -94,6 +95,7 @@ from cruxible_core.service.types import (
     GroupMemberInput,
     GroupSignalInput,
     OperationContext,
+    QueryServiceResult,
     RelationshipTargetInput,
     RelationshipWriteInput,
 )
@@ -648,6 +650,45 @@ def query(
 
     include_receipt = limit is None
 
+    return _query_tool_result(result, include_receipt=include_receipt)
+
+
+def query_inline(
+    instance_id: str,
+    definition: contracts.InlineQueryDefinition | dict[str, Any],
+    params: dict[str, Any] | None = None,
+    limit: int | None = None,
+    *,
+    relationship_state: contracts.QueryRelationshipState | None = None,
+    decision_record_id: str | None = None,
+    surface: str = "local",
+) -> contracts.QueryToolResult:
+    """Execute a bounded inline query definition without persisting it to config."""
+    check_permission("cruxible_query_inline", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    definition_payload = (
+        definition.model_dump(mode="python", exclude_none=True)
+        if isinstance(definition, BaseModel)
+        else dict(definition)
+    )
+    result = service_query_inline_surface(
+        instance,
+        definition_payload,
+        params or {},
+        limit=limit,
+        relationship_state=relationship_state,
+        context=_operation_context(decision_record_id, surface=surface),
+    )
+
+    include_receipt = limit is None
+    return _query_tool_result(result, include_receipt=include_receipt)
+
+
+def _query_tool_result(
+    result: QueryServiceResult,
+    *,
+    include_receipt: bool,
+) -> contracts.QueryToolResult:
     return contracts.QueryToolResult(
         results=[
             dump_query_row(row, mode="json")

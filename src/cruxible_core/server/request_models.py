@@ -30,6 +30,14 @@ class QueryRequest(BaseModel):
     decision_record_id: str | None = None
 
 
+class InlineQueryRequest(BaseModel):
+    definition: contracts.InlineQueryDefinition
+    params: dict[str, Any] | None = None
+    limit: int | None = None
+    relationship_state: contracts.QueryRelationshipState | None = None
+    decision_record_id: str | None = None
+
+
 class RenderWikiRequest(BaseModel):
     focus: list[str] = Field(default_factory=list)
     include_types: list[str] = Field(default_factory=list)
