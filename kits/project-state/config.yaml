@@ -1,0 +1,1027 @@
+version: "1.0"
+name: project_state
+kind: world_model
+description: >
+  Governed dev/project operating state for agent-assisted work on a product or
+  codebase. One world instance represents durable project state: product areas,
+  capabilities, roadmap items, release lines, milestones, work items, design
+  decisions, risks, open questions, and their dependency or blocker context.
+  Markdown docs, plans, chats, review reports, and transcripts are source
+  evidence for proposals; they are not modeled as entities in this kit.
+
+enums:
+  priority:
+    values: [low, medium, high, critical]
+    ordered: low_to_high
+  lifecycle_status:
+    values: [planned, active, blocked, deferred, closed, superseded]
+  decision_status:
+    values: [proposed, accepted, superseded, rejected, deferred]
+  decision_impact_type:
+    values: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
+  work_item_type:
+    values: [feature, bug, cleanup, research, docs, test, infrastructure]
+
+entity_types:
+  ProductArea:
+    description: Stable product, project, subsystem, package, or responsibility area.
+    properties:
+      area_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      description:
+        type: string
+        optional: true
+      owner:
+        type: string
+        optional: true
+
+  Capability:
+    description: Durable technical or product ability the project supports.
+    properties:
+      capability_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      description:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      owner:
+        type: string
+        optional: true
+
+  RoadmapItem:
+    description: Planned investment, initiative, or roadmap-level change.
+    properties:
+      roadmap_item_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      priority:
+        type: string
+        enum_ref: priority
+      owner:
+        type: string
+        optional: true
+      target_date:
+        type: date
+        optional: true
+
+  ReleaseLine:
+    description: Release train, version line, launch window, or delivery stream.
+    properties:
+      release_line_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      starts_at:
+        type: date
+        optional: true
+      target_date:
+        type: date
+        optional: true
+
+  Milestone:
+    description: Delivery milestone, gate, checkpoint, or intermediate target.
+    properties:
+      milestone_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      target_date:
+        type: date
+        optional: true
+
+  WorkItem:
+    description: Execution-level task, issue, bug, cleanup, research item, doc item, or test item.
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      type:
+        type: string
+        enum_ref: work_item_type
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      priority:
+        type: string
+        enum_ref: priority
+      owner:
+        type: string
+        optional: true
+      target_date:
+        type: date
+        optional: true
+
+  DesignDecision:
+    description: Durable project decision with lifecycle, supersession, and impact.
+    properties:
+      decision_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: decision_status
+      decided_at:
+        type: date
+        optional: true
+      owner:
+        type: string
+        optional: true
+
+  Risk:
+    description: Risk that may affect an area, roadmap item, work item, or delivery path.
+    properties:
+      risk_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      priority:
+        type: string
+        enum_ref: priority
+      owner:
+        type: string
+        optional: true
+
+  OpenQuestion:
+    description: Open question that must be answered before a decision or work item can safely proceed.
+    properties:
+      question_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      owner:
+        type: string
+        optional: true
+      due_date:
+        type: date
+        optional: true
+
+relationships:
+  # Deterministic or source-backed project structure.
+  - name: work_item_in_release
+    description: Work item is planned, tracked, or delivered in a release line.
+    from: WorkItem
+    to: ReleaseLine
+
+  - name: work_item_in_milestone
+    description: Work item belongs to a milestone.
+    from: WorkItem
+    to: Milestone
+
+  - name: milestone_in_release
+    description: Milestone belongs to a release line.
+    from: Milestone
+    to: ReleaseLine
+
+  - name: roadmap_item_in_release
+    description: Roadmap item is planned for a release line.
+    from: RoadmapItem
+    to: ReleaseLine
+
+  - name: roadmap_item_in_milestone
+    description: Roadmap item is planned for a milestone.
+    from: RoadmapItem
+    to: Milestone
+
+  - name: work_item_implements_roadmap_item
+    description: Work item executes part of a roadmap item.
+    from: WorkItem
+    to: RoadmapItem
+
+  - name: work_item_targets_area
+    description: Work item targets a product area.
+    from: WorkItem
+    to: ProductArea
+
+  - name: roadmap_item_targets_area
+    description: Roadmap item targets a product area.
+    from: RoadmapItem
+    to: ProductArea
+
+  - name: capability_in_area
+    description: Capability belongs to a product area.
+    from: Capability
+    to: ProductArea
+
+  - name: roadmap_item_targets_capability
+    description: Roadmap item targets a capability.
+    from: RoadmapItem
+    to: Capability
+
+  # Governed interpretation relationships for agent proposals.
+  - name: roadmap_item_depends_on_roadmap_item
+    description: Governed judgment that one roadmap item depends on another roadmap item landing, being decided, or stabilizing first.
+    from: RoadmapItem
+    to: RoadmapItem
+    properties:
+      dependency_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_depends_on_work_item
+    description: Governed judgment that one work item depends on another work item landing, being decided, or stabilizing first.
+    from: WorkItem
+    to: WorkItem
+    properties:
+      dependency_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_mitigates_risk
+    description: Governed judgment that a work item mitigates or reduces a risk.
+    from: WorkItem
+    to: Risk
+    properties:
+      mitigation_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_answers_open_question
+    description: Governed judgment that a work item answers, resolves, or materially investigates an open question.
+    from: WorkItem
+    to: OpenQuestion
+    properties:
+      answer_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_answers_open_question
+    description: Governed judgment that a design decision answers or closes an open question.
+    from: DesignDecision
+    to: OpenQuestion
+    properties:
+      answer_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_area
+    description: Governed judgment that a design decision affects a product area.
+    from: DesignDecision
+    to: ProductArea
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_capability
+    description: Governed judgment that a design decision affects a capability.
+    from: DesignDecision
+    to: Capability
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_roadmap_item
+    description: Governed judgment that a design decision affects a roadmap item.
+    from: DesignDecision
+    to: RoadmapItem
+    properties:
+      impact_type:
+        type: string
+        enum_ref: decision_impact_type
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_constrains_work_item
+    description: Governed judgment that a design decision constrains how a work item should be changed.
+    from: DesignDecision
+    to: WorkItem
+    properties:
+      impact_type:
+        type: string
+        enum_ref: decision_impact_type
+      constraint_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_supersedes_decision
+    description: Governed judgment that one design decision supersedes another.
+    from: DesignDecision
+    to: DesignDecision
+    properties:
+      supersession_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_attaches_to_area
+    description: Governed judgment that a risk attaches to a product area.
+    from: Risk
+    to: ProductArea
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_blocks_work_item
+    description: Governed judgment that a risk blocks or materially delays a work item.
+    from: Risk
+    to: WorkItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_blocks_roadmap_item
+    description: Governed judgment that a risk blocks or materially delays a roadmap item.
+    from: Risk
+    to: RoadmapItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_decision
+    description: Governed judgment that an open question blocks a design decision.
+    from: OpenQuestion
+    to: DesignDecision
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_work_item
+    description: Governed judgment that an open question blocks a work item.
+    from: OpenQuestion
+    to: WorkItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_roadmap_item
+    description: Governed judgment that an open question blocks a roadmap item.
+    from: OpenQuestion
+    to: RoadmapItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+named_queries:
+  roadmap_item_context:
+    mode: traversal
+    description: Starting from a roadmap item, inspect dependencies, dependents, delivery placement, work, decisions, risks, and open questions.
+    entry_point: RoadmapItem
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: roadmap_item_depends_on_roadmap_item
+        direction: outgoing
+        as: upstream_dependency
+        required: false
+    include:
+      downstream_dependents:
+        from: $entry
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: incoming
+        many: true
+      release_lines:
+        from: $entry
+        relationship: roadmap_item_in_release
+        direction: outgoing
+        many: true
+      milestones:
+        from: $entry
+        relationship: roadmap_item_in_milestone
+        direction: outgoing
+        many: true
+      work_items:
+        from: $entry
+        relationship: work_item_implements_roadmap_item
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_affects_roadmap_item
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_blocks_roadmap_item
+        direction: incoming
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_blocks_roadmap_item
+        direction: incoming
+        many: true
+      product_areas:
+        from: $entry
+        relationship: roadmap_item_targets_area
+        direction: outgoing
+        many: true
+      capabilities:
+        from: $entry
+        relationship: roadmap_item_targets_capability
+        direction: outgoing
+        many: true
+
+  work_item_change_context:
+    mode: traversal
+    description: Starting from a work item, inspect roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions.
+    entry_point: WorkItem
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        as: roadmap_item
+    include:
+      release_lines:
+        from: $entry
+        relationship: work_item_in_release
+        direction: outgoing
+        many: true
+      milestones:
+        from: $entry
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_work_dependencies:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      constraining_decisions:
+        from: $entry
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      risk_mitigations:
+        from: $entry
+        relationship: work_item_mitigates_risk
+        direction: outgoing
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      answered_questions:
+        from: $entry
+        relationship: work_item_answers_open_question
+        direction: outgoing
+        many: true
+      product_areas:
+        from: $entry
+        relationship: work_item_targets_area
+        direction: outgoing
+        many: true
+
+  area_change_context:
+    mode: traversal
+    description: Starting from a product area, inspect roadmap items, work, decisions, risks, and open questions before editing the subsystem.
+    entry_point: ProductArea
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: roadmap_item_targets_area
+        direction: incoming
+        as: roadmap_item
+    include:
+      work_items:
+        from: $entry
+        relationship: work_item_targets_area
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_affects_area
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_attaches_to_area
+        direction: incoming
+        many: true
+      open_questions:
+        from: $result
+        relationship: open_question_blocks_roadmap_item
+        direction: incoming
+        many: true
+      capabilities:
+        from: $entry
+        relationship: capability_in_area
+        direction: incoming
+        many: true
+
+  release_readiness_context:
+    mode: traversal
+    description: Starting from a release line, inspect active, planned, or blocked work plus roadmap items, dependency context, risks, and open questions.
+    entry_point: ReleaseLine
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: work_item_in_release
+        direction: incoming
+        as: release_work
+        where:
+          candidate.properties.status:
+            in: [active, planned, blocked]
+    include:
+      roadmap_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
+      milestones:
+        from: $result
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_work_dependencies:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      decisions:
+        from: $result
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+      risks:
+        from: $result
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      open_questions:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+
+  deferred_release_gating_work_items:
+    mode: traversal
+    description: Deferred work items that are still attached to a release line and an active, planned, or blocked milestone.
+    entry_point: ReleaseLine
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: work_item_in_release
+        direction: incoming
+        as: release_work
+        where:
+          candidate.properties.status:
+            eq: deferred
+    include:
+      gating_milestones:
+        from: $result
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+        required: true
+        where:
+          target.properties.status:
+            in: [active, planned, blocked]
+      roadmap_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
+
+  decision_impact_context:
+    mode: traversal
+    description: Starting from a design decision, inspect affected roadmap, constrained work, answered questions, and supersession context.
+    entry_point: DesignDecision
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - decision_affects_roadmap_item
+          - decision_constrains_work_item
+          - decision_affects_capability
+          - decision_affects_area
+          - decision_answers_open_question
+          - decision_supersedes_decision
+        direction: outgoing
+        as: impact_context
+    include:
+      affected_roadmap_items:
+        from: $entry
+        relationship: decision_affects_roadmap_item
+        direction: outgoing
+        many: true
+      affected_capabilities:
+        from: $entry
+        relationship: decision_affects_capability
+        direction: outgoing
+        many: true
+      affected_areas:
+        from: $entry
+        relationship: decision_affects_area
+        direction: outgoing
+        many: true
+      answered_questions:
+        from: $entry
+        relationship: decision_answers_open_question
+        direction: outgoing
+        many: true
+      superseded_decisions:
+        from: $entry
+        relationship: decision_supersedes_decision
+        direction: outgoing
+        many: true
+      superseding_decisions:
+        from: $entry
+        relationship: decision_supersedes_decision
+        direction: incoming
+        many: true
+
+  open_question_context:
+    mode: traversal
+    description: Starting from an open question, inspect blocked and answered roadmap, work, and decision context.
+    entry_point: OpenQuestion
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - open_question_blocks_roadmap_item
+          - open_question_blocks_work_item
+          - open_question_blocks_decision
+        direction: outgoing
+        as: blocked_context
+    include:
+      blocked_roadmap_items:
+        from: $entry
+        relationship: open_question_blocks_roadmap_item
+        direction: outgoing
+        many: true
+      blocked_decisions:
+        from: $entry
+        relationship: open_question_blocks_decision
+        direction: outgoing
+        many: true
+      answering_work_items:
+        from: $entry
+        relationship: work_item_answers_open_question
+        direction: incoming
+        many: true
+      answering_decisions:
+        from: $entry
+        relationship: decision_answers_open_question
+        direction: incoming
+        many: true
+
+  blocked_work_items:
+    mode: collection
+    description: Work queue of blocked execution-level work items.
+    result_shape: entity
+    returns: WorkItem
+    where:
+      result.properties.status:
+        eq: blocked
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+    limit: 100
+
+  active_risks:
+    mode: collection
+    description: Active project risks.
+    result_shape: entity
+    returns: Risk
+    where:
+      result.properties.status:
+        eq: active
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+    limit: 100
+
+  open_questions_needing_review:
+    mode: collection
+    description: Active open questions that should be reviewed before dependent work proceeds.
+    result_shape: entity
+    returns: OpenQuestion
+    where:
+      result.properties.status:
+        eq: active
+    limit: 100
+
+  superseded_decisions:
+    mode: collection
+    description: Design decisions whose status indicates they have been superseded.
+    result_shape: entity
+    returns: DesignDecision
+    where:
+      result.properties.status:
+        eq: superseded
+    limit: 100
+
+quality_checks:
+  - name: roadmap_items_target_area
+    kind: cardinality
+    description: Roadmap items should be grounded in at least one product area.
+    severity: warning
+    entity_type: RoadmapItem
+    relationship_type: roadmap_item_targets_area
+    direction: outgoing
+    min_count: 1
+
+  - name: work_items_target_area
+    kind: cardinality
+    description: Work items should be grounded in at least one product area when they are not only roadmap-derived.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_targets_area
+    direction: outgoing
+    min_count: 1
+
+  - name: roadmap_dependencies_have_basis
+    kind: property
+    description: Roadmap dependency proposals should include a short domain explanation.
+    severity: warning
+    target: relationship
+    relationship_type: roadmap_item_depends_on_roadmap_item
+    property: dependency_basis
+    rule: non_empty
+
+  - name: work_dependencies_have_basis
+    kind: property
+    description: Work dependency proposals should include a short domain explanation.
+    severity: warning
+    target: relationship
+    relationship_type: work_item_depends_on_work_item
+    property: dependency_basis
+    rule: non_empty
+
+  - name: decision_roadmap_impacts_have_type
+    kind: property
+    description: Decision-to-roadmap impacts should identify whether the decision prioritizes, blocks, scopes, or otherwise affects the item.
+    severity: warning
+    target: relationship
+    relationship_type: decision_affects_roadmap_item
+    property: impact_type
+    rule: required
+
+  - name: decision_work_constraints_have_type
+    kind: property
+    description: Decision-to-work constraints should identify the kind of impact the decision has on the work.
+    severity: warning
+    target: relationship
+    relationship_type: decision_constrains_work_item
+    property: impact_type
+    rule: required
+
+  - name: risk_work_blockers_have_basis
+    kind: property
+    description: Risk blockers should include a short explanation of why the work is blocked.
+    severity: warning
+    target: relationship
+    relationship_type: risk_blocks_work_item
+    property: blocking_basis
+    rule: non_empty
+
+  - name: open_question_work_blockers_have_basis
+    kind: property
+    description: Open-question blockers should include a short explanation of why the work is blocked.
+    severity: warning
+    target: relationship
+    relationship_type: open_question_blocks_work_item
+    property: blocking_basis
+    rule: non_empty
+
+  - name: decision_supersessions_have_basis
+    kind: property
+    description: Decision supersession edges should explain the supersession basis.
+    severity: warning
+    target: relationship
+    relationship_type: decision_supersedes_decision
+    property: supersession_basis
+    rule: non_empty
+
+  - name: deferred_release_work_not_gating_0_2
+    kind: named_query_result_count
+    description: Deferred work should not remain attached to active, planned, or blocked 0.2 gating milestones.
+    severity: error
+    query_name: deferred_release_gating_work_items
+    params:
+      release_line_id: release-0.2
+    max_count: 0

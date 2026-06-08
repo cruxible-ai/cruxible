@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import ProviderSchema
+from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.kits import (
     KitManifest,
@@ -228,6 +230,123 @@ def test_config_yaml_kit_ref_detection_is_provider_ref_only() -> None:
     assert not config_yaml_has_kit_provider_refs(
         "version: '1.0'\ndescription: 'example kit:// text only'\nproviders: {}\n"
     )
+
+
+def test_project_state_kit_config_is_dev_project_scoped() -> None:
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "kits"
+        / "project-state"
+        / "config.yaml"
+    )
+    config = load_config(config_path)
+
+    validate_config(config)
+
+    expected_entity_types = {
+        "ProductArea",
+        "Capability",
+        "RoadmapItem",
+        "ReleaseLine",
+        "Milestone",
+        "WorkItem",
+        "DesignDecision",
+        "Risk",
+        "OpenQuestion",
+    }
+    removed_entity_types = {
+        "Assumption",
+        "CustomerAccount",
+        "Persona",
+        "UseCase",
+        "PainPoint",
+        "FeatureRequest",
+        "UsageSignal",
+        "SupportSignal",
+        "Experiment",
+        "Outcome",
+    }
+    assert set(config.entity_types) == expected_entity_types
+
+    relationships = {relationship.name: relationship for relationship in config.relationships}
+    assert not any(
+        relationship.from_entity in removed_entity_types
+        or relationship.to_entity in removed_entity_types
+        for relationship in relationships.values()
+    )
+
+    required_relationships = {
+        "roadmap_item_depends_on_roadmap_item",
+        "work_item_depends_on_work_item",
+        "work_item_mitigates_risk",
+        "work_item_answers_open_question",
+        "decision_answers_open_question",
+        "decision_affects_roadmap_item",
+        "decision_constrains_work_item",
+    }
+    assert required_relationships <= set(relationships)
+    for name in required_relationships:
+        policy = relationships[name].proposal_policy
+        assert policy is not None
+        assert policy.signals["source_evidence"].role == "required"
+        assert policy.signals["maintainer_judgment"].role == "advisory"
+
+    assert relationships["work_item_depends_on_work_item"].from_entity == "WorkItem"
+    assert relationships["work_item_depends_on_work_item"].to_entity == "WorkItem"
+    assert relationships["work_item_mitigates_risk"].to_entity == "Risk"
+    assert relationships["work_item_answers_open_question"].to_entity == "OpenQuestion"
+    assert relationships["decision_answers_open_question"].to_entity == "OpenQuestion"
+    assert (
+        relationships["decision_affects_roadmap_item"]
+        .properties["impact_type"]
+        .enum_ref
+        == "decision_impact_type"
+    )
+    assert (
+        relationships["decision_constrains_work_item"]
+        .properties["impact_type"]
+        .enum_ref
+        == "decision_impact_type"
+    )
+
+    required_queries = {
+        "roadmap_item_context",
+        "work_item_change_context",
+        "area_change_context",
+        "release_readiness_context",
+        "deferred_release_gating_work_items",
+        "decision_impact_context",
+        "open_question_context",
+        "blocked_work_items",
+        "active_risks",
+        "open_questions_needing_review",
+        "superseded_decisions",
+    }
+    assert set(config.named_queries) == required_queries
+    for name in {
+        "roadmap_item_context",
+        "work_item_change_context",
+        "area_change_context",
+        "release_readiness_context",
+        "decision_impact_context",
+        "open_question_context",
+    }:
+        query = config.named_queries[name]
+        assert query.relationship_state == "reviewable"
+        assert query.allow_relationship_state_override is True
+
+    quality_checks = {check.name for check in config.quality_checks}
+    assert {
+        "roadmap_items_target_area",
+        "work_items_target_area",
+        "roadmap_dependencies_have_basis",
+        "work_dependencies_have_basis",
+        "decision_roadmap_impacts_have_type",
+        "decision_work_constraints_have_type",
+        "deferred_release_work_not_gating_0_2",
+    } <= quality_checks
+    assert config.workflows == {}
+    assert config.artifacts == {}
 
 
 def test_materialized_metadata_records_bundle_and_runtime_digest(tmp_path: Path) -> None:
