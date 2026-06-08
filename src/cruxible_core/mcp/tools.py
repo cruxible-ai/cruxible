@@ -666,6 +666,30 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_add_entity(instance_id, entities)
 
     @_tool
+    def cruxible_batch_direct_write(
+        instance_id: str,
+        payload: contracts.BatchDirectWritePayload,
+        dry_run: bool = False,
+    ) -> contracts.BatchDirectWriteResult:
+        """Validate or apply a direct batch graph write payload.
+
+        Use this for coherent hard-state slices that contain entities and
+        relationships. The payload may define top-level shared_evidence entries
+        and reference them from relationships with shared_evidence_keys. Direct
+        writes are live/unreviewed state; group approval remains the path for
+        accepted review state.
+
+        Set dry_run=true to validate entity properties, relationship endpoints,
+        relationship properties, evidence locators, duplicate IDs, and missing
+        shared evidence keys without mutating graph state.
+        """
+        return handlers.handle_batch_direct_write(
+            instance_id,
+            payload,
+            dry_run=dry_run,
+        )
+
+    @_tool
     def cruxible_add_constraint(
         instance_id: str,
         name: str,

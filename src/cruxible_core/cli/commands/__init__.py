@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     analyze_feedback_cmd: Any
     analyze_outcomes_cmd: Any
     apply_cmd: Any
+    batch_direct_write_cmd: Any
     config_views_cmd: Any
     connect_group: Any
     decision_records_cmd: Any
@@ -74,6 +75,7 @@ else:
         add_decision_policy_cmd,
         add_entity_cmd,
         add_relationship_cmd,
+        batch_direct_write_cmd,
         reload_config_cmd,
     )
     from cruxible_core.cli.commands.reads import (
@@ -115,6 +117,7 @@ __all__ = [
     "analyze_feedback_cmd",
     "analyze_outcomes_cmd",
     "apply_cmd",
+    "batch_direct_write_cmd",
     "config_views_cmd",
     "connect_group",
     "decision_records_cmd",

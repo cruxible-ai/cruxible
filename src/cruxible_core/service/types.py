@@ -106,6 +106,26 @@ class RelationshipWriteInput:
 
 
 @dataclass
+class SharedEvidenceInput:
+    evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
+    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(
+        default_factory=list
+    )
+
+
+@dataclass
+class BatchRelationshipWriteInput(RelationshipWriteInput):
+    shared_evidence_keys: Sequence[str] = field(default_factory=list)
+
+
+@dataclass
+class BatchDirectWriteInput:
+    entities: Sequence[EntityWriteInput] = field(default_factory=list)
+    relationships: Sequence[BatchRelationshipWriteInput] = field(default_factory=list)
+    shared_evidence: Mapping[str, SharedEvidenceInput] = field(default_factory=dict)
+
+
+@dataclass
 class RelationshipTargetInput:
     from_type: str
     from_id: str
@@ -138,6 +158,20 @@ class AddEntityResult:
 class AddRelationshipResult:
     added: int
     updated: int
+    receipt_id: str | None = None
+
+
+@dataclass
+class BatchDirectWriteResult:
+    dry_run: bool
+    valid: bool
+    entities_added: int = 0
+    entities_updated: int = 0
+    relationships_added: int = 0
+    relationships_updated: int = 0
+    validation_errors: list[str] = field(default_factory=list)
+    validation_warnings: list[str] = field(default_factory=list)
+    evidence_sources_used: list[str] = field(default_factory=list)
     receipt_id: str | None = None
 
 

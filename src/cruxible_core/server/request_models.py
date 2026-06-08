@@ -68,6 +68,11 @@ class AddRelationshipsRequest(BaseModel):
     relationships: list[contracts.RelationshipInput]
 
 
+class BatchDirectWriteRequest(BaseModel):
+    payload: contracts.BatchDirectWritePayload
+    dry_run: bool = False
+
+
 class FeedbackRequest(BaseModel):
     receipt_id: str
     action: contracts.FeedbackAction

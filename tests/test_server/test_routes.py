@@ -1309,6 +1309,90 @@ def test_add_relationship_rejects_malformed_evidence_ref(
     assert response.status_code in {400, 422}
 
 
+def test_batch_direct_write_route_dry_run_and_apply(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    payload = {
+        "entities": [
+            {
+                "entity_type": "Vehicle",
+                "entity_id": "V-BATCH",
+                "properties": {
+                    "vehicle_id": "V-BATCH",
+                    "year": 2026,
+                    "make": "Honda",
+                    "model": "Pilot",
+                },
+            },
+            {
+                "entity_type": "Part",
+                "entity_id": "BP-BATCH",
+                "properties": {
+                    "part_number": "BP-BATCH",
+                    "name": "Batch Pads",
+                    "category": "brakes",
+                },
+            },
+        ],
+        "relationships": [
+            {
+                "from_type": "Part",
+                "from_id": "BP-BATCH",
+                "relationship": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-BATCH",
+                "properties": {"verified": True, "source": "batch"},
+                "shared_evidence_keys": ["doc"],
+                "evidence_rationale": "Batch payload establishes the fitment.",
+            }
+        ],
+        "shared_evidence": {
+            "doc": {
+                "evidence_refs": [
+                    {"source": "roadmap_doc", "source_record_id": "batch-section"}
+                ]
+            }
+        },
+    }
+
+    dry_run = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": payload, "dry_run": True},
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json()["valid"] is True
+    missing = app_client.get(f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-BATCH")
+    assert missing.status_code == 200
+    assert missing.json()["found"] is False
+
+    applied = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": payload, "dry_run": False},
+    )
+    assert applied.status_code == 200
+    applied_payload = applied.json()
+    assert applied_payload["entities_added"] == 2
+    assert applied_payload["relationships_added"] == 1
+    assert applied_payload["receipt_id"]
+
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-BATCH",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-BATCH",
+        },
+    )
+    assert lookup.status_code == 200
+    metadata = lookup.json()["metadata"]
+    assert metadata["provenance"]["source_ref"] == "cruxible_batch_direct_write"
+    assert metadata["evidence"]["evidence_refs"][0]["source"] == "roadmap_doc"
+
+
 def test_feedback_batch_route(
     app_client: TestClient,
     server_project: Path,

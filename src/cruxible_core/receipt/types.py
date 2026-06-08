@@ -21,6 +21,7 @@ OperationType = Literal[
     "workflow",
     "add_entity",
     "add_relationship",
+    "batch_direct_write",
     "feedback",
     "feedback_batch",
     "group_propose",

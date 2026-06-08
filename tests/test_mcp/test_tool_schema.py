@@ -116,6 +116,18 @@ class TestInputSchema:
         required = set(ent_def["required"])
         assert {"entity_type", "entity_id"} <= required
 
+    def test_batch_direct_write_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_batch_direct_write"].inputSchema
+        assert {"instance_id", "payload"} <= set(schema["required"])
+        assert "dry_run" in schema["properties"]
+        payload_ref = schema["properties"]["payload"]["$ref"]
+        payload_name = payload_ref.split("/")[-1]
+        payload_def = schema["$defs"][payload_name]
+        assert {"entities", "relationships", "shared_evidence"} <= set(
+            payload_def["properties"]
+        )
+
     def test_add_constraint_severity_enum(self, server):
         schemas = _get_tool_schemas(server)
         severity = schemas["cruxible_add_constraint"].inputSchema["properties"]["severity"]

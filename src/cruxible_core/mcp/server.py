@@ -41,9 +41,11 @@ Workflow guidance belongs client-side in agent skills or playbooks, not in MCP p
 **Existing graph?**
 - `cruxible_evaluate`
 - `cruxible_query`
+- `cruxible_query_inline`
 - `cruxible_list`
 - `cruxible_receipt`
 - `cruxible_feedback` / `cruxible_feedback_from_query`
+- `cruxible_batch_direct_write` for dry-run/apply of structured direct state payloads
 
 ## Permission Modes
 

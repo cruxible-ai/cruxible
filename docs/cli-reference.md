@@ -131,6 +131,50 @@ cruxible add-relationship \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible batch-direct-write
+
+**Usage:** `cruxible batch-direct-write --payload-file PATH [--dry-run] [--json]`
+
+**Purpose:** Validate or apply one structured direct graph write payload containing
+entities, relationships, and optional payload-local shared evidence.
+
+**Payload Shape:**
+
+```yaml
+entities:
+  - entity_type: RoadmapItem
+    entity_id: ri-example
+    properties:
+      roadmap_item_id: ri-example
+      title: Example roadmap item
+relationships:
+  - from_type: WorkItem
+    from_id: wi-example
+    relationship: work_item_implements_roadmap_item
+    to_type: RoadmapItem
+    to_id: ri-example
+    shared_evidence_keys: [source_section]
+    evidence_rationale: Extracted from the referenced section.
+shared_evidence:
+  source_section:
+    source_evidence:
+      - source_artifact_id: SRC-...
+        chunk_id: mdchunk_...
+```
+
+**Output And Side Effects:**
+- `--dry-run` validates entity properties, relationship endpoints/properties,
+  evidence locators, duplicate IDs, and missing shared evidence keys without
+  mutating graph state.
+- Apply mode writes all valid entities and relationships through one mutation
+  receipt and returns a compact summary. Direct writes are live/unreviewed
+  state, not group-reviewed accepted state.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Payload file is not a JSON/YAML object.
+- Unknown shared evidence key or invalid source-evidence locator.
+
 ## cruxible analyze-feedback
 
 **Usage:** `cruxible analyze-feedback [OPTIONS]`

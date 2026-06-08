@@ -2518,6 +2518,62 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
     assert "Relationship added:" in result.output
 
 
+def test_batch_direct_write_passes_payload_file_to_server_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["instance_id"] = instance_id
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+                receipt_id=None,
+            )
+
+    payload_file = tmp_path / "batch.yaml"
+    payload_file.write_text(
+        """
+entities:
+  - entity_type: Vehicle
+    entity_id: V-BATCH
+    properties:
+      vehicle_id: V-BATCH
+relationships: []
+shared_evidence: {}
+"""
+    )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "batch-direct-write",
+            "--payload-file",
+            str(payload_file),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    assert captured["dry_run"] is True
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.entities[0].entity_id == "V-BATCH"
+    assert "Batch direct write validated." in result.output
+
+
 @pytest.mark.parametrize(
     ("raw_ref", "expected_message"),
     [

@@ -1149,6 +1149,29 @@ def handle_add_entity(
     )
 
 
+def handle_batch_direct_write(
+    instance_id: str,
+    payload: contracts.BatchDirectWritePayload,
+    *,
+    dry_run: bool = False,
+) -> contracts.BatchDirectWriteResult:
+    """Validate or apply one direct entity/relationship write payload."""
+    return _dispatch_remote_or_local(
+        lambda client: client.batch_direct_write(
+            instance_id,
+            payload,
+            dry_run=dry_run,
+        ),
+        lambda: api.batch_direct_write(
+            instance_id,
+            payload,
+            dry_run=dry_run,
+        ),
+        allow_local=False,
+        operation_name="cruxible_batch_direct_write",
+    )
+
+
 def handle_add_constraint(
     instance_id: str,
     name: str,

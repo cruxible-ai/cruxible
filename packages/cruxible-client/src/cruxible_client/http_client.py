@@ -693,6 +693,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AddEntityResult)
 
+    def batch_direct_write(
+        self,
+        instance_id: str,
+        payload: contracts.BatchDirectWritePayload,
+        *,
+        dry_run: bool = False,
+    ) -> contracts.BatchDirectWriteResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/direct-writes/batch",
+            json={"payload": payload.model_dump(mode="json"), "dry_run": dry_run},
+        )
+        return self._parse_model(response, contracts.BatchDirectWriteResult)
+
     def workflow_lock(
         self,
         instance_id: str,

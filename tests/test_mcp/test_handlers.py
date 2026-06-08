@@ -14,7 +14,12 @@ from mcp.server.fastmcp.exceptions import ToolError
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.mcp.handlers import handle_add_relationship, handle_query
+from cruxible_core.mcp.handlers import (
+    handle_add_relationship,
+    handle_batch_direct_write,
+    handle_query,
+    handle_query_inline,
+)
 from cruxible_core.mcp.server import create_server
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
@@ -86,6 +91,100 @@ def test_handle_add_relationship_preserves_evidence_fields(
     assert relationship.evidence_refs[0].source == "roadmap_doc"
     assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
+
+
+def test_handle_batch_direct_write_preserves_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["instance_id"] = instance_id
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+            )
+
+    monkeypatch.setattr("cruxible_core.mcp.handlers._get_client", lambda: StubClient())
+    payload = contracts.BatchDirectWritePayload(
+        entities=[
+            contracts.EntityInput(
+                entity_type="Vehicle",
+                entity_id="V-BATCH",
+            )
+        ]
+    )
+
+    result = handle_batch_direct_write("inst_123", payload, dry_run=True)
+
+    assert result.dry_run is True
+    assert captured["instance_id"] == "inst_123"
+    assert captured["payload"] == payload
+    assert captured["dry_run"] is True
+
+
+def test_handle_query_inline_preserves_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def query_inline(
+            self,
+            instance_id,
+            definition,
+            params,
+            *,
+            limit=None,
+            relationship_state=None,
+            decision_record_id=None,
+        ):
+            captured["instance_id"] = instance_id
+            captured["definition"] = definition
+            captured["params"] = params
+            captured["limit"] = limit
+            captured["relationship_state"] = relationship_state
+            captured["decision_record_id"] = decision_record_id
+            return contracts.QueryToolResult(
+                results=[],
+                receipt_id="RCP-inline",
+                receipt=None,
+                total_results=0,
+                limit=50,
+                truncated=False,
+                steps_executed=0,
+            )
+
+    definition = contracts.InlineQueryDefinition(
+        name="brake_parts",
+        mode="collection",
+        returns="Part",
+        result_shape="entity",
+    )
+
+    monkeypatch.setattr("cruxible_core.mcp.handlers._get_client", lambda: StubClient())
+    result = handle_query_inline(
+        "inst_123",
+        definition,
+        {"category": "brakes"},
+        limit=10,
+        relationship_state="reviewable",
+        decision_record_id="DR-1",
+    )
+
+    assert result.receipt_id == "RCP-inline"
+    assert captured == {
+        "instance_id": "inst_123",
+        "definition": definition,
+        "params": {"category": "brakes"},
+        "limit": 10,
+        "relationship_state": "reviewable",
+        "decision_record_id": "DR-1",
+    }
 
 
 @pytest.fixture

@@ -100,12 +100,32 @@
         "unknown"
       ]
     },
+    "QueryDedupe": {
+      "values": [
+        "entity",
+        "path",
+        "none"
+      ]
+    },
+    "QueryMode": {
+      "values": [
+        "collection",
+        "traversal"
+      ]
+    },
     "QueryRelationshipState": {
       "values": [
         "live",
         "accepted",
         "pending",
         "reviewable"
+      ]
+    },
+    "QueryResultShape": {
+      "values": [
+        "entity",
+        "path",
+        "relationship"
       ]
     },
     "ResourceType": {
@@ -1725,6 +1745,908 @@
       "required_fields": [
         "anchor_type",
         "outcome_count"
+      ]
+    },
+    "BatchDirectWritePayload": {
+      "fields": {
+        "entities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "entities",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EntityInput"
+            },
+            "title": "Entities",
+            "type": "array"
+          }
+        },
+        "relationships": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "relationships",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/BatchRelationshipInput"
+            },
+            "title": "Relationships",
+            "type": "array"
+          }
+        },
+        "shared_evidence": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "shared_evidence",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SharedEvidenceInput"
+            },
+            "title": "Shared Evidence",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "BatchRelationshipInput": {
+            "properties": {
+              "evidence_rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence Rationale"
+              },
+              "evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship": {
+                "title": "Relationship",
+                "type": "string"
+              },
+              "shared_evidence_keys": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Shared Evidence Keys",
+                "type": "array"
+              },
+              "source_evidence": {
+                "items": {
+                  "$ref": "#/$defs/SourceEvidenceInput"
+                },
+                "title": "Source Evidence",
+                "type": "array"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "from_type",
+              "from_id",
+              "relationship",
+              "to_type",
+              "to_id"
+            ],
+            "title": "BatchRelationshipInput",
+            "type": "object"
+          },
+          "EntityInput": {
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id"
+            ],
+            "title": "EntityInput",
+            "type": "object"
+          },
+          "EvidenceRef": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Id"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "row_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Row Index"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "source_record_id": {
+                "title": "Source Record Id",
+                "type": "string"
+              },
+              "table": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Table"
+              }
+            },
+            "required": [
+              "source",
+              "source_record_id"
+            ],
+            "title": "EvidenceRef",
+            "type": "object"
+          },
+          "SharedEvidenceInput": {
+            "properties": {
+              "evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/EvidenceRef"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "source_evidence": {
+                "items": {
+                  "$ref": "#/$defs/SourceEvidenceInput"
+                },
+                "title": "Source Evidence",
+                "type": "array"
+              }
+            },
+            "title": "SharedEvidenceInput",
+            "type": "object"
+          },
+          "SourceEvidenceInput": {
+            "properties": {
+              "block_selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Selector"
+              },
+              "chunk_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chunk Id"
+              },
+              "expected_content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Content Hash"
+              },
+              "heading_path": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Heading Path"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id"
+            ],
+            "title": "SourceEvidenceInput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "entities": {
+            "items": {
+              "$ref": "#/$defs/EntityInput"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "relationships": {
+            "items": {
+              "$ref": "#/$defs/BatchRelationshipInput"
+            },
+            "title": "Relationships",
+            "type": "array"
+          },
+          "shared_evidence": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SharedEvidenceInput"
+            },
+            "title": "Shared Evidence",
+            "type": "object"
+          }
+        },
+        "title": "BatchDirectWritePayload",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "BatchDirectWriteResult": {
+      "fields": {
+        "dry_run": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "dry_run",
+          "required": true,
+          "schema": {
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "entities_added": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "entities_added",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Entities Added",
+            "type": "integer"
+          }
+        },
+        "entities_updated": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "entities_updated",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Entities Updated",
+            "type": "integer"
+          }
+        },
+        "evidence_sources_used": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "evidence_sources_used",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Sources Used",
+            "type": "array"
+          }
+        },
+        "receipt_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          }
+        },
+        "relationships_added": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "relationships_added",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Relationships Added",
+            "type": "integer"
+          }
+        },
+        "relationships_updated": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "relationships_updated",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Relationships Updated",
+            "type": "integer"
+          }
+        },
+        "valid": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "valid",
+          "required": true,
+          "schema": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "validation_errors": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "validation_errors",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validation Errors",
+            "type": "array"
+          }
+        },
+        "validation_warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "validation_warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validation Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "entities_added": {
+            "default": 0,
+            "title": "Entities Added",
+            "type": "integer"
+          },
+          "entities_updated": {
+            "default": 0,
+            "title": "Entities Updated",
+            "type": "integer"
+          },
+          "evidence_sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Sources Used",
+            "type": "array"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Id"
+          },
+          "relationships_added": {
+            "default": 0,
+            "title": "Relationships Added",
+            "type": "integer"
+          },
+          "relationships_updated": {
+            "default": 0,
+            "title": "Relationships Updated",
+            "type": "integer"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "validation_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validation Errors",
+            "type": "array"
+          },
+          "validation_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validation Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "valid"
+        ],
+        "title": "BatchDirectWriteResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "dry_run",
+        "valid"
+      ]
+    },
+    "BatchRelationshipInput": {
+      "fields": {
+        "evidence_rationale": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "evidence_rationale",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Rationale"
+          }
+        },
+        "evidence_refs": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "evidence_refs",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          }
+        },
+        "from_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_id",
+          "required": true,
+          "schema": {
+            "title": "From Id",
+            "type": "string"
+          }
+        },
+        "from_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_type",
+          "required": true,
+          "schema": {
+            "title": "From Type",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "relationship": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relationship",
+          "required": true,
+          "schema": {
+            "title": "Relationship",
+            "type": "string"
+          }
+        },
+        "shared_evidence_keys": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "shared_evidence_keys",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shared Evidence Keys",
+            "type": "array"
+          }
+        },
+        "source_evidence": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "source_evidence",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          }
+        },
+        "to_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_id",
+          "required": true,
+          "schema": {
+            "title": "To Id",
+            "type": "string"
+          }
+        },
+        "to_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_type",
+          "required": true,
+          "schema": {
+            "title": "To Type",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "EvidenceRef": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Id"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "row_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Row Index"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "source_record_id": {
+                "title": "Source Record Id",
+                "type": "string"
+              },
+              "table": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Table"
+              }
+            },
+            "required": [
+              "source",
+              "source_record_id"
+            ],
+            "title": "EvidenceRef",
+            "type": "object"
+          },
+          "SourceEvidenceInput": {
+            "properties": {
+              "block_selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Selector"
+              },
+              "chunk_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chunk Id"
+              },
+              "expected_content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Content Hash"
+              },
+              "heading_path": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Heading Path"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id"
+            ],
+            "title": "SourceEvidenceInput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "evidence_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Rationale"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "from_id": {
+            "title": "From Id",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "relationship": {
+            "title": "Relationship",
+            "type": "string"
+          },
+          "shared_evidence_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shared Evidence Keys",
+            "type": "array"
+          },
+          "source_evidence": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          },
+          "to_id": {
+            "title": "To Id",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_type",
+          "from_id",
+          "relationship",
+          "to_type",
+          "to_id"
+        ],
+        "title": "BatchRelationshipInput",
+        "type": "object"
+      },
+      "required_fields": [
+        "from_id",
+        "from_type",
+        "relationship",
+        "to_id",
+        "to_type"
       ]
     },
     "CanonicalViewResult": {
@@ -5335,6 +6257,494 @@
       "required_fields": [
         "instance_id",
         "status"
+      ]
+    },
+    "InlineQueryDefinition": {
+      "fields": {
+        "allow_relationship_state_override": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "allow_relationship_state_override",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Allow Relationship State Override",
+            "type": "boolean"
+          }
+        },
+        "dedupe": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dedupe",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "entity",
+                  "path",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dedupe"
+          }
+        },
+        "description": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "description",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          }
+        },
+        "entry_point": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "entry_point",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entry Point"
+          }
+        },
+        "include": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "include",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Include",
+            "type": "object"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "max_paths": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_paths",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths"
+          }
+        },
+        "max_paths_per_result": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_paths_per_result",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths Per Result"
+          }
+        },
+        "mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "collection",
+              "traversal"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "name",
+          "required": true,
+          "schema": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "order_by": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "order_by",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Order By",
+            "type": "array"
+          }
+        },
+        "relationship_state": {
+          "default": "live",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "relationship_state",
+          "required": false,
+          "schema": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "pending",
+              "reviewable"
+            ],
+            "title": "Relationship State",
+            "type": "string"
+          }
+        },
+        "result_shape": {
+          "default": "path",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "result_shape",
+          "required": false,
+          "schema": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          }
+        },
+        "returns": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "returns",
+          "required": true,
+          "schema": {
+            "title": "Returns",
+            "type": "string"
+          }
+        },
+        "select": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "select",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Select"
+          }
+        },
+        "traversal": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "traversal",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Traversal",
+            "type": "array"
+          }
+        },
+        "where": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "where",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Where"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "allow_relationship_state_override": {
+            "default": false,
+            "title": "Allow Relationship State Override",
+            "type": "boolean"
+          },
+          "dedupe": {
+            "anyOf": [
+              {
+                "enum": [
+                  "entity",
+                  "path",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dedupe"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "entry_point": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entry Point"
+          },
+          "include": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Include",
+            "type": "object"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "max_paths": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths"
+          },
+          "max_paths_per_result": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Paths Per Result"
+          },
+          "mode": {
+            "enum": [
+              "collection",
+              "traversal"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order_by": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Order By",
+            "type": "array"
+          },
+          "relationship_state": {
+            "default": "live",
+            "enum": [
+              "live",
+              "accepted",
+              "pending",
+              "reviewable"
+            ],
+            "title": "Relationship State",
+            "type": "string"
+          },
+          "result_shape": {
+            "default": "path",
+            "enum": [
+              "entity",
+              "path",
+              "relationship"
+            ],
+            "title": "Result Shape",
+            "type": "string"
+          },
+          "returns": {
+            "title": "Returns",
+            "type": "string"
+          },
+          "select": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Select"
+          },
+          "traversal": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Traversal",
+            "type": "array"
+          },
+          "where": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Where"
+          }
+        },
+        "required": [
+          "name",
+          "mode",
+          "returns"
+        ],
+        "title": "InlineQueryDefinition",
+        "type": "object"
+      },
+      "required_fields": [
+        "mode",
+        "name",
+        "returns"
       ]
     },
     "InspectEntityResult": {
@@ -11618,6 +13028,207 @@
         "state_dir",
         "version"
       ]
+    },
+    "SharedEvidenceInput": {
+      "fields": {
+        "evidence_refs": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "evidence_refs",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          }
+        },
+        "source_evidence": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "source_evidence",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "EvidenceRef": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Id"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "row_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Row Index"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "source_record_id": {
+                "title": "Source Record Id",
+                "type": "string"
+              },
+              "table": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Table"
+              }
+            },
+            "required": [
+              "source",
+              "source_record_id"
+            ],
+            "title": "EvidenceRef",
+            "type": "object"
+          },
+          "SourceEvidenceInput": {
+            "properties": {
+              "block_selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Block Selector"
+              },
+              "chunk_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chunk Id"
+              },
+              "expected_content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Content Hash"
+              },
+              "heading_path": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Heading Path"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "source_artifact_id": {
+                "title": "Source Artifact Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id"
+            ],
+            "title": "SourceEvidenceInput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "source_evidence": {
+            "items": {
+              "$ref": "#/$defs/SourceEvidenceInput"
+            },
+            "title": "Source Evidence",
+            "type": "array"
+          }
+        },
+        "title": "SharedEvidenceInput",
+        "type": "object"
+      },
+      "required_fields": []
     },
     "SignalBucketBasis": {
       "fields": {

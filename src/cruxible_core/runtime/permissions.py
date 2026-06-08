@@ -142,6 +142,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
     "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
+    "cruxible_batch_direct_write": PermissionMode.GRAPH_WRITE,
     "cruxible_apply_workflow": PermissionMode.GRAPH_WRITE,
     "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
     "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,

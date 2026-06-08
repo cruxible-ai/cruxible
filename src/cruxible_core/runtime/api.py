@@ -30,6 +30,7 @@ from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
+    service_batch_direct_write,
     service_clone_snapshot,
     service_config_compatibility_warnings,
     service_create_decision_record,
@@ -90,6 +91,8 @@ from cruxible_core.service import (
     service_world_status,
 )
 from cruxible_core.service.types import (
+    BatchDirectWriteInput,
+    BatchRelationshipWriteInput,
     EntityWriteInput,
     FeedbackItemInput,
     GroupMemberInput,
@@ -98,6 +101,7 @@ from cruxible_core.service.types import (
     QueryServiceResult,
     RelationshipTargetInput,
     RelationshipWriteInput,
+    SharedEvidenceInput,
 )
 
 WorkflowExecutionContractT = TypeVar(
@@ -1563,25 +1567,7 @@ def add_relationships_with_provenance(
     check_permission("cruxible_add_relationship", instance_id=instance_id)
     instance = get_manager().get(instance_id)
 
-    inputs = [
-        RelationshipWriteInput(
-            from_type=edge.from_type,
-            from_id=edge.from_id,
-            relationship_type=edge.relationship,
-            to_type=edge.to_type,
-            to_id=edge.to_id,
-            properties=edge.properties,
-            evidence_refs=[
-                ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
-                for ref in edge.evidence_refs
-            ],
-            source_evidence=[
-                ref.model_dump(mode="python") for ref in edge.source_evidence
-            ],
-            evidence_rationale=edge.evidence_rationale,
-        )
-        for edge in relationships
-    ]
+    inputs = [_relationship_input_to_service(edge) for edge in relationships]
     result = service_add_relationship_inputs(
         instance,
         inputs,
@@ -1605,6 +1591,108 @@ def add_relationships(
         relationships,
         provenance_source="mcp_add",
         provenance_source_ref="cruxible_add_relationship",
+    )
+
+
+def _relationship_input_to_service(
+    edge: contracts.RelationshipInput,
+) -> RelationshipWriteInput:
+    return RelationshipWriteInput(
+        from_type=edge.from_type,
+        from_id=edge.from_id,
+        relationship_type=edge.relationship,
+        to_type=edge.to_type,
+        to_id=edge.to_id,
+        properties=edge.properties,
+        evidence_refs=[
+            ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+            for ref in edge.evidence_refs
+        ],
+        source_evidence=[
+            ref.model_dump(mode="python") for ref in edge.source_evidence
+        ],
+        evidence_rationale=edge.evidence_rationale,
+    )
+
+
+def _batch_payload_to_service(
+    payload: contracts.BatchDirectWritePayload,
+) -> BatchDirectWriteInput:
+    return BatchDirectWriteInput(
+        entities=[
+            EntityWriteInput(
+                entity_type=entity.entity_type,
+                entity_id=entity.entity_id,
+                properties=entity.properties,
+                metadata=entity.metadata,
+            )
+            for entity in payload.entities
+        ],
+        relationships=[
+            BatchRelationshipWriteInput(
+                from_type=edge.from_type,
+                from_id=edge.from_id,
+                relationship_type=edge.relationship,
+                to_type=edge.to_type,
+                to_id=edge.to_id,
+                properties=edge.properties,
+                evidence_refs=[
+                    ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+                    for ref in edge.evidence_refs
+                ],
+                source_evidence=[
+                    ref.model_dump(mode="python") for ref in edge.source_evidence
+                ],
+                evidence_rationale=edge.evidence_rationale,
+                shared_evidence_keys=list(edge.shared_evidence_keys),
+            )
+            for edge in payload.relationships
+        ],
+        shared_evidence={
+            key: SharedEvidenceInput(
+                evidence_refs=[
+                    ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
+                    for ref in evidence.evidence_refs
+                ],
+                source_evidence=[
+                    ref.model_dump(mode="python") for ref in evidence.source_evidence
+                ],
+            )
+            for key, evidence in payload.shared_evidence.items()
+        },
+    )
+
+
+def batch_direct_write(
+    instance_id: str,
+    payload: contracts.BatchDirectWritePayload,
+    *,
+    dry_run: bool = False,
+    provenance_source: str = "mcp_add",
+    provenance_source_ref: str = "cruxible_batch_direct_write",
+) -> contracts.BatchDirectWriteResult:
+    """Validate or apply one direct entity/relationship write payload."""
+    check_permission("cruxible_add_relationship", instance_id=instance_id)
+    check_permission("cruxible_add_entity", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_batch_direct_write(
+        instance,
+        _batch_payload_to_service(payload),
+        dry_run=dry_run,
+        source=provenance_source,
+        source_ref=provenance_source_ref,
+    )
+    return contracts.BatchDirectWriteResult(
+        dry_run=result.dry_run,
+        valid=result.valid,
+        entities_added=result.entities_added,
+        entities_updated=result.entities_updated,
+        relationships_added=result.relationships_added,
+        relationships_updated=result.relationships_updated,
+        validation_errors=result.validation_errors,
+        validation_warnings=result.validation_warnings,
+        evidence_sources_used=result.evidence_sources_used,
+        receipt_id=result.receipt_id,
     )
 
 

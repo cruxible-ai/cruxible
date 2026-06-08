@@ -106,6 +106,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
     apply_cmd,
+    batch_direct_write_cmd,
     clone_cmd,
     config_views_cmd,
     connect_group,
@@ -183,6 +184,7 @@ cli.add_command(get_entity_cmd, "get-entity")
 cli.add_command(get_relationship_cmd, "get-relationship")
 cli.add_command(add_entity_cmd, "add-entity")
 cli.add_command(add_relationship_cmd, "add-relationship")
+cli.add_command(batch_direct_write_cmd, "batch-direct-write")
 cli.add_command(add_constraint_cmd, "add-constraint")
 cli.add_command(add_decision_policy_cmd, "add-decision-policy")
 cli.add_command(export_group, "export")

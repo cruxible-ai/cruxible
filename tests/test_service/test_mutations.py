@@ -10,12 +10,16 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
+    BatchDirectWriteInput,
+    BatchRelationshipWriteInput,
     EntityWriteInput,
     RelationshipWriteInput,
+    SharedEvidenceInput,
     service_add_entities,
     service_add_entity_inputs,
     service_add_relationship_inputs,
     service_add_relationships,
+    service_batch_direct_write,
     service_register_source_artifact,
 )
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
@@ -36,6 +40,51 @@ def _part(pid: str, name: str = "Pads", category: str = "brakes") -> EntityInsta
         entity_type="Part",
         entity_id=pid,
         properties={"part_number": pid, "name": name, "category": category},
+    )
+
+
+def _batch_payload() -> BatchDirectWriteInput:
+    return BatchDirectWriteInput(
+        entities=[
+            EntityWriteInput(
+                entity_type="Vehicle",
+                entity_id="V-BATCH",
+                properties={
+                    "vehicle_id": "V-BATCH",
+                    "year": 2026,
+                    "make": "Honda",
+                    "model": "Pilot",
+                },
+            ),
+            EntityWriteInput(
+                entity_type="Part",
+                entity_id="BP-BATCH",
+                properties={
+                    "part_number": "BP-BATCH",
+                    "name": "Batch Pads",
+                    "category": "brakes",
+                },
+            ),
+        ],
+        relationships=[
+            BatchRelationshipWriteInput(
+                from_type="Part",
+                from_id="BP-BATCH",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-BATCH",
+                properties={"verified": True, "source": "batch"},
+                shared_evidence_keys=["doc"],
+                evidence_rationale="Batch payload establishes the fitment.",
+            )
+        ],
+        shared_evidence={
+            "doc": SharedEvidenceInput(
+                evidence_refs=[
+                    {"source": "roadmap_doc", "source_record_id": "batch-section"}
+                ],
+            )
+        },
     )
 
 
@@ -149,6 +198,111 @@ class TestAddEntities:
         assert result.added == 1
         restarted = CruxibleInstance.load(initialized_instance.root)
         assert restarted.load_graph().get_entity("Vehicle", "V-1") is not None
+
+
+class TestBatchDirectWrite:
+    def test_dry_run_validates_same_payload_relationship_without_mutating(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = _batch_payload()
+
+        result = service_batch_direct_write(initialized_instance, payload, dry_run=True)
+
+        assert result.valid is True
+        assert result.dry_run is True
+        assert result.entities_added == 2
+        assert result.relationships_added == 1
+        assert result.evidence_sources_used == ["roadmap_doc"]
+        assert result.receipt_id is None
+        graph = initialized_instance.load_graph()
+        assert graph.get_entity("Vehicle", "V-BATCH") is None
+        assert graph.get_relationship(
+            "Part",
+            "BP-BATCH",
+            "Vehicle",
+            "V-BATCH",
+            "fits",
+        ) is None
+
+    def test_apply_writes_batch_and_compact_receipt_summary(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        result = service_batch_direct_write(
+            initialized_instance,
+            _batch_payload(),
+            source="test_batch",
+            source_ref="test-batch",
+        )
+
+        assert result.valid is True
+        assert result.dry_run is False
+        assert result.entities_added == 2
+        assert result.relationships_added == 1
+        assert result.receipt_id is not None
+        graph = initialized_instance.load_graph()
+        relationship = graph.get_relationship(
+            "Part",
+            "BP-BATCH",
+            "Vehicle",
+            "V-BATCH",
+            "fits",
+        )
+        assert relationship is not None
+        assert relationship.metadata.evidence is not None
+        assert relationship.metadata.evidence.rationale == (
+            "Batch payload establishes the fitment."
+        )
+        assert relationship.metadata.evidence.evidence_refs[0].source == "roadmap_doc"
+
+        store = initialized_instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(result.receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.operation_type == "batch_direct_write"
+        assert receipt.committed is True
+
+    def test_invalid_apply_does_not_commit_partial_entities(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Vehicle",
+                    entity_id="V-BATCH",
+                    properties={
+                        "vehicle_id": "V-BATCH",
+                        "year": 2026,
+                        "make": "Honda",
+                        "model": "Pilot",
+                    },
+                )
+            ],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-MISSING",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-BATCH",
+                    shared_evidence_keys=["missing"],
+                )
+            ],
+        )
+
+        dry_run = service_batch_direct_write(initialized_instance, payload, dry_run=True)
+        assert dry_run.valid is False
+        assert "shared_evidence key 'missing' not found" in dry_run.validation_errors[0]
+
+        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
+            service_batch_direct_write(initialized_instance, payload)
+
+        graph = initialized_instance.load_graph()
+        assert graph.get_entity("Vehicle", "V-BATCH") is None
 
 
 # ---------------------------------------------------------------------------

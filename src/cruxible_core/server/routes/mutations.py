@@ -11,6 +11,7 @@ from cruxible_core.server.request_models import (
     AddDecisionPolicyRequest,
     AddEntitiesRequest,
     AddRelationshipsRequest,
+    BatchDirectWriteRequest,
     ReloadConfigRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -40,6 +41,24 @@ async def add_relationships(
         relationships=req.relationships,
         provenance_source="http_api",
         provenance_source_ref="cruxible_add_relationship",
+    )
+
+
+@router.post(
+    "/{instance_id}/direct-writes/batch",
+    response_model=contracts.BatchDirectWriteResult,
+)
+async def batch_direct_write(
+    instance_id: str,
+    req: BatchDirectWriteRequest,
+) -> contracts.BatchDirectWriteResult:
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.batch_direct_write(
+        instance_id=resolved_instance_id,
+        payload=req.payload,
+        dry_run=req.dry_run,
+        provenance_source="http_api",
+        provenance_source_ref="cruxible_batch_direct_write",
     )
 
 

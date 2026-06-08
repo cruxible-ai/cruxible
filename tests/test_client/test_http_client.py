@@ -99,6 +99,122 @@ def test_validation_error_preserves_errors_list():
     assert exc_info.value.errors == ["wrong type"]
 
 
+def test_query_inline_uses_expected_route_and_payload():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "results": [],
+                "receipt_id": "RCP-inline",
+                "receipt": None,
+                "total_results": 0,
+                "limit": 50,
+                "truncated": False,
+                "steps_executed": 0,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.query_inline(
+        "inst_123",
+        contracts.InlineQueryDefinition(
+            name="brake_parts",
+            mode="collection",
+            returns="Part",
+            result_shape="entity",
+            where={"result.properties.category": {"eq": "brakes"}},
+        ),
+        {},
+        relationship_state="reviewable",
+        decision_record_id="DR-1",
+    )
+
+    assert result.receipt_id == "RCP-inline"
+    assert captured == {
+        "path": "/api/v1/inst_123/query/inline",
+        "payload": {
+            "definition": {
+                "name": "brake_parts",
+                "mode": "collection",
+                "traversal": [],
+                "returns": "Part",
+                "result_shape": "entity",
+                "relationship_state": "live",
+                "allow_relationship_state_override": False,
+                "where": {"result.properties.category": {"eq": "brakes"}},
+                "order_by": [],
+                "include": {},
+            },
+            "params": {},
+            "limit": None,
+            "relationship_state": "reviewable",
+            "decision_record_id": "DR-1",
+        },
+    }
+
+
+def test_batch_direct_write_uses_expected_route_and_payload():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "dry_run": True,
+                "valid": True,
+                "entities_added": 1,
+                "entities_updated": 0,
+                "relationships_added": 0,
+                "relationships_updated": 0,
+                "validation_errors": [],
+                "validation_warnings": [],
+                "evidence_sources_used": [],
+                "receipt_id": None,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.batch_direct_write(
+        "inst_123",
+        contracts.BatchDirectWritePayload(
+            entities=[
+                contracts.EntityInput(
+                    entity_type="Vehicle",
+                    entity_id="V-BATCH",
+                    properties={"vehicle_id": "V-BATCH"},
+                )
+            ]
+        ),
+        dry_run=True,
+    )
+
+    assert result.valid is True
+    assert captured == {
+        "path": "/api/v1/inst_123/direct-writes/batch",
+        "payload": {
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "Vehicle",
+                        "entity_id": "V-BATCH",
+                        "properties": {"vehicle_id": "V-BATCH"},
+                        "metadata": {},
+                    }
+                ],
+                "relationships": [],
+                "shared_evidence": {},
+            },
+            "dry_run": True,
+        },
+    }
+
+
 def test_trace_methods_call_trace_routes():
     seen: list[tuple[str, str]] = []
 

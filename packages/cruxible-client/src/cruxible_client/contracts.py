@@ -53,11 +53,26 @@ class RelationshipInput(BaseModel):
     evidence_rationale: str | None = None
 
 
+class SharedEvidenceInput(BaseModel):
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
+
+
+class BatchRelationshipInput(RelationshipInput):
+    shared_evidence_keys: list[str] = Field(default_factory=list)
+
+
 class EntityInput(BaseModel):
     entity_type: str
     entity_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BatchDirectWritePayload(BaseModel):
+    entities: list[EntityInput] = Field(default_factory=list)
+    relationships: list[BatchRelationshipInput] = Field(default_factory=list)
+    shared_evidence: dict[str, SharedEvidenceInput] = Field(default_factory=dict)
 
 
 class SignalBucketBasis(BaseModel):
@@ -406,6 +421,19 @@ class AddRelationshipResult(BaseModel):
 class AddEntityResult(BaseModel):
     entities_added: int
     entities_updated: int
+    receipt_id: str | None = None
+
+
+class BatchDirectWriteResult(BaseModel):
+    dry_run: bool
+    valid: bool
+    entities_added: int = 0
+    entities_updated: int = 0
+    relationships_added: int = 0
+    relationships_updated: int = 0
+    validation_errors: list[str] = Field(default_factory=list)
+    validation_warnings: list[str] = Field(default_factory=list)
+    evidence_sources_used: list[str] = Field(default_factory=list)
     receipt_id: str | None = None
 
 
