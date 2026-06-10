@@ -983,50 +983,45 @@ does not pass. They are enforced by direct entity writes and batch direct writes
 They are appendable in overlay composition and are not allowed in `kind:
 ontology` configs.
 
-The current guard surface is intentionally narrow:
-
-- `operation: entity_update`
-- match by `entity_type`, `property`, and `new_value`
-- condition kind `named_query_result_count`
-- `effect: reject`
+A guard fires on any direct write that **results in** the guarded property
+value — creating an entity with the value and changing an existing entity to
+the value are both covered. Updates that re-assert the value an entity already
+holds are not transitions and do not fire. Every guard field is load-bearing;
+discriminator fields (`operation`, `effect`, condition `kind`) deliberately do
+not exist yet and will be introduced as optional fields if and when a second
+variant ships.
 
 ```yaml
 mutation_guards:
   - name: work_item_closed_requires_review
-    operation: entity_update
     entity_type: WorkItem
     property: status
     new_value: closed
     condition:
-      kind: named_query_result_count
       query_name: approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
       min_count: 1
-    effect: reject
     message: "Work item cannot be closed until approved review exists."
 ```
 
-### EntityUpdateMutationGuardSchema
+### MutationGuardSchema
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `name` | string | **yes** | — | Unique guard name |
-| `operation` | string | no | `"entity_update"` | Only `"entity_update"` is currently supported |
-| `entity_type` | string | **yes** | — | Entity type the update applies to |
-| `property` | string | **yes** | — | Property that must be present in the incoming update |
-| `new_value` | any | **yes** | — | Guarded target value after config property normalization |
+| `entity_type` | string | **yes** | — | Entity type the write applies to |
+| `property` | string | **yes** | — | Property that must be present in the incoming write |
+| `new_value` | any | **yes** | — | Guarded resulting value after config property normalization |
 | `condition` | NamedQueryResultCountGuardCondition | **yes** | — | Query-count condition that must pass |
-| `effect` | string | no | `"reject"` | Only `"reject"` is currently supported |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
 
 ### NamedQueryResultCountGuardCondition
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `kind` | string | no | `"named_query_result_count"` | Only named-query result counts are supported |
 | `query_name` | string | **yes** | — | Named query to execute against the proposed graph state |
-| `params` | dict | no | `{}` | Query params; values may reference update context |
+| `params` | dict | no | `{}` | Query params; values may reference write context |
 | `min_count` | int | conditional | `null` | Minimum result count; at least one of `min_count` or `max_count` is required |
 | `max_count` | int | conditional | `null` | Maximum result count; at least one of `min_count` or `max_count` is required |
 
@@ -1038,6 +1033,11 @@ Supported param references:
 - `$current.properties.<name>`
 - `$new_value`
 - `$old_value`
+
+On entity creation there is no prior state: `$old_value` resolves to `null`,
+and `$current.properties.<name>` cannot resolve, so a guard using `$current`
+refs rejects creates fail-closed with a missing-reference error. Prior-state
+refs therefore make a guard transition-only in practice.
 
 For batch direct writes, guards evaluate against the proposed batch graph, so
 valid same-batch entities and relationships can satisfy the named query before

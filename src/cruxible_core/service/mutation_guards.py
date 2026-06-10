@@ -12,7 +12,7 @@ from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
     normalize_value,
 )
-from cruxible_core.config.schema import CoreConfig, EntityUpdateMutationGuardSchema
+from cruxible_core.config.schema import CoreConfig, MutationGuardSchema
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import ValidatedEntity
@@ -24,27 +24,25 @@ _MISSING = object()
 
 @dataclass(frozen=True)
 class _GuardEntityContext:
-    current: EntityInstance
+    current: EntityInstance | None
     proposed: EntityInstance
     old_value: Any
     new_value: Any
 
 
-def entity_update_guard_errors(
+def mutation_guard_errors(
     config: CoreConfig,
     *,
     current_graph: EntityGraph,
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
 ) -> list[str]:
-    """Return mutation guard errors for proposed entity updates."""
+    """Return mutation guard errors for proposed entity writes (creates and updates)."""
     if not config.mutation_guards:
         return []
 
     errors: list[str] = []
     for entity in entities:
-        if not entity.is_update:
-            continue
         current = current_graph.get_entity(
             entity.entity.entity_type,
             entity.entity.entity_id,
@@ -53,7 +51,7 @@ def entity_update_guard_errors(
             entity.entity.entity_type,
             entity.entity.entity_id,
         )
-        if current is None or proposed is None:
+        if proposed is None:
             continue
         for guard in config.mutation_guards:
             context = _matching_guard_context(config, guard, entity, current, proposed)
@@ -64,15 +62,15 @@ def entity_update_guard_errors(
     return errors
 
 
-def validate_entity_update_guards(
+def validate_mutation_guards(
     config: CoreConfig,
     *,
     current_graph: EntityGraph,
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
 ) -> None:
-    """Raise DataValidationError when any proposed entity update violates a guard."""
-    errors = entity_update_guard_errors(
+    """Raise DataValidationError when any proposed entity write violates a guard."""
+    errors = mutation_guard_errors(
         config,
         current_graph=current_graph,
         proposed_graph=proposed_graph,
@@ -87,9 +85,9 @@ def validate_entity_update_guards(
 
 def _matching_guard_context(
     config: CoreConfig,
-    guard: EntityUpdateMutationGuardSchema,
+    guard: MutationGuardSchema,
     validated: ValidatedEntity,
-    current: EntityInstance,
+    current: EntityInstance | None,
     proposed: EntityInstance,
 ) -> _GuardEntityContext | None:
     entity = validated.entity
@@ -100,7 +98,7 @@ def _matching_guard_context(
 
     property_schema = config.entity_types[guard.entity_type].properties[guard.property]
     guarded_value = normalize_value(guard.new_value, property_schema, config)
-    old_value = current.properties.get(guard.property, _MISSING)
+    old_value = current.properties.get(guard.property, _MISSING) if current else _MISSING
     new_value = proposed.properties.get(guard.property, _MISSING)
     if new_value != guarded_value:
         return None
@@ -116,7 +114,7 @@ def _matching_guard_context(
 
 def _guard_condition_passes(
     config: CoreConfig,
-    guard: EntityUpdateMutationGuardSchema,
+    guard: MutationGuardSchema,
     graph: EntityGraph,
     context: _GuardEntityContext,
 ) -> bool:
@@ -138,7 +136,9 @@ def _resolve_guard_params(
 ) -> dict[str, Any]:
     scopes = {
         "entity": _entity_view(config, context.proposed),
-        "current": _entity_view(config, context.current),
+        # On creates there is no current entity; $current.* refs then fail
+        # closed via the missing-reference error.
+        "current": None if context.current is None else _entity_view(config, context.current),
         "new_value": context.new_value,
         "old_value": None if context.old_value is _MISSING else context.old_value,
     }
@@ -207,19 +207,19 @@ def _entity_view(config: CoreConfig, entity: EntityInstance) -> dict[str, Any]:
 
 
 def _guard_error_message(
-    guard: EntityUpdateMutationGuardSchema,
+    guard: MutationGuardSchema,
     entity: EntityInstance,
     context: _GuardEntityContext,
 ) -> str:
     message = guard.message or "mutation guard condition failed"
     return (
-        f"Mutation guard '{guard.name}' rejected update "
+        f"Mutation guard '{guard.name}' rejected write "
         f"{entity.entity_type}:{entity.entity_id} "
         f"{guard.property}={context.new_value!r}: {message}"
     )
 
 
 __all__ = [
-    "entity_update_guard_errors",
-    "validate_entity_update_guards",
+    "mutation_guard_errors",
+    "validate_mutation_guards",
 ]

@@ -1,8 +1,9 @@
 """Smoke tests for the project-state kit review-mediated done gate.
 
-Proves the shipped kit config rejects WorkItem.status=closed until an
-approved ReviewRequest reviews the work item, then allows the same
-transition, across single direct writes and batch direct writes.
+Proves the shipped kit config rejects any direct write resulting in
+WorkItem.status=closed — creating work as closed included — until an
+approved ReviewRequest reviews the work item, then allows the same write,
+across single direct writes and batch direct writes.
 """
 
 from __future__ import annotations
@@ -194,6 +195,108 @@ class TestProjectStateReviewGate:
 
         assert _work_item_status(instance) == "active"
         assert instance.load_graph().get_entity("ReviewRequest", "rr-batch") is None
+
+    def test_create_work_item_as_closed_rejected(self, tmp_path: Path) -> None:
+        instance = _project_state_instance(tmp_path)
+
+        with pytest.raises(
+            DataValidationError,
+            match="work_item_closed_requires_approved_review",
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={
+                            "work_item_id": "wi-born-closed",
+                            "title": "Born closed",
+                            "type": "feature",
+                            "status": "closed",
+                            "priority": "low",
+                        },
+                    )
+                ],
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+
+    def test_batch_create_as_closed_rejected_atomically(self, tmp_path: Path) -> None:
+        instance = _project_state_instance(tmp_path)
+
+        with pytest.raises(
+            DataValidationError, match="Batch direct write validation failed"
+        ):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="WorkItem",
+                            entity_id="wi-born-closed",
+                            properties={
+                                "work_item_id": "wi-born-closed",
+                                "title": "Born closed",
+                                "type": "feature",
+                                "status": "closed",
+                                "priority": "low",
+                            },
+                        )
+                    ],
+                ),
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+
+    def test_batch_create_as_closed_allowed_with_same_batch_review(
+        self, tmp_path: Path
+    ) -> None:
+        # The maintainer-led import path: historical closed work lands with
+        # its reviews in the same batch.
+        instance = _project_state_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={
+                            "work_item_id": "wi-born-closed",
+                            "title": "Imported finished work",
+                            "type": "feature",
+                            "status": "closed",
+                            "priority": "low",
+                        },
+                    ),
+                    EntityWriteInput(
+                        entity_type="ReviewRequest",
+                        entity_id="rr-import",
+                        properties={
+                            "review_request_id": "rr-import",
+                            "title": "Import-time review",
+                            "status": "approved",
+                        },
+                    ),
+                ],
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="ReviewRequest",
+                        from_id="rr-import",
+                        relationship_type="review_request_for_work_item",
+                        to_type="WorkItem",
+                        to_id="wi-born-closed",
+                    )
+                ],
+            ),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("WorkItem", "wi-born-closed")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
 
     def test_batch_close_allowed_with_same_batch_approved_review(
         self, tmp_path: Path

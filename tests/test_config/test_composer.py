@@ -463,17 +463,14 @@ class TestMutationGuardsComposition:
             "mutation_guards": [
                 {
                     "name": "base_case_guard",
-                    "operation": "entity_update",
                     "entity_type": "Case",
                     "property": "case_id",
                     "new_value": "CASE-BASE",
                     "condition": {
-                        "kind": "named_query_result_count",
                         "query_name": "find_cases",
                         "params": {"case_id": "$entity.entity_id"},
                         "min_count": 1,
                     },
-                    "effect": "reject",
                 },
             ],
         }
@@ -484,18 +481,15 @@ class TestMutationGuardsComposition:
                 "mutation_guards": [
                     {
                         "name": "overlay_case_guard",
-                        "operation": "entity_update",
-                        "entity_type": "Case",
+                            "entity_type": "Case",
                         "property": "case_id",
                         "new_value": "CASE-OVERLAY",
                         "condition": {
-                            "kind": "named_query_result_count",
-                            "query_name": "find_cases",
+                                "query_name": "find_cases",
                             "params": {"case_id": "$entity.entity_id"},
                             "min_count": 1,
                         },
-                        "effect": "reject",
-                    },
+                        },
                 ],
             }
         )

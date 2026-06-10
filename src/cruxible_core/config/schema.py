@@ -1161,7 +1161,6 @@ QualityCheckSchema = Annotated[
 class NamedQueryResultCountGuardCondition(BaseModel):
     """Named-query result count condition for config-defined mutation guards."""
 
-    kind: Literal["named_query_result_count"] = "named_query_result_count"
     query_name: str
     params: dict[str, Any] = Field(default_factory=dict)
     min_count: int | None = None
@@ -1180,16 +1179,18 @@ class NamedQueryResultCountGuardCondition(BaseModel):
 MutationGuardConditionSchema = NamedQueryResultCountGuardCondition
 
 
-class EntityUpdateMutationGuardSchema(BaseModel):
-    """Reject entity property updates unless a named-query condition passes."""
+class MutationGuardSchema(BaseModel):
+    """Reject direct entity writes that result in a guarded property value.
+
+    Fires on creates and updates alike; updates that re-assert the existing
+    value are not transitions and do not fire.
+    """
 
     name: str
-    operation: Literal["entity_update"] = "entity_update"
     entity_type: str
     property: str
     new_value: Any
     condition: MutationGuardConditionSchema
-    effect: Literal["reject"] = "reject"
     message: str | None = None
 
     model_config = {"extra": "forbid"}
@@ -1200,9 +1201,6 @@ class EntityUpdateMutationGuardSchema(BaseModel):
         if not value.strip():
             raise ValueError("must be a non-empty string")
         return value
-
-
-MutationGuardSchema = EntityUpdateMutationGuardSchema
 
 
 # ---------------------------------------------------------------------------

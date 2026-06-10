@@ -19,9 +19,9 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     EntityTypeSchema,
-    EntityUpdateMutationGuardSchema,
     EnumSchema,
     JsonContentQualityCheck,
+    MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
@@ -1612,8 +1612,8 @@ class TestQualityCheckSchema:
 
 
 class TestMutationGuardSchema:
-    def test_entity_update_guard_parses(self):
-        guard = EntityUpdateMutationGuardSchema(
+    def test_guard_parses_with_only_load_bearing_fields(self):
+        guard = MutationGuardSchema(
             name="closed_requires_review",
             entity_type="WorkItem",
             property="status",
@@ -1626,40 +1626,36 @@ class TestMutationGuardSchema:
             message="Approved review required.",
         )
 
-        assert guard.operation == "entity_update"
-        assert guard.effect == "reject"
-        assert guard.condition.kind == "named_query_result_count"
+        assert guard.new_value == "closed"
+        assert guard.condition.query_name == "approved_review"
 
     def test_guard_condition_requires_a_limit(self):
         with pytest.raises(ValidationError, match="min_count, max_count, or both"):
             NamedQueryResultCountGuardCondition(query_name="approved_review")
 
-    def test_entity_update_guard_rejects_unsupported_operation(self):
-        with pytest.raises(ValidationError, match="Input should be 'entity_update'"):
-            EntityUpdateMutationGuardSchema(
-                name="bad_operation",
-                operation="relationship_update",
-                entity_type="WorkItem",
-                property="status",
-                new_value="closed",
-                condition=NamedQueryResultCountGuardCondition(
-                    query_name="approved_review",
-                    min_count=1,
-                ),
-            )
+    def test_guard_rejects_retired_discriminator_fields(self):
+        # operation/effect were removed pre-0.2 freeze; they return as
+        # optional fields only when a second variant actually exists.
+        for extra in ({"operation": "entity_update"}, {"effect": "reject"}):
+            with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+                MutationGuardSchema(
+                    name="retired_field",
+                    entity_type="WorkItem",
+                    property="status",
+                    new_value="closed",
+                    condition=NamedQueryResultCountGuardCondition(
+                        query_name="approved_review",
+                        min_count=1,
+                    ),
+                    **extra,
+                )
 
-    def test_entity_update_guard_rejects_unsupported_effect(self):
-        with pytest.raises(ValidationError, match="Input should be 'reject'"):
-            EntityUpdateMutationGuardSchema(
-                name="bad_effect",
-                entity_type="WorkItem",
-                property="status",
-                new_value="closed",
-                condition=NamedQueryResultCountGuardCondition(
-                    query_name="approved_review",
-                    min_count=1,
-                ),
-                effect="warn",
+    def test_guard_condition_rejects_retired_kind_field(self):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            NamedQueryResultCountGuardCondition(
+                kind="named_query_result_count",
+                query_name="approved_review",
+                min_count=1,
             )
 
 

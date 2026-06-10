@@ -13,9 +13,9 @@ from cruxible_core.config.schema import (
     DecisionPolicyMatch,
     DecisionPolicySchema,
     EntityTypeSchema,
-    EntityUpdateMutationGuardSchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
@@ -299,7 +299,7 @@ class TestValidateQualityChecks:
 
 
 class TestValidateMutationGuards:
-    def _guard(self, **overrides) -> EntityUpdateMutationGuardSchema:
+    def _guard(self, **overrides) -> MutationGuardSchema:
         defaults = dict(
             name="a_closed_requires_review",
             entity_type="A",
@@ -312,7 +312,7 @@ class TestValidateMutationGuards:
             ),
         )
         defaults.update(overrides)
-        return EntityUpdateMutationGuardSchema(**defaults)
+        return MutationGuardSchema(**defaults)
 
     def _query(self) -> NamedQuerySchema:
         return NamedQuerySchema(

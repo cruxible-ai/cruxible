@@ -27,7 +27,7 @@ from cruxible_core.graph.types import (
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
-    entity_update_guard_errors,
+    mutation_guard_errors,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import (
@@ -296,7 +296,7 @@ def _prepare_batch_direct_write(
             )
 
     try:
-        guard_errors = entity_update_guard_errors(
+        guard_errors = mutation_guard_errors(
             config,
             current_graph=current_graph,
             proposed_graph=proposed_guard_graph,
@@ -549,7 +549,7 @@ def service_add_entities(
         for validated in pending:
             apply_entity(graph, validated)
         try:
-            guard_errors = entity_update_guard_errors(
+            guard_errors = mutation_guard_errors(
                 config,
                 current_graph=current_graph,
                 proposed_graph=graph,

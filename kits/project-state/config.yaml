@@ -9,9 +9,11 @@ description: >
   blocker context. Markdown docs, plans, chats, review reports, and transcripts
   are source evidence for proposals; they are not modeled as entities in this
   kit. Work item lifecycle: closed is the terminal status for finished work
-  (agents must not invent done or completed); closing a work item is
-  review-mediated — a mutation guard rejects WorkItem.status=closed until an
-  approved ReviewRequest reviews that work item.
+  (agents must not invent done or completed); completion is review-mediated —
+  a mutation guard rejects any direct write resulting in
+  WorkItem.status=closed (creating work as closed included) until an approved
+  ReviewRequest reviews that work item. Maintainer-led imports of historical
+  closed work satisfy the guard in-batch or compose a config without it.
 
 enums:
   priority:
@@ -224,7 +226,7 @@ entity_types:
   ReviewRequest:
     description: >
       Review request that gates completion of a work item. Closed is the
-      terminal work status, and a work item cannot transition to closed until
+      terminal work status, and a work item cannot be written as closed until
       at least one approved ReviewRequest reviews it.
     properties:
       review_request_id:
@@ -1029,21 +1031,20 @@ named_queries:
 
 mutation_guards:
   - name: work_item_closed_requires_approved_review
-    operation: entity_update
     entity_type: WorkItem
     property: status
     new_value: closed
     condition:
-      kind: named_query_result_count
       query_name: approved_reviews_for_work_item
       params:
         work_item_id: "$entity.entity_id"
       min_count: 1
-    effect: reject
     message: >-
       Work items cannot be closed until an approved ReviewRequest reviews
-      them. Create a ReviewRequest with status approved linked via
-      review_request_for_work_item, or get an existing request approved.
+      them. This applies to creating work as closed and to closing existing
+      work. Create a ReviewRequest with status approved linked via
+      review_request_for_work_item (same-batch is fine), or get an existing
+      request approved.
 
 quality_checks:
   - name: review_requests_review_a_work_item

@@ -154,30 +154,24 @@ named_queries:
 
 mutation_guards:
   - name: work_item_closed_requires_review
-    operation: entity_update
     entity_type: WorkItem
     property: status
     new_value: closed
     condition:
-      kind: named_query_result_count
       query_name: approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
       min_count: 1
-    effect: reject
     message: "Work item cannot be closed until approved review exists."
   - name: work_item_active_requires_trusted_batch_review
-    operation: entity_update
     entity_type: WorkItem
     property: status
     new_value: active
     condition:
-      kind: named_query_result_count
       query_name: trusted_batch_approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
       min_count: 1
-    effect: reject
     message: "Work item cannot be activated until a trusted batch review exists."
 """
 
@@ -647,6 +641,156 @@ class TestEntityMutationGuards:
         assert relationship is not None
         assert relationship.metadata.provenance is not None
         assert relationship.metadata.provenance.source == "trusted_batch"
+
+    def test_create_with_guarded_value_rejected(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+
+        with pytest.raises(
+            DataValidationError, match="work_item_closed_requires_review"
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={"work_item_id": "wi-born-closed", "status": "closed"},
+                    )
+                ],
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+
+    def test_batch_create_with_guarded_value_rejected_atomically(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+
+        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="WorkItem",
+                            entity_id="wi-born-closed",
+                            properties={
+                                "work_item_id": "wi-born-closed",
+                                "status": "closed",
+                            },
+                        )
+                    ],
+                ),
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+
+    def test_batch_create_with_guarded_value_allowed_with_same_batch_review(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={"work_item_id": "wi-born-closed", "status": "closed"},
+                    ),
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-import",
+                        properties={"review_id": "rev-import", "status": "approved"},
+                    ),
+                ],
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Review",
+                        from_id="rev-import",
+                        relationship_type="review_approves_work_item",
+                        to_type="WorkItem",
+                        to_id="wi-born-closed",
+                    )
+                ],
+            ),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("WorkItem", "wi-born-closed")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_reasserting_guarded_value_is_not_a_transition(
+        self, tmp_path: Path
+    ) -> None:
+        # Work closed before a guard existed must stay editable: re-asserting
+        # status=closed alongside other changes is not a transition.
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        unguarded = GUARDED_STATE_YAML.split("mutation_guards:")[0]
+        (tmp_path / "config.yaml").write_text(dedent(unguarded))
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        _seed_work_item(instance, status="closed")
+
+        (tmp_path / "config.yaml").write_text(dedent(GUARDED_STATE_YAML))
+        guarded = CruxibleInstance.load(tmp_path)
+
+        result = service_add_entity_inputs(
+            guarded,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-guarded",
+                    properties={"status": "closed", "title": "Retitled closed item"},
+                )
+            ],
+        )
+
+        assert result.updated == 1
+        entity = guarded.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["title"] == "Retitled closed item"
+
+    def test_current_ref_guard_rejects_creates_fail_closed(
+        self, tmp_path: Path
+    ) -> None:
+        # $current.* params have no prior state on creates; such guards are
+        # transition-only in practice and must reject creates, not pass them.
+        current_ref_guard = dedent(
+            """\
+            mutation_guards:
+              - name: closed_requires_prior_state_lookup
+                entity_type: WorkItem
+                property: status
+                new_value: closed
+                condition:
+                  query_name: approved_review_for_work_item
+                  params:
+                    work_item_id: "$current.properties.work_item_id"
+                  min_count: 1
+            """
+        )
+        config_yaml = GUARDED_STATE_YAML.split("mutation_guards:")[0] + current_ref_guard
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "config.yaml").write_text(dedent(config_yaml))
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+
+        with pytest.raises(
+            DataValidationError, match="Missing mutation guard param reference"
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={"work_item_id": "wi-born-closed", "status": "closed"},
+                    )
+                ],
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
 
 
 class TestBatchDirectWrite:
