@@ -9,6 +9,7 @@ from typing import Any
 
 import click
 
+from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.server.config import resolve_server_settings
@@ -39,13 +40,13 @@ def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
 
 
 def handle_errors(f: Any) -> Any:
-    """Decorator that catches CoreError and prints a friendly message."""
+    """Decorator that catches core and client CoreError and prints a friendly message."""
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return f(*args, **kwargs)
-        except CoreError as e:
+        except (CoreError, ClientCoreError) as e:
             click.secho(f"Error: {e}", fg="red", err=True)
             sys.exit(1)
 

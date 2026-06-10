@@ -32,6 +32,35 @@ def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: Cl
     assert "Server mode is required" in result.output
 
 
+def test_server_mode_client_errors_render_friendly_not_traceback(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # Client-package errors are a distinct hierarchy from core errors; the CLI
+    # must catch both or every server-mode failure leaks a traceback.
+    from cruxible_client.errors import DataValidationError as ClientDataValidationError
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def init(self, **_kwargs):
+            raise ClientDataValidationError(
+                "Request validation failed",
+                errors=["query.offset: Input should be a valid integer"],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "init", "--root-dir", "/srv/project"],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: Request validation failed: query.offset" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_server_mode_init_reads_local_config_and_prints_instance_id(
     monkeypatch,
     runner: CliRunner,

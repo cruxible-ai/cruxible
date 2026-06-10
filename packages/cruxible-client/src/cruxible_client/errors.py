@@ -241,6 +241,10 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc: CoreError = ConfigError(body.message, errors=body.errors)
     elif body.error_type == "DataValidationError":
         exc = DataValidationError(body.message, errors=body.errors)
+    elif body.error_type == "RequestValidationError":
+        # Server-side FastAPI request validation; field-level details ride in
+        # errors just like data validation failures.
+        exc = DataValidationError(body.message, errors=body.errors)
     elif body.error_type == "ConstraintViolationError":
         exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
     elif body.error_type == "OwnershipError":

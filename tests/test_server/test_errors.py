@@ -127,6 +127,21 @@ def test_error_round_trip_preserves_subclass_and_context(
         assert getattr(restored, key) == value
 
 
+def test_request_validation_envelope_decodes_with_field_errors():
+    restored = client_errors.response_to_error(
+        422,
+        client_errors.ErrorResponse(
+            error_type="RequestValidationError",
+            message="Request validation failed",
+            errors=["query.offset: Input should be a valid integer"],
+        ),
+    )
+
+    assert type(restored) is client_errors.DataValidationError
+    assert restored.errors == ["query.offset: Input should be a valid integer"]
+    assert "query.offset" in str(restored)
+
+
 def test_unknown_error_type_falls_back_to_core_error():
     restored = client_errors.response_to_error(
         500,
