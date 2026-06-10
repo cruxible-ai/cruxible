@@ -432,6 +432,47 @@ class TestExecuteQuery:
 
         assert _terminal_ids(result.results) == ["BP-1234"]
 
+    def test_entryless_entity_collection_filters_string_contains(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["brake_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.name": {"contains": "Brake"}},
+        )
+
+        result = execute_query(config, graph, "brake_parts", {})
+
+        assert _terminal_ids(result.results) == ["BP-1234", "BP-9999"]
+
+    def test_entryless_entity_collection_filters_string_icontains(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["brake_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.name": {"icontains": "brake"}},
+        )
+
+        result = execute_query(config, graph, "brake_parts", {})
+
+        assert _terminal_ids(result.results) == ["BP-1234", "BP-9999"]
+
+    def test_contains_predicate_requires_string_values(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        config.named_queries["invalid_year_search"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Vehicle",
+            where={"result.properties.year": {"contains": "2024"}},
+        )
+
+        with pytest.raises(QueryExecutionError, match="requires string values"):
+            execute_query(config, graph, "invalid_year_search", {})
+
     def test_entryless_entity_collection_uses_entity_id_lookup_before_scan(
         self, config: CoreConfig, graph: EntityGraph
     ):

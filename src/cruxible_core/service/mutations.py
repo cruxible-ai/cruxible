@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,9 @@ from cruxible_core.graph.types import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
+from cruxible_core.service.mutation_guards import (
+    entity_update_guard_errors,
+)
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import (
     AddEntityResult,
@@ -159,10 +163,13 @@ def _prepare_batch_direct_write(
     instance: InstanceProtocol,
     payload: BatchDirectWriteInput,
     *,
+    source: str,
+    source_ref: str,
     builder: Any | None = None,
 ) -> _PreparedBatchDirectWrite:
     config = instance.load_config()
-    graph = EntityGraph.from_dict(instance.load_graph().to_dict())
+    current_graph = instance.load_graph()
+    graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
     errors: list[str] = []
     warnings: list[str] = []
     evidence_sources: list[str] = []
@@ -277,6 +284,34 @@ def _prepare_batch_direct_write(
                 },
             )
 
+    proposed_guard_graph = graph
+    if config.mutation_guards and validated_relationships:
+        proposed_guard_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
+        for relationship_item in validated_relationships:
+            apply_relationship(
+                proposed_guard_graph,
+                relationship_item.validated,
+                source=source,
+                source_ref=source_ref,
+            )
+
+    try:
+        guard_errors = entity_update_guard_errors(
+            config,
+            current_graph=current_graph,
+            proposed_graph=proposed_guard_graph,
+            entities=validated_entities,
+        )
+    except DataValidationError as exc:
+        guard_errors = [str(exc), *exc.errors]
+    for error in guard_errors:
+        errors.append(error)
+        if builder:
+            builder.record_validation(
+                passed=False,
+                detail={"guard_error": error},
+            )
+
     return _PreparedBatchDirectWrite(
         graph=graph,
         entities=validated_entities,
@@ -329,7 +364,12 @@ def service_batch_direct_write(
     )
 
     if dry_run:
-        prepared = _prepare_batch_direct_write(instance, payload)
+        prepared = _prepare_batch_direct_write(
+            instance,
+            payload,
+            source=source,
+            source_ref=source_ref,
+        )
         return _batch_direct_write_result(prepared, dry_run=True)
 
     with mutation_receipt(
@@ -343,7 +383,13 @@ def service_batch_direct_write(
         },
     ) as ctx:
         builder = ctx.builder
-        prepared = _prepare_batch_direct_write(instance, payload, builder=builder)
+        prepared = _prepare_batch_direct_write(
+            instance,
+            payload,
+            source=source,
+            source_ref=source_ref,
+            builder=builder,
+        )
         if prepared.validation_errors:
             raise DataValidationError(
                 f"Batch direct write validation failed with "
@@ -446,7 +492,7 @@ def service_add_entities(
         entity_types=[entity.entity_type for entity in entities],
     )
     config = instance.load_config()
-    graph = instance.load_graph()
+    current_graph = instance.load_graph()
 
     with mutation_receipt(
         instance,
@@ -473,7 +519,7 @@ def service_add_entities(
             try:
                 validated = validate_entity(
                     config,
-                    graph,
+                    current_graph,
                     ent.entity_type,
                     ent.entity_id,
                     ent.properties,
@@ -499,11 +545,34 @@ def service_add_entities(
                 errors=errors,
             )
 
+        graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
+        for validated in pending:
+            apply_entity(graph, validated)
+        try:
+            guard_errors = entity_update_guard_errors(
+                config,
+                current_graph=current_graph,
+                proposed_graph=graph,
+                entities=pending,
+            )
+        except DataValidationError as exc:
+            guard_errors = [str(exc), *exc.errors]
+        for error in guard_errors:
+            if builder:
+                builder.record_validation(
+                    passed=False,
+                    detail={"guard_error": error},
+                )
+        if guard_errors:
+            raise DataValidationError(
+                f"Mutation guard validation failed with {len(guard_errors)} error(s)",
+                errors=guard_errors,
+            )
+
         added = 0
         updated = 0
         touched_entities = []
         for validated in pending:
-            apply_entity(graph, validated)
             persisted = graph.get_entity(
                 validated.entity.entity_type,
                 validated.entity.entity_id,

@@ -3,8 +3,8 @@
 Cruxible Core configs are YAML files that define a decision domain: entity
 types, relationships, named queries, constraints, workflows, providers,
 artifacts, quality checks, feedback profiles, outcome profiles, and decision
-policies. AI agents generate these configs; Core validates and executes against
-them.
+policies, plus mutation guards for direct state writes. AI agents generate
+these configs; Core validates and executes against them.
 
 ## Top-Level Structure
 
@@ -24,6 +24,7 @@ constraints: [ ... ]
 quality_checks: [ ... ]
 feedback_profiles: { ... }
 outcome_profiles: { ... }
+mutation_guards: [ ... ]
 decision_policies: [ ... ]
 contracts: { ... }
 artifacts: { ... }
@@ -49,6 +50,7 @@ tests: [ ... ]
 | `quality_checks` | list | no | `[]` | Evaluate-time graph quality checks |
 | `feedback_profiles` | dict | no | `{}` | Structured feedback vocabularies per relationship type |
 | `outcome_profiles` | dict | no | `{}` | Structured outcome vocabularies for trust calibration |
+| `mutation_guards` | list | no | `[]` | Reject direct graph mutations unless configured state-side conditions pass |
 | `decision_policies` | list | no | `[]` | Action-side behavior rules for queries and workflows |
 | `enums` | dict | no | `{}` | Shared enum vocabularies referenced by property schemas |
 | `contracts` | dict | no | `{}` | Typed payload contracts for providers/workflows |
@@ -124,7 +126,7 @@ relationships:
 |----------------|--------|----------|
 | Metadata | `name`, `description` | Overlay overrides base |
 | Runtime options | `runtime` | Overlay runtime options override base runtime options |
-| Safe lists | `constraints`, `quality_checks`, `tests`, `decision_policies` | Overlay appends to base |
+| Safe lists | `constraints`, `quality_checks`, `mutation_guards`, `tests`, `decision_policies` | Overlay appends to base |
 | Relationships | `relationships` | Overlay can only add new names; redefining an upstream relationship raises `ConfigError` |
 | Keyed maps | `entity_types`, `named_queries`, `enums`, `feedback_profiles`, `outcome_profiles`, `contracts`, `artifacts`, `providers`, `workflows` | Overlay can only add new keys; redefining an upstream key raises `ConfigError` |
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
@@ -135,7 +137,7 @@ When `extends` is set, `entity_types` may be empty — the base provides them.
 
 `kind` controls whether the config is a reusable reference ontology or an operational world model.
 
-- `ontology`: schema-only reference taxonomy/model. It may define entities, relationships, queries, constraints, and other static schema, but it may not define contracts, artifacts, providers, workflows, or workflow tests.
+- `ontology`: schema-only reference taxonomy/model. It may define entities, relationships, queries, constraints, and other static schema, but it may not define mutation guards, contracts, artifacts, providers, workflows, or workflow tests.
 - `world_model`: operational model. It can load local/company data through workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
 
 Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
@@ -588,7 +590,10 @@ named_queries:
                 eq: $entry.entity_id
 ```
 
-Supported structured predicate operators are `eq`, `ne`, `in`, `not_in`, `lt`, `lte`, `gt`, `gte`, and `exists`. Predicate values may reference:
+Supported structured predicate operators are `eq`, `ne`, `in`, `not_in`,
+`lt`, `lte`, `gt`, `gte`, `exists`, `contains`, and `icontains`. `contains`
+and `icontains` require string values; `icontains` compares case-insensitively.
+Predicate values may reference:
 
 - `$input.<field>`
 - `$entry.<field>`
@@ -968,6 +973,75 @@ Scope key paths depend on anchor type. Valid fields per prefix:
 | `TRACESET` | `trace_ids`, `provider_names`, `trace_count` |
 
 **Validation:** Resolution profiles require `relationship_type` and must not set `surface_type`/`surface_name`. Receipt profiles require `surface_type` and `surface_name` and must not set `relationship_type`/`workflow_name`.
+
+---
+
+## mutation_guards
+
+Mutation guards reject direct state writes when a configured state-side condition
+does not pass. They are enforced by direct entity writes and batch direct writes.
+They are appendable in overlay composition and are not allowed in `kind:
+ontology` configs.
+
+The current guard surface is intentionally narrow:
+
+- `operation: entity_update`
+- match by `entity_type`, `property`, and `new_value`
+- condition kind `named_query_result_count`
+- `effect: reject`
+
+```yaml
+mutation_guards:
+  - name: work_item_closed_requires_review
+    operation: entity_update
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      kind: named_query_result_count
+      query_name: approved_review_for_work_item
+      params:
+        work_item_id: "$entity.entity_id"
+      min_count: 1
+    effect: reject
+    message: "Work item cannot be closed until approved review exists."
+```
+
+### EntityUpdateMutationGuardSchema
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | **yes** | — | Unique guard name |
+| `operation` | string | no | `"entity_update"` | Only `"entity_update"` is currently supported |
+| `entity_type` | string | **yes** | — | Entity type the update applies to |
+| `property` | string | **yes** | — | Property that must be present in the incoming update |
+| `new_value` | any | **yes** | — | Guarded target value after config property normalization |
+| `condition` | NamedQueryResultCountGuardCondition | **yes** | — | Query-count condition that must pass |
+| `effect` | string | no | `"reject"` | Only `"reject"` is currently supported |
+| `message` | string | no | `null` | Optional user-facing rejection detail |
+
+### NamedQueryResultCountGuardCondition
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `kind` | string | no | `"named_query_result_count"` | Only named-query result counts are supported |
+| `query_name` | string | **yes** | — | Named query to execute against the proposed graph state |
+| `params` | dict | no | `{}` | Query params; values may reference update context |
+| `min_count` | int | conditional | `null` | Minimum result count; at least one of `min_count` or `max_count` is required |
+| `max_count` | int | conditional | `null` | Maximum result count; at least one of `min_count` or `max_count` is required |
+
+Supported param references:
+
+- `$entity.entity_type`
+- `$entity.entity_id`
+- `$entity.properties.<name>`
+- `$current.properties.<name>`
+- `$new_value`
+- `$old_value`
+
+For batch direct writes, guards evaluate against the proposed batch graph, so
+valid same-batch entities and relationships can satisfy the named query before
+anything is committed.
 
 ---
 

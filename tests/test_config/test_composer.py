@@ -448,6 +448,64 @@ class TestDecisionPoliciesComposition:
         assert composed.decision_policies[0].name == "overlay_only"
 
 
+class TestMutationGuardsComposition:
+    def test_overlay_appends_mutation_guards(self) -> None:
+        base_data = {
+            **_BASE_YAML,
+            "named_queries": {
+                "find_cases": {
+                    "mode": "collection",
+                    "returns": "Case",
+                    "result_shape": "entity",
+                    "where": {"result.entity_id": {"eq": "$input.case_id"}},
+                },
+            },
+            "mutation_guards": [
+                {
+                    "name": "base_case_guard",
+                    "operation": "entity_update",
+                    "entity_type": "Case",
+                    "property": "case_id",
+                    "new_value": "CASE-BASE",
+                    "condition": {
+                        "kind": "named_query_result_count",
+                        "query_name": "find_cases",
+                        "params": {"case_id": "$entity.entity_id"},
+                        "min_count": 1,
+                    },
+                    "effect": "reject",
+                },
+            ],
+        }
+        base = CoreConfig.model_validate(base_data)
+
+        overlay = _overlay(
+            {
+                "mutation_guards": [
+                    {
+                        "name": "overlay_case_guard",
+                        "operation": "entity_update",
+                        "entity_type": "Case",
+                        "property": "case_id",
+                        "new_value": "CASE-OVERLAY",
+                        "condition": {
+                            "kind": "named_query_result_count",
+                            "query_name": "find_cases",
+                            "params": {"case_id": "$entity.entity_id"},
+                            "min_count": 1,
+                        },
+                        "effect": "reject",
+                    },
+                ],
+            }
+        )
+
+        composed = compose_configs(base, overlay)
+
+        names = [guard.name for guard in composed.mutation_guards]
+        assert names == ["base_case_guard", "overlay_case_guard"]
+
+
 class TestArtifactUriComposition:
     def test_compose_config_files_rebases_relative_artifacts(self, tmp_path: Path) -> None:
         base_path = tmp_path / "base" / "config.yaml"

@@ -16,6 +16,8 @@ PredicateOperator = Literal[
     "gt",
     "gte",
     "exists",
+    "contains",
+    "icontains",
 ]
 
 PREDICATE_OPERATORS = set(get_args(PredicateOperator))
@@ -43,6 +45,9 @@ class StructuredPredicateSpec(RootModel[dict[str, dict[str, Any]]]):
                     raise ValueError(msg)
                 if operator == "exists" and not isinstance(value, bool):
                     msg = "predicate operator 'exists' requires a boolean value"
+                    raise ValueError(msg)
+                if operator in {"contains", "icontains"} and not isinstance(value, str):
+                    msg = f"predicate operator '{operator}' requires a string value"
                     raise ValueError(msg)
         return self
 

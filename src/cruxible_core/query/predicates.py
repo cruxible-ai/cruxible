@@ -559,6 +559,14 @@ def _evaluate_predicate_operator(
         return exists is expected
     if left is _MISSING:
         return False
+    if operator in {"contains", "icontains"}:
+        if not isinstance(left, str) or not isinstance(expected, str):
+            raise QueryExecutionError(
+                f"Predicate operator '{operator}' for '{path}' requires string values"
+            )
+        if operator == "contains":
+            return expected in left
+        return expected.casefold() in left.casefold()
     if operator in {"in", "not_in"}:
         if not isinstance(expected, list | tuple | set | frozenset):
             raise QueryExecutionError(

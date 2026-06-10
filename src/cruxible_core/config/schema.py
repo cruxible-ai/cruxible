@@ -18,6 +18,7 @@ Hierarchy:
     ├── feedback_profiles: dict[str, FeedbackProfileSchema]
     ├── outcome_profiles: dict[str, OutcomeProfileSchema]
     ├── quality_checks: list[QualityCheckSchema]
+    ├── mutation_guards: list[MutationGuardSchema]
     ├── decision_policies: list[DecisionPolicySchema]
     ├── contracts: dict[str, ContractSchema]
     ├── artifacts: dict[str, ProviderArtifactSchema]
@@ -1153,6 +1154,58 @@ QualityCheckSchema = Annotated[
 
 
 # ---------------------------------------------------------------------------
+# Mutation Guard Schema
+# ---------------------------------------------------------------------------
+
+
+class NamedQueryResultCountGuardCondition(BaseModel):
+    """Named-query result count condition for config-defined mutation guards."""
+
+    kind: Literal["named_query_result_count"] = "named_query_result_count"
+    query_name: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    min_count: int | None = None
+    max_count: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> NamedQueryResultCountGuardCondition:
+        if self.min_count is None and self.max_count is None:
+            msg = "Mutation guard named-query conditions require min_count, max_count, or both"
+            raise ValueError(msg)
+        return self
+
+
+MutationGuardConditionSchema = NamedQueryResultCountGuardCondition
+
+
+class EntityUpdateMutationGuardSchema(BaseModel):
+    """Reject entity property updates unless a named-query condition passes."""
+
+    name: str
+    operation: Literal["entity_update"] = "entity_update"
+    entity_type: str
+    property: str
+    new_value: Any
+    condition: MutationGuardConditionSchema
+    effect: Literal["reject"] = "reject"
+    message: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("name", "entity_type", "property")
+    @classmethod
+    def _non_empty_string(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must be a non-empty string")
+        return value
+
+
+MutationGuardSchema = EntityUpdateMutationGuardSchema
+
+
+# ---------------------------------------------------------------------------
 # Workflow / Provider Contracts
 # ---------------------------------------------------------------------------
 
@@ -1876,6 +1929,7 @@ class CoreConfig(BaseModel):
     feedback_profiles: dict[str, FeedbackProfileSchema] = Field(default_factory=dict)
     outcome_profiles: dict[str, OutcomeProfileSchema] = Field(default_factory=dict)
     quality_checks: list[QualityCheckSchema] = Field(default_factory=list)
+    mutation_guards: list[MutationGuardSchema] = Field(default_factory=list)
     decision_policies: list[DecisionPolicySchema] = Field(default_factory=list)
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     artifacts: dict[str, ProviderArtifactSchema] = Field(default_factory=dict)

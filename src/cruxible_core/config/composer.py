@@ -12,7 +12,13 @@ from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
 
-_SAFE_LIST_KEYS = {"constraints", "quality_checks", "tests", "decision_policies"}
+_SAFE_LIST_KEYS = {
+    "constraints",
+    "quality_checks",
+    "mutation_guards",
+    "tests",
+    "decision_policies",
+}
 _KEYED_MAP_KEYS = {
     "entity_types",
     "named_queries",

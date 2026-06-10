@@ -19,8 +19,10 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     EntityTypeSchema,
+    EntityUpdateMutationGuardSchema,
     EnumSchema,
     JsonContentQualityCheck,
+    NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
     PropertyQualityCheck,
@@ -173,6 +175,23 @@ class TestStructuredPredicateSpec:
         with pytest.raises(ValidationError, match="predicate operator 'exists' requires"):
             StructuredPredicateSpec.model_validate(
                 {"payload.properties.deleted_at": {"exists": "false"}}
+            )
+
+    def test_accepts_string_contains_predicates(self):
+        spec = StructuredPredicateSpec.model_validate(
+            {
+                "payload.properties.title": {"contains": "review"},
+                "payload.properties.summary": {"icontains": "release"},
+            }
+        )
+
+        assert spec.root["payload.properties.title"] == {"contains": "review"}
+        assert spec.root["payload.properties.summary"] == {"icontains": "release"}
+
+    def test_rejects_non_string_contains_predicate_value(self):
+        with pytest.raises(ValidationError, match="requires a string value"):
+            StructuredPredicateSpec.model_validate(
+                {"payload.properties.title": {"contains": 1}}
             )
 
 
@@ -356,11 +375,11 @@ class TestTraversalStep:
         assert "edge.properties.priority" in step.where.root
 
     def test_where_rejects_unknown_operator(self):
-        with pytest.raises(ValidationError, match="unsupported predicate operator 'contains'"):
+        with pytest.raises(ValidationError, match="unsupported predicate operator 'matches'"):
             TraversalStep.model_validate(
                 {
                     "relationship": "fits",
-                    "where": {"edge.properties.priority": {"contains": "critical"}},
+                    "where": {"edge.properties.priority": {"matches": "critical"}},
                 }
             )
 
@@ -1589,6 +1608,58 @@ class TestQualityCheckSchema:
             NamedQueryResultCountQualityCheck(
                 name="missing_limit",
                 query_name="some_query",
+            )
+
+
+class TestMutationGuardSchema:
+    def test_entity_update_guard_parses(self):
+        guard = EntityUpdateMutationGuardSchema(
+            name="closed_requires_review",
+            entity_type="WorkItem",
+            property="status",
+            new_value="closed",
+            condition=NamedQueryResultCountGuardCondition(
+                query_name="approved_review",
+                params={"work_item_id": "$entity.entity_id"},
+                min_count=1,
+            ),
+            message="Approved review required.",
+        )
+
+        assert guard.operation == "entity_update"
+        assert guard.effect == "reject"
+        assert guard.condition.kind == "named_query_result_count"
+
+    def test_guard_condition_requires_a_limit(self):
+        with pytest.raises(ValidationError, match="min_count, max_count, or both"):
+            NamedQueryResultCountGuardCondition(query_name="approved_review")
+
+    def test_entity_update_guard_rejects_unsupported_operation(self):
+        with pytest.raises(ValidationError, match="Input should be 'entity_update'"):
+            EntityUpdateMutationGuardSchema(
+                name="bad_operation",
+                operation="relationship_update",
+                entity_type="WorkItem",
+                property="status",
+                new_value="closed",
+                condition=NamedQueryResultCountGuardCondition(
+                    query_name="approved_review",
+                    min_count=1,
+                ),
+            )
+
+    def test_entity_update_guard_rejects_unsupported_effect(self):
+        with pytest.raises(ValidationError, match="Input should be 'reject'"):
+            EntityUpdateMutationGuardSchema(
+                name="bad_effect",
+                entity_type="WorkItem",
+                property="status",
+                new_value="closed",
+                condition=NamedQueryResultCountGuardCondition(
+                    query_name="approved_review",
+                    min_count=1,
+                ),
+                effect="warn",
             )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from textwrap import dedent
 from unittest.mock import patch
 
 import pytest
@@ -85,6 +87,148 @@ def _batch_payload() -> BatchDirectWriteInput:
                 ],
             )
         },
+    )
+
+
+GUARDED_STATE_YAML = """\
+version: "1.0"
+name: guarded_project_state
+
+enums:
+  lifecycle_status:
+    values: [planned, active, closed]
+  review_status:
+    values: [pending, approved]
+
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      title:
+        type: string
+        optional: true
+  Review:
+    properties:
+      review_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: review_status
+
+relationships:
+  - name: review_approves_work_item
+    from: Review
+    to: WorkItem
+
+named_queries:
+  approved_review_for_work_item:
+    mode: traversal
+    entry_point: WorkItem
+    traversal:
+      - relationship: review_approves_work_item
+        direction: incoming
+        where:
+          candidate.properties.status:
+            eq: approved
+    returns: list[Review]
+    result_shape: entity
+  trusted_batch_approved_review_for_work_item:
+    mode: traversal
+    entry_point: WorkItem
+    traversal:
+      - relationship: review_approves_work_item
+        direction: incoming
+        where:
+          candidate.properties.status:
+            eq: approved
+          edge.metadata.provenance.source:
+            eq: trusted_batch
+    returns: list[Review]
+    result_shape: entity
+
+mutation_guards:
+  - name: work_item_closed_requires_review
+    operation: entity_update
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      kind: named_query_result_count
+      query_name: approved_review_for_work_item
+      params:
+        work_item_id: "$entity.entity_id"
+      min_count: 1
+    effect: reject
+    message: "Work item cannot be closed until approved review exists."
+  - name: work_item_active_requires_trusted_batch_review
+    operation: entity_update
+    entity_type: WorkItem
+    property: status
+    new_value: active
+    condition:
+      kind: named_query_result_count
+      query_name: trusted_batch_approved_review_for_work_item
+      params:
+        work_item_id: "$entity.entity_id"
+      min_count: 1
+    effect: reject
+    message: "Work item cannot be activated until a trusted batch review exists."
+"""
+
+
+def _guarded_instance(tmp_path: Path) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(dedent(GUARDED_STATE_YAML))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _seed_work_item(instance: CruxibleInstance, status: str = "planned") -> None:
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="WorkItem",
+                entity_id="wi-guarded",
+                properties={
+                    "work_item_id": "wi-guarded",
+                    "status": status,
+                    "title": "Guarded item",
+                },
+            )
+        ],
+    )
+
+
+def _seed_approved_review(instance: CruxibleInstance) -> None:
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="Review",
+                entity_id="rev-approved",
+                properties={"review_id": "rev-approved", "status": "approved"},
+            )
+        ],
+    )
+    service_add_relationship_inputs(
+        instance,
+        [
+            RelationshipWriteInput(
+                from_type="Review",
+                from_id="rev-approved",
+                relationship_type="review_approves_work_item",
+                to_type="WorkItem",
+                to_id="wi-guarded",
+            )
+        ],
+        source="test",
+        source_ref="approved-review",
     )
 
 
@@ -198,6 +342,311 @@ class TestAddEntities:
         assert result.added == 1
         restarted = CruxibleInstance.load(initialized_instance.root)
         assert restarted.load_graph().get_entity("Vehicle", "V-1") is not None
+
+
+class TestEntityMutationGuards:
+    def test_unmatched_guard_allows_unrelated_update(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-guarded",
+                    properties={"title": "Updated title"},
+                )
+            ],
+        )
+
+        assert result.updated == 1
+        entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+        assert entity.properties["title"] == "Updated title"
+
+    def test_add_entity_update_rejects_closed_without_review(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-guarded",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        assert "work_item_closed_requires_review" in str(exc_info.value)
+        assert "Work item cannot be closed" in str(exc_info.value)
+        entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+
+    def test_add_entity_guard_failure_receipt_records_guard_error(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-guarded",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        receipt_id = exc_info.value.mutation_receipt_id
+        assert receipt_id is not None
+        store = instance.get_receipt_store()
+        try:
+            receipt = store.get_receipt(receipt_id)
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        failed_validations = [
+            node
+            for node in receipt.nodes
+            if node.node_type == "validation" and node.detail.get("passed") is False
+        ]
+        assert any(
+            "work_item_closed_requires_review" in node.detail.get("guard_error", "")
+            for node in failed_validations
+        )
+
+    def test_add_entity_update_allows_closed_with_approved_review(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+        _seed_approved_review(instance)
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-guarded",
+                    properties={"status": "closed"},
+                )
+            ],
+        )
+
+        assert result.updated == 1
+        entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_batch_dry_run_reports_guard_failure_without_mutating(
+        self, tmp_path: Path
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-guarded",
+                        properties={"status": "closed"},
+                    )
+                ],
+            ),
+            dry_run=True,
+        )
+
+        assert result.valid is False
+        assert any(
+            "work_item_closed_requires_review" in error
+            for error in result.validation_errors
+        )
+        entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+
+    def test_batch_apply_rejects_guard_atomically(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        EntityWriteInput(
+                            entity_type="WorkItem",
+                            entity_id="wi-guarded",
+                            properties={"status": "closed"},
+                        ),
+                        EntityWriteInput(
+                            entity_type="Review",
+                            entity_id="rev-pending",
+                            properties={"review_id": "rev-pending", "status": "pending"},
+                        ),
+                    ],
+                ),
+            )
+
+        graph = instance.load_graph()
+        work_item = graph.get_entity("WorkItem", "wi-guarded")
+        assert work_item is not None
+        assert work_item.properties["status"] == "planned"
+        assert graph.get_entity("Review", "rev-pending") is None
+
+    def test_batch_apply_allows_closed_with_approved_review(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+        _seed_approved_review(instance)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-guarded",
+                        properties={"status": "closed"},
+                    )
+                ],
+            ),
+        )
+
+        assert result.valid is True
+        assert result.entities_updated == 1
+        entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_batch_apply_allows_closed_with_same_batch_approved_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-approved",
+                        properties={"review_id": "rev-approved", "status": "approved"},
+                    ),
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-guarded",
+                        properties={"status": "closed"},
+                    ),
+                ],
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Review",
+                        from_id="rev-approved",
+                        relationship_type="review_approves_work_item",
+                        to_type="WorkItem",
+                        to_id="wi-guarded",
+                    )
+                ],
+            ),
+        )
+
+        assert result.valid is True
+        assert result.entities_added == 1
+        assert result.entities_updated == 1
+        assert result.relationships_added == 1
+        graph = instance.load_graph()
+        entity = graph.get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+        assert (
+            graph.get_relationship(
+                "Review",
+                "rev-approved",
+                "WorkItem",
+                "wi-guarded",
+                "review_approves_work_item",
+            )
+            is not None
+        )
+
+    def test_batch_guard_evaluates_same_batch_relationship_with_real_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+        payload = BatchDirectWriteInput(
+            entities=[
+                EntityWriteInput(
+                    entity_type="Review",
+                    entity_id="rev-approved",
+                    properties={"review_id": "rev-approved", "status": "approved"},
+                ),
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-guarded",
+                    properties={"status": "active"},
+                ),
+            ],
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Review",
+                    from_id="rev-approved",
+                    relationship_type="review_approves_work_item",
+                    to_type="WorkItem",
+                    to_id="wi-guarded",
+                )
+            ],
+        )
+
+        with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
+            service_batch_direct_write(
+                instance,
+                payload,
+                source="untrusted_batch",
+                source_ref="untrusted",
+            )
+        graph = instance.load_graph()
+        entity = graph.get_entity("WorkItem", "wi-guarded")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+        assert graph.get_entity("Review", "rev-approved") is None
+
+        trusted_instance = _guarded_instance(tmp_path / "trusted")
+        _seed_work_item(trusted_instance)
+        result = service_batch_direct_write(
+            trusted_instance,
+            payload,
+            source="trusted_batch",
+            source_ref="trusted",
+        )
+
+        assert result.valid is True
+        relationship = trusted_instance.load_graph().get_relationship(
+            "Review",
+            "rev-approved",
+            "WorkItem",
+            "wi-guarded",
+            "review_approves_work_item",
+        )
+        assert relationship is not None
+        assert relationship.metadata.provenance is not None
+        assert relationship.metadata.provenance.source == "trusted_batch"
 
 
 class TestBatchDirectWrite:

@@ -13,8 +13,10 @@ from cruxible_core.config.schema import (
     DecisionPolicyMatch,
     DecisionPolicySchema,
     EntityTypeSchema,
+    EntityUpdateMutationGuardSchema,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
+    NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     NamedQuerySchema,
     OutcomeCodeSchema,
@@ -294,6 +296,114 @@ class TestValidateQualityChecks:
             validate_config(config)
 
         assert any("missing_query" in e for e in exc_info.value.errors)
+
+
+class TestValidateMutationGuards:
+    def _guard(self, **overrides) -> EntityUpdateMutationGuardSchema:
+        defaults = dict(
+            name="a_closed_requires_review",
+            entity_type="A",
+            property="status",
+            new_value="closed",
+            condition=NamedQueryResultCountGuardCondition(
+                query_name="find_a",
+                params={"id": "$entity.entity_id"},
+                min_count=1,
+            ),
+        )
+        defaults.update(overrides)
+        return EntityUpdateMutationGuardSchema(**defaults)
+
+    def _query(self) -> NamedQuerySchema:
+        return NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="A",
+            where={"result.entity_id": {"eq": "$input.id"}},
+        )
+
+    def test_mutation_guard_accepts_known_entity_property_value_and_query(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard()],
+        )
+
+        validate_config(config)
+
+    def test_mutation_guard_rejects_duplicate_names(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(), self._guard()],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("Duplicate mutation guard name" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_unknown_entity_type(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(entity_type="Missing")],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("entity_type 'Missing'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_unknown_property(self):
+        config = _minimal_config(
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(property="missing")],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("property 'missing'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_invalid_new_value(self):
+        config = _minimal_config(
+            entity_types={
+                "A": EntityTypeSchema(
+                    properties={
+                        "id": PropertySchema(type="string", primary_key=True),
+                        "count": PropertySchema(type="int"),
+                    }
+                ),
+                "B": EntityTypeSchema(
+                    properties={"id": PropertySchema(type="string", primary_key=True)}
+                ),
+            },
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard(property="count", new_value="closed")],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("new_value for property 'count'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_unknown_query(self):
+        config = _minimal_config(mutation_guards=[self._guard()])
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("query_name 'find_a'" in e for e in exc_info.value.errors)
+
+    def test_ontology_config_rejects_mutation_guards(self):
+        config = _minimal_config(
+            kind="ontology",
+            named_queries={"find_a": self._query()},
+            mutation_guards=[self._guard()],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("may not define mutation_guards" in e for e in exc_info.value.errors)
 
 
 class TestValidateLoopOneControls:

@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from cruxible_core.config.constraint_rules import parse_constraint_rule
+from cruxible_core.config.property_validation import normalize_value
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
     BoundsQualityCheck,
@@ -20,6 +21,7 @@ from cruxible_core.config.schema import (
     ContractSchema,
     CoreConfig,
     JsonContentQualityCheck,
+    NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     PropertyQualityCheck,
     RelationshipPropertyConsistencyQualityCheck,
@@ -50,6 +52,7 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
     _validate_quality_checks(config, errors)
+    _validate_mutation_guards(config, errors)
     _validate_decision_policies(config, errors)
     _validate_workflows(config, errors)
     _validate_tests(config, errors)
@@ -765,6 +768,48 @@ def _validate_quality_checks(config: CoreConfig, errors: list[str]) -> None:
                 )
 
 
+def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
+    """Validate config-defined mutation guard cross-references."""
+    seen_names: set[str] = set()
+
+    for guard in config.mutation_guards:
+        if guard.name in seen_names:
+            errors.append(f"Duplicate mutation guard name: '{guard.name}'")
+            continue
+        seen_names.add(guard.name)
+
+        entity_schema = config.entity_types.get(guard.entity_type)
+        if entity_schema is None:
+            errors.append(
+                f"Mutation guard '{guard.name}': entity_type "
+                f"'{guard.entity_type}' not defined in entity_types"
+            )
+            continue
+
+        property_schema = entity_schema.properties.get(guard.property)
+        if property_schema is None:
+            errors.append(
+                f"Mutation guard '{guard.name}': property '{guard.property}' "
+                f"not found on entity type '{guard.entity_type}'"
+            )
+        else:
+            try:
+                normalize_value(guard.new_value, property_schema, config)
+            except ValueError as exc:
+                errors.append(
+                    f"Mutation guard '{guard.name}': new_value for property "
+                    f"'{guard.property}': {exc}"
+                )
+
+        condition = guard.condition
+        if isinstance(condition, NamedQueryResultCountGuardCondition):
+            if condition.query_name not in config.named_queries:
+                errors.append(
+                    f"Mutation guard '{guard.name}': query_name "
+                    f"'{condition.query_name}' not defined in named_queries"
+                )
+
+
 def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
     """Validate top-level kind gating for built world-model features."""
     if config.kind != "ontology":
@@ -778,6 +823,8 @@ def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
         errors.append("Config kind 'ontology' may not define providers")
     if config.workflows:
         errors.append("Config kind 'ontology' may not define workflows")
+    if config.mutation_guards:
+        errors.append("Config kind 'ontology' may not define mutation_guards")
     if config.tests:
         errors.append("Config kind 'ontology' may not define workflow tests")
 
