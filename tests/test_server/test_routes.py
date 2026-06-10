@@ -240,6 +240,18 @@ def test_health_endpoint_returns_ok(app_client: TestClient):
     assert response.json() == {"status": "ok"}
 
 
+def test_request_validation_errors_use_error_response_envelope(app_client: TestClient):
+    # Non-integer offset trips FastAPI param validation; the body must be the
+    # ErrorResponse envelope, not FastAPI's native {detail: [...]} shape.
+    response = app_client.get("/api/v1/inst-missing/traces", params={"offset": "abc"})
+    assert response.status_code == 422
+    body = response.json()
+    assert "detail" not in body
+    assert body["error_type"] == "RequestValidationError"
+    assert body["message"] == "Request validation failed"
+    assert any("offset" in error for error in body["errors"])
+
+
 def test_server_info_endpoint_returns_live_metadata(
     app_client: TestClient,
     server_project: Path,

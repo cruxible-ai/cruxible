@@ -57,8 +57,9 @@ class CruxibleClient:
         try:
             body = ErrorResponse.model_validate(response.json())
         except Exception as exc:
+            detail = response.text[:500]
             raise CoreError(
-                f"Server request failed with status {response.status_code}: {response.text}"
+                f"Server request failed with status {response.status_code}: {detail}"
             ) from exc
         raise response_to_error(response.status_code, body)
 

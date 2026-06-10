@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from cruxible_core import __version__
@@ -36,6 +37,21 @@ def create_app() -> FastAPI:
     async def core_error_handler(_request: Request, exc: CoreError) -> JSONResponse:
         status_code, body = error_to_response(exc)
         return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        errors = [
+            f"{'.'.join(str(part) for part in err.get('loc', ()))}: {err.get('msg', 'invalid')}"
+            for err in exc.errors()
+        ]
+        body = ErrorResponse(
+            error_type="RequestValidationError",
+            message="Request validation failed",
+            errors=errors,
+        )
+        return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResponse:
