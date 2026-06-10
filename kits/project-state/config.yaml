@@ -5,9 +5,13 @@ description: >
   Governed dev/project operating state for agent-assisted work on a product or
   codebase. One world instance represents durable project state: product areas,
   capabilities, roadmap items, release lines, milestones, work items, design
-  decisions, risks, open questions, and their dependency or blocker context.
-  Markdown docs, plans, chats, review reports, and transcripts are source
-  evidence for proposals; they are not modeled as entities in this kit.
+  decisions, risks, open questions, review requests, and their dependency or
+  blocker context. Markdown docs, plans, chats, review reports, and transcripts
+  are source evidence for proposals; they are not modeled as entities in this
+  kit. Work item lifecycle: closed is the terminal status for finished work
+  (agents must not invent done or completed); closing a work item is
+  review-mediated — a mutation guard rejects WorkItem.status=closed until an
+  approved ReviewRequest reviews that work item.
 
 enums:
   priority:
@@ -21,6 +25,8 @@ enums:
     values: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
   work_item_type:
     values: [feature, bug, cleanup, research, docs, test, infrastructure]
+  review_status:
+    values: [requested, in_review, changes_requested, approved, withdrawn]
 
 entity_types:
   ProductArea:
@@ -215,8 +221,54 @@ entity_types:
         type: date
         optional: true
 
+  ReviewRequest:
+    description: >
+      Review request that gates completion of a work item. Closed is the
+      terminal work status, and a work item cannot transition to closed until
+      at least one approved ReviewRequest reviews it.
+    properties:
+      review_request_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      status:
+        type: string
+        enum_ref: review_status
+      summary:
+        type: string
+        optional: true
+      requested_by:
+        type: string
+        optional: true
+      reviewer:
+        type: string
+        optional: true
+      requested_at:
+        type: date
+        optional: true
+      resolved_at:
+        type: date
+        optional: true
+
 relationships:
   # Deterministic or source-backed project structure.
+  - name: review_request_for_work_item
+    description: Review request reviews a work item for completion.
+    from: ReviewRequest
+    to: WorkItem
+
+  - name: review_request_in_release
+    description: Review request belongs to a release line's review context.
+    from: ReviewRequest
+    to: ReleaseLine
+
+  - name: review_request_in_milestone
+    description: Review request belongs to a milestone's review context.
+    from: ReviewRequest
+    to: Milestone
+
   - name: work_item_in_release
     description: Work item is planned, tracked, or delivered in a release line.
     from: WorkItem
@@ -887,6 +939,46 @@ named_queries:
         direction: incoming
         many: true
 
+  approved_reviews_for_work_item:
+    mode: traversal
+    description: >
+      Approved review requests reviewing a specific work item. Used by the
+      work_item_closed_requires_approved_review mutation guard as the
+      closed-transition condition.
+    entry_point: WorkItem
+    returns: ReviewRequest
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 100
+    max_paths_per_result: 25
+    traversal:
+      - relationship: review_request_for_work_item
+        direction: incoming
+        as: approved_review
+        where:
+          candidate.properties.status:
+            eq: approved
+
+  review_queue:
+    mode: collection
+    description: Open review requests awaiting review.
+    result_shape: entity
+    returns: ReviewRequest
+    where:
+      result.properties.status:
+        in: [requested, in_review]
+    limit: 100
+
+  changes_requested_reviews:
+    mode: collection
+    description: Review requests sent back with changes requested.
+    result_shape: entity
+    returns: ReviewRequest
+    where:
+      result.properties.status:
+        eq: changes_requested
+    limit: 100
+
   blocked_work_items:
     mode: collection
     description: Work queue of blocked execution-level work items.
@@ -935,7 +1027,34 @@ named_queries:
         eq: superseded
     limit: 100
 
+mutation_guards:
+  - name: work_item_closed_requires_approved_review
+    operation: entity_update
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      kind: named_query_result_count
+      query_name: approved_reviews_for_work_item
+      params:
+        work_item_id: "$entity.entity_id"
+      min_count: 1
+    effect: reject
+    message: >-
+      Work items cannot be closed until an approved ReviewRequest reviews
+      them. Create a ReviewRequest with status approved linked via
+      review_request_for_work_item, or get an existing request approved.
+
 quality_checks:
+  - name: review_requests_review_a_work_item
+    kind: cardinality
+    description: Review requests should be attached to the work item they review.
+    severity: warning
+    entity_type: ReviewRequest
+    relationship_type: review_request_for_work_item
+    direction: outgoing
+    min_count: 1
+
   - name: roadmap_items_target_area
     kind: cardinality
     description: Roadmap items should be grounded in at least one product area.

@@ -253,6 +253,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "DesignDecision",
         "Risk",
         "OpenQuestion",
+        "ReviewRequest",
     }
     removed_entity_types = {
         "Assumption",
@@ -321,6 +322,9 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "active_risks",
         "open_questions_needing_review",
         "superseded_decisions",
+        "approved_reviews_for_work_item",
+        "review_queue",
+        "changes_requested_reviews",
     }
     assert set(config.named_queries) == required_queries
     for name in {
