@@ -148,6 +148,13 @@
         "archive"
       ]
     },
+    "StateCompatibility": {
+      "values": [
+        "data_only",
+        "additive_schema",
+        "breaking"
+      ]
+    },
     "WorkflowMode": {
       "values": [
         "run",
@@ -162,13 +169,6 @@
         "canonical",
         "decision_support",
         "proposal"
-      ]
-    },
-    "WorldCompatibility": {
-      "values": [
-        "data_only",
-        "additive_schema",
-        "breaking"
       ]
     }
   },
@@ -11018,7 +11018,7 @@
         "support_count"
       ]
     },
-    "PublishedWorldManifest": {
+    "PublishedStateManifest": {
       "fields": {
         "compatibility": {
           "has_default": false,
@@ -11111,13 +11111,13 @@
             "type": "string"
           }
         },
-        "world_id": {
+        "state_id": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "world_id",
+          "json_name": "state_id",
           "required": true,
           "schema": {
-            "title": "World Id",
+            "title": "State Id",
             "type": "string"
           }
         }
@@ -11171,19 +11171,19 @@
             "title": "Snapshot Id",
             "type": "string"
           },
-          "world_id": {
-            "title": "World Id",
+          "state_id": {
+            "title": "State Id",
             "type": "string"
           }
         },
         "required": [
           "format_version",
-          "world_id",
+          "state_id",
           "release_id",
           "snapshot_id",
           "compatibility"
         ],
-        "title": "PublishedWorldManifest",
+        "title": "PublishedStateManifest",
         "type": "object"
       },
       "required_fields": [
@@ -11191,7 +11191,7 @@
         "format_version",
         "release_id",
         "snapshot_id",
-        "world_id"
+        "state_id"
       ]
     },
     "QualityCheckCandidate": {
@@ -15236,6 +15236,638 @@
         "source_artifact_id"
       ]
     },
+    "StateOverlayResult": {
+      "fields": {
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "manifest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "manifest",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PublishedStateManifest"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PublishedStateManifest": {
+            "properties": {
+              "compatibility": {
+                "enum": [
+                  "data_only",
+                  "additive_schema",
+                  "breaking"
+                ],
+                "title": "Compatibility",
+                "type": "string"
+              },
+              "format_version": {
+                "title": "Format Version",
+                "type": "integer"
+              },
+              "owned_entity_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Entity Types",
+                "type": "array"
+              },
+              "owned_relationship_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Relationship Types",
+                "type": "array"
+              },
+              "parent_release_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parent Release Id"
+              },
+              "release_id": {
+                "title": "Release Id",
+                "type": "string"
+              },
+              "snapshot_id": {
+                "title": "Snapshot Id",
+                "type": "string"
+              },
+              "state_id": {
+                "title": "State Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "format_version",
+              "state_id",
+              "release_id",
+              "snapshot_id",
+              "compatibility"
+            ],
+            "title": "PublishedStateManifest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/$defs/PublishedStateManifest"
+          }
+        },
+        "required": [
+          "instance_id",
+          "manifest"
+        ],
+        "title": "StateOverlayResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "instance_id",
+        "manifest"
+      ]
+    },
+    "StatePublishResult": {
+      "fields": {
+        "manifest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "manifest",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PublishedStateManifest"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PublishedStateManifest": {
+            "properties": {
+              "compatibility": {
+                "enum": [
+                  "data_only",
+                  "additive_schema",
+                  "breaking"
+                ],
+                "title": "Compatibility",
+                "type": "string"
+              },
+              "format_version": {
+                "title": "Format Version",
+                "type": "integer"
+              },
+              "owned_entity_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Entity Types",
+                "type": "array"
+              },
+              "owned_relationship_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Relationship Types",
+                "type": "array"
+              },
+              "parent_release_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parent Release Id"
+              },
+              "release_id": {
+                "title": "Release Id",
+                "type": "string"
+              },
+              "snapshot_id": {
+                "title": "Snapshot Id",
+                "type": "string"
+              },
+              "state_id": {
+                "title": "State Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "format_version",
+              "state_id",
+              "release_id",
+              "snapshot_id",
+              "compatibility"
+            ],
+            "title": "PublishedStateManifest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "manifest": {
+            "$ref": "#/$defs/PublishedStateManifest"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "title": "StatePublishResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "manifest"
+      ]
+    },
+    "StatePullApplyResult": {
+      "fields": {
+        "apply_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "apply_digest",
+          "required": true,
+          "schema": {
+            "title": "Apply Digest",
+            "type": "string"
+          }
+        },
+        "pre_pull_snapshot_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pre_pull_snapshot_id",
+          "required": true,
+          "schema": {
+            "title": "Pre Pull Snapshot Id",
+            "type": "string"
+          }
+        },
+        "release_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "release_id",
+          "required": true,
+          "schema": {
+            "title": "Release Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "apply_digest": {
+            "title": "Apply Digest",
+            "type": "string"
+          },
+          "pre_pull_snapshot_id": {
+            "title": "Pre Pull Snapshot Id",
+            "type": "string"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "apply_digest",
+          "pre_pull_snapshot_id"
+        ],
+        "title": "StatePullApplyResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "apply_digest",
+        "pre_pull_snapshot_id",
+        "release_id"
+      ]
+    },
+    "StatePullPreviewResult": {
+      "fields": {
+        "apply_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "apply_digest",
+          "required": true,
+          "schema": {
+            "title": "Apply Digest",
+            "type": "string"
+          }
+        },
+        "compatibility": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compatibility",
+          "required": true,
+          "schema": {
+            "enum": [
+              "data_only",
+              "additive_schema",
+              "breaking"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          }
+        },
+        "conflicts": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "conflicts",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          }
+        },
+        "current_release_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "current_release_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Release Id"
+          }
+        },
+        "lock_changed": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lock_changed",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Lock Changed",
+            "type": "boolean"
+          }
+        },
+        "target_release_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target_release_id",
+          "required": true,
+          "schema": {
+            "title": "Target Release Id",
+            "type": "string"
+          }
+        },
+        "upstream_edge_delta": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "upstream_edge_delta",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Upstream Edge Delta",
+            "type": "integer"
+          }
+        },
+        "upstream_entity_delta": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "upstream_entity_delta",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Upstream Entity Delta",
+            "type": "integer"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "apply_digest": {
+            "title": "Apply Digest",
+            "type": "string"
+          },
+          "compatibility": {
+            "enum": [
+              "data_only",
+              "additive_schema",
+              "breaking"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "current_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Release Id"
+          },
+          "lock_changed": {
+            "default": false,
+            "title": "Lock Changed",
+            "type": "boolean"
+          },
+          "target_release_id": {
+            "title": "Target Release Id",
+            "type": "string"
+          },
+          "upstream_edge_delta": {
+            "default": 0,
+            "title": "Upstream Edge Delta",
+            "type": "integer"
+          },
+          "upstream_entity_delta": {
+            "default": 0,
+            "title": "Upstream Entity Delta",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "target_release_id",
+          "compatibility",
+          "apply_digest"
+        ],
+        "title": "StatePullPreviewResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "apply_digest",
+        "compatibility",
+        "target_release_id"
+      ]
+    },
+    "StateStatusResult": {
+      "fields": {
+        "upstream": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "upstream",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/UpstreamMetadataResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "UpstreamMetadataResult": {
+            "properties": {
+              "compatibility": {
+                "enum": [
+                  "data_only",
+                  "additive_schema",
+                  "breaking"
+                ],
+                "title": "Compatibility",
+                "type": "string"
+              },
+              "graph_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Graph Digest"
+              },
+              "graph_path": {
+                "title": "Graph Path",
+                "type": "string"
+              },
+              "lock_path": {
+                "title": "Lock Path",
+                "type": "string"
+              },
+              "manifest_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Manifest Digest"
+              },
+              "manifest_path": {
+                "title": "Manifest Path",
+                "type": "string"
+              },
+              "overlay_config_path": {
+                "title": "Overlay Config Path",
+                "type": "string"
+              },
+              "owned_entity_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Entity Types",
+                "type": "array"
+              },
+              "owned_relationship_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Relationship Types",
+                "type": "array"
+              },
+              "release_id": {
+                "title": "Release Id",
+                "type": "string"
+              },
+              "requested_source_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Requested Source Ref"
+              },
+              "requested_transport_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Requested Transport Ref"
+              },
+              "snapshot_id": {
+                "title": "Snapshot Id",
+                "type": "string"
+              },
+              "state_id": {
+                "title": "State Id",
+                "type": "string"
+              },
+              "transport_ref": {
+                "title": "Transport Ref",
+                "type": "string"
+              },
+              "upstream_config_path": {
+                "title": "Upstream Config Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "transport_ref",
+              "state_id",
+              "release_id",
+              "snapshot_id",
+              "compatibility",
+              "overlay_config_path",
+              "manifest_path",
+              "graph_path",
+              "upstream_config_path",
+              "lock_path"
+            ],
+            "title": "UpstreamMetadataResult",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "upstream": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/UpstreamMetadataResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "StateStatusResult",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "StatsResult": {
       "fields": {
         "edge_count": {
@@ -16403,6 +17035,16 @@
             "type": "string"
           }
         },
+        "state_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state_id",
+          "required": true,
+          "schema": {
+            "title": "State Id",
+            "type": "string"
+          }
+        },
         "transport_ref": {
           "has_default": false,
           "has_default_factory": false,
@@ -16420,16 +17062,6 @@
           "required": true,
           "schema": {
             "title": "Upstream Config Path",
-            "type": "string"
-          }
-        },
-        "world_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "world_id",
-          "required": true,
-          "schema": {
-            "title": "World Id",
             "type": "string"
           }
         }
@@ -16531,6 +17163,10 @@
             "title": "Snapshot Id",
             "type": "string"
           },
+          "state_id": {
+            "title": "State Id",
+            "type": "string"
+          },
           "transport_ref": {
             "title": "Transport Ref",
             "type": "string"
@@ -16538,15 +17174,11 @@
           "upstream_config_path": {
             "title": "Upstream Config Path",
             "type": "string"
-          },
-          "world_id": {
-            "title": "World Id",
-            "type": "string"
           }
         },
         "required": [
           "transport_ref",
-          "world_id",
+          "state_id",
           "release_id",
           "snapshot_id",
           "compatibility",
@@ -16567,9 +17199,9 @@
         "overlay_config_path",
         "release_id",
         "snapshot_id",
+        "state_id",
         "transport_ref",
-        "upstream_config_path",
-        "world_id"
+        "upstream_config_path"
       ]
     },
     "ValidateResult": {
@@ -18803,638 +19435,6 @@
         "passed",
         "total"
       ]
-    },
-    "WorldOverlayResult": {
-      "fields": {
-        "instance_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "instance_id",
-          "required": true,
-          "schema": {
-            "title": "Instance Id",
-            "type": "string"
-          }
-        },
-        "manifest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "manifest",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PublishedWorldManifest"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "PublishedWorldManifest": {
-            "properties": {
-              "compatibility": {
-                "enum": [
-                  "data_only",
-                  "additive_schema",
-                  "breaking"
-                ],
-                "title": "Compatibility",
-                "type": "string"
-              },
-              "format_version": {
-                "title": "Format Version",
-                "type": "integer"
-              },
-              "owned_entity_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Entity Types",
-                "type": "array"
-              },
-              "owned_relationship_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Relationship Types",
-                "type": "array"
-              },
-              "parent_release_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parent Release Id"
-              },
-              "release_id": {
-                "title": "Release Id",
-                "type": "string"
-              },
-              "snapshot_id": {
-                "title": "Snapshot Id",
-                "type": "string"
-              },
-              "world_id": {
-                "title": "World Id",
-                "type": "string"
-              }
-            },
-            "required": [
-              "format_version",
-              "world_id",
-              "release_id",
-              "snapshot_id",
-              "compatibility"
-            ],
-            "title": "PublishedWorldManifest",
-            "type": "object"
-          }
-        },
-        "properties": {
-          "instance_id": {
-            "title": "Instance Id",
-            "type": "string"
-          },
-          "manifest": {
-            "$ref": "#/$defs/PublishedWorldManifest"
-          }
-        },
-        "required": [
-          "instance_id",
-          "manifest"
-        ],
-        "title": "WorldOverlayResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "instance_id",
-        "manifest"
-      ]
-    },
-    "WorldPublishResult": {
-      "fields": {
-        "manifest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "manifest",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/PublishedWorldManifest"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "PublishedWorldManifest": {
-            "properties": {
-              "compatibility": {
-                "enum": [
-                  "data_only",
-                  "additive_schema",
-                  "breaking"
-                ],
-                "title": "Compatibility",
-                "type": "string"
-              },
-              "format_version": {
-                "title": "Format Version",
-                "type": "integer"
-              },
-              "owned_entity_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Entity Types",
-                "type": "array"
-              },
-              "owned_relationship_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Relationship Types",
-                "type": "array"
-              },
-              "parent_release_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parent Release Id"
-              },
-              "release_id": {
-                "title": "Release Id",
-                "type": "string"
-              },
-              "snapshot_id": {
-                "title": "Snapshot Id",
-                "type": "string"
-              },
-              "world_id": {
-                "title": "World Id",
-                "type": "string"
-              }
-            },
-            "required": [
-              "format_version",
-              "world_id",
-              "release_id",
-              "snapshot_id",
-              "compatibility"
-            ],
-            "title": "PublishedWorldManifest",
-            "type": "object"
-          }
-        },
-        "properties": {
-          "manifest": {
-            "$ref": "#/$defs/PublishedWorldManifest"
-          }
-        },
-        "required": [
-          "manifest"
-        ],
-        "title": "WorldPublishResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "manifest"
-      ]
-    },
-    "WorldPullApplyResult": {
-      "fields": {
-        "apply_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "apply_digest",
-          "required": true,
-          "schema": {
-            "title": "Apply Digest",
-            "type": "string"
-          }
-        },
-        "pre_pull_snapshot_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "pre_pull_snapshot_id",
-          "required": true,
-          "schema": {
-            "title": "Pre Pull Snapshot Id",
-            "type": "string"
-          }
-        },
-        "release_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "release_id",
-          "required": true,
-          "schema": {
-            "title": "Release Id",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "properties": {
-          "apply_digest": {
-            "title": "Apply Digest",
-            "type": "string"
-          },
-          "pre_pull_snapshot_id": {
-            "title": "Pre Pull Snapshot Id",
-            "type": "string"
-          },
-          "release_id": {
-            "title": "Release Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "release_id",
-          "apply_digest",
-          "pre_pull_snapshot_id"
-        ],
-        "title": "WorldPullApplyResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "apply_digest",
-        "pre_pull_snapshot_id",
-        "release_id"
-      ]
-    },
-    "WorldPullPreviewResult": {
-      "fields": {
-        "apply_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "apply_digest",
-          "required": true,
-          "schema": {
-            "title": "Apply Digest",
-            "type": "string"
-          }
-        },
-        "compatibility": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "compatibility",
-          "required": true,
-          "schema": {
-            "enum": [
-              "data_only",
-              "additive_schema",
-              "breaking"
-            ],
-            "title": "Compatibility",
-            "type": "string"
-          }
-        },
-        "conflicts": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "conflicts",
-          "required": false,
-          "schema": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Conflicts",
-            "type": "array"
-          }
-        },
-        "current_release_id": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "current_release_id",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Current Release Id"
-          }
-        },
-        "lock_changed": {
-          "default": false,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "lock_changed",
-          "required": false,
-          "schema": {
-            "default": false,
-            "title": "Lock Changed",
-            "type": "boolean"
-          }
-        },
-        "target_release_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "target_release_id",
-          "required": true,
-          "schema": {
-            "title": "Target Release Id",
-            "type": "string"
-          }
-        },
-        "upstream_edge_delta": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "upstream_edge_delta",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "title": "Upstream Edge Delta",
-            "type": "integer"
-          }
-        },
-        "upstream_entity_delta": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "upstream_entity_delta",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "title": "Upstream Entity Delta",
-            "type": "integer"
-          }
-        },
-        "warnings": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "warnings",
-          "required": false,
-          "schema": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        }
-      },
-      "json_schema": {
-        "properties": {
-          "apply_digest": {
-            "title": "Apply Digest",
-            "type": "string"
-          },
-          "compatibility": {
-            "enum": [
-              "data_only",
-              "additive_schema",
-              "breaking"
-            ],
-            "title": "Compatibility",
-            "type": "string"
-          },
-          "conflicts": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Conflicts",
-            "type": "array"
-          },
-          "current_release_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Current Release Id"
-          },
-          "lock_changed": {
-            "default": false,
-            "title": "Lock Changed",
-            "type": "boolean"
-          },
-          "target_release_id": {
-            "title": "Target Release Id",
-            "type": "string"
-          },
-          "upstream_edge_delta": {
-            "default": 0,
-            "title": "Upstream Edge Delta",
-            "type": "integer"
-          },
-          "upstream_entity_delta": {
-            "default": 0,
-            "title": "Upstream Entity Delta",
-            "type": "integer"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        },
-        "required": [
-          "target_release_id",
-          "compatibility",
-          "apply_digest"
-        ],
-        "title": "WorldPullPreviewResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "apply_digest",
-        "compatibility",
-        "target_release_id"
-      ]
-    },
-    "WorldStatusResult": {
-      "fields": {
-        "upstream": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "upstream",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/UpstreamMetadataResult"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "UpstreamMetadataResult": {
-            "properties": {
-              "compatibility": {
-                "enum": [
-                  "data_only",
-                  "additive_schema",
-                  "breaking"
-                ],
-                "title": "Compatibility",
-                "type": "string"
-              },
-              "graph_digest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Graph Digest"
-              },
-              "graph_path": {
-                "title": "Graph Path",
-                "type": "string"
-              },
-              "lock_path": {
-                "title": "Lock Path",
-                "type": "string"
-              },
-              "manifest_digest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Manifest Digest"
-              },
-              "manifest_path": {
-                "title": "Manifest Path",
-                "type": "string"
-              },
-              "overlay_config_path": {
-                "title": "Overlay Config Path",
-                "type": "string"
-              },
-              "owned_entity_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Entity Types",
-                "type": "array"
-              },
-              "owned_relationship_types": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Owned Relationship Types",
-                "type": "array"
-              },
-              "release_id": {
-                "title": "Release Id",
-                "type": "string"
-              },
-              "requested_source_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Requested Source Ref"
-              },
-              "requested_transport_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Requested Transport Ref"
-              },
-              "snapshot_id": {
-                "title": "Snapshot Id",
-                "type": "string"
-              },
-              "transport_ref": {
-                "title": "Transport Ref",
-                "type": "string"
-              },
-              "upstream_config_path": {
-                "title": "Upstream Config Path",
-                "type": "string"
-              },
-              "world_id": {
-                "title": "World Id",
-                "type": "string"
-              }
-            },
-            "required": [
-              "transport_ref",
-              "world_id",
-              "release_id",
-              "snapshot_id",
-              "compatibility",
-              "overlay_config_path",
-              "manifest_path",
-              "graph_path",
-              "upstream_config_path",
-              "lock_path"
-            ],
-            "title": "UpstreamMetadataResult",
-            "type": "object"
-          }
-        },
-        "properties": {
-          "upstream": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/UpstreamMetadataResult"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        },
-        "title": "WorldStatusResult",
-        "type": "object"
-      },
-      "required_fields": []
     }
   },
   "module": "cruxible_client.contracts"

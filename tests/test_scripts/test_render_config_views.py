@@ -150,7 +150,6 @@ def test_config_owned_operational_sections_render() -> None:
         """\
 version: "1.0"
 name: operational_sections
-kind: world_model
 
 entity_types:
   Asset:
@@ -392,7 +391,6 @@ def test_load_config_for_rendering_composes_extends(tmp_path: Path) -> None:
         """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Product:
     properties:
@@ -479,7 +477,6 @@ def test_load_config_for_rendering_runtime_strips_upstream_workflows(
         """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Product:
     properties:

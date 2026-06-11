@@ -1,12 +1,12 @@
 # Concepts
 
-Cruxible Core is a deterministic world-model runtime with receipts. It gives
+Cruxible Core is a deterministic state runtime with receipts. It gives
 agents and humans a shared, governed substrate for domain state that should
 survive beyond one prompt, one chat, or one run.
 
-## World Model, Not Scratch Memory
+## A State Model, Not Scratch Memory
 
-A **world model** is the governed universe exposed to an agent: entity types,
+A **state model** is the governed universe exposed to an agent: entity types,
 relationships, workflows, named queries, review state, receipts, traces, and
 outcomes.
 
@@ -49,10 +49,10 @@ separation, see [Isolated Deployment](isolated-deployment.md).
 A **kit** is a versioned bundle with `cruxible-kit.yaml`, `config.yaml`,
 provider code, optional data, and a bundled `cruxible.lock.yaml`.
 
-- A **standalone kit** can initialize a world model by itself.
-- An **overlay kit** targets a published upstream world and adds local schema,
+- A **standalone kit** can initialize a state model by itself.
+- An **overlay kit** targets a published upstream state and adds local schema,
   workflows, data, and governed proposal surfaces.
-- An **overlay** is a local instance tracking a published upstream world.
+- An **overlay** is a local instance tracking a published upstream state.
 - A **clone** is a point-in-time copy from a snapshot.
 - **Local state** is customer-owned seeded or runtime state in the overlay.
 
@@ -65,12 +65,10 @@ Example:
   governed exposure workflows.
 
 Kit distribution details live in [Kit Authoring And Distribution](kit-authoring.md).
-The meaning of `kind: ontology | world_model` is documented in
-[World Models And Config Kind](world-model-kind.md).
 
 ## Config
 
-The config is the schema and execution contract for a world model. It can
+The config is the schema and execution contract for a state model. It can
 declare:
 
 - entity types and typed properties

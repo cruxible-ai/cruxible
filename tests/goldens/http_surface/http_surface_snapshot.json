@@ -5,11 +5,11 @@
   "/api/v1/server/info": {
     "GET": "ServerInfoResult"
   },
+  "/api/v1/states/overlays": {
+    "POST": "StateOverlayResult"
+  },
   "/api/v1/validate": {
     "POST": "ValidateResult"
-  },
-  "/api/v1/worlds/overlays": {
-    "POST": "WorldOverlayResult"
   },
   "/api/v1/{instance_id}/config/reload": {
     "POST": "ReloadConfigResult"
@@ -151,6 +151,18 @@
   "/api/v1/{instance_id}/source-evidence/dereference": {
     "POST": "DereferenceSourceEvidenceResult"
   },
+  "/api/v1/{instance_id}/state/publish": {
+    "POST": "StatePublishResult"
+  },
+  "/api/v1/{instance_id}/state/pull/apply": {
+    "POST": "StatePullApplyResult"
+  },
+  "/api/v1/{instance_id}/state/pull/preview": {
+    "POST": "StatePullPreviewResult"
+  },
+  "/api/v1/{instance_id}/state/status": {
+    "GET": "StateStatusResult"
+  },
   "/api/v1/{instance_id}/stats": {
     "GET": "StatsResult"
   },
@@ -180,18 +192,6 @@
   },
   "/api/v1/{instance_id}/workflows/test": {
     "POST": "WorkflowTestResult"
-  },
-  "/api/v1/{instance_id}/world/publish": {
-    "POST": "WorldPublishResult"
-  },
-  "/api/v1/{instance_id}/world/pull/apply": {
-    "POST": "WorldPullApplyResult"
-  },
-  "/api/v1/{instance_id}/world/pull/preview": {
-    "POST": "WorldPullPreviewResult"
-  },
-  "/api/v1/{instance_id}/world/status": {
-    "GET": "WorldStatusResult"
   },
   "/health": {
     "GET": null

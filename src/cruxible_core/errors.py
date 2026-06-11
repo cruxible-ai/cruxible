@@ -246,7 +246,7 @@ class QueryExecutionError(ExecutionError):
 
 
 class TransportError(ExecutionError):
-    """Error during world release transport operations."""
+    """Error during state release transport operations."""
 
     pass
 

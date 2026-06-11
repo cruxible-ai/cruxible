@@ -59,7 +59,7 @@ class LockedArtifact(BaseModel):
 
     kind: str
     uri: str
-    sha256: str
+    digest: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -68,7 +68,7 @@ class LockedProvider(BaseModel):
 
     version: str
     ref: str
-    provider_entrypoint_sha256: str | None = None
+    provider_entrypoint_digest: str | None = None
     runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool
@@ -99,9 +99,9 @@ class CompiledPlanStep(BaseModel):
     provider_name: str | None = None
     provider_ref: str | None = None
     provider_version: str | None = None
-    provider_entrypoint_sha256: str | None = None
+    provider_entrypoint_digest: str | None = None
     artifact_name: str | None = None
-    artifact_sha256: str | None = None
+    artifact_digest: str | None = None
     params_template: dict[str, Any] = Field(default_factory=dict)
     params_preview: dict[str, Any] = Field(default_factory=dict)
     relationship_state_template: Any | None = None

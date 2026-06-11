@@ -1,6 +1,6 @@
 # Supply Chain Blast Radius Demo
 
-Deterministic supply-chain world model that turns a supplier-side disruption into
+Deterministic supply-chain state model that turns a supplier-side disruption into
 a bounded, reviewable blast radius. The stable canonical backbone is suppliers,
 components, assemblies, products, and shipments. Incidents arrive as governed
 trigger state and cascade through staged proposal workflows:

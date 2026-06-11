@@ -5,11 +5,11 @@ Controls which operations a runtime session can invoke, enforced via the
 
 - ``READ_ONLY``: query, inspect, validate, and plan workflows
 - ``GOVERNED_WRITE``: execute governed operator actions such as feedback,
-  proposals, snapshots, policy additions, and subscribed world pulls
+  proposals, snapshots, policy additions, and subscribed state pulls
 - ``GRAPH_WRITE``: commit local governed state through direct graph writes,
   group resolution, trust updates, or canonical workflow apply
 - ``ADMIN``: manage instance lifecycle, active config replacement, locks,
-  clones, overlays, and published world trust boundaries
+  clones, overlays, and published state trust boundaries
 
 Default is ``ADMIN`` (backward compatible) when ``CRUXIBLE_MODE`` is unset.
 
@@ -77,7 +77,7 @@ _MODE_NAMES: dict[str, PermissionMode] = {
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
-    # READ_ONLY tools do not mutate graph/world state. Some may still append
+    # READ_ONLY tools do not mutate graph/state. Some may still append
     # decision-event audit metadata when an explicit decision_record_id is supplied.
     "cruxible_version": PermissionMode.READ_ONLY,
     "cruxible_server_info": PermissionMode.READ_ONLY,
@@ -117,8 +117,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_get_decision_record": PermissionMode.READ_ONLY,
     "cruxible_list_decision_records": PermissionMode.READ_ONLY,
     "cruxible_list_decision_events": PermissionMode.READ_ONLY,
-    "cruxible_world_status": PermissionMode.READ_ONLY,
-    "cruxible_world_pull_preview": PermissionMode.READ_ONLY,
+    "cruxible_state_status": PermissionMode.READ_ONLY,
+    "cruxible_state_pull_preview": PermissionMode.READ_ONLY,
     "cruxible_list_snapshots": PermissionMode.READ_ONLY,
     "cruxible_dereference_source_evidence": PermissionMode.READ_ONLY,
     "cruxible_plan_workflow": PermissionMode.READ_ONLY,
@@ -137,7 +137,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_add_constraint": PermissionMode.GOVERNED_WRITE,
     "cruxible_add_decision_policy": PermissionMode.GOVERNED_WRITE,
     "cruxible_create_snapshot": PermissionMode.GOVERNED_WRITE,
-    "cruxible_world_pull_apply": PermissionMode.GOVERNED_WRITE,
+    "cruxible_state_pull_apply": PermissionMode.GOVERNED_WRITE,
     "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
     # GRAPH_WRITE tools
     "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
@@ -150,8 +150,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_lock_workflow": PermissionMode.ADMIN,
     "cruxible_reload_config": PermissionMode.ADMIN,
     "cruxible_clone_snapshot": PermissionMode.ADMIN,
-    "cruxible_world_publish": PermissionMode.ADMIN,
-    "cruxible_world_create_overlay": PermissionMode.ADMIN,
+    "cruxible_state_publish": PermissionMode.ADMIN,
+    "cruxible_state_create_overlay": PermissionMode.ADMIN,
 }
 
 # Internal runtime operations that are not registered MCP tools but still need

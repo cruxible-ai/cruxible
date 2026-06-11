@@ -1,6 +1,6 @@
 # Quickstart
 
-Get from install to a governed kit-backed world model in a few minutes.
+Get from install to a governed kit-backed state model in a few minutes.
 
 The recommended `0.2` shape is a local `cruxible-server` daemon. The daemon
 owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
@@ -81,16 +81,16 @@ world and adds local assets, services, controls, exceptions, remediation,
 incidents, findings, and governed proposal workflows.
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 world create-overlay \
-  --world-ref kev-reference \
+cruxible --server-url http://127.0.0.1:8100 state create-overlay \
+  --state-ref kev-reference \
   --kit kev-triage \
   --root-dir "$PWD/kev-triage-workspace"
 ```
 
-`--world-ref kev-reference` resolves through the published world catalog. In a
-source checkout before published OCI reference worlds are available, publish the
+`--state-ref kev-reference` resolves through the published world catalog. In a
+source checkout before published OCI reference states are available, publish the
 reference instance to a local `file://` transport and pass `--transport-ref`
-instead of `--world-ref`.
+instead of `--state-ref`.
 
 The command returns a new overlay `instance_id`. Lock the overlay, preview the
 local canonical state refresh, and apply it:
@@ -169,8 +169,8 @@ If the agent should not have direct state access, keep
 
 Use kits for repeatable work:
 
-- A **standalone kit** creates a world model by itself.
-- An **overlay kit** extends a published reference world.
+- A **standalone kit** creates a state model by itself.
+- An **overlay kit** extends a published reference state.
 - Provider refs use `kit://...::callable`.
 - Deterministic state loading should be workflow-based: parse source artifacts,
   shape/filter/join/dedupe rows, make graph objects, preview, then apply.

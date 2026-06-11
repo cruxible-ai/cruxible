@@ -1,4 +1,4 @@
-"""Snapshot and release metadata types for immutable world-model state."""
+"""Snapshot and release metadata types for immutable state."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from cruxible_core.temporal import utc_now
 
 _RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
 
-WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
+StateCompatibility = Literal["data_only", "additive_schema", "breaking"]
 """Compatibility class between a published release and its predecessors.
 
 - ``data_only``: graph data changes only; no schema changes.
@@ -31,7 +31,7 @@ def _validate_path_safe_id(value: str, field_name: str) -> str:
     return value
 
 
-class WorldSnapshot(BaseModel):
+class StateSnapshot(BaseModel):
     """Immutable local snapshot of graph state and build lineage."""
 
     snapshot_id: str
@@ -44,22 +44,22 @@ class WorldSnapshot(BaseModel):
     origin_snapshot_id: str | None = None
 
 
-class PublishedWorldManifest(BaseModel):
-    """Distribution metadata for a published world release bundle."""
+class PublishedStateManifest(BaseModel):
+    """Distribution metadata for a published state release bundle."""
 
     format_version: int = 1
-    world_id: str
+    state_id: str
     release_id: str
     snapshot_id: str
-    compatibility: WorldCompatibility
+    compatibility: StateCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
 
-    @field_validator("world_id")
+    @field_validator("state_id")
     @classmethod
-    def validate_world_id(cls, value: str) -> str:
-        return _validate_path_safe_id(value, "world_id")
+    def validate_state_id(cls, value: str) -> str:
+        return _validate_path_safe_id(value, "state_id")
 
     @field_validator("release_id")
     @classmethod
@@ -67,10 +67,10 @@ class PublishedWorldManifest(BaseModel):
         return _validate_path_safe_id(value, "release_id")
 
 
-class UpstreamMetadata(PublishedWorldManifest):
+class UpstreamMetadata(PublishedStateManifest):
     """Per-instance upstream release tracking metadata for pullable overlays.
 
-    Extends ``PublishedWorldManifest`` with transport and local-path
+    Extends ``PublishedStateManifest`` with transport and local-path
     bookkeeping. The manifest fields record what was pulled; the rest
     tracks how it was fetched and where it lives on disk.
     """

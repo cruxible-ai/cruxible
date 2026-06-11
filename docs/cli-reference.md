@@ -9,7 +9,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - The CLI context commands remember transport and the active instance for shell
   users; MCP does not use CLI context.
 - Commands that mutate governed state are blocked locally when the command requires a daemon surface.
-- `init --kit` accepts standalone kits. Overlay kits are created with `world create-overlay --kit`.
+- `init --kit` accepts standalone kits. Overlay kits are created with `state create-overlay --kit`.
 - `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
 - `explain` and `export edges` are direct-local file/rendering utilities. Use receipts and list/query tools for daemon/MCP flows.
 
@@ -1692,7 +1692,7 @@ cruxible query inline \
 
 **Usage:** `cruxible render-wiki [OPTIONS]`
 
-**Purpose:** Render a deterministic Markdown wiki from the current world state.
+**Purpose:** Render a deterministic Markdown wiki from the current state.
 
 **Options And Arguments:**
 
@@ -1822,7 +1822,7 @@ cruxible query inline \
 
 **Usage:** `cruxible snapshot [OPTIONS]`
 
-**Purpose:** Manage immutable world-model snapshots.
+**Purpose:** Manage immutable state snapshots.
 
 **Subcommands:**
 
@@ -2047,19 +2047,19 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world
+## cruxible state
 
-**Usage:** `cruxible world [OPTIONS]`
+**Usage:** `cruxible state [OPTIONS]`
 
-**Purpose:** Publish immutable worlds and manage pullable overlays.
+**Purpose:** Publish immutable states and manage pullable overlays.
 
 **Subcommands:**
 
-- `cruxible world create-overlay` - Create a new local overlay instance from a published world release.
-- `cruxible world publish` - Publish the current root world-model instance as an immutable release bundle.
-- `cruxible world pull-apply` - Apply a previewed upstream release into the current overlay.
-- `cruxible world pull-preview` - Preview pulling a newer upstream release into the current overlay.
-- `cruxible world status` - Show upstream tracking metadata for the current instance.
+- `cruxible state create-overlay` - Create a new local overlay instance from a published state release.
+- `cruxible state publish` - Publish the current root state-model instance as an immutable release bundle.
+- `cruxible state pull-apply` - Apply a previewed upstream release into the current overlay.
+- `cruxible state pull-preview` - Preview pulling a newer upstream release into the current overlay.
+- `cruxible state status` - Show upstream tracking metadata for the current instance.
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -2069,18 +2069,18 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world create-overlay
+## cruxible state create-overlay
 
-**Usage:** `cruxible world create-overlay [OPTIONS]`
+**Usage:** `cruxible state create-overlay [OPTIONS]`
 
-**Purpose:** Create a new local overlay instance from a published world release.
+**Purpose:** Create a new local overlay instance from a published state release.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--transport-ref` | no | `Sentinel.UNSET` | text | Transport ref, e.g. file://... or oci://... |
-| `--world-ref` | no | `Sentinel.UNSET` | text | World alias, e.g. kev-reference or kev-reference@2026-03-27. |
+| `--state-ref` | no | `Sentinel.UNSET` | text | World alias, e.g. kev-reference or kev-reference@2026-03-27. |
 | `--kit` | no | `Sentinel.UNSET` | text | Apply a checked-in local overlay kit, e.g. kev-triage. |
 | `--no-kit` | no | `False` | boolean | Skip automatic kit application and create a bare overlay. |
 | `--root-dir` | no | `` | text | Workspace root for the new overlay (defaults to current directory in server mode). |
@@ -2094,18 +2094,18 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world publish
+## cruxible state publish
 
-**Usage:** `cruxible world publish [OPTIONS]`
+**Usage:** `cruxible state publish [OPTIONS]`
 
-**Purpose:** Publish the current root world-model instance as an immutable release bundle.
+**Purpose:** Publish the current root state-model instance as an immutable release bundle.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--transport-ref` | yes | `Sentinel.UNSET` | text | Transport ref, e.g. file://... or oci://... |
-| `--world-id` | yes | `Sentinel.UNSET` | text | Stable published world identifier. |
+| `--state-id` | yes | `Sentinel.UNSET` | text | Stable published state identifier. |
 | `--release-id` | yes | `Sentinel.UNSET` | text | User-supplied release identifier. |
 | `--compatibility` | no | `data_only` | choice | Compatibility classification for the published release. |
 
@@ -2117,9 +2117,9 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world pull-apply
+## cruxible state pull-apply
 
-**Usage:** `cruxible world pull-apply [OPTIONS]`
+**Usage:** `cruxible state pull-apply [OPTIONS]`
 
 **Purpose:** Apply a previewed upstream release into the current overlay.
 
@@ -2137,9 +2137,9 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world pull-preview
+## cruxible state pull-preview
 
-**Usage:** `cruxible world pull-preview [OPTIONS]`
+**Usage:** `cruxible state pull-preview [OPTIONS]`
 
 **Purpose:** Preview pulling a newer upstream release into the current overlay.
 
@@ -2151,9 +2151,9 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible world status
+## cruxible state status
 
-**Usage:** `cruxible world status [OPTIONS]`
+**Usage:** `cruxible state status [OPTIONS]`
 
 **Purpose:** Show upstream tracking metadata for the current instance.
 

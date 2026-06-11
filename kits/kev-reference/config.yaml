@@ -1,6 +1,5 @@
 version: "1.0"
 name: kev_reference
-kind: world_model
 description: >
   Published vulnerability reference graph built from public data: CISA KEV,
   NVD CVE/CPE configurations, and EPSS scores. Products use CPE-based
@@ -232,7 +231,7 @@ artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
+    digest: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
 
 providers:
   parse_public_kev_bundle:

@@ -34,18 +34,18 @@ def test_kit_manifest_validates_roles() -> None:
         role="standalone",
         entry_config="config.yaml",
     )
-    assert standalone.target_world is None
+    assert standalone.target_state is None
 
     overlay = KitManifest(
         kit_id="demo-overlay",
         version="0.2.0",
         role="overlay",
-        target_world="demo",
+        target_state="demo",
         entry_config="config.yaml",
     )
-    assert overlay.target_world == "demo"
+    assert overlay.target_state == "demo"
 
-    with pytest.raises(ValidationError, match="requires target_world"):
+    with pytest.raises(ValidationError, match="requires target_state"):
         KitManifest(
             kit_id="bad-overlay",
             version="0.2.0",
@@ -79,9 +79,9 @@ def test_kit_provider_ref_loads_relative_imports(tmp_path: Path) -> None:
 def test_materialize_rejects_overlay_kit_for_standalone_init(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    _write_minimal_kit(source, role="overlay", target_world="demo")
+    _write_minimal_kit(source, role="overlay", target_state="demo")
 
-    with pytest.raises(ConfigError, match="Use `cruxible world create-overlay --kit`"):
+    with pytest.raises(ConfigError, match="Use `cruxible state create-overlay --kit`"):
         materialize_kit(
             kit=f"file://{source}",
             root=tmp_path / "target",
@@ -366,9 +366,9 @@ def _write_minimal_kit(
     root: Path,
     *,
     role: str,
-    target_world: str | None = None,
+    target_state: str | None = None,
 ) -> None:
-    target_line = f"target_world: {target_world}\n" if target_world else ""
+    target_line = f"target_state: {target_state}\n" if target_state else ""
     root.joinpath("cruxible-kit.yaml").write_text(
         "schema_version: cruxible.kit.v1\n"
         "kit_id: demo\n"

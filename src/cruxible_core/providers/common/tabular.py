@@ -32,7 +32,7 @@ class _ParsedTable:
     name: str
     source_file: str
     source_format: str
-    source_sha256: str
+    source_digest: str
     columns: list[str]
     rows: list[dict[str, Any]]
     source_sheet: str | None = None
@@ -73,7 +73,7 @@ def load_tabular_artifact_bundle(
                     "file": parsed.source_file,
                     "sheet": parsed.source_sheet,
                     "format": parsed.source_format,
-                    "sha256": parsed.source_sha256,
+                    "digest": parsed.source_digest,
                     "row_count": len(parsed.rows),
                 }
             )
@@ -96,7 +96,7 @@ def load_tabular_artifact_bundle(
             {
                 "path": _relative_file_name(file_path, root),
                 "format": file_path.suffix.lower().lstrip("."),
-                "sha256": _sha256_file(file_path),
+                "digest": _sha256_file(file_path),
             }
             for file_path in files
         ],
@@ -244,7 +244,7 @@ def _discover_files(root: Path, extensions: frozenset[str]) -> list[Path]:
 def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> list[_ParsedTable]:
     extension = file_path.suffix.lower()
     relative_name = _relative_file_name(file_path, root)
-    source_sha256 = _sha256_file(file_path)
+    source_digest = _sha256_file(file_path)
 
     if extension == ".csv":
         frame = pl.read_csv(file_path, infer_schema=False)
@@ -254,7 +254,7 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
                 table_name=_table_name_for(file_path, root, options),
                 source_file=relative_name,
                 source_format="csv",
-                source_sha256=source_sha256,
+                source_digest=source_digest,
                 source_row_start=2,
                 source_sheet=None,
                 normalize_headers=options.normalize_headers,
@@ -269,7 +269,7 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
                 table_name=_table_name_for(file_path, root, options),
                 source_file=relative_name,
                 source_format=extension.lstrip("."),
-                source_sha256=source_sha256,
+                source_digest=source_digest,
                 source_row_start=1,
                 source_sheet=None,
                 normalize_headers=options.normalize_headers,
@@ -284,7 +284,7 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
                 table_name=_table_name_for(file_path, root, options),
                 source_file=relative_name,
                 source_format="json",
-                source_sha256=source_sha256,
+                source_digest=source_digest,
                 source_row_start=1,
                 source_sheet=None,
                 normalize_headers=options.normalize_headers,
@@ -295,7 +295,7 @@ def _parse_file(file_path: Path, *, root: Path, options: _TabularOptions) -> lis
             file_path,
             root=root,
             options=options,
-            source_sha256=source_sha256,
+            source_digest=source_digest,
         )
     raise ValueError(f"Unsupported tabular file extension: {extension}")
 
@@ -305,7 +305,7 @@ def _parse_excel_file(
     *,
     root: Path,
     options: _TabularOptions,
-    source_sha256: str,
+    source_digest: str,
 ) -> list[_ParsedTable]:
     try:
         raw = pl.read_excel(file_path, sheet_id=0)
@@ -330,7 +330,7 @@ def _parse_excel_file(
                 table_name=_table_name_for(file_path, root, options, sheet_name=sheet_name),
                 source_file=relative_name,
                 source_format=file_path.suffix.lower().lstrip("."),
-                source_sha256=source_sha256,
+                source_digest=source_digest,
                 source_row_start=2,
                 source_sheet=sheet_name,
                 normalize_headers=options.normalize_headers,
@@ -345,7 +345,7 @@ def _table_from_frame(
     table_name: str,
     source_file: str,
     source_format: str,
-    source_sha256: str,
+    source_digest: str,
     source_row_start: int,
     source_sheet: str | None,
     normalize_headers: bool,
@@ -383,7 +383,7 @@ def _table_from_frame(
         name=table_name,
         source_file=source_file,
         source_format=source_format,
-        source_sha256=source_sha256,
+        source_digest=source_digest,
         source_sheet=source_sheet,
         columns=unique_columns,
         rows=rows,
@@ -515,7 +515,7 @@ def _artifact_summary(context: ProviderContext) -> dict[str, Any] | None:
         "name": context.artifact.name,
         "kind": context.artifact.kind,
         "uri": context.artifact.uri,
-        "sha256": context.artifact.sha256,
+        "digest": context.artifact.digest,
         "metadata": context.artifact.metadata,
     }
 

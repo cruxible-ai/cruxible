@@ -37,7 +37,6 @@ from tests.support import workflow_test_providers
 QUERY_EVIDENCE_PROPOSAL_CONFIG_YAML = """\
 version: "1.0"
 name: query_evidence_proposals
-kind: world_model
 
 entity_types:
   Campaign:

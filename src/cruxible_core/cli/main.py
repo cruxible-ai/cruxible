@@ -144,10 +144,10 @@ from cruxible_core.cli.commands import (  # noqa: E402
     server_group,
     snapshot_group,
     source_group,
+    state_group,
     stats_cmd,
     test_cmd,
     validate,
-    world_group,
 )  # re-exported from cli.commands submodules
 
 cli.add_command(init)
@@ -156,7 +156,7 @@ cli.add_command(config_views_cmd, "config-views")
 cli.add_command(connect_group, "context")
 cli.add_command(decision_records_cmd, "decision-record")
 cli.add_command(lock_cmd)
-cli.add_command(world_group, "world")
+cli.add_command(state_group, "state")
 cli.add_command(plan_cmd)
 cli.add_command(run_cmd)
 cli.add_command(apply_cmd)

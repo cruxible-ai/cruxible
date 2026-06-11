@@ -26,7 +26,7 @@ class ResolvedArtifact(BaseModel):
     kind: str
     uri: str
     local_path: str | None = None
-    sha256: str | None = None
+    digest: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -56,12 +56,12 @@ class ExecutionTrace(BaseModel):
     provider_name: str
     provider_version: str
     provider_ref: str
-    provider_entrypoint_sha256: str | None = None
+    provider_entrypoint_digest: str | None = None
     runtime: ProviderRuntime
     deterministic: bool
     side_effects: bool
     artifact_name: str | None = None
-    artifact_sha256: str | None = None
+    artifact_digest: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     input_payload_metadata: TracePayloadMetadata | None = None

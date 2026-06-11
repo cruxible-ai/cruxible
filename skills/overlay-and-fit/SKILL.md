@@ -1,46 +1,46 @@
 ---
 name: overlay-and-fit
-description: Create an overlay from a published reference world, use the inherited world plus any applied kit with the lowest-friction path, and only add local config or code when the current overlay is not enough.
+description: Create an overlay from a published reference state, use the inherited state plus any applied kit with the lowest-friction path, and only add local config or code when the current overlay is not enough.
 ---
 
 # Overlay And Fit
 
-Use this skill when the user wants to start from a published reference world and fit it to a local use case with the least friction.
+Use this skill when the user wants to start from a published reference state and fit it to a local use case with the least friction.
 
-This is the reference-world path, not the greenfield path. Start from the inherited world, use the applied `kit` if one exists, and only add local config or code when the current overlay is not enough.
+This is the reference-state path, not the greenfield path. Start from the inherited state, use the applied `kit` if one exists, and only add local config or code when the current overlay is not enough.
 
 If you are not sure whether the current workspace is already an overlay, check first:
 
 ```bash
-cruxible world status
+cruxible state status
 ```
 
 If it reports upstream tracking metadata, continue in the current workspace.
 
-If it says the instance is not tracking an upstream published world, create an overlay first:
+If it says the instance is not tracking an upstream published state, create an overlay first:
 
 ```bash
-cruxible world create-overlay --world-ref <alias> --root-dir <root_dir>
+cruxible state create-overlay --state-ref <alias> --root-dir <root_dir>
 ```
 
 Here, `<root_dir>` is the workspace root directory that will contain the local `config.yaml` and the `.cruxible/` instance directory. It is not the `.cruxible/` directory itself.
 
-If that world has a configured default `kit`, its local files will be copied into the workspace automatically. This usually means the overlay-specific `config.yaml` plus any companion workspace files that kit needs, such as local provider code, artifacts or seed data, helper files, or other local starting material. The exact kit shape may vary. Use `--kit <kit>` to override the default `kit`, or `--no-kit` for a bare overlay.
+If that state has a configured default `kit`, its local files will be copied into the workspace automatically. This usually means the overlay-specific `config.yaml` plus any companion workspace files that kit needs, such as local provider code, artifacts or seed data, helper files, or other local starting material. The exact kit shape may vary. Use `--kit <kit>` to override the default `kit`, or `--no-kit` for a bare overlay.
 
 ## Cruxible Terms
 
-- `canonical` behavior means deterministic graph-building or refresh behavior whose results can be written directly into world state
-- `governed` behavior means judgment-based behavior that should go through proposal, review, and resolution before it becomes durable world state
-- `proposal workflows` are the non-canonical `workflows` that produce reviewable candidates or groups instead of writing directly into world state
-- `named_queries` are the user-facing query entry points the world exposes
+- `canonical` behavior means deterministic graph-building or refresh behavior whose results can be written directly into state
+- `governed` behavior means judgment-based behavior that should go through proposal, review, and resolution before it becomes durable state
+- `proposal workflows` are the non-canonical `workflows` that produce reviewable candidates or groups instead of writing directly into state
+- `named_queries` are the user-facing query entry points the state exposes
 - `providers` are the code or model-backed steps that `workflows` call
 
 ## Core Rules
 
 - edit the local `config.yaml`, not `.cruxible/upstream/current/config.yaml`
 - treat `.cruxible/composed/config.yaml` as generated output, not as the source of truth
-- use the inherited world and the applied `kit` as-is if they already solve the problem
-- add local extensions instead of re-declaring inherited config or graph structure from the reference world
+- use the inherited state and the applied `kit` as-is if they already solve the problem
+- add local extensions instead of re-declaring inherited config or graph structure from the reference state
 - prefer refining the local `kit` pattern over inventing new local machinery
 - if a desired change really belongs in the inherited config, call it out as upstream work
 - keep the local fit as small as the use case allows
@@ -50,7 +50,7 @@ If that world has a configured default `kit`, its local files will be copied int
 Start by inspecting the overlay workspace:
 
 ```bash
-cruxible world status
+cruxible state status
 cruxible stats
 cruxible sample --type <EntityType> --limit 5
 cruxible inspect entity --type <EntityType> --id <entity_id>
@@ -67,21 +67,21 @@ If a `kit` was applied, inspect the local files it brought in too.
 Then answer:
 
 1. what user problem are we solving in this overlay?
-2. what does the inherited world already provide?
+2. what does the inherited state already provide?
 3. what does the applied `kit` already provide?
 4. what `named_queries` or downstream `workflows` does this overlay need to support for the user?
-5. does the current inherited world plus local files already have a clean path for those surfaces?
+5. does the current inherited state plus local files already have a clean path for those surfaces?
 6. can the current overlay already handle this use case without local changes?
 7. if not, what is actually missing?
 8. what should stay local instead of being pushed upstream?
 
-Keep this phase grounded in the current overlay. Do not redesign the inherited world from scratch.
+Keep this phase grounded in the current overlay. Do not redesign the inherited state from scratch.
 
 ## Phase 2: Choose the fit strategy
 
 Decide whether to use the overlay as-is or make the smallest local fit:
 
-1. can the inherited world, applied `kit`, and existing `workflows` handle the user's data or workflow as-is?
+1. can the inherited state, applied `kit`, and existing `workflows` handle the user's data or workflow as-is?
 2. if yes, which existing `workflows`, proposal flows, or `named_queries` should be used?
 3. if no, is the gap missing local graph structure, missing local provider or workflow machinery, missing local `named_queries`, or some combination?
 4. does the problem require new local canonical behavior, new governed behavior, new local queries, or none of those?
@@ -182,7 +182,7 @@ cruxible run --workflow <workflow_name> --apply
 
 Do not try to rebuild inherited state here. The overlay should add local state and local behavior on top of what is already inherited.
 
-Re-check the world:
+Re-check the state:
 
 ```bash
 cruxible stats
@@ -190,7 +190,7 @@ cruxible sample --type <EntityType> --limit 5
 cruxible inspect entity --type <EntityType> --id <entity_id>
 ```
 
-If the inherited world plus the applied `kit` now solve the problem, stop adding machinery.
+If the inherited state plus the applied `kit` now solve the problem, stop adding machinery.
 
 ## Shared Governance Flow
 
@@ -198,7 +198,7 @@ After Phase 5, read and follow:
 
 - `../_shared/references/governance-flow.md`
 
-That shared reference is the source of truth for the remaining flow after the local canonical fit. Some phases inside it are conditional, so if the inherited world plus the selected `kit` already solve the problem you may skip the unnecessary add-more-machinery phases there. But the shared reference itself is not optional once you move past Phase 5.
+That shared reference is the source of truth for the remaining flow after the local canonical fit. Some phases inside it are conditional, so if the inherited state plus the selected `kit` already solve the problem you may skip the unnecessary add-more-machinery phases there. But the shared reference itself is not optional once you move past Phase 5.
 
 When following it from `overlay-and-fit`:
 
@@ -214,8 +214,8 @@ Before doing the final handoff phase in `governance-flow.md`, return here for th
 Before the final handoff, confirm that the local config still stays compatible with future upstream pulls:
 
 ```bash
-cruxible world status
-cruxible world pull-preview
+cruxible state status
+cruxible state pull-preview
 ```
 
 Inspect warnings, compatibility, and conflicts.
@@ -229,7 +229,7 @@ If the local config does not compose cleanly with the upstream preview:
 Only apply the pull if the user wants to test it directly:
 
 ```bash
-cruxible world pull-apply --apply-digest <digest>
+cruxible state pull-apply --apply-digest <digest>
 ```
 
 When you return to the final handoff phase in `governance-flow.md`, also clearly distinguish:
@@ -237,5 +237,5 @@ When you return to the final handoff phase in `governance-flow.md`, also clearly
 - what remains inherited
 - what came from the selected `kit`
 - what was added locally in this overlay
-- the current `world status` / `pull-preview` result
+- the current `state status` / `pull-preview` result
 - what should stay local versus what should be proposed upstream later

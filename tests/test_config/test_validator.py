@@ -393,18 +393,6 @@ class TestValidateMutationGuards:
 
         assert any("query_name 'find_a'" in e for e in exc_info.value.errors)
 
-    def test_ontology_config_rejects_mutation_guards(self):
-        config = _minimal_config(
-            kind="ontology",
-            named_queries={"find_a": self._query()},
-            mutation_guards=[self._guard()],
-        )
-
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-
-        assert any("may not define mutation_guards" in e for e in exc_info.value.errors)
-
 
 class TestValidateLoopOneControls:
     def test_supported_constraint_invalid_reference_errors(self):
@@ -478,7 +466,7 @@ class TestValidateLoopOneControls:
             },
             artifacts={
                 "artifact": ProviderArtifactSchema(
-                    kind="model", uri="file:///tmp/model", sha256="abc"
+                    kind="model", uri="file:///tmp/model", digest="abc"
                 )
             },
             providers={
@@ -613,7 +601,7 @@ class TestValidateWorkflowExecution:
             },
             artifacts={
                 "artifact": ProviderArtifactSchema(
-                    kind="model", uri="file:///tmp/model", sha256="abc"
+                    kind="model", uri="file:///tmp/model", digest="abc"
                 )
             },
             providers={
@@ -1327,45 +1315,6 @@ class TestValidateWorkflowExecution:
         )
 
         validate_config(config)
-
-
-class TestValidateKinds:
-    def test_ontology_rejects_world_model_execution_blocks(self):
-        config = _minimal_config(
-            kind="ontology",
-            contracts={
-                "WorkflowInput": ContractSchema(fields={"id": PropertySchema(type="string")}),
-            },
-            providers={
-                "provider": ProviderSchema(
-                    kind="function",
-                    contract_in="WorkflowInput",
-                    contract_out="WorkflowInput",
-                    ref="tests.support.workflow_test_providers.lift_predictor",
-                    version="1.0.0",
-                )
-            },
-            workflows={
-                "wf": WorkflowSchema(
-                    contract_in="WorkflowInput",
-                    steps=[
-                        WorkflowStepSchema(
-                            id="provider_step",
-                            provider="provider",
-                            input={"id": "$input.id"},
-                            **{"as": "loaded"},
-                        )
-                    ],
-                    returns="loaded",
-                )
-            },
-        )
-
-        with pytest.raises(ConfigError) as exc_info:
-            validate_config(config)
-        assert any(
-            "kind 'ontology' may not define workflows" in error for error in exc_info.value.errors
-        )
 
 
 class TestConfigErrorStr:

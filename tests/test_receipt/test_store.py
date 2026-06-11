@@ -238,7 +238,7 @@ class TestSQLiteReceiptStore:
             deterministic=True,
             side_effects=False,
             artifact_name="promo_model",
-            artifact_sha256="abc123",
+            artifact_digest="abc123",
             input_payload={"sku": "SKU-123"},
             output_payload={"predicted_lift_pct": 0.12},
             **_trace_timing(),
@@ -290,7 +290,7 @@ class TestSQLiteReceiptStore:
         assert loaded.input_payload_metadata.retention == "preview"
         assert loaded.input_payload_metadata.stored_inline is False
         assert loaded.input_payload_metadata.byte_count > 128
-        assert loaded.input_payload_metadata.sha256.startswith("sha256:")
+        assert loaded.input_payload_metadata.digest.startswith("sha256:")
         assert loaded.input_payload_metadata.truncated is True
         assert loaded.input_payload["_cruxible_payload_preview"]["omitted_count"] == 0
         assert raw is not None
@@ -327,7 +327,7 @@ class TestSQLiteReceiptStore:
         assert loaded.input_payload == {
             "_cruxible_payload_omitted": {
                 "retention": "metadata",
-                "sha256": loaded.input_payload_metadata.sha256,
+                "digest": loaded.input_payload_metadata.digest,
                 "byte_count": loaded.input_payload_metadata.byte_count,
             }
         }

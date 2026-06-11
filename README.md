@@ -67,7 +67,7 @@ A simple way to think about it:
 > LLMs can reason over knowledge. Cruxible governs what becomes trusted state.
 
 More specifically, Cruxible lets humans and agents share a governed domain
-world model: typed entities, relationships, workflows, named queries, review
+state model: typed entities, relationships, workflows, named queries, review
 state, and outcomes.
 
 ## How It Works
@@ -78,7 +78,7 @@ state, and outcomes.
   classify, score, or enrich data.
 - **Workflows:** repeatable procedures that build reference state, load
   operational state, or propose governed changes.
-- **Named queries:** deterministic read surfaces over the world model.
+- **Named queries:** deterministic read surfaces over the state model.
 - **Groups and resolutions:** the review boundary where uncertain proposals
   become accepted state.
 - **Receipts:** structured proof of how a query result or proposal was
@@ -282,15 +282,15 @@ reference refresh, query KEV/product relationships, and inspect receipts.
 For local cyber triage, create the overlay kit:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 world create-overlay \
-  --world-ref kev-reference \
+cruxible --server-url http://127.0.0.1:8100 state create-overlay \
+  --state-ref kev-reference \
   --kit kev-triage \
   --root-dir "$PWD/kev-triage-workspace"
 ```
 
 The overlay adds customer-owned assets, services, controls, incidents,
 findings, remediation, and governed proposal workflows on top of the public KEV
-reference world.
+reference state.
 
 ## Why Not Just Use Prompts, Docs, Memory, or a Knowledge Base?
 

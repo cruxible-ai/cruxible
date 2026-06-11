@@ -1,6 +1,6 @@
 # Cruxible Kits
 
-Kits are maintained Cruxible world models intended to be used, overlaid, and
+Kits are maintained Cruxible state models intended to be used, overlaid, and
 iterated with agents. Each kit includes a YAML config and a README with generated
 views for the ontology, governed relationships, workflows, and named queries.
 
@@ -8,7 +8,7 @@ views for the ontology, governed relationships, workflows, and named queries.
 
 | Kit | Domain | Purpose |
 |---|---|---|
-| [kev-reference](kev-reference/) | Cybersecurity | Standalone public KEV, NVD, EPSS, vendor, product, and vulnerability reference world. |
+| [kev-reference](kev-reference/) | Cybersecurity | Standalone public KEV, NVD, EPSS, vendor, product, and vulnerability reference state. |
 | [kev-triage](kev-triage/) | Cybersecurity | Overlay kit for local assets, exposure triage, remediation, incidents, and controls. |
 | [supply-chain-blast-radius](supply-chain-blast-radius/) | Supply Chain | Supplier, component, product, shipment, and incident blast-radius modeling. |
 | [case-law-monitoring](case-law-monitoring/) | Legal | Matter-centered case-law monitoring and authority impact modeling. |
@@ -27,10 +27,10 @@ For layered kits such as KEV triage, include `--runtime` so generated views use
 the composed runtime config.
 
 Standalone kits can be initialized with `cruxible init --kit <kit>`. Overlay
-kits are created with `cruxible world create-overlay --kit <kit>`.
+kits are created with `cruxible state create-overlay --kit <kit>`.
 
 When rendering a runtime wiki for a layered kit, use local scope so only the
-local world state plus directly used upstream context is emitted:
+local state plus directly used upstream context is emitted:
 
 ```bash
 uv run cruxible render-wiki --output wiki --scope local

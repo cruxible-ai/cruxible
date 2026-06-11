@@ -58,7 +58,7 @@ volume in a way that gives a consistent filesystem view.
 
 ## Snapshots Versus Backups
 
-Cruxible snapshots are world-model snapshots. They are useful for cloning,
+Cruxible snapshots are state snapshots. They are useful for cloning,
 preview identity checks, and comparing graph state over time.
 
 Backups are operational recovery artifacts. They should include the graph plus

@@ -18,7 +18,7 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
 from cruxible_core.primitives import canonical_json
 from cruxible_core.receipt.store import SQLiteReceiptStore
-from cruxible_core.snapshot.types import WorldSnapshot
+from cruxible_core.snapshot.types import StateSnapshot
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 from cruxible_core.source_artifacts.types import (
     SourceArtifactChunk,
@@ -307,7 +307,7 @@ class SQLiteSnapshotRepository:
 
     def save_snapshot(
         self,
-        snapshot: WorldSnapshot,
+        snapshot: StateSnapshot,
         artifacts: Mapping[str, bytes | str],
     ) -> None:
         """Persist a snapshot row and its portable artifact payloads."""
@@ -354,23 +354,23 @@ class SQLiteSnapshotRepository:
                 ),
             )
 
-    def get_snapshot(self, snapshot_id: str) -> WorldSnapshot | None:
+    def get_snapshot(self, snapshot_id: str) -> StateSnapshot | None:
         row = self._conn.execute(
             "SELECT snapshot_json FROM snapshots WHERE snapshot_id = ?",
             (snapshot_id,),
         ).fetchone()
         if row is None:
             return None
-        return WorldSnapshot.model_validate_json(row["snapshot_json"])
+        return StateSnapshot.model_validate_json(row["snapshot_json"])
 
-    def list_snapshots(self, limit: int | None = None) -> list[WorldSnapshot]:
+    def list_snapshots(self, limit: int | None = None) -> list[StateSnapshot]:
         query = "SELECT snapshot_json FROM snapshots ORDER BY created_at DESC, snapshot_id DESC"
         params: tuple[int, ...] = ()
         if limit is not None:
             query += " LIMIT ?"
             params = (limit,)
         return [
-            WorldSnapshot.model_validate_json(row["snapshot_json"])
+            StateSnapshot.model_validate_json(row["snapshot_json"])
             for row in self._conn.execute(query, params).fetchall()
         ]
 

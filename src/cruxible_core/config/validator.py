@@ -49,7 +49,6 @@ def validate_config(config: CoreConfig) -> list[str]:
     _validate_feedback_profiles(config, errors)
     _validate_outcome_profiles(config, errors)
     _validate_primary_keys(config, errors)
-    _validate_kind(config, errors)
     _validate_provider_artifacts(config, errors)
     _validate_quality_checks(config, errors)
     _validate_mutation_guards(config, errors)
@@ -549,8 +548,8 @@ def _validate_provider_artifacts(config: CoreConfig, errors: list[str]) -> None:
     artifact_names = set(config.artifacts.keys())
 
     for artifact_name, artifact in config.artifacts.items():
-        if artifact.sha256 is None or not artifact.sha256.strip():
-            errors.append(f"Artifact '{artifact_name}' is missing required sha256")
+        if artifact.digest is None or not artifact.digest.strip():
+            errors.append(f"Artifact '{artifact_name}' is missing required digest")
 
     for provider_name, provider in config.providers.items():
         if not _contract_exists(config, provider.contract_in):
@@ -808,25 +807,6 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                     f"Mutation guard '{guard.name}': query_name "
                     f"'{condition.query_name}' not defined in named_queries"
                 )
-
-
-def _validate_kind(config: CoreConfig, errors: list[str]) -> None:
-    """Validate top-level kind gating for built world-model features."""
-    if config.kind != "ontology":
-        return
-
-    if config.contracts:
-        errors.append("Config kind 'ontology' may not define contracts")
-    if config.artifacts:
-        errors.append("Config kind 'ontology' may not define artifacts")
-    if config.providers:
-        errors.append("Config kind 'ontology' may not define providers")
-    if config.workflows:
-        errors.append("Config kind 'ontology' may not define workflows")
-    if config.mutation_guards:
-        errors.append("Config kind 'ontology' may not define mutation_guards")
-    if config.tests:
-        errors.append("Config kind 'ontology' may not define workflow tests")
 
 
 def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:

@@ -1,4 +1,4 @@
-"""Build and publish the KEV reference world model from fresh public data.
+"""Build and publish the KEV reference state from fresh public data.
 
 Usage:
     uv run python scripts/publish_kev_release.py --release-id 2026-03-27
@@ -32,8 +32,8 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.kits import copy_kit_runtime_files, write_materialized_kit_metadata
 from cruxible_core.service.execution import service_apply_workflow, service_lock, service_run
 from cruxible_core.service.lifecycle import service_init
-from cruxible_core.service.world import build_release_bundle
-from cruxible_core.snapshot.types import PublishedWorldManifest
+from cruxible_core.service.state import build_release_bundle
+from cruxible_core.snapshot.types import PublishedStateManifest
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import parse_transport_ref
 from cruxible_core.workflow.compiler import compute_path_sha256
@@ -43,7 +43,7 @@ CISA_KEV_URL = (
 )
 EPSS_KEV_URL = "https://raw.githubusercontent.com/jgamblin/KEV_EPSS/main/epss_kev_nvd.csv"
 DEFAULT_TRANSPORT_REF = "oci://ghcr.io/cruxible-ai/models/kev-reference"
-DEFAULT_WORLD_ID = "kev-reference"
+DEFAULT_STATE_ID = "kev-reference"
 DEFAULT_WORKFLOW_NAME = "build_public_kev_reference"
 DEFAULT_COMPATIBILITY = "data_only"
 
@@ -60,7 +60,7 @@ class PublishRefs:
 
 @dataclass(frozen=True)
 class PublishKevReleaseResult:
-    manifest: PublishedWorldManifest
+    manifest: PublishedStateManifest
     immutable_ref: str
     latest_ref: str
 
@@ -69,12 +69,12 @@ def publish_kev_release(
     *,
     transport_ref: str,
     release_id: str,
-    world_id: str = DEFAULT_WORLD_ID,
+    state_id: str = DEFAULT_STATE_ID,
     workflow_name: str = DEFAULT_WORKFLOW_NAME,
     compatibility: str = DEFAULT_COMPATIBILITY,
     nvd_api_key: str | None = None,
 ) -> PublishKevReleaseResult:
-    """Build and publish the KEV reference world release bundle."""
+    """Build and publish the KEV reference state release bundle."""
     refs = build_publish_refs(transport_ref=transport_ref, release_id=release_id)
     repo_root = _repo_root()
 
@@ -91,11 +91,11 @@ def publish_kev_release(
 
         config_src = kit_root / "config.yaml"
         config_path = workspace / "config.yaml"
-        artifact_sha256 = compute_path_sha256(data_dir)
+        artifact_digest = compute_path_sha256(data_dir)
         write_temp_kev_config(
             source_path=config_src,
             output_path=config_path,
-            artifact_sha256=artifact_sha256,
+            artifact_digest=artifact_digest,
         )
         write_materialized_kit_metadata(workspace)
 
@@ -122,7 +122,7 @@ def publish_kev_release(
         bundle_dir = build_release_bundle(
             instance=instance,
             snapshot_id=applied.committed_snapshot_id,
-            world_id=world_id,
+            state_id=state_id,
             release_id=release_id,
             compatibility=compatibility,
             parent_release_id=None,
@@ -130,7 +130,7 @@ def publish_kev_release(
 
         publish_release_bundle(bundle_dir, refs)
 
-        manifest = PublishedWorldManifest.model_validate_json(
+        manifest = PublishedStateManifest.model_validate_json(
             (bundle_dir / "manifest.json").read_text(encoding="utf-8")
         )
         return PublishKevReleaseResult(
@@ -209,7 +209,7 @@ def write_temp_kev_config(
     *,
     source_path: Path,
     output_path: Path,
-    artifact_sha256: str,
+    artifact_digest: str,
 ) -> None:
     """Write a temp KEV config with the current data bundle digest."""
     raw = yaml.safe_load(source_path.read_text(encoding="utf-8"))
@@ -221,7 +221,7 @@ def write_temp_kev_config(
     public_bundle = artifacts["public_kev_bundle"]
     if not isinstance(public_bundle, dict):
         raise ConfigError("artifacts.public_kev_bundle must be a mapping")
-    public_bundle["sha256"] = artifact_sha256
+    public_bundle["digest"] = artifact_digest
     output_path.write_text(
         yaml.safe_dump(raw, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
@@ -272,8 +272,8 @@ def _prepare_latest_target(ref: str) -> None:
 
 
 def _validate_release_id(value: str) -> None:
-    PublishedWorldManifest(
-        world_id="kev-reference",
+    PublishedStateManifest(
+        state_id="kev-reference",
         release_id=value,
         snapshot_id="snap_validation",
         compatibility=DEFAULT_COMPATIBILITY,
@@ -297,9 +297,9 @@ def parse_args() -> argparse.Namespace:
         help="Immutable release identifier, e.g. 2026-03-27",
     )
     parser.add_argument(
-        "--world-id",
-        default=DEFAULT_WORLD_ID,
-        help=f"Published world_id (default: {DEFAULT_WORLD_ID})",
+        "--state-id",
+        default=DEFAULT_STATE_ID,
+        help=f"Published state_id (default: {DEFAULT_STATE_ID})",
     )
     parser.add_argument(
         "--workflow-name",
@@ -327,12 +327,12 @@ def main() -> None:
     result = publish_kev_release(
         transport_ref=args.transport_ref,
         release_id=args.release_id,
-        world_id=args.world_id,
+        state_id=args.state_id,
         workflow_name=args.workflow_name,
         compatibility=args.compatibility,
         nvd_api_key=nvd_api_key,
     )
-    print(f"Published {result.manifest.world_id}:{result.manifest.release_id}")
+    print(f"Published {result.manifest.state_id}:{result.manifest.release_id}")
     print(f"Immutable ref: {result.immutable_ref}")
     print(f"Latest ref:    {result.latest_ref}")
     print(f"Snapshot:      {result.manifest.snapshot_id}")

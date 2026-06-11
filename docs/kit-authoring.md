@@ -13,7 +13,7 @@ schema_version: cruxible.kit.v1
 kit_id: kev-triage
 version: 0.2.0
 role: overlay
-target_world: kev-reference
+target_state: kev-reference
 entry_config: config.yaml
 provider_paths:
   - providers
@@ -27,8 +27,8 @@ requires_extras: []
 Rules:
 
 - `role` is `standalone` or `overlay`.
-- `role: overlay` requires `target_world`.
-- `role: standalone` must not set `target_world`.
+- `role: overlay` requires `target_state`.
+- `role: standalone` must not set `target_state`.
 - 0.2 supports one `entry_config` per kit.
 - `requires_extras` is metadata only. Cruxible does not install kit
   dependencies automatically.
@@ -78,7 +78,7 @@ workspace, running `cruxible lock` there, and copying the resulting
 
 Vocabulary:
 
-- Use **overlay** for a local instance tracking a published upstream world.
+- Use **overlay** for a local instance tracking a published upstream state.
 - Use **clone** for a point-in-time state copy from a snapshot.
 - Use **local** for customer-owned seeded or runtime state.
 - Do not use clone for kit distribution. Use pull, cache, materialize, or

@@ -6,8 +6,8 @@ Once a parent skill tells you to use this reference, read it as the source of tr
 
 This reference is shared by:
 
-- `create-world`, after its initial graph and canonical build phases
-- `overlay-and-fit`, after its local canonical fit phase when the inherited world plus selected `kit` are still not enough
+- `create-state`, after its initial graph and canonical build phases
+- `overlay-and-fit`, after its local canonical fit phase when the inherited state plus selected `kit` are still not enough
 
 When using this reference in an overlay:
 
@@ -17,12 +17,12 @@ When using this reference in an overlay:
 
 ## Phase 1: Design the governed group layer
 
-Only add this phase if the world needs reviewable, judgment-based relationships beyond the canonical layer.
+Only add this phase if the state needs reviewable, judgment-based relationships beyond the canonical layer.
 
 Before choosing providers or proposal workflow steps, understand the proposal process at a high level:
 
 - a non-canonical proposal workflow should produce candidate relationships and a relationship-group proposal
-- those candidate relationships do not go directly into world state
+- those candidate relationships do not go directly into state
 - instead, Cruxible turns them into a reviewable group for one relationship type
 - an `integration` is the named source of judgment used in governed relationship proposals
 - a `provider` may produce the raw output, but the `integration` name is what Cruxible uses for signal guardrails, review policy, and trust reuse
@@ -298,7 +298,7 @@ When real groups expose ambiguity or a design mismatch, ask targeted iteration q
 
 If the governed design enabled auto-resolve or this relationship type is supposed to reuse prior resolutions across repeated runs, inspect prior resolutions and trust status before moving on. Use `group trust` only when a representative resolution should become reusable precedent or should invalidate earlier precedent.
 
-After approving representative groups, verify that the intended governed relationships now exist in world state before moving on to named queries. Re-check the world with:
+After approving representative groups, verify that the intended governed relationships now exist in the state before moving on to named queries. Re-check the state with:
 
 ```bash
 cruxible stats
@@ -306,7 +306,7 @@ cruxible stats
 
 If the grouping rule, review question, thesis/signature design, or signal policy is wrong, go back to Phase 1 and revise the governed design with the user. If the provider output, signal mapping, or workflow wiring is wrong, go back to Phase 2 and revise the implementation.
 
-Do not design the final query surface against a world that is still missing the governed relationships it is supposed to rely on.
+Do not design the final query surface against a state that is still missing the governed relationships it is supposed to rely on.
 
 ## Phase 4: Understand the user-facing query surface
 
@@ -316,15 +316,15 @@ Do not design the final query surface against a world that is still missing the 
 4. identify what evidence path a human should be able to inspect
 5. summarize the planned query surface for user confirmation
 
-Keep this phase user-facing. Design queries around the real questions users ask and the evidence they should be able to inspect. Do not reopen earlier graph or workflow design unless an important question has no clean path through the current world.
+Keep this phase user-facing. Design queries around the real questions users ask and the evidence they should be able to inspect. Do not reopen earlier graph or workflow design unless an important question has no clean path through the current state.
 
-If an important user question has no clean path through the current world, do not force a bad query. Go back to the earlier step that owns the problem:
+If an important user question has no clean path through the current state, do not force a bad query. Go back to the earlier step that owns the problem:
 
-- the earlier graph-shape or local-fit phase in the parent skill if the world is missing the needed entities or deterministic relationships
+- the earlier graph-shape or local-fit phase in the parent skill if the state is missing the needed entities or deterministic relationships
 - Phase 1 if the governed relationship design is wrong
 - Phase 2 if the proposal workflow implementation is wrong
 
-Also use this phase to simplify the world when needed. If an entity, relationship, or governed path was added in anticipation of queries that the real user-facing query surface does not actually need, do not keep that complexity by default. Go back to the earlier step that introduced it and narrow the design.
+Also use this phase to simplify the state when needed. If an entity, relationship, or governed path was added in anticipation of queries that the real user-facing query surface does not actually need, do not keep that complexity by default. Go back to the earlier step that introduced it and narrow the design.
 
 ## Write Step C: Add named queries
 
@@ -360,7 +360,7 @@ cruxible query --query <query_name> --param key=value
 cruxible explain --receipt <receipt_id>
 ```
 
-Do not hand off a world whose `named_queries` have not all been exercised against representative cases.
+Do not hand off a state whose `named_queries` have not all been exercised against representative cases.
 
 ## Phase 6: Understand the feedback and outcome flywheel
 
@@ -381,9 +381,9 @@ In this phase:
   - receipt-anchored profiles also record the relevant surface metadata
 - a `resolution` is the recorded approve/reject decision on a candidate group
 - a `receipt` is the recorded output of a query, workflow, or operation
-- `quality_checks` are recurring health checks over the world
+- `quality_checks` are recurring health checks over the state
 - `decision_policies` are exact-match rules that suppress or require review for governed decisions
-- `constraints` define invalid states the world should reject or warn on
+- `constraints` define invalid states the state should reject or warn on
 
 1. identify where humans or agent reviewers will review relationships or proposal groups
 2. identify which relationship-scoped review surfaces need structured `feedback_profiles`
@@ -391,7 +391,7 @@ In this phase:
 4. identify which downstream outcomes should be recorded for resolutions, queries, workflows, or operations, and whether they should anchor to a `resolution` or a `receipt`
 5. identify the `outcome_profiles` those outcome surfaces need
 6. identify what repeated failure modes should become `constraints`, `quality_checks`, `decision_policies`, provider fixes, workflow fixes, or graph fixes
-7. identify what feedback and outcome flywheels should improve the world over time
+7. identify what feedback and outcome flywheels should improve the state over time
 8. summarize the feedback and outcome flywheel for user confirmation
 
 Keep this phase focused on real recurring review and outcome surfaces for both human and agent reviewers. Do not invent `feedback_profiles`, `outcome_profiles`, or governance rules unless there is a real review or outcome loop to support.

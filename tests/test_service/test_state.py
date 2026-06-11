@@ -1,4 +1,4 @@
-"""Tests for published world release, overlay, and pull flows."""
+"""Tests for published state release, overlay, and pull flows."""
 
 from __future__ import annotations
 
@@ -7,34 +7,33 @@ from pathlib import Path
 
 import pytest
 
-import cruxible_core.service.world as world_service
+import cruxible_core.service.state as state_service
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
 from cruxible_core.errors import OwnershipError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.kits.world_refs import WorldCatalogEntry
+from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import (
     service_add_entities,
     service_add_relationships,
-    service_create_world_overlay,
+    service_create_state_overlay,
     service_lock,
-    service_publish_world,
-    service_pull_world_apply,
-    service_pull_world_preview,
+    service_publish_state,
+    service_pull_state_apply,
+    service_pull_state_preview,
     service_reload_config,
+    service_state_status,
     service_test,
-    service_world_status,
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
 from cruxible_core.workflow.apply import apply_entity_set, apply_relationship_set
 
-WORLD_MODEL_YAML = """\
+STATE_MODEL_YAML = """\
 version: "1.0"
 name: case_reference
-kind: world_model
 
 entity_types:
   Case:
@@ -56,7 +55,7 @@ relationships:
 def published_release_fixture(tmp_path: Path) -> tuple[CruxibleInstance, Path]:
     root = tmp_path / "root-model"
     root.mkdir()
-    (root / "config.yaml").write_text(WORLD_MODEL_YAML)
+    (root / "config.yaml").write_text(STATE_MODEL_YAML)
     instance = CruxibleInstance.init(root, "config.yaml")
     service_add_entities(
         instance,
@@ -67,10 +66,10 @@ def published_release_fixture(tmp_path: Path) -> tuple[CruxibleInstance, Path]:
     )
 
     release_dir = tmp_path / "releases" / "current"
-    service_publish_world(
+    service_publish_state(
         instance,
         transport_ref=f"file://{release_dir}",
-        world_id="case-law",
+        state_id="case-law",
         release_id="v1.0.0",
         compatibility="data_only",
     )
@@ -81,7 +80,7 @@ def _write_overlay_kit_manifest(
     kit_dir: Path,
     kit_id: str,
     *,
-    target_world: str = "case-law",
+    target_state: str = "case-law",
 ) -> None:
     (kit_dir / "cruxible-kit.yaml").write_text(
         "\n".join(
@@ -90,7 +89,7 @@ def _write_overlay_kit_manifest(
                 f"kit_id: {kit_id}",
                 "version: 0.2.0",
                 "role: overlay",
-                f"target_world: {target_world}",
+                f"target_state: {target_state}",
                 "entry_config: config.yaml",
                 "provider_paths: []",
                 "copy_paths: []",
@@ -112,7 +111,7 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     root_instance, release_dir = published_release_fixture
     overlay_root = tmp_path / "cloned-model"
 
-    overlay_result = service_create_world_overlay(
+    overlay_result = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         root_dir=overlay_root,
     )
@@ -148,30 +147,30 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     root_instance.save_graph(root_graph)
 
     successor_dir = tmp_path / "releases" / "successor"
-    service_publish_world(
+    service_publish_state(
         root_instance,
         transport_ref=f"file://{successor_dir}",
-        world_id="case-law",
+        state_id="case-law",
         release_id="v1.1.0",
         compatibility="data_only",
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_world_preview(overlay_instance)
+    preview = service_pull_state_preview(overlay_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
     assert preview.upstream_entity_delta == 1
 
     pull_count = 0
-    real_pull_bundle = world_service._pull_bundle
+    real_pull_bundle = state_service._pull_bundle
 
     def counted_pull_bundle(transport_ref: str):
         nonlocal pull_count
         pull_count += 1
         return real_pull_bundle(transport_ref)
 
-    monkeypatch.setattr(world_service, "_pull_bundle", counted_pull_bundle)
-    applied = service_pull_world_apply(
+    monkeypatch.setattr(state_service, "_pull_bundle", counted_pull_bundle)
+    applied = service_pull_state_apply(
         overlay_instance,
         expected_apply_digest=preview.apply_digest,
     )
@@ -182,12 +181,12 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     merged_graph = overlay_instance.load_graph()
     assert merged_graph.has_entity("Case", "CASE-C")
     assert merged_graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "follow_up")
-    status = service_world_status(overlay_instance)
+    status = service_state_status(overlay_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.1.0"
 
 
-def test_overlay_world_ref_specific_release_tracks_latest_ref(
+def test_overlay_state_ref_specific_release_tracks_latest_ref(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -197,9 +196,9 @@ def test_overlay_world_ref_specific_release_tracks_latest_ref(
     version_dir = releases_dir / "v1.0.0"
     shutil.copytree(current_dir, version_dir)
     monkeypatch.setattr(
-        "cruxible_core.kits.world_refs.get_world_catalog",
+        "cruxible_core.kits.state_refs.get_state_catalog",
         lambda: {
-            "case-law": WorldCatalogEntry(
+            "case-law": StateCatalogEntry(
                 alias="case-law",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
@@ -208,12 +207,12 @@ def test_overlay_world_ref_specific_release_tracks_latest_ref(
     )
 
     overlay_root = tmp_path / "cloned-model"
-    overlay_instance = service_create_world_overlay(
-        world_ref="case-law@v1.0.0",
+    overlay_instance = service_create_state_overlay(
+        state_ref="case-law@v1.0.0",
         root_dir=overlay_root,
     ).instance
 
-    status = service_world_status(overlay_instance)
+    status = service_state_status(overlay_instance)
     assert status.upstream is not None
     assert status.upstream.release_id == "v1.0.0"
     assert status.upstream.requested_source_ref == "case-law@v1.0.0"
@@ -230,16 +229,16 @@ def test_overlay_world_ref_specific_release_tracks_latest_ref(
     )
     root_instance.save_graph(root_graph)
     successor_dir = tmp_path / "releases" / "v1.1.0"
-    service_publish_world(
+    service_publish_state(
         root_instance,
         transport_ref=f"file://{successor_dir}",
-        world_id="case-law",
+        state_id="case-law",
         release_id="v1.1.0",
         compatibility="data_only",
     )
     _replace_release_dir(successor_dir, current_dir)
 
-    preview = service_pull_world_preview(overlay_instance)
+    preview = service_pull_state_preview(overlay_instance)
     assert preview.target_release_id == "v1.1.0"
     assert preview.conflicts == []
 
@@ -257,7 +256,6 @@ def test_overlay_with_explicit_kit_materializes_local_overlay(
             [
                 'version: "1.0"',
                 "name: case_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  Note:",
@@ -270,7 +268,7 @@ def test_overlay_with_explicit_kit_materializes_local_overlay(
                 "  local_seed:",
                 "    kind: directory",
                 "    uri: ./data/seed",
-                "    sha256: sha256:test",
+                "    digest: sha256:test",
             ]
         )
         + "\n"
@@ -286,7 +284,7 @@ def test_overlay_with_explicit_kit_materializes_local_overlay(
     )
 
     overlay_root = tmp_path / "cloned-model"
-    overlay_result = service_create_world_overlay(
+    overlay_result = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         kit="case-overlay",
         root_dir=overlay_root,
@@ -301,7 +299,7 @@ def test_overlay_with_explicit_kit_materializes_local_overlay(
     assert "Note" in loaded.entity_types
 
 
-def test_overlay_world_ref_uses_default_kit(
+def test_overlay_state_ref_uses_default_kit(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -309,9 +307,9 @@ def test_overlay_world_ref_uses_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.kits.world_refs.get_world_catalog",
+        "cruxible_core.kits.state_refs.get_state_catalog",
         lambda: {
-            "case-law": WorldCatalogEntry(
+            "case-law": StateCatalogEntry(
                 alias="case-law",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
@@ -326,7 +324,6 @@ def test_overlay_world_ref_uses_default_kit(
             [
                 'version: "1.0"',
                 "name: case_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  Note:",
@@ -347,13 +344,13 @@ def test_overlay_world_ref_uses_default_kit(
     )
 
     overlay_root = tmp_path / "cloned-default-kit"
-    overlay_result = service_create_world_overlay(world_ref="case-law", root_dir=overlay_root)
+    overlay_result = service_create_state_overlay(state_ref="case-law", root_dir=overlay_root)
 
     assert (overlay_root / "providers.py").exists()
     assert "Note" in overlay_result.instance.load_config().entity_types
 
 
-def test_explicit_kit_overrides_world_default_kit(
+def test_explicit_kit_overrides_state_default_kit(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -361,9 +358,9 @@ def test_explicit_kit_overrides_world_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.kits.world_refs.get_world_catalog",
+        "cruxible_core.kits.state_refs.get_state_catalog",
         lambda: {
-            "case-law": WorldCatalogEntry(
+            "case-law": StateCatalogEntry(
                 alias="case-law",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
@@ -378,7 +375,6 @@ def test_explicit_kit_overrides_world_default_kit(
             [
                 'version: "1.0"',
                 "name: default_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  DefaultNote:",
@@ -398,7 +394,6 @@ def test_explicit_kit_overrides_world_default_kit(
             [
                 'version: "1.0"',
                 "name: override_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  OverrideNote:",
@@ -422,8 +417,8 @@ def test_explicit_kit_overrides_world_default_kit(
     )
 
     overlay_root = tmp_path / "cloned-override-kit"
-    loaded = service_create_world_overlay(
-        world_ref="case-law",
+    loaded = service_create_state_overlay(
+        state_ref="case-law",
         kit="override-kit",
         root_dir=overlay_root,
     ).instance.load_config()
@@ -432,7 +427,7 @@ def test_explicit_kit_overrides_world_default_kit(
     assert "DefaultNote" not in loaded.entity_types
 
 
-def test_no_kit_skips_world_default_kit(
+def test_no_kit_skips_state_default_kit(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -440,9 +435,9 @@ def test_no_kit_skips_world_default_kit(
     _root_instance, current_dir = published_release_fixture
     releases_dir = current_dir.parent
     monkeypatch.setattr(
-        "cruxible_core.kits.world_refs.get_world_catalog",
+        "cruxible_core.kits.state_refs.get_state_catalog",
         lambda: {
-            "case-law": WorldCatalogEntry(
+            "case-law": StateCatalogEntry(
                 alias="case-law",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
@@ -457,7 +452,6 @@ def test_no_kit_skips_world_default_kit(
             [
                 'version: "1.0"',
                 "name: case_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  Note:",
@@ -477,8 +471,8 @@ def test_no_kit_skips_world_default_kit(
     )
 
     overlay_root = tmp_path / "cloned-no-kit"
-    overlay_result = service_create_world_overlay(
-        world_ref="case-law",
+    overlay_result = service_create_state_overlay(
+        state_ref="case-law",
         no_kit=True,
         root_dir=overlay_root,
     )
@@ -502,7 +496,6 @@ def test_transport_ref_overlay_does_not_auto_apply_any_kit(
             [
                 'version: "1.0"',
                 "name: transport_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types:",
                 "  TransportNote:",
@@ -522,7 +515,7 @@ def test_transport_ref_overlay_does_not_auto_apply_any_kit(
     )
 
     overlay_root = tmp_path / "cloned-transport-ref"
-    loaded = service_create_world_overlay(
+    loaded = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         root_dir=overlay_root,
     ).instance.load_config()
@@ -537,7 +530,7 @@ def test_pull_preview_surfaces_dangling_overlay_relationships(
 ) -> None:
     root_instance, release_dir = published_release_fixture
     overlay_root = tmp_path / "cloned-model"
-    overlay_instance = service_create_world_overlay(
+    overlay_instance = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         root_dir=overlay_root,
     ).instance
@@ -564,16 +557,16 @@ def test_pull_preview_surfaces_dangling_overlay_relationships(
     root_instance.save_graph(root_graph)
 
     successor_dir = tmp_path / "releases" / "successor"
-    service_publish_world(
+    service_publish_state(
         root_instance,
         transport_ref=f"file://{successor_dir}",
-        world_id="case-law",
+        state_id="case-law",
         release_id="v2.0.0",
         compatibility="breaking",
     )
     _replace_release_dir(successor_dir, release_dir)
 
-    preview = service_pull_world_preview(overlay_instance)
+    preview = service_pull_state_preview(overlay_instance)
     assert preview.target_release_id == "v2.0.0"
     assert any("missing upstream entity Case:CASE-B" in conflict for conflict in preview.conflicts)
 
@@ -621,16 +614,16 @@ def test_overlay_runtime_config_excludes_upstream_canonical_workflows(
 
     service_lock(canonical_workflow_instance)
     release_dir = tmp_path / "releases" / "current"
-    service_publish_world(
+    service_publish_state(
         canonical_workflow_instance,
         transport_ref=f"file://{release_dir}",
-        world_id="canonical-reference",
+        state_id="canonical-reference",
         release_id="v1.0.0",
         compatibility="data_only",
     )
 
     overlay_root = tmp_path / "cloned-runtime"
-    overlay_result = service_create_world_overlay(
+    overlay_result = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         root_dir=overlay_root,
     )
@@ -649,7 +642,7 @@ def test_overlay_runtime_config_excludes_upstream_canonical_workflows(
 def test_load_config_with_extends_remains_single_file(tmp_path: Path) -> None:
     base = tmp_path / "base.yaml"
     overlay = tmp_path / "overlay.yaml"
-    base.write_text(WORLD_MODEL_YAML)
+    base.write_text(STATE_MODEL_YAML)
     overlay.write_text(
         "\n".join(
             [
@@ -673,7 +666,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     root = tmp_path / "owned-case-model"
     root.mkdir()
     (root / "config.yaml").write_text(
-        WORLD_MODEL_YAML
+        STATE_MODEL_YAML
         + """
   - name: follow_up
     from: Case
@@ -690,7 +683,7 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     instance.set_upstream_metadata(
         UpstreamMetadata(
             transport_ref="file:///tmp/release",
-            world_id="case-law",
+            state_id="case-law",
             release_id="v1.0.0",
             snapshot_id="snap_1",
             compatibility="data_only",

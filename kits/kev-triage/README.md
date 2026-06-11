@@ -1,6 +1,6 @@
 # KEV Triage
 
-Localable cyber world model for vulnerability and KEV triage.
+Localable cyber state model for vulnerability and KEV triage.
 
 ## Skills
 
@@ -13,7 +13,7 @@ Localable cyber world model for vulnerability and KEV triage.
 
 This demo has two kit directories that represent the two layers:
 
-- **`../kev-reference/config.yaml`** — the published upstream world model. Contains only
+- **`../kev-reference/config.yaml`** — the published upstream state model. Contains only
   public entity types (Vendor, Product, Vulnerability), deterministic reference
   relationships, plus a canonical workflow that builds accepted reference state
   from the bundled hashed KEV/NVD/EPSS artifact. This is what Cruxible hosts

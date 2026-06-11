@@ -1,4 +1,4 @@
-"""Derived ownership view for composed world-model configs."""
+"""Derived ownership view for composed state configs."""
 
 from __future__ import annotations
 

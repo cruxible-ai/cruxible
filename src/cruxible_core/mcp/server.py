@@ -27,7 +27,7 @@ execution with proof via receipts.
 
 ## Start Here
 
-This server exposes deterministic world-building and query tools.
+This server exposes deterministic state-building and query tools.
 Workflow guidance belongs client-side in agent skills or playbooks, not in MCP prompts.
 
 **No config yet?**

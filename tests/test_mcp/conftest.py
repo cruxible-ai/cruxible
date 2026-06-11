@@ -583,48 +583,48 @@ class GovernedLocalClient:
             offset=offset,
         )
 
-    def create_world_overlay(
+    def create_state_overlay(
         self,
         *,
         root_dir: str,
         transport_ref: str | None = None,
-        world_ref: str | None = None,
+        state_ref: str | None = None,
         kit: str | None = None,
         no_kit: bool = False,
     ):
-        return api.create_world_overlay_governed(
+        return api.create_state_overlay_governed(
             transport_ref,
-            world_ref,
+            state_ref,
             kit,
             no_kit,
             root_dir,
         )
 
-    def world_publish(
+    def state_publish(
         self,
         instance_id: str,
         *,
         transport_ref: str,
-        world_id: str,
+        state_id: str,
         release_id: str,
         compatibility: str,
     ):
-        return api.world_publish(
+        return api.state_publish(
             instance_id,
             transport_ref=transport_ref,
-            world_id=world_id,
+            state_id=state_id,
             release_id=release_id,
             compatibility=compatibility,
         )
 
-    def world_status(self, instance_id: str):
-        return api.world_status(instance_id)
+    def state_status(self, instance_id: str):
+        return api.state_status(instance_id)
 
-    def world_pull_preview(self, instance_id: str):
-        return api.world_pull_preview(instance_id)
+    def state_pull_preview(self, instance_id: str):
+        return api.state_pull_preview(instance_id)
 
-    def world_pull_apply(self, instance_id: str, *, expected_apply_digest: str):
-        return api.world_pull_apply(
+    def state_pull_apply(self, instance_id: str, *, expected_apply_digest: str):
+        return api.state_pull_apply(
             instance_id,
             expected_apply_digest=expected_apply_digest,
         )

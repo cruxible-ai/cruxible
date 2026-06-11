@@ -69,18 +69,18 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_validate(config_path, config_yaml)
 
     @_tool
-    def cruxible_world_create_overlay(
+    def cruxible_state_create_overlay(
         root_dir: str,
         transport_ref: str | None = None,
-        world_ref: str | None = None,
+        state_ref: str | None = None,
         kit: str | None = None,
         no_kit: bool = False,
-    ) -> contracts.WorldOverlayResult:
-        """Create a new governed overlay from a published world release."""
-        return handlers.handle_create_world_overlay(
+    ) -> contracts.StateOverlayResult:
+        """Create a new governed overlay from a published state release."""
+        return handlers.handle_create_state_overlay(
             root_dir=root_dir,
             transport_ref=transport_ref,
-            world_ref=world_ref,
+            state_ref=state_ref,
             kit=kit,
             no_kit=no_kit,
         )
@@ -1033,18 +1033,18 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
-    def cruxible_world_publish(
+    def cruxible_state_publish(
         instance_id: str,
         transport_ref: str,
-        world_id: str,
+        state_id: str,
         release_id: str,
-        compatibility: contracts.WorldCompatibility,
-    ) -> contracts.WorldPublishResult:
-        """Publish a root world-model instance as an immutable release bundle."""
-        return handlers.handle_world_publish(
+        compatibility: contracts.StateCompatibility,
+    ) -> contracts.StatePublishResult:
+        """Publish a root state instance as an immutable release bundle."""
+        return handlers.handle_state_publish(
             instance_id,
             transport_ref,
-            world_id,
+            state_id,
             release_id,
             compatibility,
         )
@@ -1114,24 +1114,24 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_clone_snapshot(instance_id, snapshot_id, root_dir)
 
     @_tool
-    def cruxible_world_status(instance_id: str) -> contracts.WorldStatusResult:
+    def cruxible_state_status(instance_id: str) -> contracts.StateStatusResult:
         """Return upstream tracking metadata for a release-backed overlay."""
-        return handlers.handle_world_status(instance_id)
+        return handlers.handle_state_status(instance_id)
 
     @_tool
-    def cruxible_world_pull_preview(
+    def cruxible_state_pull_preview(
         instance_id: str,
-    ) -> contracts.WorldPullPreviewResult:
+    ) -> contracts.StatePullPreviewResult:
         """Preview pulling a newer upstream release into a release-backed overlay."""
-        return handlers.handle_world_pull_preview(instance_id)
+        return handlers.handle_state_pull_preview(instance_id)
 
     @_tool
-    def cruxible_world_pull_apply(
+    def cruxible_state_pull_apply(
         instance_id: str,
         expected_apply_digest: str,
-    ) -> contracts.WorldPullApplyResult:
+    ) -> contracts.StatePullApplyResult:
         """Apply a previewed upstream release into a release-backed overlay."""
-        return handlers.handle_world_pull_apply(instance_id, expected_apply_digest)
+        return handlers.handle_state_pull_apply(instance_id, expected_apply_digest)
 
     @_tool
     def cruxible_get_entity(

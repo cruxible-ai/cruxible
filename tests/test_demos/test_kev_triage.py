@@ -21,11 +21,11 @@ from cruxible_core.provider.types import ProviderContext, ResolvedArtifact
 from cruxible_core.providers.common.tabular import load_tabular_artifact_bundle
 from cruxible_core.service import (
     service_apply_workflow,
-    service_create_world_overlay,
+    service_create_state_overlay,
     service_init,
     service_lock,
     service_propose_workflow,
-    service_publish_world,
+    service_publish_state,
     service_query,
     service_resolve_group,
     service_run,
@@ -132,7 +132,7 @@ def _provider_context(artifact_path: Path | None) -> ProviderContext:
             kind="directory",
             uri=str(artifact_path),
             local_path=str(artifact_path),
-            sha256="sha256:test",
+            digest="sha256:test",
         )
     return ProviderContext(
         workflow_name="test",
@@ -982,10 +982,10 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         "product_asset_context",
         {"product_id": pre_exposure_product_id},
     )
-    assert pre_exposure_context.total_results > 0
+    assert pre_exposure_context.total > 0
     assert any(
         getattr(_include_result(row, "affected_vulnerabilities"), "count") > 0
-        for row in pre_exposure_context.results
+        for row in pre_exposure_context.items
     )
 
     _approve_workflow_group(instance, "propose_asset_exposure")
@@ -1074,9 +1074,9 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         {"product_id": product_id},
     )
 
-    assert vulnerability_asset_context.total_results > 0
-    assert owner_patch_queue.total_results > 0
-    assert product_asset_context.total_results > 0
+    assert vulnerability_asset_context.total > 0
+    assert owner_patch_queue.total > 0
+    assert product_asset_context.total > 0
 
     _approve_workflow_group_with_input(
         instance,
@@ -1104,12 +1104,12 @@ def test_kev_demo_workflows_run_end_to_end_from_composed_config(tmp_path: Path) 
         {"control_id": "CTRL-1"},
     )
 
-    assert vulnerability_class_context.total_results > 0
-    assert control_coverage_gap.total_results > 0
+    assert vulnerability_class_context.total > 0
+    assert control_coverage_gap.total > 0
     assert any(
         getattr(_row_path_segment(row, "mitigated_class"), "properties", {}).get("effect")
         == "blocks"
-        for row in control_coverage_gap.results
+        for row in control_coverage_gap.items
     )
     graph_after_control_review = instance.load_graph()
     control_mitigation_edge = next(
@@ -1242,7 +1242,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     assert vendor_context.relationship_state == "reviewable"
     vendor_rows = [
         row
-        for row in vendor_context.results
+        for row in vendor_context.items
         if getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
         and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
     ]
@@ -1253,7 +1253,7 @@ def test_broad_context_queries_include_reviewable_provenance(
 
     owner_queue = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
     assert owner_queue.relationship_state == "live"
-    assert not _has_exposure_path(owner_queue.results, asset_id, cve_id)
+    assert not _has_exposure_path(owner_queue.items, asset_id, cve_id)
 
     vulnerability_class_context = service_query(
         instance,
@@ -1264,7 +1264,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     assert any(
         getattr(_row_path_segment(row, "classification"), "from_id") == cve_id
         and _path_segment_review_status(row, "classification") == "pending"
-        for row in vulnerability_class_context.results
+        for row in vulnerability_class_context.items
     )
 
     control_coverage_gap = service_query(
@@ -1278,7 +1278,7 @@ def test_broad_context_queries_include_reviewable_provenance(
         and _path_segment_review_status(row, "classified_vulnerability") == "pending"
         and getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
         and _path_segment_review_status(row, "exposure") == "pending"
-        for row in control_coverage_gap.results
+        for row in control_coverage_gap.items
     )
 
 
@@ -1335,7 +1335,7 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     asset_id, cve_id, owner_id, vendor_id = unique_pair
 
     before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    before_ids = _query_entity_ids(before.results)
+    before_ids = _query_entity_ids(before.items)
     assert cve_id in before_ids
 
     graph.add_relationship(
@@ -1397,15 +1397,15 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     instance.save_graph(graph)
 
     after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    after_ids = _query_entity_ids(after.results)
+    after_ids = _query_entity_ids(after.items)
 
     assert cve_id not in after_ids
-    assert after.total_results == before.total_results - 1
+    assert after.total == before.total - 1
 
     vendor_context = service_query(instance, "vendor_service_impact", {"vendor_id": vendor_id})
     context_row = next(
         row
-        for row in vendor_context.results
+        for row in vendor_context.items
         if getattr(_row_path_segment(row, "exposure"), "from_id") == asset_id
         and getattr(_row_path_segment(row, "exposure"), "to_id") == cve_id
     )
@@ -1433,7 +1433,7 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
     asset_id, owner_id = sorted(asset_to_owner.items())[0]
 
     before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    before_ids = _query_entity_ids(before.results)
+    before_ids = _query_entity_ids(before.items)
     remediated_pairs = {
         (edge["from_id"], edge["to_id"])
         for edge in graph.list_edges("asset_remediated_vulnerability")
@@ -1488,8 +1488,8 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
 
     after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
 
-    assert candidate_cve not in _query_entity_ids(after.results)
-    assert after.total_results == before.total_results
+    assert candidate_cve not in _query_entity_ids(after.items)
+    assert after.total == before.total
 
 
 def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> None:
@@ -1527,7 +1527,7 @@ def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> No
     asset_id, cve_id, owner_id = unique_pair
 
     before = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    before_ids = _query_entity_ids(before.results)
+    before_ids = _query_entity_ids(before.items)
     assert cve_id in before_ids
 
     graph.add_relationship(
@@ -1561,10 +1561,10 @@ def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> No
     instance.save_graph(graph)
 
     after = service_query(instance, "owner_patch_queue", {"owner_id": owner_id})
-    after_ids = _query_entity_ids(after.results)
+    after_ids = _query_entity_ids(after.items)
 
     assert cve_id not in after_ids
-    assert after.total_results == before.total_results - 1
+    assert after.total == before.total - 1
 
 
 def test_exposure_reconciliation_no_candidates_completes_without_group(
@@ -1607,16 +1607,16 @@ def test_release_backed_kev_overlay_can_propose_asset_products(tmp_path: Path) -
     assert product.properties.get("vendor_id")
 
     release_dir = tmp_path / "releases" / "current"
-    service_publish_world(
+    service_publish_state(
         reference,
         transport_ref=f"file://{release_dir}",
-        world_id="kev-reference",
+        state_id="kev-reference",
         release_id="2026-03-31",
         compatibility="data_only",
     )
 
     overlay_root = tmp_path / "overlay"
-    overlay = service_create_world_overlay(
+    overlay = service_create_state_overlay(
         transport_ref=f"file://{release_dir}",
         kit="kev-triage",
         root_dir=overlay_root,

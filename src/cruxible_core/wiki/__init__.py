@@ -1,4 +1,4 @@
-"""Wiki generation from current world state."""
+"""Wiki generation from current state."""
 
 from cruxible_core.wiki.generator import (
     WikiOptions,

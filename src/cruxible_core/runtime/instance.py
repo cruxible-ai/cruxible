@@ -30,7 +30,7 @@ from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.store import SQLiteReceiptStore
-from cruxible_core.snapshot.types import UpstreamMetadata, WorldSnapshot
+from cruxible_core.snapshot.types import StateSnapshot, UpstreamMetadata
 from cruxible_core.storage.sqlite import (
     SQLiteSourceArtifactStore,
     SQLiteStorageBackend,
@@ -357,7 +357,7 @@ class CruxibleInstance(InstanceProtocol):
             (snapshot_dir / artifact_name).write_bytes(content)
         return snapshot_dir
 
-    def create_snapshot(self, label: str | None = None) -> WorldSnapshot:
+    def create_snapshot(self, label: str | None = None) -> StateSnapshot:
         """Persist an immutable full snapshot of the current graph + config state."""
         return self._write_snapshot(self.load_graph(), label=label, persist_live_graph=False)
 
@@ -368,7 +368,7 @@ class CruxibleInstance(InstanceProtocol):
         *,
         entities: Sequence[EntityInstance] | None = None,
         relationships: Sequence[RelationshipInstance] | None = None,
-    ) -> WorldSnapshot:
+    ) -> StateSnapshot:
         """Persist a snapshot for a provided graph, then atomically advance live state."""
         return self._write_snapshot(
             graph,
@@ -386,7 +386,7 @@ class CruxibleInstance(InstanceProtocol):
         persist_live_graph: bool,
         entities: Sequence[EntityInstance] | None = None,
         relationships: Sequence[RelationshipInstance] | None = None,
-    ) -> WorldSnapshot:
+    ) -> StateSnapshot:
         """Persist DB-authoritative snapshot state and export portable artifacts."""
         snapshot_id = new_id("snap", length=16, separator="_")
         config = self.load_config()
@@ -405,7 +405,7 @@ class CruxibleInstance(InstanceProtocol):
             lock_digest = f"sha256:{hashlib.sha256(lock_bytes).hexdigest()}"
             artifacts[LOCK_FILE_NAME] = lock_bytes
 
-        snapshot = WorldSnapshot(
+        snapshot = StateSnapshot(
             snapshot_id=snapshot_id,
             created_at=utc_now(),
             label=label,
@@ -450,7 +450,7 @@ class CruxibleInstance(InstanceProtocol):
             self._graph_cache = graph
         return snapshot
 
-    def get_snapshot(self, snapshot_id: str) -> WorldSnapshot | None:
+    def get_snapshot(self, snapshot_id: str) -> StateSnapshot | None:
         """Load DB-authoritative snapshot metadata by ID."""
         if self._active_uow is not None:
             return self._active_uow.snapshots.get_snapshot(snapshot_id)
@@ -458,7 +458,7 @@ class CruxibleInstance(InstanceProtocol):
         with self._storage_backend().snapshot_repository() as snapshots:
             return snapshots.get_snapshot(snapshot_id)
 
-    def list_snapshots(self) -> list[WorldSnapshot]:
+    def list_snapshots(self) -> list[StateSnapshot]:
         """List DB-authoritative snapshots in reverse chronological order."""
         if self._active_uow is not None:
             return self._active_uow.snapshots.list_snapshots()
@@ -474,7 +474,7 @@ class CruxibleInstance(InstanceProtocol):
         root_dir: str | Path,
         *,
         instance_mode: str = DEV_MODE,
-    ) -> tuple[CruxibleInstance, WorldSnapshot]:
+    ) -> tuple[CruxibleInstance, StateSnapshot]:
         """Create a new local instance rooted at a chosen snapshot."""
         cls._validate_instance_mode(instance_mode)
         snapshot = source_instance.get_snapshot(snapshot_id)

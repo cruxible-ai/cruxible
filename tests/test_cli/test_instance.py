@@ -113,7 +113,7 @@ class TestMetadata:
 
     def test_upstream_metadata_round_trips(self, initialized_project: CruxibleInstance) -> None:
         upstream = UpstreamMetadata(
-            world_id="world",
+            state_id="state",
             release_id="v1",
             snapshot_id="snap_1",
             compatibility="data_only",
@@ -127,7 +127,7 @@ class TestMetadata:
 
         assert loaded.get_upstream_metadata() == upstream
         raw = json.loads((initialized_project.instance_dir / "instance.json").read_text())
-        assert raw["upstream"]["world_id"] == "world"
+        assert raw["upstream"]["state_id"] == "state"
         assert raw["upstream"]["transport_ref"] == "file:///tmp/world"
 
     def test_snapshot_metadata_round_trips(

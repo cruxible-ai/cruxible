@@ -1,4 +1,4 @@
-"""Shared transport types for published world bundles."""
+"""Shared transport types for published state bundles."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from cruxible_core.errors import ConfigError
-from cruxible_core.snapshot.types import PublishedWorldManifest, WorldSnapshot
+from cruxible_core.snapshot.types import PublishedStateManifest, StateSnapshot
 
 
 @dataclass
@@ -15,8 +15,8 @@ class PulledReleaseBundle:
     """Materialized published release bundle."""
 
     root_dir: Path
-    manifest: PublishedWorldManifest
-    snapshot: WorldSnapshot
+    manifest: PublishedStateManifest
+    snapshot: StateSnapshot
 
 
 class ReleaseTransport(Protocol):

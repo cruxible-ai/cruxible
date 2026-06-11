@@ -11965,9 +11965,9 @@
       "receipt_id": "<RECEIPT_18>"
     }
   ],
-  "version": 1,
-  "world": {
+  "state": {
     "head_snapshot_id": "<SNAPSHOT_1>",
     "upstream": null
-  }
+  },
+  "version": 1
 }

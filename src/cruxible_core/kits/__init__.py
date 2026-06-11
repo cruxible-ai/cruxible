@@ -48,7 +48,7 @@ class KitManifest(BaseModel):
     kit_id: str
     version: str
     role: str
-    target_world: str | None = None
+    target_state: str | None = None
     entry_config: str = "config.yaml"
     provider_paths: list[str] = Field(default_factory=list)
     copy_paths: list[str] = Field(default_factory=list)
@@ -60,10 +60,10 @@ class KitManifest(BaseModel):
             raise ValueError(f"schema_version must be {KIT_SCHEMA_VERSION}")
         if self.role not in {"standalone", "overlay"}:
             raise ValueError("role must be standalone or overlay")
-        if self.role == "overlay" and not self.target_world:
-            raise ValueError("role: overlay requires target_world")
-        if self.role == "standalone" and self.target_world is not None:
-            raise ValueError("role: standalone must not set target_world")
+        if self.role == "overlay" and not self.target_state:
+            raise ValueError("role: overlay requires target_state")
+        if self.role == "standalone" and self.target_state is not None:
+            raise ValueError("role: standalone must not set target_state")
         _validate_relative_path(self.entry_config, field_name="entry_config")
         for field_name, values in (
             ("provider_paths", self.provider_paths),
@@ -151,7 +151,7 @@ def materialize_kit(
     kit: str,
     root: Path,
     expected_role: str,
-    target_world: str | None = None,
+    target_state: str | None = None,
     upstream_config_path: str | None = None,
 ) -> Path:
     """Copy a resolved kit bundle into an instance root and return its config path."""
@@ -160,7 +160,7 @@ def materialize_kit(
     if manifest.role != expected_role:
         if expected_role == "standalone" and manifest.role == "overlay":
             raise ConfigError(
-                f"Kit '{manifest.kit_id}' is an overlay kit. Use `cruxible world "
+                f"Kit '{manifest.kit_id}' is an overlay kit. Use `cruxible state "
                 "create-overlay --kit` instead of `cruxible init --kit`."
             )
         raise ConfigError(
@@ -168,11 +168,11 @@ def materialize_kit(
         )
     if (
         manifest.role == "overlay"
-        and target_world is not None
-        and manifest.target_world != target_world
+        and target_state is not None
+        and manifest.target_state != target_state
     ):
         raise ConfigError(
-            f"Kit '{manifest.kit_id}' targets world '{manifest.target_world}', not '{target_world}'"
+            f"Kit '{manifest.kit_id}' targets state '{manifest.target_state}', not '{target_state}'"
         )
 
     _copy_bundle_files(bundle.root, root)

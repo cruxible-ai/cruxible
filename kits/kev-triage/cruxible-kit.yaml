@@ -2,7 +2,7 @@ schema_version: cruxible.kit.v1
 kit_id: kev-triage
 version: 0.2.0
 role: overlay
-target_world: kev-reference
+target_state: kev-reference
 entry_config: config.yaml
 provider_paths:
   - providers

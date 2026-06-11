@@ -9,7 +9,7 @@ For manifest rules and distribution behavior, see
 
 ## Walkthrough 1: Create A Standalone Kit
 
-Use a standalone kit when the domain can initialize a world model by itself.
+Use a standalone kit when the domain can initialize a state model by itself.
 
 ### 1. Create The Kit Directory
 
@@ -40,7 +40,7 @@ copy_paths:
 requires_extras: []
 ```
 
-### 2. Define A Small World Model
+### 2. Define A Small State Model
 
 Start with one entity, one relationship, and one query. Add contracts,
 artifacts, providers, and workflows only after the graph shape is clear.
@@ -48,7 +48,6 @@ artifacts, providers, and workflows only after the graph shape is clear.
 ```yaml
 schema_version: cruxible.config.v1
 name: my_risk_kit
-kind: world_model
 version: "0.2.0"
 
 entity_types:
@@ -141,18 +140,18 @@ world. KEV triage is the canonical example.
 ### 1. Create The Overlay
 
 ```bash
-cruxible world create-overlay \
-  --world-ref kev-reference \
+cruxible state create-overlay \
+  --state-ref kev-reference \
   --kit kev-triage \
   --root-dir "$PWD/kev-triage-workspace"
 ```
 
-The resulting instance tracks the KEV reference world and materializes local
+The resulting instance tracks the KEV reference state and materializes local
 triage config, providers, source data, skills, and lock state.
 
 If you are testing from a source checkout without published OCI reference
 worlds, publish a local `kev-reference` release to `file://...` first and use
-`--transport-ref file://...` instead of `--world-ref kev-reference`.
+`--transport-ref file://...` instead of `--state-ref kev-reference`.
 
 ### 2. Add Local State
 

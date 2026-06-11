@@ -672,7 +672,7 @@ def propose_cmd(
 
 @click.group("snapshot")
 def snapshot_group() -> None:
-    """Manage immutable world-model snapshots."""
+    """Manage immutable state snapshots."""
 
 
 @snapshot_group.command("create")

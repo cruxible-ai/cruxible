@@ -53,7 +53,7 @@ def document_to_markdown(
         "source": {
             "name": source,
             "media_type": _media_type_for_extension(extension),
-            "sha256": _sha256_text(raw_text),
+            "digest": _sha256_text(raw_text),
             **_artifact_summary(context),
         },
         "diagnostics": [],
@@ -259,7 +259,7 @@ def _document_result(
         "source": {
             "name": path.name,
             "media_type": "application/pdf",
-            "sha256": _sha256_file(path),
+            "digest": _sha256_file(path),
             **_artifact_summary(context),
         },
         "backend": {"name": backend},
@@ -405,7 +405,7 @@ def _artifact_summary(context: ProviderContext) -> dict[str, Any]:
     return {
         "artifact_name": context.artifact.name,
         "artifact_uri": context.artifact.uri,
-        "artifact_sha256": context.artifact.sha256,
+        "artifact_digest": context.artifact.digest,
     }
 
 

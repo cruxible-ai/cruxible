@@ -66,7 +66,7 @@ def test_cross_section_is_allowlist_based(tmp_path: Path) -> None:
     assert "Vehicle" not in report["graph"]["counts"]["entities_by_type"]
 
 
-def test_cross_section_tokenization_is_global_across_world_and_snapshots(
+def test_cross_section_tokenization_is_global_across_state_and_snapshots(
     tmp_path: Path,
 ) -> None:
     instance = _new_instance(tmp_path)
@@ -75,11 +75,11 @@ def test_cross_section_tokenization_is_global_across_world_and_snapshots(
 
     report = build_state_cross_section(
         instance,
-        StateCrossSectionSpec(include_world=True, include_snapshots=True),
+        StateCrossSectionSpec(include_state=True, include_snapshots=True),
     )
 
-    assert report["world"]["head_snapshot_id"] == report["snapshots"][0]["snapshot_id"]
-    assert report["world"]["head_snapshot_id"].startswith("<SNAPSHOT_")
+    assert report["state"]["head_snapshot_id"] == report["snapshots"][0]["snapshot_id"]
+    assert report["state"]["head_snapshot_id"].startswith("<SNAPSHOT_")
 
 
 def test_cross_section_query_capture_does_not_persist_receipts(tmp_path: Path) -> None:

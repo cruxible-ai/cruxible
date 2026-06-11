@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
-from cruxible_core.kits.world_refs import WorldCatalogEntry
+from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.provider.types import ExecutionTrace
@@ -31,7 +31,7 @@ def _write_overlay_kit_manifest(
     kit_dir: Path,
     kit_id: str,
     *,
-    target_world: str = "car-parts",
+    target_state: str = "car-parts",
 ) -> None:
     (kit_dir / "cruxible-kit.yaml").write_text(
         "\n".join(
@@ -40,7 +40,7 @@ def _write_overlay_kit_manifest(
                 f"kit_id: {kit_id}",
                 "version: 0.2.0",
                 "role: overlay",
-                f"target_world: {target_world}",
+                f"target_state: {target_state}",
                 "entry_config: config.yaml",
                 "provider_paths: []",
                 "copy_paths: []",
@@ -956,7 +956,7 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     assert lookup.json()["metadata"] == {"source": "route-test"}
 
 
-def test_world_publish_overlay_and_status_routes(
+def test_state_publish_overlay_and_status_routes(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -965,10 +965,10 @@ def test_world_publish_overlay_and_status_routes(
     release_dir = tmp_path / "releases" / "current"
 
     publish = app_client.post(
-        f"/api/v1/{instance_id}/world/publish",
+        f"/api/v1/{instance_id}/state/publish",
         json={
             "transport_ref": f"file://{release_dir}",
-            "world_id": "car-parts",
+            "state_id": "car-parts",
             "release_id": "v1.0.0",
             "compatibility": "data_only",
         },
@@ -978,7 +978,7 @@ def test_world_publish_overlay_and_status_routes(
 
     overlay_root = tmp_path / "cloned-model"
     overlay = app_client.post(
-        "/api/v1/worlds/overlays",
+        "/api/v1/states/overlays",
         json={
             "transport_ref": f"file://{release_dir}",
             "root_dir": str(overlay_root),
@@ -988,13 +988,13 @@ def test_world_publish_overlay_and_status_routes(
     overlay_instance_id = overlay.json()["instance_id"]
     assert overlay_instance_id != str(overlay_root)
 
-    status = app_client.get(f"/api/v1/{overlay_instance_id}/world/status")
+    status = app_client.get(f"/api/v1/{overlay_instance_id}/state/status")
     assert status.status_code == 200
-    assert status.json()["upstream"]["world_id"] == "car-parts"
+    assert status.json()["upstream"]["state_id"] == "car-parts"
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
 
 
-def test_create_world_overlay_route_accepts_world_ref(
+def test_create_state_overlay_route_accepts_state_ref(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -1011,7 +1011,6 @@ def test_create_world_overlay_route_accepts_world_ref(
             [
                 'version: "1.0"',
                 "name: car_parts_overlay",
-                "kind: world_model",
                 "extends: base-kit.yaml",
                 "entity_types: {}",
                 "relationships: []",
@@ -1022,10 +1021,10 @@ def test_create_world_overlay_route_accepts_world_ref(
     (kit_dir / "providers.py").write_text("KIT = True\n")
     _write_overlay_kit_manifest(kit_dir, "car-parts-overlay")
     publish = app_client.post(
-        f"/api/v1/{instance_id}/world/publish",
+        f"/api/v1/{instance_id}/state/publish",
         json={
             "transport_ref": f"file://{version_dir}",
-            "world_id": "car-parts",
+            "state_id": "car-parts",
             "release_id": "v1.0.0",
             "compatibility": "data_only",
         },
@@ -1033,9 +1032,9 @@ def test_create_world_overlay_route_accepts_world_ref(
     assert publish.status_code == 200
     shutil.copytree(version_dir, latest_dir)
     monkeypatch.setattr(
-        "cruxible_core.kits.world_refs.get_world_catalog",
+        "cruxible_core.kits.state_refs.get_state_catalog",
         lambda: {
-            "car-parts": WorldCatalogEntry(
+            "car-parts": StateCatalogEntry(
                 alias="car-parts",
                 base_transport_ref=f"file://{releases_dir}",
                 latest_release="current",
@@ -1050,16 +1049,16 @@ def test_create_world_overlay_route_accepts_world_ref(
 
     overlay_root = tmp_path / "cloned-alias-model"
     overlay = app_client.post(
-        "/api/v1/worlds/overlays",
+        "/api/v1/states/overlays",
         json={
-            "world_ref": "car-parts",
+            "state_ref": "car-parts",
             "root_dir": str(overlay_root),
         },
     )
     assert overlay.status_code == 200
     overlay_instance_id = overlay.json()["instance_id"]
 
-    status = app_client.get(f"/api/v1/{overlay_instance_id}/world/status")
+    status = app_client.get(f"/api/v1/{overlay_instance_id}/state/status")
     assert status.status_code == 200
     assert status.json()["upstream"]["requested_source_ref"] == "car-parts"
     assert status.json()["upstream"]["requested_transport_ref"] == f"file://{latest_dir}"
@@ -1069,29 +1068,29 @@ def test_create_world_overlay_route_accepts_world_ref(
     assert (Path(record.location) / "providers.py").exists()
 
 
-def test_create_world_overlay_route_requires_exactly_one_source(
+def test_create_state_overlay_route_requires_exactly_one_source(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
     response = app_client.post(
-        "/api/v1/worlds/overlays",
+        "/api/v1/states/overlays",
         json={
             "transport_ref": "file:///tmp/release",
-            "world_ref": "car-parts",
+            "state_ref": "car-parts",
             "root_dir": str(tmp_path / "overlay"),
         },
     )
     assert response.status_code == 422
 
 
-def test_create_world_overlay_route_rejects_kit_and_no_kit(
+def test_create_state_overlay_route_rejects_kit_and_no_kit(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
     response = app_client.post(
-        "/api/v1/worlds/overlays",
+        "/api/v1/states/overlays",
         json={
-            "world_ref": "car-parts",
+            "state_ref": "car-parts",
             "kit": "car-parts-overlay",
             "no_kit": True,
             "root_dir": str(tmp_path / "overlay"),

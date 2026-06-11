@@ -1247,7 +1247,7 @@ class ProviderArtifactSchema(BaseModel):
 
     kind: str
     uri: str
-    sha256: str | None = None
+    digest: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1916,7 +1916,6 @@ class CoreConfig(BaseModel):
     name: str
     description: str | None = None
     cruxible_version: str | None = None
-    kind: Literal["ontology", "world_model"] = "world_model"
     extends: str | None = None
 
     entity_types: dict[str, EntityTypeSchema] = Field(default_factory=dict)

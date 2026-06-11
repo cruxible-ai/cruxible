@@ -24,7 +24,7 @@ def _context(path: Path | None = None) -> ProviderContext:
             kind="file",
             uri=str(path),
             local_path=str(path),
-            sha256="sha256:test",
+            digest="sha256:test",
         )
     return ProviderContext(
         workflow_name="wf",

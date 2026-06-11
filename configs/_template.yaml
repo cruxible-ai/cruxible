@@ -9,7 +9,6 @@
 
 version: "1.0"
 name: my_domain
-kind: world_model          # world_model or ontology
 description: >
   Describe the decision domain, who maintains it, and what decisions it
   supports.

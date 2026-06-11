@@ -20,8 +20,7 @@ from cruxible_core.wiki.generator import SubjectRef, _humanize
 WIKI_TEST_CONFIG = """\
 version: "1.0"
 name: kev_subject_wiki
-description: Deterministic wiki test world
-kind: world_model
+description: Deterministic wiki test state
 
 contracts:
   exposure_input:
@@ -160,7 +159,6 @@ LAYERED_REFERENCE_CONFIG = """\
 version: "1.0"
 name: reference_catalog
 description: Upstream reference catalog.
-kind: world_model
 
 contracts:
   empty_input:
@@ -227,8 +225,7 @@ workflows:
 LAYERED_LOCAL_CONFIG_TEMPLATE = """\
 version: "1.0"
 name: local_projection
-description: Local world model overlay.
-kind: world_model
+description: Local state overlay.
 extends: __BASE_PATH__
 
 entity_types:
@@ -585,7 +582,7 @@ def _seed_receipts_and_traces(instance: CruxibleInstance) -> tuple[str, str, str
                 deterministic=True,
                 side_effects=False,
                 artifact_name="inventory-snapshot.json",
-                artifact_sha256="abc123",
+                artifact_digest="abc123",
                 input_payload={"vulnerability_id": "CVE-2021-41773"},
                 output_payload={"items": [{"asset_id": "prod-web-01"}]},
                 status="success",
@@ -936,7 +933,6 @@ def test_workflow_reference_explains_apply_steps(tmp_path: Path) -> None:
         """\
 version: "1.0"
 name: canonical_workflow_wiki
-kind: world_model
 
 contracts:
   empty_input:
@@ -976,11 +972,11 @@ workflows:
     workflow_text = (project / "wiki" / "reference" / "workflows" / "canonical-load.md").read_text()
     assert "Apply steps commit previously built records or links" in workflow_text
     assert (
-        "| apply_assets | Apply records to world model | assets | apply_assets |" in workflow_text
+        "| apply_assets | Apply records to state | assets | apply_assets |" in workflow_text
     )
 
 
-def test_render_wiki_local_scope_projects_layered_world(tmp_path: Path) -> None:
+def test_render_wiki_local_scope_projects_layered_state(tmp_path: Path) -> None:
     project = tmp_path / "layered-wiki-project"
     instance = _write_layered_wiki_project(project)
     instance.save_graph(_build_layered_graph())

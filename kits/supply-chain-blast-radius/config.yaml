@@ -1,6 +1,5 @@
 version: "1.0"
 name: supply_chain_blast_radius
-kind: world_model
 description: >
   Supply chain incident blast-radius kit. Deterministic base world of
   suppliers, components, assemblies (with recursive BOM hierarchy),
@@ -1771,7 +1770,7 @@ artifacts:
   supply_chain_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:9915f747ad2696e38c9c5047251245e4f7c2ff31c81bec8c8ac9a6f1fe41889a
+    digest: sha256:9915f747ad2696e38c9c5047251245e4f7c2ff31c81bec8c8ac9a6f1fe41889a
 
 # ─── Providers ───────────────────────────────────────────────────────
 #

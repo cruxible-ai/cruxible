@@ -2491,7 +2491,6 @@ class TestWorkflowExecutor:
         config_yaml = f"""\
 version: "1.0"
 name: tabular_shape_ingest_parity
-kind: world_model
 
 entity_types:
   Asset:
@@ -2531,7 +2530,7 @@ artifacts:
   seed_bundle:
     kind: directory
     uri: ./bundle
-    sha256: {bundle_sha256}
+    digest: {bundle_sha256}
 
 providers:
   parse_seed_bundle:
@@ -2620,7 +2619,7 @@ workflows:
         )
         rows_path.write_text(json.dumps(rows, indent=2, sort_keys=True))
         config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = compute_directory_sha256(
+        config.artifacts["canonical_bundle"].digest = compute_directory_sha256(
             canonical_workflow_instance.root / "bundle"
         )
         canonical_workflow_instance.save_config(config)

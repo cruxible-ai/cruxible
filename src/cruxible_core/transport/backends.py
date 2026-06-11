@@ -1,4 +1,4 @@
-"""File and OCI transport backends for published world bundles."""
+"""File and OCI transport backends for published state bundles."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from cruxible_core.errors import ConfigError, TransportError
-from cruxible_core.snapshot.types import PublishedWorldManifest, WorldSnapshot
+from cruxible_core.snapshot.types import PublishedStateManifest, StateSnapshot
 from cruxible_core.transport.types import PulledReleaseBundle, ReleaseTransport
 
 
@@ -18,8 +18,8 @@ def _load_bundle(root_dir: Path) -> PulledReleaseBundle:
         raise TransportError(f"Bundle missing manifest.json at {root_dir}")
     if not snapshot_path.exists():
         raise TransportError(f"Bundle missing snapshot.json at {root_dir}")
-    manifest = PublishedWorldManifest.model_validate_json(manifest_path.read_text())
-    snapshot = WorldSnapshot.model_validate_json(snapshot_path.read_text())
+    manifest = PublishedStateManifest.model_validate_json(manifest_path.read_text())
+    snapshot = StateSnapshot.model_validate_json(snapshot_path.read_text())
     return PulledReleaseBundle(root_dir=root_dir, manifest=manifest, snapshot=snapshot)
 
 

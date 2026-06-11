@@ -1,6 +1,6 @@
 # Retail Catalog Demo
 
-Single-layer Cruxible world model for retail catalog intelligence and
+Single-layer Cruxible state model for retail catalog intelligence and
 merchandising decision state. The kit is not trying to be the product
 information manager, search index, pricing engine, or promotion optimizer. It
 gives an agent a governed graph of the catalog judgments that downstream
@@ -29,7 +29,7 @@ for humans and agents reading the kit.
 
 ## Modeling Notes
 
-This first pass intentionally stops at the world-model surface. Providers,
+This first pass intentionally stops at the state-model surface. Providers,
 workflow implementations, seed data, and downstream consumers can come later
 once the ontology and query surface feel right. The important early choice is
 that product relationships are not all the same kind of fact:

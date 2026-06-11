@@ -109,26 +109,26 @@ class CruxibleClient:
         response = self._client.get("/api/v1/server/info")
         return self._parse_model(response, contracts.ServerInfoResult)
 
-    def create_world_overlay(
+    def create_state_overlay(
         self,
         *,
         root_dir: str,
         transport_ref: str | None = None,
-        world_ref: str | None = None,
+        state_ref: str | None = None,
         kit: str | None = None,
         no_kit: bool = False,
-    ) -> contracts.WorldOverlayResult:
+    ) -> contracts.StateOverlayResult:
         response = self._client.post(
-            "/api/v1/worlds/overlays",
+            "/api/v1/states/overlays",
             json={
                 "transport_ref": transport_ref,
-                "world_ref": world_ref,
+                "state_ref": state_ref,
                 "kit": kit,
                 "no_kit": no_kit,
                 "root_dir": root_dir,
             },
         )
-        return self._parse_model(response, contracts.WorldOverlayResult)
+        return self._parse_model(response, contracts.StateOverlayResult)
 
     def query(
         self,
@@ -913,45 +913,45 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.CloneSnapshotResult)
 
-    def world_publish(
+    def state_publish(
         self,
         instance_id: str,
         *,
         transport_ref: str,
-        world_id: str,
+        state_id: str,
         release_id: str,
-        compatibility: contracts.WorldCompatibility,
-    ) -> contracts.WorldPublishResult:
+        compatibility: contracts.StateCompatibility,
+    ) -> contracts.StatePublishResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/world/publish",
+            f"/api/v1/{instance_id}/state/publish",
             json={
                 "transport_ref": transport_ref,
-                "world_id": world_id,
+                "state_id": state_id,
                 "release_id": release_id,
                 "compatibility": compatibility,
             },
         )
-        return self._parse_model(response, contracts.WorldPublishResult)
+        return self._parse_model(response, contracts.StatePublishResult)
 
-    def world_status(self, instance_id: str) -> contracts.WorldStatusResult:
-        response = self._client.get(f"/api/v1/{instance_id}/world/status")
-        return self._parse_model(response, contracts.WorldStatusResult)
+    def state_status(self, instance_id: str) -> contracts.StateStatusResult:
+        response = self._client.get(f"/api/v1/{instance_id}/state/status")
+        return self._parse_model(response, contracts.StateStatusResult)
 
-    def world_pull_preview(self, instance_id: str) -> contracts.WorldPullPreviewResult:
-        response = self._client.post(f"/api/v1/{instance_id}/world/pull/preview")
-        return self._parse_model(response, contracts.WorldPullPreviewResult)
+    def state_pull_preview(self, instance_id: str) -> contracts.StatePullPreviewResult:
+        response = self._client.post(f"/api/v1/{instance_id}/state/pull/preview")
+        return self._parse_model(response, contracts.StatePullPreviewResult)
 
-    def world_pull_apply(
+    def state_pull_apply(
         self,
         instance_id: str,
         *,
         expected_apply_digest: str,
-    ) -> contracts.WorldPullApplyResult:
+    ) -> contracts.StatePullApplyResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/world/pull/apply",
+            f"/api/v1/{instance_id}/state/pull/apply",
             json={"expected_apply_digest": expected_apply_digest},
         )
-        return self._parse_model(response, contracts.WorldPullApplyResult)
+        return self._parse_model(response, contracts.StatePullApplyResult)
 
     def add_constraint(
         self,

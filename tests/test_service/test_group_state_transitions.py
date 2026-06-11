@@ -355,7 +355,7 @@ def test_approval_rejects_upstream_owned_relationship_type_and_rolls_back(
     instance.set_upstream_metadata(
         UpstreamMetadata(
             transport_ref="file:///tmp/reference-world",
-            world_id="reference-world",
+            state_id="reference-world",
             release_id="v1",
             snapshot_id="snap-1",
             compatibility="data_only",

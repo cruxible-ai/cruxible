@@ -270,7 +270,7 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
     [
         ("cruxible_init", {"root_dir": "/tmp/project", "config_yaml": "name: demo"}),
         (
-            "cruxible_world_create_overlay",
+            "cruxible_state_create_overlay",
             {"transport_ref": "file:///tmp/release", "root_dir": "/tmp/overlay"},
         ),
         (

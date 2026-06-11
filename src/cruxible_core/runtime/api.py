@@ -39,7 +39,7 @@ from cruxible_core.service import (
     service_config_compatibility_warnings,
     service_create_decision_record,
     service_create_snapshot,
-    service_create_world_overlay,
+    service_create_state_overlay,
     service_dereference_source_evidence,
     service_describe_query,
     service_evaluate,
@@ -75,9 +75,9 @@ from cruxible_core.service import (
     service_plan,
     service_propose_group_inputs,
     service_propose_workflow,
-    service_publish_world,
-    service_pull_world_apply,
-    service_pull_world_preview,
+    service_publish_state,
+    service_pull_state_apply,
+    service_pull_state_preview,
     service_query_inline_surface,
     service_query_surface,
     service_register_source_artifact,
@@ -88,11 +88,11 @@ from cruxible_core.service import (
     service_sample,
     service_schema,
     service_server_info,
+    service_state_status,
     service_stats,
     service_test,
     service_update_trust_status,
     service_validate,
-    service_world_status,
 )
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
@@ -2242,104 +2242,104 @@ def list_resolutions(
     )
 
 
-def world_publish(
+def state_publish(
     instance_id: str,
     transport_ref: str,
-    world_id: str,
+    state_id: str,
     release_id: str,
-    compatibility: contracts.WorldCompatibility,
-) -> contracts.WorldPublishResult:
-    """Publish a root world-model instance as an immutable release bundle."""
-    check_permission("cruxible_world_publish", instance_id=instance_id)
+    compatibility: contracts.StateCompatibility,
+) -> contracts.StatePublishResult:
+    """Publish a root state instance as an immutable release bundle."""
+    check_permission("cruxible_state_publish", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_publish_world(
+    result = service_publish_state(
         instance,
         transport_ref=transport_ref,
-        world_id=world_id,
+        state_id=state_id,
         release_id=release_id,
         compatibility=compatibility,
     )
-    return contracts.WorldPublishResult(
-        manifest=contracts.PublishedWorldManifest.model_validate(
+    return contracts.StatePublishResult(
+        manifest=contracts.PublishedStateManifest.model_validate(
             result.manifest.model_dump(mode="json")
         )
     )
 
 
-def create_world_overlay_local(
+def create_state_overlay_local(
     transport_ref: str | None,
-    world_ref: str | None,
+    state_ref: str | None,
     kit: str | None,
     no_kit: bool,
     root_dir: str,
-) -> contracts.WorldOverlayResult:
-    """Create a new local overlay from a published world release."""
-    check_permission("cruxible_world_create_overlay", instance_id=root_dir)
+) -> contracts.StateOverlayResult:
+    """Create a new local overlay from a published state release."""
+    check_permission("cruxible_state_create_overlay", instance_id=root_dir)
     validate_root_dir(root_dir)
-    result = service_create_world_overlay(
+    result = service_create_state_overlay(
         transport_ref=transport_ref,
-        world_ref=world_ref,
+        state_ref=state_ref,
         kit=kit,
         no_kit=no_kit,
         root_dir=root_dir,
     )
     registered = get_registry().get_or_create_local_instance(Path(root_dir))
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.WorldOverlayResult(
+    return contracts.StateOverlayResult(
         instance_id=registered.record.instance_id,
-        manifest=contracts.PublishedWorldManifest.model_validate(
+        manifest=contracts.PublishedStateManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
     )
 
 
-def create_world_overlay_governed(
+def create_state_overlay_governed(
     transport_ref: str | None,
-    world_ref: str | None,
+    state_ref: str | None,
     kit: str | None,
     no_kit: bool,
     root_dir: str,
-) -> contracts.WorldOverlayResult:
-    """Create a daemon-owned governed overlay from a published world release."""
-    check_permission("cruxible_world_create_overlay", instance_id=root_dir)
+) -> contracts.StateOverlayResult:
+    """Create a daemon-owned governed overlay from a published state release."""
+    check_permission("cruxible_state_create_overlay", instance_id=root_dir)
     validate_root_dir(root_dir)
     registered = get_registry().create_governed_instance(workspace_root=root_dir)
-    result = service_create_world_overlay(
+    result = service_create_state_overlay(
         transport_ref=transport_ref,
-        world_ref=world_ref,
+        state_ref=state_ref,
         kit=kit,
         no_kit=no_kit,
         root_dir=registered.record.location,
         instance_mode=CruxibleInstance.GOVERNED_MODE,
     )
     get_manager().register(registered.record.instance_id, result.instance)
-    return contracts.WorldOverlayResult(
+    return contracts.StateOverlayResult(
         instance_id=registered.record.instance_id,
-        manifest=contracts.PublishedWorldManifest.model_validate(
+        manifest=contracts.PublishedStateManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
     )
 
 
-def world_status(instance_id: str) -> contracts.WorldStatusResult:
+def state_status(instance_id: str) -> contracts.StateStatusResult:
     """Return upstream tracking metadata for a release-backed overlay."""
-    check_permission("cruxible_world_status", instance_id=instance_id)
+    check_permission("cruxible_state_status", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_world_status(instance)
+    result = service_state_status(instance)
     upstream = (
         contracts.UpstreamMetadataResult.model_validate(result.upstream.model_dump(mode="json"))
         if result.upstream is not None
         else None
     )
-    return contracts.WorldStatusResult(upstream=upstream)
+    return contracts.StateStatusResult(upstream=upstream)
 
 
-def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
+def state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
     """Preview pulling a newer upstream release into an overlay."""
-    check_permission("cruxible_world_pull_preview", instance_id=instance_id)
+    check_permission("cruxible_state_pull_preview", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_pull_world_preview(instance)
-    return contracts.WorldPullPreviewResult(
+    result = service_pull_state_preview(instance)
+    return contracts.StatePullPreviewResult(
         current_release_id=result.current_release_id,
         target_release_id=result.target_release_id,
         compatibility=result.compatibility,
@@ -2352,15 +2352,15 @@ def world_pull_preview(instance_id: str) -> contracts.WorldPullPreviewResult:
     )
 
 
-def world_pull_apply(
+def state_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
-) -> contracts.WorldPullApplyResult:
+) -> contracts.StatePullApplyResult:
     """Apply a previewed upstream pull to a tracked overlay."""
-    check_permission("cruxible_world_pull_apply", instance_id=instance_id)
+    check_permission("cruxible_state_pull_apply", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_pull_world_apply(instance, expected_apply_digest=expected_apply_digest)
-    return contracts.WorldPullApplyResult(
+    result = service_pull_state_apply(instance, expected_apply_digest=expected_apply_digest)
+    return contracts.StatePullApplyResult(
         release_id=result.release_id,
         apply_digest=result.apply_digest,
         pre_pull_snapshot_id=result.pre_pull_snapshot_id,

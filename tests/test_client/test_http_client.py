@@ -1187,20 +1187,20 @@ def test_snapshot_create_uses_expected_route():
     assert captured["payload"]["label"] == "baseline"
 
 
-def test_world_endpoints_use_expected_routes():
+def test_state_endpoints_use_expected_routes():
     captured: list[tuple[str, str | None]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = request.content.decode() if request.content else None
         captured.append((str(request.url), payload))
-        if request.url.path == "/api/v1/worlds/overlays":
+        if request.url.path == "/api/v1/states/overlays":
             return httpx.Response(
                 200,
                 json={
                     "instance_id": "inst_overlay",
                     "manifest": {
                         "format_version": 1,
-                        "world_id": "case-law",
+                        "state_id": "case-law",
                         "release_id": "v1.0.0",
                         "snapshot_id": "snap_1",
                         "compatibility": "data_only",
@@ -1210,13 +1210,13 @@ def test_world_endpoints_use_expected_routes():
                     },
                 },
             )
-        if request.url.path.endswith("/world/publish"):
+        if request.url.path.endswith("/state/publish"):
             return httpx.Response(
                 200,
                 json={
                     "manifest": {
                         "format_version": 1,
-                        "world_id": "case-law",
+                        "state_id": "case-law",
                         "release_id": "v1.0.0",
                         "snapshot_id": "snap_1",
                         "compatibility": "data_only",
@@ -1226,7 +1226,7 @@ def test_world_endpoints_use_expected_routes():
                     }
                 },
             )
-        if request.url.path.endswith("/world/status"):
+        if request.url.path.endswith("/state/status"):
             return httpx.Response(
                 200,
                 json={
@@ -1234,7 +1234,7 @@ def test_world_endpoints_use_expected_routes():
                         "transport_ref": "file:///tmp/releases/current",
                         "requested_source_ref": "case-law@v1.0.0",
                         "requested_transport_ref": "file:///tmp/releases/v1.0.0",
-                        "world_id": "case-law",
+                        "state_id": "case-law",
                         "release_id": "v1.0.0",
                         "snapshot_id": "snap_1",
                         "compatibility": "data_only",
@@ -1250,7 +1250,7 @@ def test_world_endpoints_use_expected_routes():
                     }
                 },
             )
-        if request.url.path.endswith("/world/pull/preview"):
+        if request.url.path.endswith("/state/pull/preview"):
             return httpx.Response(
                 200,
                 json={
@@ -1276,43 +1276,43 @@ def test_world_endpoints_use_expected_routes():
 
     client = _build_client(handler)
     assert (
-        client.create_world_overlay(
+        client.create_state_overlay(
             transport_ref="file:///tmp/releases/current",
             root_dir="/tmp/overlay",
         ).instance_id
         == "inst_overlay"
     )
     assert (
-        client.world_publish(
+        client.state_publish(
             "inst_123",
             transport_ref="file:///tmp/releases/current",
-            world_id="case-law",
+            state_id="case-law",
             release_id="v1.0.0",
             compatibility="data_only",
         ).manifest.release_id
         == "v1.0.0"
     )
-    upstream = client.world_status("inst_123").upstream
+    upstream = client.state_status("inst_123").upstream
     assert upstream is not None
     assert upstream.requested_source_ref == "case-law@v1.0.0"
     assert upstream.requested_transport_ref == "file:///tmp/releases/v1.0.0"
-    assert client.world_pull_preview("inst_123").apply_digest == "sha256:apply"
+    assert client.state_pull_preview("inst_123").apply_digest == "sha256:apply"
     assert (
-        client.world_pull_apply(
+        client.state_pull_apply(
             "inst_123",
             expected_apply_digest="sha256:apply",
         ).pre_pull_snapshot_id
         == "snap_pre"
     )
 
-    assert captured[0][0].endswith("/api/v1/worlds/overlays")
-    assert captured[1][0].endswith("/api/v1/inst_123/world/publish")
-    assert captured[2][0].endswith("/api/v1/inst_123/world/status")
-    assert captured[3][0].endswith("/api/v1/inst_123/world/pull/preview")
-    assert captured[4][0].endswith("/api/v1/inst_123/world/pull/apply")
+    assert captured[0][0].endswith("/api/v1/states/overlays")
+    assert captured[1][0].endswith("/api/v1/inst_123/state/publish")
+    assert captured[2][0].endswith("/api/v1/inst_123/state/status")
+    assert captured[3][0].endswith("/api/v1/inst_123/state/pull/preview")
+    assert captured[4][0].endswith("/api/v1/inst_123/state/pull/apply")
 
 
-def test_create_world_overlay_serializes_world_ref():
+def test_create_state_overlay_serializes_state_ref():
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1324,7 +1324,7 @@ def test_create_world_overlay_serializes_world_ref():
                 "instance_id": "inst_overlay",
                 "manifest": {
                     "format_version": 1,
-                    "world_id": "kev-reference",
+                    "state_id": "kev-reference",
                     "release_id": "2026-03-27",
                     "snapshot_id": "snap_1",
                     "compatibility": "data_only",
@@ -1336,17 +1336,17 @@ def test_create_world_overlay_serializes_world_ref():
         )
 
     client = _build_client(handler)
-    result = client.create_world_overlay(
+    result = client.create_state_overlay(
         root_dir="/tmp/overlay",
-        world_ref="kev-reference",
+        state_ref="kev-reference",
         kit="kev-triage",
     )
 
     assert result.instance_id == "inst_overlay"
-    assert captured["path"].endswith("/api/v1/worlds/overlays")
+    assert captured["path"].endswith("/api/v1/states/overlays")
     assert captured["payload"] == {
         "transport_ref": None,
-        "world_ref": "kev-reference",
+        "state_ref": "kev-reference",
         "kit": "kev-triage",
         "no_kit": False,
         "root_dir": "/tmp/overlay",

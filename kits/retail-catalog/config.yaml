@@ -1,6 +1,5 @@
 version: "1.0"
 name: retail_catalog
-kind: world_model
 description: >
   Retail catalog world model for product relationship intelligence and
   merchandising decision support. The canonical layer tracks products, SKUs,

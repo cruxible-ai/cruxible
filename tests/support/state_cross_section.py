@@ -57,7 +57,7 @@ class StateCrossSectionSpec:
     include_receipts: bool = False
     include_traces: bool = False
     include_snapshots: bool = False
-    include_world: bool = False
+    include_state: bool = False
     limits: CrossSectionLimits = field(default_factory=CrossSectionLimits)
 
 
@@ -156,7 +156,7 @@ _SEMANTIC_VALUE_KEYS = {
     "provider_name",
     "provider",
     "release_id",
-    "world_id",
+    "state_id",
     "entity_type",
     "relationship_type",
     "from_type",
@@ -183,8 +183,8 @@ def build_state_cross_section(
     graph_section = _build_graph_section(instance, spec)
     if graph_section:
         raw["graph"] = graph_section
-    if spec.include_world:
-        raw["world"] = _build_world_section(instance)
+    if spec.include_state:
+        raw["state"] = _build_state_section(instance)
     if spec.include_snapshots:
         raw["snapshots"] = _build_snapshots_section(instance, spec.limits.snapshots)
     if spec.include_groups:
@@ -345,7 +345,7 @@ def _build_graph_section(instance: InstanceProtocol, spec: StateCrossSectionSpec
     return section
 
 
-def _build_world_section(instance: InstanceProtocol) -> JsonObject:
+def _build_state_section(instance: InstanceProtocol) -> JsonObject:
     upstream = instance.get_upstream_metadata()
     return {
         "head_snapshot_id": instance.get_head_snapshot_id(),
@@ -902,10 +902,10 @@ def _receipt_group_sort_keys(
 
 
 def _upstream_metadata(cross_section: Mapping[str, Any]) -> Mapping[str, Any]:
-    world = cross_section.get("world")
-    if not isinstance(world, Mapping):
+    state = cross_section.get("state")
+    if not isinstance(state, Mapping):
         return {}
-    upstream = world.get("upstream")
+    upstream = state.get("upstream")
     return upstream if isinstance(upstream, Mapping) else {}
 
 

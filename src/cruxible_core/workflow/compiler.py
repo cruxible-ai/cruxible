@@ -65,25 +65,25 @@ def build_lock(
     canonical_artifact_names = _collect_canonical_artifact_names(config)
     locked_artifacts: dict[str, LockedArtifact] = {}
     for name, artifact in config.artifacts.items():
-        locked_sha256 = artifact.sha256 or ""
+        locked_digest = artifact.digest or ""
         if name in canonical_artifact_names and config_base_path is not None:
             artifact_path = resolve_local_artifact_path(artifact.uri, config_base_path)
             if artifact_path is not None:
-                actual_sha256 = compute_path_sha256(artifact_path)
-                if artifact.sha256 and artifact.sha256 != actual_sha256:
+                actual_digest = compute_path_sha256(artifact_path)
+                if artifact.digest and artifact.digest != actual_digest:
                     if not force:
                         raise ConfigError(
                             _artifact_hash_mismatch_message(
                                 name,
-                                artifact.sha256,
-                                actual_sha256,
+                                artifact.digest,
+                                actual_digest,
                             )
                         )
-                locked_sha256 = actual_sha256
+                locked_digest = actual_digest
         locked_artifacts[name] = LockedArtifact(
             kind=artifact.kind,
             uri=artifact.uri,
-            sha256=locked_sha256,
+            digest=locked_digest,
             metadata=artifact.metadata,
         )
 
@@ -94,7 +94,7 @@ def build_lock(
             name: LockedProvider(
                 version=provider.version,
                 ref=provider.ref,
-                provider_entrypoint_sha256=_compute_provider_entrypoint_sha256(
+                provider_entrypoint_digest=_compute_provider_entrypoint_sha256(
                     provider_name=name,
                     config=config,
                     config_base_path=config_base_path,
@@ -222,7 +222,7 @@ def compile_workflow(
                 config=config,
                 config_base_path=config_base_path,
             )
-            if current_entrypoint_sha != locked.provider_entrypoint_sha256:
+            if current_entrypoint_sha != locked.provider_entrypoint_digest:
                 raise ConfigError(
                     f"Provider '{step.provider}' entrypoint changed since lock generation. "
                     "Run `cruxible lock`."
@@ -247,7 +247,7 @@ def compile_workflow(
                     _verify_local_artifact_hash(
                         locked.artifact,
                         locked_artifact.uri,
-                        locked_artifact.sha256,
+                        locked_artifact.digest,
                         config_base_path,
                     )
             compiled_steps.append(
@@ -259,10 +259,10 @@ def compile_workflow(
                     provider_name=step.provider,
                     provider_ref=locked.ref,
                     provider_version=locked.version,
-                    provider_entrypoint_sha256=locked.provider_entrypoint_sha256,
+                    provider_entrypoint_digest=locked.provider_entrypoint_digest,
                     artifact_name=locked.artifact,
-                    artifact_sha256=(
-                        lock.artifacts[locked.artifact].sha256 if locked.artifact else None
+                    artifact_digest=(
+                        lock.artifacts[locked.artifact].digest if locked.artifact else None
                     ),
                     input_template=step.input,
                     input_preview=preview_value(step.input, normalized_input),
@@ -535,26 +535,26 @@ def _collect_canonical_artifact_names(config: CoreConfig) -> set[str]:
 def _verify_local_artifact_hash(
     name: str,
     uri: str,
-    expected_sha256: str,
+    expected_digest: str,
     config_base_path: Path,
 ) -> None:
-    if not expected_sha256:
-        raise ConfigError("Canonical workflow artifact is missing sha256")
+    if not expected_digest:
+        raise ConfigError("Canonical workflow artifact is missing digest")
     artifact_path = resolve_local_artifact_path(uri, config_base_path)
     if artifact_path is None:
         raise ConfigError("Canonical workflows require local file or directory artifacts")
     if not artifact_path.exists():
         raise ConfigError(f"Artifact path does not exist: {artifact_path}")
-    actual_sha256 = compute_path_sha256(artifact_path)
-    if actual_sha256 != expected_sha256:
-        raise ConfigError(_artifact_hash_mismatch_message(name, expected_sha256, actual_sha256))
+    actual_digest = compute_path_sha256(artifact_path)
+    if actual_digest != expected_digest:
+        raise ConfigError(_artifact_hash_mismatch_message(name, expected_digest, actual_digest))
 
 
-def _artifact_hash_mismatch_message(name: str, expected_sha256: str, actual_sha256: str) -> str:
+def _artifact_hash_mismatch_message(name: str, expected_digest: str, actual_digest: str) -> str:
     return (
-        f"Artifact '{name}' sha256 mismatch.\n"
-        f"  expected (config): {expected_sha256}\n"
-        f"  actual (on disk):  {actual_sha256}\n"
+        f"Artifact '{name}' digest mismatch.\n"
+        f"  expected (config): {expected_digest}\n"
+        f"  actual (on disk):  {actual_digest}\n"
         "Run 'cruxible lock --force' to accept the on-disk hash, or restore the expected artifact."
     )
 

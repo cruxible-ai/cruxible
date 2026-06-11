@@ -83,7 +83,7 @@ The source of truth for all business logic. Organized by concern:
 - `execution.py` — Workflow execution (plan, run, test, apply, propose, lock)
 - `groups.py` — Candidate group proposal management with resolution/trust
 - `analysis.py` — Constraint evaluation and candidate finding
-- `snapshots.py` — World state snapshots for branching/recovery
+- `snapshots.py` — State snapshots for branching/recovery
 - `types.py` — All input/output types (typed dataclasses)
 
 Service functions have consistent signatures: accept `instance: InstanceProtocol`, return typed result dataclasses.
@@ -122,7 +122,7 @@ Deterministic workflow engine with lock-file reproducibility:
 - `contracts.py` — Payload validation against declared contracts
 - `refs.py` — Step reference resolution (`$input`, `$steps.*`, `$item`)
 
-Three execution modes: `run` (non-canonical), `preview` (canonical dry-run), `apply` (canonical with mutations). Canonical workflows create `WorldSnapshot` objects with lineage tracking.
+Three execution modes: `run` (non-canonical), `preview` (canonical dry-run), `apply` (canonical with mutations). Canonical workflows create `StateSnapshot` objects with lineage tracking.
 
 ### Provider System (`provider/`)
 

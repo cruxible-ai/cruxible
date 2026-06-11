@@ -19,7 +19,7 @@ def _provider_context(path: Path) -> ProviderContext:
             kind="directory",
             uri=str(path),
             local_path=str(path),
-            sha256="sha256:test",
+            digest="sha256:test",
         ),
     )
 

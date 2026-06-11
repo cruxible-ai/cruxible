@@ -36,7 +36,7 @@ class TestWorkflowCompiler:
         assert plan.steps[0].kind == "query"
         assert plan.steps[0].params_preview["sku"] == "SKU-123"
         assert plan.steps[1].provider_version == "1.2.0"
-        assert plan.steps[1].artifact_sha256 == "abc123"
+        assert plan.steps[1].artifact_digest == "abc123"
 
     def test_compile_workflow_carries_contract_out(
         self, workflow_instance: CruxibleInstance
@@ -351,7 +351,7 @@ class TestWorkflowCompiler:
 
         assert plan.canonical is True
         assert plan.lock_digest == lock.lock_digest
-        assert plan.steps[0].provider_entrypoint_sha256 is not None
+        assert plan.steps[0].provider_entrypoint_digest is not None
         assert "apply_entities" in [step.kind for step in plan.steps]
 
     def test_compile_canonical_workflow_allows_transform_provider_without_artifact(
@@ -376,7 +376,7 @@ class TestWorkflowCompiler:
 
         assert plan.steps[0].provider_name == provider_name
         assert plan.steps[0].artifact_name is None
-        assert plan.steps[0].artifact_sha256 is None
+        assert plan.steps[0].artifact_digest is None
 
     def test_compile_workflow_carries_apply_all_step(
         self, canonical_workflow_instance: CruxibleInstance
@@ -429,7 +429,7 @@ class TestWorkflowCompiler:
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
+        config.artifacts["canonical_bundle"].digest = "sha256:bad"
         canonical_workflow_instance.save_config(config)
 
         with pytest.raises(ConfigError) as exc_info:
@@ -438,7 +438,7 @@ class TestWorkflowCompiler:
                 canonical_workflow_instance.get_config_path().parent,
             )
         message = str(exc_info.value)
-        assert "Artifact 'canonical_bundle' sha256 mismatch." in message
+        assert "Artifact 'canonical_bundle' digest mismatch." in message
         assert "expected (config): sha256:bad" in message
         assert "actual (on disk):" in message
         assert "cruxible lock --force" in message
@@ -447,7 +447,7 @@ class TestWorkflowCompiler:
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
         config = canonical_workflow_instance.load_config()
-        config.artifacts["canonical_bundle"].sha256 = "sha256:bad"
+        config.artifacts["canonical_bundle"].digest = "sha256:bad"
         canonical_workflow_instance.save_config(config)
 
         lock = build_lock(
@@ -456,5 +456,5 @@ class TestWorkflowCompiler:
             force=True,
         )
 
-        assert lock.artifacts["canonical_bundle"].sha256 != "sha256:bad"
-        assert lock.artifacts["canonical_bundle"].sha256.startswith("sha256:")
+        assert lock.artifacts["canonical_bundle"].digest != "sha256:bad"
+        assert lock.artifacts["canonical_bundle"].digest.startswith("sha256:")

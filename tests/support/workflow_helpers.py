@@ -87,7 +87,6 @@ def dataflow_instance(
         f"""\
 version: "1.0"
 name: dataflow_workflow
-kind: world_model
 
 entity_types:
   Row:

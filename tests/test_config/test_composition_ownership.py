@@ -11,8 +11,7 @@ from cruxible_core.snapshot.types import UpstreamMetadata
 
 BASE_CONFIG = """\
 version: "1.0"
-name: reference_world
-kind: world_model
+name: reference_state
 
 contracts:
   empty_input:
@@ -62,8 +61,7 @@ workflows:
 
 OVERLAY_TEMPLATE = """\
 version: "1.0"
-name: local_world
-kind: world_model
+name: local_state
 extends: __BASE_PATH__
 
 entity_types:
@@ -113,8 +111,7 @@ workflows:
 
 UNLAYERED_CONFIG = """\
 version: "1.0"
-name: standalone_world
-kind: world_model
+name: standalone_state
 entity_types:
   Thing:
     properties:
@@ -170,7 +167,7 @@ def test_upstream_metadata_takes_precedence_over_extends(tmp_path: Path) -> None
     instance.set_upstream_metadata(
         UpstreamMetadata(
             transport_ref="file:///tmp/reference-world",
-            world_id="reference-world",
+            state_id="reference-world",
             release_id="v1",
             snapshot_id="snap-1",
             compatibility="additive_schema",

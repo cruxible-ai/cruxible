@@ -627,7 +627,6 @@ class TestConfigViews:
             """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Product:
     properties:

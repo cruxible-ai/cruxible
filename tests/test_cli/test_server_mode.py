@@ -2557,14 +2557,14 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
         (["entity", "add", "--type", "Vehicle", "--id", "V-1"], "entity add"),
         (
             [
-                "world",
+                "state",
                 "create-overlay",
                 "--transport-ref",
                 "file:///tmp/release",
                 "--root-dir",
                 "/tmp/overlay",
             ],
-            "world create-overlay",
+            "state create-overlay",
         ),
     ],
 )

@@ -5,7 +5,7 @@ description: Profile and prepare raw source files before modeling or loading the
 
 # Prepare Data
 
-Use this skill before `create-world`, and before `overlay-and-fit` whenever local source files need to be loaded into an overlay.
+Use this skill before `create-state`, and before `overlay-and-fit` whenever local source files need to be loaded into an overlay.
 
 Cruxible validates, loads, and evaluates. File cleaning and transforms are external.
 
@@ -17,7 +17,7 @@ This skill is about source-data preparation only:
 - identifying cleaning and transform work
 - producing cleaned files or a preparation plan
 
-It is not for cross-dataset matching or governed relationship design. Those happen later in the world-building flow.
+It is not for cross-dataset matching or governed relationship design. Those happen later in the state-building flow.
 
 Use your own tools freely here: Python, Polars, SQL, spreadsheets, or shell tooling. The goal is to hand the later skills source files that are understood, defensible, and ready.
 
@@ -32,7 +32,7 @@ For each file, identify:
 - what its likely row grain is
 - what other files it seems to join to
 
-Do not assume the target world shape is already known. This skill is part of discovering it.
+Do not assume the target state shape is already known. This skill is part of discovering it.
 
 ## Phase 2: Profile each file
 
@@ -95,7 +95,7 @@ After the files are profiled and cleaned enough to reason about them, summarize 
 - obvious column rename, normalization, or reshape requirements
 - whether cross-dataset matching will likely be needed later
 
-If a draft config or draft world model already exists, you may compare against it here as a consistency check. Do not treat that as the starting assumption for this skill.
+If a draft config or draft state model already exists, you may compare against it here as a consistency check. Do not treat that as the starting assumption for this skill.
 
 ## Phase 6: Produce the preparation result
 
@@ -143,7 +143,7 @@ Report:
 
 `recommended_next_step` should usually be one of:
 
-- start `create-world`
+- start `create-state`
 - continue `overlay-and-fit`
 - clean specific files first
 - clarify ambiguous source semantics with the user before modeling further

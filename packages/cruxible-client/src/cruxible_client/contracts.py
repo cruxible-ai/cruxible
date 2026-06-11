@@ -33,7 +33,7 @@ GroupTrustStatus = Literal["trusted", "watch", "invalidated"]
 DecisionPolicyAppliesTo = Literal["query", "workflow"]
 DecisionPolicyEffect = Literal["suppress", "require_review"]
 DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
-WorldCompatibility = Literal["data_only", "additive_schema", "breaking"]
+StateCompatibility = Literal["data_only", "additive_schema", "breaking"]
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
 WorkflowMode = Literal["run", "preview", "apply", "proposal"]
 
@@ -673,12 +673,12 @@ class CloneSnapshotResult(BaseModel):
     snapshot: SnapshotMetadata
 
 
-class PublishedWorldManifest(BaseModel):
+class PublishedStateManifest(BaseModel):
     format_version: int
-    world_id: str
+    state_id: str
     release_id: str
     snapshot_id: str
-    compatibility: WorldCompatibility
+    compatibility: StateCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     parent_release_id: str | None = None
@@ -688,10 +688,10 @@ class UpstreamMetadataResult(BaseModel):
     transport_ref: str
     requested_source_ref: str | None = None
     requested_transport_ref: str | None = None
-    world_id: str
+    state_id: str
     release_id: str
     snapshot_id: str
-    compatibility: WorldCompatibility
+    compatibility: StateCompatibility
     owned_entity_types: list[str] = Field(default_factory=list)
     owned_relationship_types: list[str] = Field(default_factory=list)
     overlay_config_path: str
@@ -703,23 +703,23 @@ class UpstreamMetadataResult(BaseModel):
     graph_digest: str | None = None
 
 
-class WorldPublishResult(BaseModel):
-    manifest: PublishedWorldManifest
+class StatePublishResult(BaseModel):
+    manifest: PublishedStateManifest
 
 
-class WorldOverlayResult(BaseModel):
+class StateOverlayResult(BaseModel):
     instance_id: str
-    manifest: PublishedWorldManifest
+    manifest: PublishedStateManifest
 
 
-class WorldStatusResult(BaseModel):
+class StateStatusResult(BaseModel):
     upstream: UpstreamMetadataResult | None = None
 
 
-class WorldPullPreviewResult(BaseModel):
+class StatePullPreviewResult(BaseModel):
     current_release_id: str | None = None
     target_release_id: str
-    compatibility: WorldCompatibility
+    compatibility: StateCompatibility
     apply_digest: str
     warnings: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
@@ -728,7 +728,7 @@ class WorldPullPreviewResult(BaseModel):
     upstream_edge_delta: int = 0
 
 
-class WorldPullApplyResult(BaseModel):
+class StatePullApplyResult(BaseModel):
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str

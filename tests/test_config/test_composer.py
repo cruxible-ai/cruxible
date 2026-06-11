@@ -22,7 +22,6 @@ from cruxible_core.errors import ConfigError
 _BASE_YAML = {
     "version": "1.0",
     "name": "base",
-    "kind": "world_model",
     "entity_types": {
         "Case": {
             "properties": {
@@ -78,7 +77,6 @@ class TestSequenceComposition:
             """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Vendor:
     properties:
@@ -97,7 +95,7 @@ artifacts:
   canonical_bundle:
     kind: directory
     uri: ./bundle
-    sha256: sha256:bundle
+    digest: sha256:bundle
 providers:
   reference_loader:
     kind: function
@@ -514,7 +512,6 @@ class TestArtifactUriComposition:
             """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Case:
     properties:
@@ -526,7 +523,7 @@ artifacts:
   base_bundle:
     kind: directory
     uri: ./bundle
-    sha256: sha256:base
+    digest: sha256:base
 """
         )
         overlay_path.write_text(
@@ -540,7 +537,7 @@ artifacts:
   seed_bundle:
     kind: directory
     uri: ./seed
-    sha256: sha256:seed
+    digest: sha256:seed
 """
         )
 
@@ -562,7 +559,6 @@ artifacts:
             """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Case:
     properties:
@@ -574,7 +570,7 @@ artifacts:
   base_bundle:
     kind: directory
     uri: ./bundle
-    sha256: sha256:base
+    digest: sha256:base
 """
         )
         overlay_path.write_text(
@@ -606,7 +602,6 @@ relationships: []
             """\
 version: "1.0"
 name: base
-kind: world_model
 entity_types:
   Case:
     properties:

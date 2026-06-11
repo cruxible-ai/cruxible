@@ -9,7 +9,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
 | GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, and source artifact registration. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation and group resolution/trust updates. |
-| ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, world publication/pull, ingest, constraints, policies. |
+| ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, state publication/pull, ingest, constraints, policies. |
 
 ## cruxible_version
 
@@ -92,11 +92,11 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_world_create_overlay
+## cruxible_state_create_overlay
 
 **Permission:** `ADMIN`
 
-**Purpose:** Create a new governed overlay from a published world release.
+**Purpose:** Create a new governed overlay from a published state release.
 
 **Arguments:**
 
@@ -104,7 +104,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `root_dir` | yes | string |  |
 | `transport_ref` | no | string | null |  |
-| `world_ref` | no | string | null |  |
+| `state_ref` | no | string | null |  |
 | `kit` | no | string | null |  |
 | `no_kit` | no | boolean |  |
 
@@ -1416,11 +1416,11 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_world_publish
+## cruxible_state_publish
 
 **Permission:** `ADMIN`
 
-**Purpose:** Publish a root world-model instance as an immutable release bundle.
+**Purpose:** Publish a root state-model instance as an immutable release bundle.
 
 **Arguments:**
 
@@ -1428,7 +1428,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `transport_ref` | yes | string |  |
-| `world_id` | yes | string |  |
+| `state_id` | yes | string |  |
 | `release_id` | yes | string |  |
 | `compatibility` | yes | enum: data_only, additive_schema, breaking |  |
 
@@ -1559,7 +1559,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_world_status
+## cruxible_state_status
 
 **Permission:** `READ_ONLY`
 
@@ -1580,7 +1580,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_world_pull_preview
+## cruxible_state_pull_preview
 
 **Permission:** `READ_ONLY`
 
@@ -1601,7 +1601,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_world_pull_apply
+## cruxible_state_pull_apply
 
 **Permission:** `ADMIN`
 

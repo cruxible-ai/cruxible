@@ -1,4 +1,4 @@
-"""Deterministic Markdown wiki generation from local world state."""
+"""Deterministic Markdown wiki generation from local state."""
 
 from __future__ import annotations
 
@@ -639,8 +639,7 @@ class _WikiGenerator:
         lines = [f"# {self.config.name} Wiki", ""]
         if self.config.description:
             lines.extend([self.config.description.strip(), ""])
-        lines.append("## World")
-        lines.append(f"- Kind: {self.config.kind}")
+        lines.append("## State")
         if self.head_snapshot_id:
             lines.append(f"- Head snapshot: {self.head_snapshot_id}")
         lines.append(f"- Rendered subjects: {len(subjects)}")
@@ -749,7 +748,7 @@ class _WikiGenerator:
             if review_count:
                 review_counts.append((review_count, subject))
 
-        lines = ["## Local World Summary"]
+        lines = ["## Local State Summary"]
         lines.append("### Rendered Subjects")
         for entity_type, count in sorted(by_entity_type.items()):
             lines.append(f"- {_humanize(entity_type)}: {count}")
@@ -820,7 +819,7 @@ class _WikiGenerator:
                 outcomes=outcomes,
             )
         )
-        lines.extend(self._render_world_state_section(subject, rendered_subjects))
+        lines.extend(self._render_state_section(subject, rendered_subjects))
         lines.extend(self._render_production_section(subject, receipts, rendered_subjects))
         lines.extend(self._render_pending_review_section(subject, groups, rendered_subjects))
         lines.extend(
@@ -909,7 +908,7 @@ class _WikiGenerator:
         lines.append("")
         return lines
 
-    def _render_world_state_section(
+    def _render_state_section(
         self,
         subject: SubjectRef,
         rendered_subjects: set[SubjectRef],
@@ -920,7 +919,7 @@ class _WikiGenerator:
             direction="both",
         )
         if not inspect_rows:
-            return ["## Current World State", "- No linked records found.", ""]
+            return ["## Current State", "- No linked records found.", ""]
 
         groups: dict[
             str,
@@ -945,7 +944,7 @@ class _WikiGenerator:
                 )
             )
 
-        lines = ["## Current World State"]
+        lines = ["## Current State"]
         for entity_type in sorted(groups):
             items = sorted(
                 groups[entity_type].values(),
@@ -980,7 +979,7 @@ class _WikiGenerator:
         return render_mermaid_inline_legend(
             (
                 MermaidLegendItem("Blue rounded node", "Current page subject."),
-                MermaidLegendItem("Green rectangle", "Local world-model neighbor."),
+                MermaidLegendItem("Green rectangle", "Local state neighbor."),
                 MermaidLegendItem("Amber double rectangle", "Upstream/reference neighbor."),
                 MermaidLegendItem("Gray rectangle", "Neighbor with unavailable ownership."),
                 MermaidLegendItem("Solid blue labeled edge", "Deterministic relationship."),
@@ -1670,7 +1669,7 @@ class _WikiGenerator:
         lines.append("## Configured Step Details")
         if self._workflow_has_apply_steps(schema):
             lines.append(
-                "Apply steps commit previously built records or links into the world "
+                "Apply steps commit previously built records or links into the state "
                 "model. In preview mode they report what would change; in apply mode "
                 "they persist those changes."
             )
@@ -1966,11 +1965,11 @@ class _WikiGenerator:
         if step.make_relationships is not None:
             return f"Build {_humanize(step.make_relationships.relationship_type)} links"
         if step.apply_entities is not None:
-            return "Apply records to world model"
+            return "Apply records to state"
         if step.apply_relationships is not None:
-            return "Apply links to world model"
+            return "Apply links to state"
         if step.apply_all is not None:
-            return "Apply records and links to world model"
+            return "Apply records and links to state"
         if step.assert_spec is not None:
             return f"Check {step.assert_spec.message}"
         return "Run step"

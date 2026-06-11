@@ -11,7 +11,6 @@ these configs; Core validates and executes against them.
 ```yaml
 version: "1.0"
 name: "my_domain"
-kind: world_model
 description: "Optional description of this decision domain"
 # extends: base-config.yaml  # release-backed overlay composition (see below)
 
@@ -39,7 +38,6 @@ tests: [ ... ]
 |-------|------|----------|---------|-------------|
 | `version` | string | no | `"1.0"` | Config schema version |
 | `name` | string | **yes** | — | Unique name for this domain |
-| `kind` | string | no | `"world_model"` | `"ontology"` or `"world_model"` |
 | `description` | string | no | `null` | Human-readable description |
 | `extends` | string | no | `null` | Path to a base config for release-backed overlay composition (see [Config Composition](#config-composition)) |
 | `cruxible_version` | string | no | `null` | Version of cruxible-core that produced this config (auto-stamped on save) |
@@ -65,7 +63,7 @@ tests: [ ... ]
 ## Runtime Options
 
 `runtime` controls local execution and audit-capture behavior that is not part
-of the world model itself.
+of the state model itself.
 
 ```yaml
 runtime:
@@ -81,9 +79,9 @@ Trace payload retention controls what is persisted in provider execution traces:
 - `full` stores full provider `input_payload` and `output_payload` bodies inline
   in local SQLite trace rows.
 - `preview` stores small payload bodies inline, but replaces large payloads with
-  bounded deterministic previews plus sha256/byte-count metadata.
+  bounded deterministic previews plus digest/byte-count metadata.
 - `metadata` stores no full provider payload bodies; trace payload fields contain
-  omission placeholders plus sha256/byte-count metadata.
+  omission placeholders plus digest/byte-count metadata.
 
 Local SQLite does not provide cold storage or later hydration for omitted
 payload bodies. Choose `full` only when local full-body provider provenance is
@@ -93,7 +91,7 @@ more important than trace database size.
 
 ## Config Composition
 
-The `extends` field enables an **overlay pattern** for release-backed world publishing. A published upstream world model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
+The `extends` field enables an **overlay pattern** for release-backed state publishing. A published upstream state model provides entity types, relationships, and workflows; a downstream overlay adds its own internal extensions without duplicating the base.
 
 **How it works:** `cruxible_validate` detects `extends`, resolves the base path relative to the overlay file, composes in memory, and validates the composed result. The raw `load_config()` function still parses a single file — composition happens in the service/CLI layer. For inline `config_yaml` (no file path), `extends` must use an absolute path or validation will error.
 
@@ -105,7 +103,7 @@ version: "1.0"
 name: kev_triage
 extends: ../kev-reference/config.yaml
 description: >
-  Overlay of the KEV reference world model for internal vulnerability triage.
+  Overlay of the KEV reference state for internal vulnerability triage.
 
 entity_types:
   Asset:
@@ -132,17 +130,6 @@ relationships:
 | Other fields | everything else | Overlay can only set if not in base, or if equal to base value |
 
 When `extends` is set, `entity_types` may be empty — the base provides them.
-
-## kind
-
-`kind` controls whether the config is a reusable reference ontology or an operational world model.
-
-- `ontology`: schema-only reference taxonomy/model. It may define entities, relationships, queries, constraints, and other static schema, but it may not define mutation guards, contracts, artifacts, providers, workflows, or workflow tests.
-- `world_model`: operational model. It can load local/company data through workflows, use pinned artifacts/providers, and carry governed judgment state on top of the underlying schema.
-
-Use `ontology` for reusable reference layers. Use `world_model` when the config needs to operate on real data and support company-specific execution and review flows.
-
----
 
 ## entity_types
 
@@ -1043,6 +1030,12 @@ For batch direct writes, guards evaluate against the proposed batch graph, so
 valid same-batch entities and relationships can satisfy the named query before
 anything is committed.
 
+Dry-run (and real) `added`/`updated` counts cover **explicit writes only** —
+when derived relationships ship, derived-edge effects will be reported in a
+separate additive field, never folded into the write counts. Guard conditions
+already see query-time derived edges in dry-runs by construction, since guards
+evaluate the named-query engine against the proposed graph.
+
 ---
 
 ## decision_policies
@@ -1151,14 +1144,14 @@ contracts:
 
 ## artifacts
 
-Pinned external artifacts referenced by providers. Artifacts represent data bundles, models, or other resources that providers depend on. The `sha256` hash enables reproducible builds — the workflow lock verifies the live artifact matches the hash at lock time.
+Pinned external artifacts referenced by providers. Artifacts represent data bundles, models, or other resources that providers depend on. The `digest` hash enables reproducible builds — the workflow lock verifies the live artifact matches the hash at lock time.
 
 ```yaml
 artifacts:
   public_kev_bundle:
     kind: directory
     uri: ./data
-    sha256: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
+    digest: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
 ```
 
 ### ProviderArtifactSchema
@@ -1167,7 +1160,7 @@ artifacts:
 |-------|------|----------|---------|-------------|
 | `kind` | string | **yes** | — | Artifact kind (e.g., `directory`, `file`, `model`) |
 | `uri` | string | **yes** | — | Location (relative path, URL, etc.) |
-| `sha256` | string | no | `null` | Content hash for reproducibility verification |
+| `digest` | string | no | `null` | Content hash for reproducibility verification (`sha256:`-prefixed) |
 | `metadata` | dict | no | `{}` | Arbitrary metadata |
 
 ---
@@ -1687,10 +1680,9 @@ The KEV triage overlay config (`kits/kev-triage/config.yaml`) demonstrates a rel
 ```yaml
 version: "1.0"
 name: kev_triage
-kind: world_model
 extends: ../kev-reference/config.yaml
 description: >
-  Overlay of the KEV reference world model for internal vulnerability triage.
+  Overlay of the KEV reference state for internal vulnerability triage.
 
 entity_types:
   Asset:

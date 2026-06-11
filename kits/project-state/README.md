@@ -1,6 +1,6 @@
 # Project State Kit
 
-This kit defines a first-pass Cruxible world model for governed dev/project
+This kit defines a first-pass Cruxible state model for governed dev/project
 operating state. It is for agent-assisted project work where future agents
 need durable context about roadmap items, execution work, design decisions,
 risks, open questions, release placement, and dependency graphs.

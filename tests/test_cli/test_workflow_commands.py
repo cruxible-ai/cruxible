@@ -131,7 +131,7 @@ class TestWorkflowCli:
         payload = json.loads(result.output)
         assert payload["workflow"] == "evaluate_promo"
         assert payload["steps"][1]["provider_version"] == "1.2.0"
-        assert payload["steps"][1]["artifact_sha256"] == "abc123"
+        assert payload["steps"][1]["artifact_digest"] == "abc123"
 
     def test_run_executes_workflow(
         self,

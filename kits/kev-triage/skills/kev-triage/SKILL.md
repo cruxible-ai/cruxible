@@ -5,7 +5,7 @@ description: Run the KEV local's daily triage loop, remediation verification, wa
 
 # KEV Security Triage
 
-Agent skill for operating on a KEV triage world instance. Read this before
+Agent skill for operating on a KEV triage state instance. Read this before
 taking any action against the graph.
 
 ## What this skill does
@@ -104,10 +104,10 @@ does not approve or resolve governed proposals directly.
 
 1. Refresh the reference layer:
    ```
-   cruxible world status
-   cruxible world pull-preview
+   cruxible state status
+   cruxible state pull-preview
    ```
-   Use `world pull-*` for the KEV daily refresh path. KEV reference releases
+   Use `state pull-*` for the KEV daily refresh path. KEV reference releases
    are data-safe/additive, so the agent may pull them directly. If this
    instance is not tracking a published upstream KEV reference, stop and fix
    that first instead of rebuilding the reference layer locally.
@@ -117,7 +117,7 @@ does not approve or resolve governed proposals directly.
    breaking compatibility, or an unexpected delta, stop and ask. Otherwise
    apply the returned digest:
    ```
-   cruxible world pull-apply --apply-digest <digest>
+   cruxible state pull-apply --apply-digest <digest>
    ```
 
 2. Run the local proposal chain:

@@ -25,6 +25,9 @@ def _tracked_text_files() -> list[Path]:
             continue
         if raw == "CHANGELOG.md" or raw.startswith("docs/migrations/"):
             continue
+        if raw.startswith("demos/"):
+            # demos/ is slated for deletion in favor of kits; not swept for vocabulary
+            continue
         if raw == "tests/test_guardrails/test_vocabulary.py":
             continue
         if raw.endswith("/data/nvd_kev_cves.json"):
@@ -50,11 +53,49 @@ def test_no_old_fork_vocabulary() -> None:
         "world_fork",
         "service_fork_world",
         "cruxible_world_fork",
+        "cruxible_state_fork",
         "ForkSnapshot",
         "fork_snapshot",
         "snapshot_fork",
         "fork --snapshot",
         "world fork",
+    ]
+    offenders: list[str] = []
+    for path in _tracked_text_files():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if any(term in line for term in banned):
+                offenders.append(f"{rel}:{line_number}:{line.strip()}")
+    assert offenders == []
+
+
+def test_no_retired_world_vocabulary() -> None:
+    """The 0.2 freeze renamed the world surface to state (B7).
+
+    Retired identifiers, routes, and CLI spellings must not reappear in code
+    or user-facing docs. Generic prose use of the word "world" is fine.
+    """
+    banned = [
+        "WorldSnapshot",
+        "PublishedWorldManifest",
+        "WorldCompatibility",
+        "WorldPublishResult",
+        "WorldOverlayResult",
+        "WorldStatusResult",
+        "WorldPullPreviewResult",
+        "WorldPullApplyResult",
+        "WorldCatalogEntry",
+        "world_id",
+        "world_ref",
+        "target_world",
+        "/worlds/overlays",
+        "/world/publish",
+        "/world/status",
+        "/world/pull/",
+        "cruxible world ",
+        "cruxible_world_",
+        "kind: world_model",
     ]
     offenders: list[str] = []
     for path in _tracked_text_files():

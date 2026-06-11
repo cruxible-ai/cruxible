@@ -1,6 +1,5 @@
 version: "1.0"
 name: case_law_monitoring
-kind: world_model
 description: >
   Single-layer case-law monitoring world model for use alongside a specialized
   legal agent. The canonical layer tracks opinions, courts, judges, statutes,

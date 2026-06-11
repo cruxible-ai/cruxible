@@ -1,6 +1,6 @@
 # Case Law Monitoring Demo
 
-Single-layer Cruxible world model for legal monitoring alongside a specialized
+Single-layer Cruxible state model for legal monitoring alongside a specialized
 law agent. The kit is not trying to replace legal reasoning. It gives the agent
 and attorney a governed memory of what has been reviewed: holdings, citation
 treatment, matter statutory scope, argument impact, filing obligations, matter
@@ -27,7 +27,7 @@ for humans and agents reading the kit.
 
 ## Modeling Notes
 
-This first pass intentionally avoids a reference world. CourtListener, PACER, or
+This first pass intentionally avoids a reference state. CourtListener, PACER, or
 firm DMS providers can supply opinions and filings later, but this config is
 about the local legal-workflow layer: which authorities matter to this firm,
 which clients and matters they affect, which arguments they support or

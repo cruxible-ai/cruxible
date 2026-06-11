@@ -235,7 +235,7 @@ def build_kev_state_cross_section(
             entity_types=("Vendor", "Product", "Vulnerability"),
             relationship_types=("product_from_vendor", "vulnerability_affects_product"),
             include_receipts=True,
-            include_world=True,
+            include_state=True,
             limits=CrossSectionLimits(
                 entities_per_type=10,
                 relationships_per_type=14,
@@ -276,7 +276,7 @@ def build_kev_state_cross_section(
         ),
         include_groups=True,
         include_receipts=True,
-        include_world=True,
+        include_state=True,
         limits=CrossSectionLimits(
             entities_per_type=10,
             relationships_per_type=16,

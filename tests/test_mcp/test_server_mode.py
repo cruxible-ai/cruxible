@@ -430,9 +430,9 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
     [
         (handlers.handle_init, ("./project", None, "name: demo", None), "cruxible_init"),
         (
-            handlers.handle_create_world_overlay,
+            handlers.handle_create_state_overlay,
             ("./overlay", "file:///tmp/release"),
-            "cruxible_world_create_overlay",
+            "cruxible_state_create_overlay",
         ),
         (handlers.handle_workflow_run, ("inst_123", "wf", {"id": "1"}), "cruxible_run_workflow"),
         (handlers.handle_workflow_test, ("inst_123", None), "cruxible_test_workflow"),

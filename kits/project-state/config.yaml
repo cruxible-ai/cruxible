@@ -1,6 +1,5 @@
 version: "1.0"
 name: project_state
-kind: world_model
 description: >
   Governed dev/project operating state for agent-assisted work on a product or
   codebase. One world instance represents durable project state: product areas,

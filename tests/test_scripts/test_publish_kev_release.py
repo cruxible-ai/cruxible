@@ -49,11 +49,11 @@ def test_write_temp_kev_config_updates_artifact_sha(tmp_path: Path) -> None:
     module.write_temp_kev_config(
         source_path=source,
         output_path=output,
-        artifact_sha256="sha256:test-artifact",
+        artifact_digest="sha256:test-artifact",
     )
 
     loaded = module.yaml.safe_load(output.read_text(encoding="utf-8"))
-    assert loaded["artifacts"]["public_kev_bundle"]["sha256"] == "sha256:test-artifact"
+    assert loaded["artifacts"]["public_kev_bundle"]["digest"] == "sha256:test-artifact"
     assert loaded["workflows"]["build_public_kev_reference"]["type"] == "canonical"
 
 

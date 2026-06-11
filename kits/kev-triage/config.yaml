@@ -1,6 +1,5 @@
 version: "1.0"
 name: kev_triage
-kind: world_model
 extends: ../kev-reference/config.yaml
 description: >
   Local of the KEV reference world model for internal vulnerability triage.
@@ -887,7 +886,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    sha256: sha256:f8671b9da8f68c2eae1941a59a2b96195af912c2f14cfdd41098a8dd4d0f193b
+    digest: sha256:f8671b9da8f68c2eae1941a59a2b96195af912c2f14cfdd41098a8dd4d0f193b
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 

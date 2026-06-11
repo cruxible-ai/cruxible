@@ -1,11 +1,11 @@
 ---
-name: create-world
-description: Create a new Cruxible world from raw domain data through staged graph, workflow, query, and review-loop design.
+name: create-state
+description: Create a new Cruxible state from raw domain data through staged graph, workflow, query, and review-loop design.
 ---
 
-# Create World
+# Create State
 
-Use this skill when a user wants to turn new data into a usable Cruxible world.
+Use this skill when a user wants to turn new data into a usable Cruxible state.
 
 If the source files are messy, run `prepare-data` first.
 
@@ -13,7 +13,7 @@ Work in stages. Do not try to design the graph, workflows, queries, and review l
 
 ## Generated config views
 
-Do not rely on YAML alone when drafting or reviewing a world. At each major
+Do not rely on YAML alone when drafting or reviewing a state. At each major
 config checkpoint, generate canonical views from the config and use those
 views as the review surface.
 
@@ -68,7 +68,7 @@ Before writing config:
 4. identify any obvious bad states that should remain invalid across future ingests, refreshes, and graph updates, and should later become constraints or quality checks
    - do not invent constraints just to fill the slot
    - if there are no clear durable invalid states yet, leave this empty for now
-5. identify the major user-facing query and use-case categories the world should eventually support
+5. identify the major user-facing query and use-case categories the state should eventually support
 6. summarize the structural model for user confirmation
 
 Use a concrete summary:
@@ -96,7 +96,7 @@ Write only the minimum needed for the base graph:
 Do not spend time on named queries, review loops, or advanced workflows yet.
 
 After writing the base graph config, render at least the ontology view inline.
-If the world has a README, add or update the ontology marker block there too.
+If the state has a README, add or update the ontology marker block there too.
 Use this as the graph-shape checkpoint before moving on.
 
 ## Phase 2: Validate the base graph config
@@ -127,7 +127,7 @@ Stop on validation or init errors. Do not continue with a broken base config.
 
 ## Phase 3: Understand the operational workflows
 
-Once the base graph shape is defined and validated, figure out how this world is built and maintained over time.
+Once the base graph shape is defined and validated, figure out how this state is built and maintained over time.
 
 Start with the operating loop, not the config nouns. Ask:
 
@@ -146,7 +146,7 @@ Then translate those answers into Cruxible terms:
 - `providers`: reusable logic, model calls, or external processing steps
 - `contracts`: structured workflow input and output shapes
 - `workflows`: repeatable procedures that build, refresh, or propose graph state
-- `canonical` workflows: workflows whose results are written directly into world state instead of first becoming reviewable proposals. Use this only for deterministic or otherwise highly trusted operations that are safe to commit without a proposal/review step.
+- `canonical` workflows: workflows whose results are written directly into state instead of first becoming reviewable proposals. Use this only for deterministic or otherwise highly trusted operations that are safe to commit without a proposal/review step.
 
 At the end of this phase, separate the workflow plan into two buckets:
 
@@ -173,12 +173,12 @@ For judgment-based tasks that will need model judgment, matching, ranking, or re
 Do not introduce Cruxible workflow machinery just because the schema allows it.
 
 After adding workflow machinery, render the workflow pipeline and workflow
-summary inline. If the world has a README, update the generated workflow marker
+summary inline. If the state has a README, update the generated workflow marker
 blocks there too. The user should be able to review the sequence, each stage's
 input context, the produced state or proposal, and provider provenance without
 mentally parsing the YAML.
 
-## Phase 4: Build and inspect the world for the first time
+## Phase 4: Build and inspect the state for the first time
 
 After workflow config changes:
 
@@ -196,11 +196,11 @@ Then run every canonical build or refresh workflow you defined in Step B, in dep
 cruxible run --workflow <workflow_name> --apply
 ```
 
-This is the first real population step. Use it to build or refresh the world through the full canonical workflow path you designed in Step B.
+This is the first real population step. Use it to build or refresh the state through the full canonical workflow path you designed in Step B.
 
-Do not run judgment-based or proposal workflows in this phase. This phase is only for the workflows that are safe to apply directly to world state.
+Do not run judgment-based or proposal workflows in this phase. This phase is only for the workflows that are safe to apply directly to the state.
 
-Re-check the world with:
+Re-check the state with:
 
 ```bash
 cruxible stats
@@ -216,7 +216,7 @@ After Phase 4, read and follow:
 
 That shared reference is the source of truth for the remaining flow after the canonical layer is in place. Some phases inside it are conditional, but the reference itself is not optional once you move past Phase 4.
 
-When following it from `create-world`, use Phases 1-4 of this skill as the earlier loopback points for graph shape, canonical workflow design, and canonical world build questions.
+When following it from `create-state`, use Phases 1-4 of this skill as the earlier loopback points for graph shape, canonical workflow design, and canonical state build questions.
 
 After adding governed relationships, named queries, feedback profiles, outcome
 profiles, or decision policies, rerender the full default config view bundle

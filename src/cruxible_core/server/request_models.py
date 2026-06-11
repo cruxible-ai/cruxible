@@ -273,28 +273,28 @@ class CloneSnapshotRequest(BaseModel):
     root_dir: str
 
 
-class WorldPublishRequest(BaseModel):
+class StatePublishRequest(BaseModel):
     transport_ref: str
-    world_id: str
+    state_id: str
     release_id: str
-    compatibility: contracts.WorldCompatibility
+    compatibility: contracts.StateCompatibility
 
 
-class WorldOverlayRequest(BaseModel):
+class StateOverlayRequest(BaseModel):
     transport_ref: str | None = None
-    world_ref: str | None = None
+    state_ref: str | None = None
     kit: str | None = None
     no_kit: bool = False
     root_dir: str
 
     @model_validator(mode="after")
-    def validate_source(self) -> WorldOverlayRequest:
-        if bool((self.transport_ref or "").strip()) == bool((self.world_ref or "").strip()):
-            raise ValueError("Provide exactly one of transport_ref or world_ref")
+    def validate_source(self) -> StateOverlayRequest:
+        if bool((self.transport_ref or "").strip()) == bool((self.state_ref or "").strip()):
+            raise ValueError("Provide exactly one of transport_ref or state_ref")
         if bool((self.kit or "").strip()) and self.no_kit:
             raise ValueError("Provide kit or no_kit, not both")
         return self
 
 
-class WorldPullApplyRequest(BaseModel):
+class StatePullApplyRequest(BaseModel):
     expected_apply_digest: str

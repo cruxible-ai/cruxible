@@ -1,4 +1,4 @@
-"""Published world release, overlay, status, and pull service functions."""
+"""Published state release, overlay, status, and pull service functions."""
 
 from __future__ import annotations
 
@@ -16,72 +16,70 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import materialize_kit
-from cruxible_core.kits.world_refs import resolve_world_source
+from cruxible_core.kits.state_refs import resolve_state_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
 from cruxible_core.service.snapshots import service_create_snapshot
 from cruxible_core.service.types import (
-    WorldOverlayResult,
-    WorldPublishResult,
-    WorldPullApplyResult,
-    WorldPullPreviewResult,
-    WorldStatusResult,
+    StateOverlayResult,
+    StatePublishResult,
+    StatePullApplyResult,
+    StatePullPreviewResult,
+    StateStatusResult,
 )
 from cruxible_core.snapshot.types import (
-    PublishedWorldManifest,
+    PublishedStateManifest,
+    StateCompatibility,
     UpstreamMetadata,
-    WorldCompatibility,
 )
 from cruxible_core.transport.backends import resolve_transport
 from cruxible_core.transport.types import PulledReleaseBundle
 
 
-def service_publish_world(
+def service_publish_state(
     instance: InstanceProtocol,
     *,
     transport_ref: str,
-    world_id: str,
+    state_id: str,
     release_id: str,
-    compatibility: WorldCompatibility,
-) -> WorldPublishResult:
-    """Publish a root world-model instance as an immutable release bundle."""
+    compatibility: StateCompatibility,
+) -> StatePublishResult:
+    """Publish a root state instance as an immutable release bundle."""
     if instance.get_upstream_metadata() is not None:
-        raise ConfigError("Only root instances can publish world releases in v1")
-    if instance.load_config().kind != "world_model":
-        raise ConfigError("Only kind: world_model instances can publish world releases")
+        raise ConfigError("Only root instances can publish state releases in v1")
 
     snapshot = service_create_snapshot(instance, label=release_id).snapshot
     bundle_dir = build_release_bundle(
         instance=instance,
         snapshot_id=snapshot.snapshot_id,
-        world_id=world_id,
+        state_id=state_id,
         release_id=release_id,
         compatibility=compatibility,
         parent_release_id=None,
     )
     transport, resolved_ref = resolve_transport(transport_ref)
     transport.publish(resolved_ref, bundle_dir)
-    manifest = PublishedWorldManifest.model_validate_json(
+    manifest = PublishedStateManifest.model_validate_json(
         (bundle_dir / "manifest.json").read_text()
     )
-    return WorldPublishResult(manifest=manifest)
+    return StatePublishResult(manifest=manifest)
 
 
-def service_create_world_overlay(
+def service_create_state_overlay(
     *,
     transport_ref: str | None = None,
-    world_ref: str | None = None,
+    state_ref: str | None = None,
     kit: str | None = None,
     no_kit: bool = False,
     root_dir: str | Path,
     instance_mode: str = CruxibleInstance.DEV_MODE,
-) -> WorldOverlayResult:
-    """Create a new local overlay instance from a published world release."""
+) -> StateOverlayResult:
+    """Create a new local overlay instance from a published state release."""
     root = Path(root_dir)
     if (root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
         raise ConfigError(f"Instance already exists at {root}")
 
-    resolved = resolve_world_source(transport_ref=transport_ref, world_ref=world_ref)
+    resolved = resolve_state_source(transport_ref=transport_ref, state_ref=state_ref)
     pulled = _pull_bundle(resolved.pull_transport_ref)
     upstream_dir = _materialize_upstream_bundle(root, pulled.root_dir, pulled.manifest.release_id)
 
@@ -95,11 +93,11 @@ def service_create_world_overlay(
             kit=selected_kit,
             root=root,
             expected_role="overlay",
-            target_world=pulled.manifest.world_id,
+            target_state=pulled.manifest.state_id,
             upstream_config_path=".cruxible/upstream/current/config.yaml",
         )
         if selected_kit is not None
-        else _write_default_overlay_config(root, pulled.manifest.world_id, upstream_dir)
+        else _write_default_overlay_config(root, pulled.manifest.state_id, upstream_dir)
     )
     composed_path = root / ".cruxible" / "composed" / "config.yaml"
     write_runtime_composed_config(
@@ -118,7 +116,7 @@ def service_create_world_overlay(
         transport_ref=resolved.tracking_transport_ref,
         requested_source_ref=resolved.source_ref,
         requested_transport_ref=resolved.pull_transport_ref,
-        world_id=pulled.manifest.world_id,
+        state_id=pulled.manifest.state_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
         compatibility=pulled.manifest.compatibility,
@@ -134,30 +132,30 @@ def service_create_world_overlay(
     )
     instance.set_upstream_metadata(upstream)
     service_lock(instance)
-    return WorldOverlayResult(instance=instance, manifest=pulled.manifest)
+    return StateOverlayResult(instance=instance, manifest=pulled.manifest)
 
 
-def service_world_status(instance: InstanceProtocol) -> WorldStatusResult:
+def service_state_status(instance: InstanceProtocol) -> StateStatusResult:
     """Return upstream tracking metadata for a release-backed overlay, if any."""
-    return WorldStatusResult(upstream=instance.get_upstream_metadata())
+    return StateStatusResult(upstream=instance.get_upstream_metadata())
 
 
-def service_pull_world_preview(instance: InstanceProtocol) -> WorldPullPreviewResult:
+def service_pull_state_preview(instance: InstanceProtocol) -> StatePullPreviewResult:
     """Preview an upstream pull for a release-backed overlay instance."""
     upstream = instance.get_upstream_metadata()
     if upstream is None:
-        raise ConfigError("Instance is not tracking an upstream world release")
+        raise ConfigError("Instance is not tracking an upstream state release")
 
     pulled = _pull_bundle(upstream.transport_ref)
-    return _build_world_pull_preview(instance, upstream=upstream, pulled=pulled)
+    return _build_state_pull_preview(instance, upstream=upstream, pulled=pulled)
 
 
-def _build_world_pull_preview(
+def _build_state_pull_preview(
     instance: InstanceProtocol,
     *,
     upstream: UpstreamMetadata,
     pulled: PulledReleaseBundle,
-) -> WorldPullPreviewResult:
+) -> StatePullPreviewResult:
     """Evaluate a materialized upstream bundle against the current overlay."""
     warnings: list[str] = []
     conflicts: list[str] = []
@@ -179,13 +177,13 @@ def _build_world_pull_preview(
     next_graph = _load_graph_from_bundle(pulled.root_dir)
     local_graph = _extract_local_overlay_graph(instance.load_graph(), upstream)
     conflicts.extend(_find_dangling_reference_conflicts(local_graph, next_graph, pulled.manifest))
-    apply_digest = _compute_world_apply_digest(
+    apply_digest = _compute_state_apply_digest(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
         current_graph_digest=upstream.graph_digest or "",
         next_graph_digest=_sha256_file(pulled.root_dir / "graph.json"),
     )
-    return WorldPullPreviewResult(
+    return StatePullPreviewResult(
         current_release_id=upstream.release_id,
         target_release_id=pulled.manifest.release_id,
         compatibility=pulled.manifest.compatibility,
@@ -199,22 +197,22 @@ def _build_world_pull_preview(
     )
 
 
-def service_pull_world_apply(
+def service_pull_state_apply(
     instance: InstanceProtocol,
     *,
     expected_apply_digest: str,
-) -> WorldPullApplyResult:
+) -> StatePullApplyResult:
     """Apply a previewed upstream pull to a release-backed overlay instance."""
     upstream = instance.get_upstream_metadata()
     if upstream is None:
-        raise ConfigError("Instance is not tracking an upstream world release")
+        raise ConfigError("Instance is not tracking an upstream state release")
 
     pulled = _pull_bundle(upstream.transport_ref)
-    preview = _build_world_pull_preview(instance, upstream=upstream, pulled=pulled)
+    preview = _build_state_pull_preview(instance, upstream=upstream, pulled=pulled)
     if preview.apply_digest != expected_apply_digest:
-        raise ConfigError("World pull apply digest mismatch; rerun pull preview before apply")
+        raise ConfigError("State pull apply digest mismatch; rerun pull preview before apply")
     if preview.conflicts:
-        raise ConfigError("World pull preview has blocking conflicts", errors=preview.conflicts)
+        raise ConfigError("State pull preview has blocking conflicts", errors=preview.conflicts)
 
     pre_pull_snapshot_id = service_create_snapshot(
         instance,
@@ -246,7 +244,7 @@ def service_pull_world_apply(
         transport_ref=upstream.transport_ref,
         requested_source_ref=upstream.requested_source_ref,
         requested_transport_ref=upstream.requested_transport_ref,
-        world_id=pulled.manifest.world_id,
+        state_id=pulled.manifest.state_id,
         release_id=pulled.manifest.release_id,
         snapshot_id=pulled.manifest.snapshot_id,
         compatibility=pulled.manifest.compatibility,
@@ -262,7 +260,7 @@ def service_pull_world_apply(
     )
     instance.set_upstream_metadata(updated)
     service_lock(instance)
-    return WorldPullApplyResult(
+    return StatePullApplyResult(
         release_id=updated.release_id,
         apply_digest=preview.apply_digest,
         pre_pull_snapshot_id=pre_pull_snapshot_id,
@@ -279,9 +277,9 @@ def build_release_bundle(
     *,
     instance: InstanceProtocol,
     snapshot_id: str,
-    world_id: str,
+    state_id: str,
     release_id: str,
-    compatibility: WorldCompatibility,
+    compatibility: StateCompatibility,
     parent_release_id: str | None,
 ) -> Path:
     snapshot = instance.get_snapshot(snapshot_id)
@@ -297,8 +295,8 @@ def build_release_bundle(
         if source.exists():
             shutil.copy2(source, bundle_dir / name)
     config = instance.load_config()
-    manifest = PublishedWorldManifest(
-        world_id=world_id,
+    manifest = PublishedStateManifest(
+        state_id=state_id,
         release_id=release_id,
         snapshot_id=snapshot_id,
         compatibility=compatibility,
@@ -321,14 +319,14 @@ def _materialize_upstream_bundle(root: Path, bundle_dir: Path, release_id: str) 
     return current_dir
 
 
-def _write_default_overlay_config(root: Path, world_id: str, upstream_dir: Path) -> Path:
+def _write_default_overlay_config(root: Path, state_id: str, upstream_dir: Path) -> Path:
     overlay_path = root / "config.yaml"
     overlay_path.parent.mkdir(parents=True, exist_ok=True)
     overlay_path.write_text(
         "\n".join(
             [
                 "version: '1.0'",
-                f"name: {world_id}-overlay",
+                f"name: {state_id}-overlay",
                 f"extends: {str((upstream_dir / 'config.yaml').relative_to(root))}",
                 "entity_types: {}",
                 "relationships: []",
@@ -355,7 +353,7 @@ def _lock_text(path: Path) -> str | None:
     return path.read_text()
 
 
-def _compute_world_apply_digest(
+def _compute_state_apply_digest(
     *,
     current_release_id: str | None,
     target_release_id: str,
@@ -395,7 +393,7 @@ def _extract_local_overlay_graph(
 def _find_dangling_reference_conflicts(
     local_graph: EntityGraph,
     next_upstream_graph: EntityGraph,
-    manifest: PublishedWorldManifest,
+    manifest: PublishedStateManifest,
 ) -> list[str]:
     upstream_entity_types = set(manifest.owned_entity_types)
     conflicts: list[str] = []

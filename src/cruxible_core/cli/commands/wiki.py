@@ -71,7 +71,7 @@ def render_wiki_cmd(
     max_per_type: int,
     all_subjects: bool,
 ) -> None:
-    """Render a deterministic Markdown wiki from the current world state."""
+    """Render a deterministic Markdown wiki from the current state."""
     focus = _parse_focus_values(focus_values)
     effective_scope = cast(WikiScope, scope or ("all" if all_subjects else "local"))
     if all_subjects:

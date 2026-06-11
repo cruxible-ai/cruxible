@@ -1,5 +1,5 @@
 """Snapshot and release types."""
 
-from cruxible_core.snapshot.types import PublishedWorldManifest, UpstreamMetadata, WorldSnapshot
+from cruxible_core.snapshot.types import PublishedStateManifest, StateSnapshot, UpstreamMetadata
 
-__all__ = ["PublishedWorldManifest", "UpstreamMetadata", "WorldSnapshot"]
+__all__ = ["PublishedStateManifest", "UpstreamMetadata", "StateSnapshot"]

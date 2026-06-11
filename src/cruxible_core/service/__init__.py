@@ -97,6 +97,13 @@ from cruxible_core.service.source_artifacts import (
     service_dereference_source_evidence,
     service_register_source_artifact,
 )
+from cruxible_core.service.state import (
+    service_create_state_overlay,
+    service_publish_state,
+    service_pull_state_apply,
+    service_pull_state_preview,
+    service_state_status,
+)
 from cruxible_core.service.types import (
     AddConstraintServiceResult,
     AddDecisionPolicyServiceResult,
@@ -165,6 +172,11 @@ from cruxible_core.service.types import (
     SharedEvidenceInput,
     SnapshotCreateResult,
     SnapshotListResult,
+    StateOverlayResult,
+    StatePublishResult,
+    StatePullApplyResult,
+    StatePullPreviewResult,
+    StateStatusResult,
     StatsServiceResult,
     SuppressedProposalMember,
     TestServiceResult,
@@ -175,24 +187,12 @@ from cruxible_core.service.types import (
     UpdateTrustStatusResult,
     ValidateServiceResult,
     WorkflowTestCaseServiceResult,
-    WorldOverlayResult,
-    WorldPublishResult,
-    WorldPullApplyResult,
-    WorldPullPreviewResult,
-    WorldStatusResult,
 )
 from cruxible_core.service.views import (
     service_explain_receipt,
     service_export_edges,
     service_inspect_view,
     service_render_wiki,
-)
-from cruxible_core.service.world import (
-    service_create_world_overlay,
-    service_publish_world,
-    service_pull_world_apply,
-    service_pull_world_preview,
-    service_world_status,
 )
 
 __all__ = [
@@ -230,11 +230,11 @@ __all__ = [
     "InspectNeighborResult",
     "InitResult",
     "LockServiceResult",
-    "WorldOverlayResult",
-    "WorldPublishResult",
-    "WorldPullApplyResult",
-    "WorldPullPreviewResult",
-    "WorldStatusResult",
+    "StateOverlayResult",
+    "StatePublishResult",
+    "StatePullApplyResult",
+    "StatePullPreviewResult",
+    "StateStatusResult",
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
@@ -282,11 +282,11 @@ __all__ = [
     "WorkflowTestCaseServiceResult",
     # Execution
     "service_lock",
-    "service_world_status",
-    "service_publish_world",
-    "service_create_world_overlay",
-    "service_pull_world_preview",
-    "service_pull_world_apply",
+    "service_state_status",
+    "service_publish_state",
+    "service_create_state_overlay",
+    "service_pull_state_preview",
+    "service_pull_state_apply",
     "service_plan",
     "apply_preview_reference_from_receipt",
     "service_apply_workflow",

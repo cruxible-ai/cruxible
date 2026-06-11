@@ -1,11 +1,11 @@
 ---
-name: review-world
-description: Review an existing world, inspect evaluation, queries, governed groups, feedback, and outcomes, and surface prioritized issues with the likely fix surface before making changes.
+name: review-state
+description: Review an existing state, inspect evaluation, queries, governed groups, feedback, and outcomes, and surface prioritized issues with the likely fix surface before making changes.
 ---
 
-# Review World
+# Review State
 
-Use this skill on an existing world when the goal is diagnosis, quality review, or prioritizing follow-up work.
+Use this skill on an existing state when the goal is diagnosis, quality review, or prioritizing follow-up work.
 
 This skill is for:
 
@@ -27,20 +27,20 @@ Start by identifying:
    - governed relationships
    - query quality
    - feedback or outcome patterns
-   - overall world health
-3. whether the world is a root world or an overlay
+   - overall state health
+3. whether the state is a root state or an overlay
 4. which user-facing queries or downstream decisions matter most
-5. whether source files, prepared files, or `prepare-data` outputs are available for a source-to-world audit
+5. whether source files, prepared files, or `prepare-data` outputs are available for a source-to-state audit
 
 Then inspect the current state:
 
 ```bash
-cruxible world status
+cruxible state status
 cruxible stats
 cruxible evaluate
 ```
 
-If the world is an overlay and the review is about overall health, local fit quality, or handoff readiness, include upstream pull compatibility in scope by default.
+If the state is an overlay and the review is about overall health, local fit quality, or handoff readiness, include upstream pull compatibility in scope by default.
 
 ## Phase 2: Inspect the most important surfaces
 
@@ -48,7 +48,7 @@ Work from the surfaces that actually affect users.
 
 ### Workflows, providers, and implementation
 
-If findings may come from how the world is built rather than only from final query outputs, inspect the implementation surfaces too:
+If findings may come from how the state is built rather than only from final query outputs, inspect the implementation surfaces too:
 
 - canonical `workflows`
 - proposal `workflows`
@@ -65,14 +65,14 @@ Use this to answer:
 
 ### Queries and receipts
 
-If the world has `named_queries`, run the ones that matter to the user's concern and inspect receipts:
+If the state has `named_queries`, run the ones that matter to the user's concern and inspect receipts:
 
 ```bash
 cruxible query --query <query_name> --param key=value
 cruxible explain --receipt <receipt_id>
 ```
 
-If the review is about overall world health or handoff readiness, do not stop at representative coverage. Exercise all `named_queries`.
+If the review is about overall state health or handoff readiness, do not stop at representative coverage. Exercise all `named_queries`.
 
 Use this to answer:
 
@@ -82,7 +82,7 @@ Use this to answer:
 
 ### Governed groups
 
-If the world uses governed relationships, inspect the review surfaces:
+If the state uses governed relationships, inspect the review surfaces:
 
 ```bash
 cruxible group list
@@ -106,14 +106,14 @@ Use this to answer:
 
 ### Feedback and outcomes
 
-If the world has enough history, inspect recurring review and outcome patterns:
+If the state has enough history, inspect recurring review and outcome patterns:
 
 ```bash
 cruxible analyze-feedback --relationship <relationship_type>
 cruxible analyze-outcomes --anchor-type <receipt|resolution> --surface-type <query|workflow|operation> --surface-name <name>
 ```
 
-Use whichever filters match the review surface you are investigating. Treat these as evidence about recurring process failures, not as automatic instructions to mutate the world.
+Use whichever filters match the review surface you are investigating. Treat these as evidence about recurring process failures, not as automatic instructions to mutate the state.
 
 If history is sparse, inspect the config surfaces directly instead:
 
@@ -125,12 +125,12 @@ If history is sparse, inspect the config surfaces directly instead:
 
 Use this to answer:
 
-- do the configured review and outcome surfaces match the real recurring loops the world actually has?
+- do the configured review and outcome surfaces match the real recurring loops the state actually has?
 - are governance rules present where they are justified, and absent where they would just add noise?
 
-### Source-to-world audit
+### Source-to-state audit
 
-If source files, cleaned files, or `prepare-data` outputs are available, compare them against the current world design and behavior.
+If source files, cleaned files, or `prepare-data` outputs are available, compare them against the current state design and behavior.
 
 Use:
 
@@ -152,19 +152,19 @@ Use this to answer:
 - are any governed relationships actually deterministic and overcomplicated?
 - is the graph shape still consistent with what the prepared data supports?
 
-If those source or preparation artifacts are not available, say explicitly that the source-to-world classification audit was not performed.
+If those source or preparation artifacts are not available, say explicitly that the source-to-state classification audit was not performed.
 
 ### Overlay pull compatibility
 
-If the world is an overlay and pull compatibility is in scope, inspect:
+If the state is an overlay and pull compatibility is in scope, inspect:
 
 ```bash
-cruxible world pull-preview
+cruxible state pull-preview
 ```
 
 Use this to answer:
 
-- does the local fit still compose cleanly with the upstream world?
+- does the local fit still compose cleanly with the upstream state?
 - are any local additions likely to conflict with future upstream pulls?
 - should a change stay local, move upstream, or be simplified?
 
@@ -173,7 +173,7 @@ Use this to answer:
 Do not just list problems. For each real issue, classify where the fix belongs:
 
 - `prepare-data`: source file quality, key issues, join issues, grain issues
-- `create-world`: base graph shape, wrong canonical-versus-governed boundary, canonical workflow design, governed design, named queries, or feedback/outcome structure in a root world
+- `create-state`: base graph shape, wrong canonical-versus-governed boundary, canonical workflow design, governed design, named queries, or feedback/outcome structure in a root state
 - `overlay-and-fit`: local fit boundary, wrong local canonical-versus-governed boundary, local canonical fit, local governed additions, local queries, or overlay pull-compatibility issues
 - provider or workflow implementation
 - query design
@@ -212,7 +212,7 @@ If there are no meaningful issues, say that explicitly and mention any residual 
 - no governed history yet
 - no representative query receipts yet
 - too little feedback or outcome data to infer patterns
-- source files or `prepare-data` outputs were not available for a source-to-world audit
+- source files or `prepare-data` outputs were not available for a source-to-state audit
 
 ## Optional Follow-Up
 
@@ -221,5 +221,5 @@ Only move from review into changes if the user asks for fixes or clearly wants y
 If the next step is clear:
 
 - use `prepare-data` for source-data issues
-- use `create-world` for root-world build or redesign work
+- use `create-state` for root-state build or redesign work
 - use `overlay-and-fit` for local adaptation work

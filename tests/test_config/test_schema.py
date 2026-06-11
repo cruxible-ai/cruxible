@@ -2244,7 +2244,6 @@ class TestCoreConfig:
         )
         assert config.name == "test"
         assert config.version == "1.0"
-        assert config.kind == "world_model"
         assert config.named_queries == {}
         assert config.constraints == []
         assert config.runtime.trace_payloads == "preview"
@@ -2403,7 +2402,7 @@ class TestCoreConfig:
             contracts={"ThingInput": ContractSchema(fields={"id": PropertySchema(type="string")})},
             artifacts={
                 "artifact": ProviderArtifactSchema(
-                    kind="model", uri="file:///tmp/model", sha256="abc"
+                    kind="model", uri="file:///tmp/model", digest="abc"
                 )
             },
             providers={

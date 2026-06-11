@@ -11,4 +11,4 @@ experimentation, but they are not maintained as first-class 0.2 kits.
 | [manufacturing-judgment-memory](manufacturing-judgment-memory/) | Manufacturing | Early judgment-memory shape for operational decisions. |
 | [mitre-attack](mitre-attack/) | Cybersecurity | Threat modeling with ATT&CK technique and group analysis. |
 | [sanctions-screening](sanctions-screening/) | Fintech / RegTech | OFAC screening with beneficial ownership traversal. |
-| [scientific-claim-verification](scientific-claim-verification/) | Science | Early scientific claim verification world-model sketch. |
+| [scientific-claim-verification](scientific-claim-verification/) | Science | Early scientific claim verification state-model sketch. |

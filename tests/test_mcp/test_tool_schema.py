@@ -168,18 +168,18 @@ class TestInputSchema:
         # root_dir remains required
         assert "root_dir" in required
 
-    def test_create_world_overlay_has_optional_world_ref_and_transport_ref(self, server):
+    def test_create_state_overlay_has_optional_state_ref_and_transport_ref(self, server):
         schemas = _get_tool_schemas(server)
-        schema = schemas["cruxible_world_create_overlay"].inputSchema
+        schema = schemas["cruxible_state_create_overlay"].inputSchema
         props = schema["properties"]
         required = set(schema.get("required", []))
         assert "root_dir" in required
         assert "transport_ref" in props
-        assert "world_ref" in props
+        assert "state_ref" in props
         assert "kit" in props
         assert "no_kit" in props
         assert "transport_ref" not in required
-        assert "world_ref" not in required
+        assert "state_ref" not in required
         assert "kit" not in required
         assert "no_kit" not in required
 

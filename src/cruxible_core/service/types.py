@@ -37,10 +37,10 @@ from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.snapshot.types import (
-    PublishedWorldManifest,
+    PublishedStateManifest,
+    StateCompatibility,
+    StateSnapshot,
     UpstreamMetadata,
-    WorldCompatibility,
-    WorldSnapshot,
 )
 from cruxible_core.source_artifacts.types import SourceEvidenceInput
 from cruxible_core.workflow.types import CompiledPlan
@@ -53,7 +53,7 @@ class OperationContext:
 
     Supplying ``decision_record_id`` opts the operation into decision recording
     mode. Read operations may still append decision-event audit metadata; this
-    does not imply graph or world-state mutation.
+    does not imply graph or state mutation.
     """
 
     decision_record_id: str | None = None
@@ -698,42 +698,42 @@ class ProposeWorkflowResult:
 
 @dataclass
 class SnapshotCreateResult:
-    snapshot: WorldSnapshot
+    snapshot: StateSnapshot
 
 
 @dataclass
 class SnapshotListResult:
-    items: list[WorldSnapshot] = field(default_factory=list)
+    items: list[StateSnapshot] = field(default_factory=list)
     total: int = 0
 
 
 @dataclass
 class CloneSnapshotResult:
     instance: InstanceProtocol
-    snapshot: WorldSnapshot
+    snapshot: StateSnapshot
 
 
 @dataclass
-class WorldPublishResult:
-    manifest: PublishedWorldManifest
+class StatePublishResult:
+    manifest: PublishedStateManifest
 
 
 @dataclass
-class WorldOverlayResult:
+class StateOverlayResult:
     instance: InstanceProtocol
-    manifest: PublishedWorldManifest
+    manifest: PublishedStateManifest
 
 
 @dataclass
-class WorldStatusResult:
+class StateStatusResult:
     upstream: UpstreamMetadata | None
 
 
 @dataclass
-class WorldPullPreviewResult:
+class StatePullPreviewResult:
     current_release_id: str | None
     target_release_id: str
-    compatibility: WorldCompatibility
+    compatibility: StateCompatibility
     apply_digest: str
     warnings: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
@@ -743,7 +743,7 @@ class WorldPullPreviewResult:
 
 
 @dataclass
-class WorldPullApplyResult:
+class StatePullApplyResult:
     release_id: str
     apply_digest: str
     pre_pull_snapshot_id: str

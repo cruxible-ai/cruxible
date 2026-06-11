@@ -26,7 +26,7 @@ class TracePayloadMetadata(BaseModel):
     stored_inline: bool
     inline: bool
     byte_count: int
-    sha256: str
+    digest: str
     truncated: bool
     preview: dict[str, Any] = Field(default_factory=dict)
 
@@ -53,7 +53,7 @@ def retain_payload(
                 stored_inline=True,
                 inline=True,
                 byte_count=byte_count,
-                sha256=sha256,
+                digest=sha256,
                 truncated=False,
                 preview={"retained_count": len(payload)},
             ),
@@ -70,7 +70,7 @@ def retain_payload(
                 stored_inline=stored_inline,
                 inline=stored_inline,
                 byte_count=byte_count,
-                sha256=sha256,
+                digest=sha256,
                 truncated=not stored_inline,
                 preview=preview_metadata,
             ),
@@ -79,7 +79,7 @@ def retain_payload(
     omitted = {
         _OMITTED_KEY: {
             "retention": retention,
-            "sha256": sha256,
+            "digest": sha256,
             "byte_count": byte_count,
         }
     }
@@ -90,7 +90,7 @@ def retain_payload(
             stored_inline=False,
             inline=False,
             byte_count=byte_count,
-            sha256=sha256,
+            digest=sha256,
             truncated=True,
             preview=dict(omitted[_OMITTED_KEY]),
         ),

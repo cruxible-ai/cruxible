@@ -173,7 +173,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 int(trace.deterministic),
                 int(trace.side_effects),
                 trace.artifact_name,
-                trace.artifact_sha256,
+                trace.artifact_digest,
                 trace.model_dump_json(),
                 format_datetime(trace.started_at),
             ),

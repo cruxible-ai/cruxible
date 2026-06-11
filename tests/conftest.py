@@ -77,7 +77,7 @@ artifacts:
   promo_model:
     kind: model
     uri: file:///tmp/promo-model.bin
-    sha256: abc123
+    digest: abc123
 
 providers:
   lift_predictor:
@@ -149,7 +149,6 @@ tests:
 PROPOSAL_WORKFLOW_CONFIG_YAML = """\
 version: "1.0"
 name: campaign_relationship_workflows
-kind: world_model
 
 entity_types:
   Campaign:
@@ -348,7 +347,6 @@ def canonical_workflow_project(tmp_path: Path) -> Path:
     config_yaml = f"""\
 version: "1.0"
 name: canonical_reference_workflow
-kind: world_model
 
 entity_types:
   Vendor:
@@ -402,7 +400,7 @@ artifacts:
   canonical_bundle:
     kind: directory
     uri: ./bundle
-    sha256: {bundle_sha256}
+    digest: {bundle_sha256}
 
 providers:
   reference_loader:

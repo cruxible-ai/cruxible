@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     stats_cmd: Any
     test_cmd: Any
     validate: Any
-    world_group: Any
+    state_group: Any
 else:
     from cruxible_core.cli.commands.config_views import config_views_cmd
     from cruxible_core.cli.commands.context import (
@@ -94,6 +94,7 @@ else:
     )
     from cruxible_core.cli.commands.server import server_group
     from cruxible_core.cli.commands.source_artifacts import source_group
+    from cruxible_core.cli.commands.state import state_group
     from cruxible_core.cli.commands.wiki import render_wiki_cmd
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
@@ -107,7 +108,6 @@ else:
         test_cmd,
         validate,
     )
-    from cruxible_core.cli.commands.world import world_group
 
 __all__ = [
     "add_constraint_cmd",
@@ -153,5 +153,5 @@ __all__ = [
     "stats_cmd",
     "test_cmd",
     "validate",
-    "world_group",
+    "state_group",
 ]

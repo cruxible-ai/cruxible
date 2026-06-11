@@ -180,7 +180,7 @@ def service_init_governed_upload(
             raise ConfigError(
                 "Uploaded config contains kit:// provider refs, but the workspace root "
                 "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
-                "standalone kits, or `cruxible world create-overlay --kit` for overlay kits."
+                "standalone kits, or `cruxible state create-overlay --kit` for overlay kits."
             )
         if (caller_workspace / KIT_MANIFEST_FILE).exists():
             copy_kit_runtime_files(

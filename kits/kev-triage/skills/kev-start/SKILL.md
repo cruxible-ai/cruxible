@@ -6,7 +6,7 @@ description: Adapt the KEV triage kit to your own asset, inventory, and service-
 # KEV Start
 
 Use this skill when a developer is adapting the KEV kit to their own data.
-The goal is to build a working KEV-shaped world on their inventory: reference
+The goal is to build a working KEV-shaped state on their inventory: reference
 layer loaded, local layer built from their assets/owners/software/services,
 proposal chain run, and governed outputs visible in queries and the wiki.
 
@@ -44,7 +44,7 @@ Produce a working KEV local in one pass:
 - Run from `kits/kev-triage/` or a local of it
 - Cruxible daemon reachable (`cruxible server info --json` succeeds)
 - For custom onboarding, replace local seed or source files after
-  `world create-overlay --kit` materializes the local overlay, unless you are already
+  `state create-overlay --kit` materializes the local overlay, unless you are already
   working in a local where the kit has been applied
 - `CRUXIBLE_AGENT_MODE` may be set; that's fine — this skill does not use
   blocked commands
@@ -135,7 +135,7 @@ If the remembered instance's query surface does not look like the KEV kit
 Treat that as "wrong instance selected" and create or select a KEV instance in
 Step 4 instead.
 
-Do not treat "nonzero entities" as the only branch. A partially built world is
+Do not treat "nonzero entities" as the only branch. A partially built state is
 common when adapting inputs. Resume from the first missing milestone instead of
 starting over blindly.
 
@@ -165,7 +165,7 @@ Sanity-check the prepared inputs before continuing:
   will emit nothing.
 
 If the source files are too messy to normalize cleanly, stop and switch to
-`prepare-data` or the general `create-world` skill rather than forcing bad
+`prepare-data` or the general `create-state` skill rather than forcing bad
 state into the KEV local.
 
 ### 3. Tailor the final KEV surface to the user's data
@@ -244,18 +244,18 @@ A query may be intentionally kept even if this dataset is expected to leave it
 empty, but a kept workflow should not remain in the final surface if its
 required inputs are absent for this pass.
 
-### 4. Create the KEV local from the published world
+### 4. Create the KEV local from the published state
 
 Server mode is the primary path for 0.2. The daemon owns the instance
 directory (under `CRUXIBLE_SERVER_STATE_DIR`, default `~/.cruxible/server/
-instances/inst_<id>/`). In server mode, `world create-overlay` defaults its workspace
+instances/inst_<id>/`). In server mode, `state create-overlay` defaults its workspace
 root to the current directory, so you do **not** need to pass `--root-dir` for
 normal onboarding. Do not create a local `.cruxible/` directory.
 
 If no instance exists:
 
 ```
-cruxible world create-overlay --world-ref kev-reference --kit kev-triage
+cruxible state create-overlay --state-ref kev-reference --kit kev-triage
 ```
 
 This materializes the local local overlay into the workspace root, including
@@ -267,27 +267,27 @@ those local files.
 Capture the returned `instance_id` and persist it with `cruxible context use
 <instance_id>` so subsequent commands target it.
 
-Narrate briefly: "Created a KEV local from the published upstream world with the
+Narrate briefly: "Created a KEV local from the published upstream state with the
 `kev-triage` overlay kit. Daemon owns state at
 `~/.cruxible/server/instances/<instance_id>/`."
 
 ### 5. Check for newer upstream reference releases
 
-The onboarding path should consume the published upstream KEV world, not
-rebuild it locally. A fresh `world create-overlay` already materializes the current
+The onboarding path should consume the published upstream KEV state, not
+rebuild it locally. A fresh `state create-overlay` already materializes the current
 published KEV release into the local. This step checks whether a newer release
 needs to be pulled into the instance:
 
 ```
-cruxible world status
-cruxible world pull-preview
+cruxible state status
+cruxible state pull-preview
 ```
 
-If `cruxible world status` shows that the instance is not tracking a published
-upstream KEV world, stop and fix that first. Do not continue onboarding on a
+If `cruxible state status` shows that the instance is not tracking a published
+upstream KEV state, stop and fix that first. Do not continue onboarding on a
 local-only reference path.
 
-Inspect the `world pull-preview` output before applying. At minimum, check and
+Inspect the `state pull-preview` output before applying. At minimum, check and
 narrate:
 
 - current release
@@ -302,13 +302,13 @@ unexpected for this onboarding pass, stop and ask before applying.
 
 If the preview reports "Already at latest pulled release", narrate that and
 continue without applying. Otherwise, if the preview looks clean, use the
-`apply_digest` returned by `world pull-preview` in:
+`apply_digest` returned by `state pull-preview` in:
 
 ```
-cruxible world pull-apply --apply-digest <digest>
+cruxible state pull-apply --apply-digest <digest>
 ```
 
-If apply fails because the head moved, rerun `world pull-preview` and apply the
+If apply fails because the head moved, rerun `state pull-preview` and apply the
 new digest. Do not switch to a local reference rebuild path during onboarding.
 
 Narrate with real counts pulled from `cruxible stats --json`:
@@ -394,7 +394,7 @@ cruxible group status --group <group_id> --json
 
 This is usually the stage that deserves the closest look, because it is the
 fuzzy bridge from internal software inventory into the reference product
-world.
+state.
 
 In guided onboarding, ask the user to approve. In fast onboarding, approve if
 the summary looks clean and expected.
@@ -498,11 +498,11 @@ not issue further approvals outside that flow.
 
 - Daemon not reachable. Stop; tell the user how to start one.
 - Input files cannot be normalized into stable KEV surfaces. Stop and switch
-  to `prepare-data` or `create-world`.
+  to `prepare-data` or `create-state`.
 - Required input surfaces for the kept queries or workflows are missing.
   Stop and name the missing source (or go back to Step 3 and remove or modify
   the surfaces that depend on it).
-- The world is partially built. Resume from the first missing milestone rather
+- The state is partially built. Resume from the first missing milestone rather
   than restarting blindly.
 - Any `run` / `apply` command fails. Surface the full error and stop — do
   not retry blindly. Common cause: artifact hash drift (see step 4) or
@@ -522,7 +522,7 @@ not issue further approvals outside that flow.
 
 - Does not redesign the KEV ontology. This skill assumes the KEV kit shape is
   broadly correct and focuses on adapting data to it.
-- Does not create a new world from scratch. Use the general `create-world`
+- Does not create a new state from scratch. Use the general `create-state`
   skill for that.
 - Does not force every optional KEV data surface on the local. Surfaces are
   required only for queries and workflows the user chooses to keep in Step 3.
