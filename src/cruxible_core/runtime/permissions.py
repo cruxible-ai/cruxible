@@ -32,7 +32,7 @@ from pathlib import Path
 
 import structlog
 
-from cruxible_core.errors import ConfigError, PermissionDeniedError
+from cruxible_core.errors import ConfigError, InstanceScopeError, PermissionDeniedError
 
 # ---------------------------------------------------------------------------
 # Safe stderr default for structlog — never write to stdout (MCP stdio)
@@ -157,7 +157,10 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 # Internal runtime operations that are not registered MCP tools but still need
 # permission gates owned by this module.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
+    "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,
+    "cruxible_runtime_credentials": PermissionMode.ADMIN,
 }
 
 PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
@@ -175,6 +178,9 @@ _cached_allowed_roots: list[Path] | None | bool = False  # False = not yet parse
 # Per-request override (for cloud / multi-tenant use)
 _request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
     "cruxible_permission_mode", default=None
+)
+_request_instance_scope: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cruxible_instance_scope", default=None
 )
 
 
@@ -261,6 +267,7 @@ def reset_permissions() -> None:
     _cached_mode = None
     _cached_allowed_roots = False
     _request_mode.set(None)
+    _request_instance_scope.set(None)
 
 
 @contextmanager
@@ -276,6 +283,16 @@ def request_permission_scope(mode: PermissionMode) -> Iterator[None]:
         _request_mode.reset(token)
 
 
+@contextmanager
+def request_instance_scope(instance_id: str | None) -> Iterator[None]:
+    """Temporarily bind an instance scope for the current request."""
+    token = _request_instance_scope.set(instance_id)
+    try:
+        yield
+    finally:
+        _request_instance_scope.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # Permission check
 # ---------------------------------------------------------------------------
@@ -285,12 +302,16 @@ def check_permission(
     tool_name: str,
     *,
     instance_id: str | None = None,
+    enforce_instance_scope: bool = True,
 ) -> None:
     """Check whether the current mode permits calling *tool_name*.
 
     Args:
         tool_name: The operation or tool being called.
-        instance_id: Optional instance ID for audit logging.
+        instance_id: Optional instance ID for audit logging and scope enforcement.
+        enforce_instance_scope: Whether to reject when request credentials are scoped
+            to a different instance. Disable only for legacy root-dir lifecycle checks
+            that authorize scope before calling the runtime facade.
 
     Raises:
         PermissionDeniedError: If the current mode is insufficient.
@@ -309,6 +330,21 @@ def check_permission(
             instance_id=instance_id,
         )
         raise PermissionDeniedError(tool_name, current.name, effective.name)
+
+    credential_scope = _request_instance_scope.get()
+    if (
+        enforce_instance_scope
+        and credential_scope is not None
+        and instance_id is not None
+        and instance_id != credential_scope
+    ):
+        _log.warning(
+            "instance_scope_denied",
+            tool=tool_name,
+            instance_id=instance_id,
+            credential_scope=credential_scope,
+        )
+        raise InstanceScopeError(instance_id, credential_scope)
 
     # Audit log for mutations
     if effective >= PermissionMode.GOVERNED_WRITE:

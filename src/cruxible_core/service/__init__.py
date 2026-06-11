@@ -238,7 +238,6 @@ __all__ = [
     "ListGroupsResult",
     "ListResolutionsResult",
     "ListResult",
-
     "LintServiceResult",
     "LintSummary",
     "OutcomeServiceResult",

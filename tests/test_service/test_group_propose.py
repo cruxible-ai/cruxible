@@ -91,6 +91,7 @@ def _agent_signature_facts(
         ],
     )
 
+
 # ---------------------------------------------------------------------------
 # Config YAML with proposal_policy section for group testing
 # ---------------------------------------------------------------------------
@@ -383,9 +384,7 @@ def _approve_live_fit_edge(
     metadata = RelationshipMetadata()
     if assertion_status == "pending":
         metadata = RelationshipMetadata(
-            assertion=RelationshipAssertion(
-                review=RelationshipReviewState(status="pending")
-            )
+            assertion=RelationshipAssertion(review=RelationshipReviewState(status="pending"))
         )
     elif assertion_status == "rejected":
         metadata = RelationshipMetadata(
@@ -463,9 +462,7 @@ class TestBasicProposal:
         finally:
             store.close()
 
-    def test_members_store_compact_evidence_refs(
-        self, matching_instance: CruxibleInstance
-    ) -> None:
+    def test_members_store_compact_evidence_refs(self, matching_instance: CruxibleInstance) -> None:
         signals = _all_support_signals()
         signals[0] = CandidateSignal(
             signal_source="bolt_pattern_check",
@@ -573,10 +570,7 @@ class TestBasicProposal:
             assert stored[0].signals[0].basis is not None
             assert stored[0].signals[0].basis.mode == "enum"
             assert isinstance(stored[0].source_query_evidence[0], QuerySourceEvidence)
-            assert (
-                stored[0].source_query_evidence[0].query_receipt_id
-                == "RCP-query000001"
-            )
+            assert stored[0].source_query_evidence[0].query_receipt_id == "RCP-query000001"
         finally:
             store.close()
 
@@ -1354,9 +1348,7 @@ class TestPendingBuckets:
                 from_id="BP-1001",
                 to_type="Vehicle",
                 to_id="V-2024-CIVIC",
-                metadata=RelationshipMetadata(
-                    assertion=RelationshipAssertion(group_override=True)
-                ),
+                metadata=RelationshipMetadata(assertion=RelationshipAssertion(group_override=True)),
             )
         )
         matching_instance.save_graph(graph)
@@ -1483,9 +1475,7 @@ class TestPendingBuckets:
         self, matching_instance: CruxibleInstance
     ) -> None:
         _seed_fitment_entities(matching_instance)
-        initial_members = [
-            _member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())
-        ]
+        initial_members = [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())]
         initial = service_propose_group(
             matching_instance,
             "fits",
@@ -2067,16 +2057,12 @@ constraints: []
 
 class TestDeriveReviewPriority:
     def test_blocking_contradict_critical(self) -> None:
-        matching = ProposalPolicySchema(
-            signals={"blocker": SignalPolicySchema(role="blocking")}
-        )
+        matching = ProposalPolicySchema(signals={"blocker": SignalPolicySchema(role="blocking")})
         members = [_member(signals=[CandidateSignal(signal_source="blocker", signal="contradict")])]
         assert derive_review_priority(members, matching, None) == "critical"
 
     def test_invalidated_prior_critical(self) -> None:
-        matching = ProposalPolicySchema(
-            signals={"check": SignalPolicySchema(role="required")}
-        )
+        matching = ProposalPolicySchema(signals={"check": SignalPolicySchema(role="required")})
         members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         prior = _fake_resolution("invalidated")
         assert derive_review_priority(members, matching, prior) == "critical"
@@ -2095,9 +2081,7 @@ class TestDeriveReviewPriority:
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_unsure_on_blocking_review(self) -> None:
-        matching = ProposalPolicySchema(
-            signals={"blocker": SignalPolicySchema(role="blocking")}
-        )
+        matching = ProposalPolicySchema(signals={"blocker": SignalPolicySchema(role="blocking")})
         members = [_member(signals=[CandidateSignal(signal_source="blocker", signal="unsure")])]
         prior = _fake_resolution("trusted")
         assert derive_review_priority(members, matching, prior) == "review"
@@ -2109,16 +2093,12 @@ class TestDeriveReviewPriority:
         assert derive_review_priority(members, matching, prior) == "review"
 
     def test_no_prior_review(self) -> None:
-        matching = ProposalPolicySchema(
-            signals={"check": SignalPolicySchema(role="required")}
-        )
+        matching = ProposalPolicySchema(signals={"check": SignalPolicySchema(role="required")})
         members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         assert derive_review_priority(members, matching, None) == "review"
 
     def test_prior_watch_review(self) -> None:
-        matching = ProposalPolicySchema(
-            signals={"check": SignalPolicySchema(role="required")}
-        )
+        matching = ProposalPolicySchema(signals={"check": SignalPolicySchema(role="required")})
         members = [_member(signals=[CandidateSignal(signal_source="check", signal="support")])]
         prior = _fake_resolution("watch")
         assert derive_review_priority(members, matching, prior) == "review"

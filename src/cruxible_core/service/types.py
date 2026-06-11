@@ -18,6 +18,7 @@ from cruxible_core.config.schema import (
     WorkflowType,
 )
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
@@ -59,6 +60,7 @@ class OperationContext:
     decision_record_id: str | None = None
     request_id: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None
+    actor_context: GovernedActorContext | None = None
 
 
 @dataclass

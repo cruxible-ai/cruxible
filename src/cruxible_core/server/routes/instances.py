@@ -6,7 +6,18 @@ from fastapi import APIRouter
 
 from cruxible_client import contracts
 from cruxible_core.runtime import api
-from cruxible_core.server.request_models import InitRequest, ValidateRequest
+from cruxible_core.server.config import get_runtime_bootstrap_secret
+from cruxible_core.server.credentials import get_runtime_credential_store
+from cruxible_core.server.request_models import (
+    BootstrapClaimRequest,
+    InitRequest,
+    ValidateRequest,
+)
+from cruxible_core.server.route_paths import RUNTIME_BOOTSTRAP_CLAIM_PATH
+from cruxible_core.server.routes import (
+    authorize_governed_instance_lifecycle,
+    resolve_server_instance_id,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["instances"])
 
@@ -14,6 +25,7 @@ router = APIRouter(prefix="/api/v1", tags=["instances"])
 @router.post("/instances", response_model=contracts.InitResult)
 async def init_instance(req: InitRequest) -> contracts.InitResult:
     """Create or reload an instance, returning an opaque server ID."""
+    authorize_governed_instance_lifecycle(req.root_dir)
     return api.init_governed(
         root_dir=req.root_dir,
         config_path=req.config_path,
@@ -29,6 +41,29 @@ async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
     return api.validate(
         config_path=req.config_path,
         config_yaml=req.config_yaml,
+    )
+
+
+@router.post(
+    RUNTIME_BOOTSTRAP_CLAIM_PATH,
+    response_model=contracts.RuntimeCredentialBootstrapResult,
+)
+async def claim_runtime_bootstrap(
+    instance_id: str,
+    req: BootstrapClaimRequest,
+) -> contracts.RuntimeCredentialBootstrapResult:
+    """Exchange a one-time bootstrap secret for the initial ADMIN runtime token."""
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    created = get_runtime_credential_store().claim_bootstrap_credential(
+        instance_id=resolved_instance_id,
+        bootstrap_secret=req.bootstrap_secret,
+        expected_bootstrap_secret=get_runtime_bootstrap_secret(),
+    )
+    return contracts.RuntimeCredentialBootstrapResult(
+        credential_id=created.record.credential_id,
+        instance_id=created.record.instance_id,
+        permission_mode="admin",
+        token=created.token,
     )
 
 

@@ -53,6 +53,13 @@
         "agent"
       ]
     },
+    "GovernedActorType": {
+      "values": [
+        "human_user",
+        "service_account",
+        "system"
+      ]
+    },
     "GroupAction": {
       "values": [
         "approve",
@@ -84,6 +91,18 @@
         "trusted",
         "watch",
         "invalidated"
+      ]
+    },
+    "HostedInstanceInitStatus": {
+      "values": [
+        "initialized",
+        "already_initialized"
+      ]
+    },
+    "HostedInstanceSourceType": {
+      "values": [
+        "kit",
+        "reference_model"
       ]
     },
     "OutcomeAnchorType": {
@@ -135,6 +154,14 @@
         "receipts",
         "feedback",
         "outcomes"
+      ]
+    },
+    "RuntimeCredentialPermissionMode": {
+      "values": [
+        "read_only",
+        "governed_write",
+        "graph_write",
+        "admin"
       ]
     },
     "SourceKind": {
@@ -5959,6 +5986,149 @@
         "to_type"
       ]
     },
+    "GovernedActorContext": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "actor_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_type",
+          "required": true,
+          "schema": {
+            "enum": [
+              "human_user",
+              "service_account",
+              "system"
+            ],
+            "title": "Actor Type",
+            "type": "string"
+          }
+        },
+        "operation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation_id",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "org_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "org_id",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "request_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "request_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          }
+        },
+        "timestamp": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "timestamp",
+          "required": true,
+          "schema": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "minLength": 1,
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "actor_type": {
+            "enum": [
+              "human_user",
+              "service_account",
+              "system"
+            ],
+            "title": "Actor Type",
+            "type": "string"
+          },
+          "operation_id": {
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "org_id": {
+            "minLength": 1,
+            "title": "Org Id",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_type",
+          "actor_id",
+          "org_id",
+          "operation_id",
+          "timestamp"
+        ],
+        "title": "GovernedActorContext",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "actor_type",
+        "operation_id",
+        "org_id",
+        "timestamp"
+      ]
+    },
     "GroupBucketStatusToolResult": {
       "fields": {
         "accepted_tuple_count": {
@@ -6365,6 +6535,280 @@
         "resolved_at",
         "trust_status",
         "tuple_count"
+      ]
+    },
+    "HostedInstanceInitResult": {
+      "fields": {
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "manifest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "manifest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublishedStateManifest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "overlay_kit_ref": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "overlay_kit_ref",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Overlay Kit Ref"
+          }
+        },
+        "resolved_source_ref": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolved_source_ref",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolved Source Ref"
+          }
+        },
+        "source_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_ref",
+          "required": true,
+          "schema": {
+            "title": "Source Ref",
+            "type": "string"
+          }
+        },
+        "source_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_type",
+          "required": true,
+          "schema": {
+            "enum": [
+              "kit",
+              "reference_model"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "initialized",
+              "already_initialized"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PublishedStateManifest": {
+            "properties": {
+              "compatibility": {
+                "enum": [
+                  "data_only",
+                  "additive_schema",
+                  "breaking"
+                ],
+                "title": "Compatibility",
+                "type": "string"
+              },
+              "format_version": {
+                "title": "Format Version",
+                "type": "integer"
+              },
+              "owned_entity_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Entity Types",
+                "type": "array"
+              },
+              "owned_relationship_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Owned Relationship Types",
+                "type": "array"
+              },
+              "parent_release_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parent Release Id"
+              },
+              "release_id": {
+                "title": "Release Id",
+                "type": "string"
+              },
+              "snapshot_id": {
+                "title": "Snapshot Id",
+                "type": "string"
+              },
+              "state_id": {
+                "title": "State Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "format_version",
+              "state_id",
+              "release_id",
+              "snapshot_id",
+              "compatibility"
+            ],
+            "title": "PublishedStateManifest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublishedStateManifest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "overlay_kit_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Overlay Kit Ref"
+          },
+          "resolved_source_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolved Source Ref"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "kit",
+              "reference_model"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "initialized",
+              "already_initialized"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status",
+          "source_type",
+          "source_ref"
+        ],
+        "title": "HostedInstanceInitResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "instance_id",
+        "source_ref",
+        "source_type",
+        "status"
       ]
     },
     "InitResult": {
@@ -13461,6 +13905,477 @@
         "edges_created",
         "edges_skipped",
         "group_id"
+      ]
+    },
+    "RuntimeCredentialBootstrapResult": {
+      "fields": {
+        "credential_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "credential_id",
+          "required": true,
+          "schema": {
+            "title": "Credential Id",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "permission_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "permission_mode",
+          "required": true,
+          "schema": {
+            "const": "admin",
+            "title": "Permission Mode",
+            "type": "string"
+          }
+        },
+        "token": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "token",
+          "required": true,
+          "schema": {
+            "title": "Token",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "permission_mode": {
+            "const": "admin",
+            "title": "Permission Mode",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id",
+          "instance_id",
+          "permission_mode",
+          "token"
+        ],
+        "title": "RuntimeCredentialBootstrapResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "credential_id",
+        "instance_id",
+        "permission_mode",
+        "token"
+      ]
+    },
+    "RuntimeCredentialListResult": {
+      "fields": {
+        "credentials": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "credentials",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/RuntimeCredentialMetadata"
+            },
+            "title": "Credentials",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "RuntimeCredentialMetadata": {
+            "properties": {
+              "created_at": {
+                "title": "Created At",
+                "type": "string"
+              },
+              "created_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Created By"
+              },
+              "credential_id": {
+                "title": "Credential Id",
+                "type": "string"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "permission_mode": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Permission Mode",
+                "type": "string"
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revoked At"
+              }
+            },
+            "required": [
+              "credential_id",
+              "instance_id",
+              "label",
+              "permission_mode",
+              "created_at"
+            ],
+            "title": "RuntimeCredentialMetadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "credentials": {
+            "items": {
+              "$ref": "#/$defs/RuntimeCredentialMetadata"
+            },
+            "title": "Credentials",
+            "type": "array"
+          }
+        },
+        "title": "RuntimeCredentialListResult",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "RuntimeCredentialMetadata": {
+      "fields": {
+        "created_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "created_at",
+          "required": true,
+          "schema": {
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "created_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "created_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created By"
+          }
+        },
+        "credential_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "credential_id",
+          "required": true,
+          "schema": {
+            "title": "Credential Id",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "label": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": true,
+          "schema": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "permission_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "permission_mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Permission Mode",
+            "type": "string"
+          }
+        },
+        "revoked_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "revoked_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revoked At"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created By"
+          },
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "permission_mode": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Permission Mode",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "credential_id",
+          "instance_id",
+          "label",
+          "permission_mode",
+          "created_at"
+        ],
+        "title": "RuntimeCredentialMetadata",
+        "type": "object"
+      },
+      "required_fields": [
+        "created_at",
+        "credential_id",
+        "instance_id",
+        "label",
+        "permission_mode"
+      ]
+    },
+    "RuntimeCredentialResult": {
+      "fields": {
+        "credential": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "credential",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/RuntimeCredentialMetadata"
+          }
+        },
+        "token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "RuntimeCredentialMetadata": {
+            "properties": {
+              "created_at": {
+                "title": "Created At",
+                "type": "string"
+              },
+              "created_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Created By"
+              },
+              "credential_id": {
+                "title": "Credential Id",
+                "type": "string"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "permission_mode": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Permission Mode",
+                "type": "string"
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revoked At"
+              }
+            },
+            "required": [
+              "credential_id",
+              "instance_id",
+              "label",
+              "permission_mode",
+              "created_at"
+            ],
+            "title": "RuntimeCredentialMetadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "credential": {
+            "$ref": "#/$defs/RuntimeCredentialMetadata"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "title": "RuntimeCredentialResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "credential"
       ]
     },
     "SampleResult": {

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig
     from cruxible_core.decision.types import DecisionEvent, DecisionRecord
     from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+    from cruxible_core.governance.actors import GovernedActorContext
     from cruxible_core.graph.entity_graph import EntityGraph
     from cruxible_core.graph.types import EntityInstance, RelationshipInstance
     from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
@@ -265,6 +266,7 @@ class GroupStoreProtocol(ABC):
         resolved_by: str,
         trust_status: str = "watch",
         confirmed: bool = False,
+        resolved_actor_context: Any | None = None,
     ) -> str: ...
     @abstractmethod
     def confirm_resolution(self, resolution_id: str, trust_status: str | None = None) -> None: ...
@@ -323,7 +325,11 @@ class GroupStoreProtocol(ABC):
     ) -> bool: ...
     @abstractmethod
     def update_resolution_trust_status(
-        self, resolution_id: str, trust_status: str, trust_reason: str = ""
+        self,
+        resolution_id: str,
+        trust_status: str,
+        trust_reason: str = "",
+        trust_actor_context: Any | None = None,
     ) -> bool: ...
     @abstractmethod
     def close(self) -> None: ...
@@ -367,7 +373,12 @@ class InstanceProtocol(ABC):
     @abstractmethod
     def set_upstream_metadata(self, metadata: UpstreamMetadata | None) -> None: ...
     @abstractmethod
-    def create_snapshot(self, label: str | None = None) -> StateSnapshot: ...
+    def create_snapshot(
+        self,
+        label: str | None = None,
+        *,
+        actor_context: GovernedActorContext | None = None,
+    ) -> StateSnapshot: ...
     @abstractmethod
     def commit_graph_snapshot(
         self,
@@ -376,6 +387,7 @@ class InstanceProtocol(ABC):
         *,
         entities: Sequence[EntityInstance] | None = None,
         relationships: Sequence[RelationshipInstance] | None = None,
+        actor_context: GovernedActorContext | None = None,
     ) -> StateSnapshot: ...
     @abstractmethod
     def get_snapshot(self, snapshot_id: str) -> StateSnapshot | None: ...

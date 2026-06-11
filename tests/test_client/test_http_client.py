@@ -9,7 +9,12 @@ import httpx
 import pytest
 
 from cruxible_client import CruxibleClient, contracts
-from cruxible_client.errors import ConstraintViolationError, DataValidationError
+from cruxible_client.errors import (
+    AuthenticationError,
+    ConstraintViolationError,
+    DataValidationError,
+    RuntimeCredentialNotFoundError,
+)
 
 
 def _build_client(handler):
@@ -1626,3 +1631,317 @@ def test_outcome_routes():
     assert analysis.outcome_count == 2
     assert captured["path"].endswith("/api/v1/inst_123/outcomes/analyze")
     assert captured["payload"]["anchor_type"] == "receipt"
+
+
+def test_claim_runtime_bootstrap_uses_expected_route_and_contract():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "credential_id": "rcred_123",
+                "instance_id": "inst_123",
+                "permission_mode": "admin",
+                "token": "crt_rcred_123_secret",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.claim_runtime_bootstrap("inst_123", "bootstrap-secret")
+
+    assert result.credential_id == "rcred_123"
+    assert result.instance_id == "inst_123"
+    assert result.permission_mode == "admin"
+    assert result.token == "crt_rcred_123_secret"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/v1/inst_123/runtime/bootstrap/claim"
+    assert captured["payload"] == {"bootstrap_secret": "bootstrap-secret"}
+
+
+def test_claim_runtime_bootstrap_rehydrates_authentication_error():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "error_type": "AuthenticationError",
+                "message": "Invalid bootstrap secret",
+                "errors": [],
+                "context": {},
+                "mutation_receipt_id": None,
+            },
+        )
+
+    client = _build_client(handler)
+
+    with pytest.raises(AuthenticationError, match="Invalid bootstrap secret"):
+        client.claim_runtime_bootstrap("inst_123", "wrong-secret")
+
+
+def test_init_hosted_instance_uses_expected_route_and_contract():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_hosted",
+                "status": "initialized",
+                "source_type": "reference_model",
+                "source_ref": "kev-reference@v1",
+                "resolved_source_ref": "oci://ghcr.io/cruxible-ai/models/kev-reference:v1",
+                "overlay_kit_ref": "kev-triage",
+                "manifest": {
+                    "format_version": 1,
+                    "state_id": "kev-reference",
+                    "release_id": "v1",
+                    "snapshot_id": "snap_1",
+                    "compatibility": "data_only",
+                    "owned_entity_types": ["Vulnerability"],
+                    "owned_relationship_types": ["affects_product"],
+                    "parent_release_id": None,
+                },
+                "warnings": [],
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.init_hosted_instance(
+        instance_id="inst_hosted",
+        source_type="reference_model",
+        state_ref="kev-reference@v1",
+        overlay_kit_ref="kev-triage",
+    )
+
+    assert result.instance_id == "inst_hosted"
+    assert result.status == "initialized"
+    assert result.manifest is not None
+    assert result.manifest.release_id == "v1"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/v1/runtime/instances"
+    assert captured["payload"] == {
+        "instance_id": "inst_hosted",
+        "source_type": "reference_model",
+        "kit_ref": None,
+        "transport_ref": None,
+        "state_ref": "kev-reference@v1",
+        "overlay_kit_ref": "kev-triage",
+        "no_overlay_kit": False,
+    }
+
+
+def test_runtime_credential_client_routes_round_trip():
+    captured: list[tuple[str, str, Any]] = []
+
+    metadata = {
+        "credential_id": "rcred_123",
+        "instance_id": "inst_123",
+        "label": "dispatch",
+        "permission_mode": "graph_write",
+        "created_at": "2026-06-01T12:00:00Z",
+        "created_by": "rcred_admin",
+        "revoked_at": None,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        payload = json.loads(request.content.decode()) if request.content else None
+        captured.append((request.method, path, payload))
+        if request.method == "POST" and path == "/api/v1/inst_123/runtime/credentials":
+            return httpx.Response(200, json={"credential": metadata, "token": "crt_new"})
+        if request.method == "GET" and path == "/api/v1/inst_123/runtime/credentials":
+            return httpx.Response(200, json={"credentials": [metadata]})
+        if path == "/api/v1/inst_123/runtime/credentials/rcred_123/revoke":
+            revoked = {**metadata, "revoked_at": "2026-06-01T12:01:00Z"}
+            return httpx.Response(200, json={"credential": revoked})
+        if path == "/api/v1/inst_123/runtime/credentials/rcred_123/rotate":
+            rotated = {**metadata, "credential_id": "rcred_456"}
+            return httpx.Response(200, json={"credential": rotated, "token": "crt_rotated"})
+        return httpx.Response(404, json={"error_type": "CoreError", "message": "not found"})
+
+    client = _build_client(handler)
+
+    created = client.create_runtime_credential(
+        "inst_123",
+        label="dispatch",
+        permission_mode="graph_write",
+    )
+    listed = client.list_runtime_credentials("inst_123")
+    revoked = client.revoke_runtime_credential("inst_123", "rcred_123")
+    rotated = client.rotate_runtime_credential("inst_123", "rcred_123")
+
+    assert created.credential.permission_mode == "graph_write"
+    assert created.token == "crt_new"
+    assert listed.credentials[0].credential_id == "rcred_123"
+    assert revoked.credential.revoked_at == "2026-06-01T12:01:00Z"
+    assert rotated.credential.credential_id == "rcred_456"
+    assert rotated.token == "crt_rotated"
+    assert captured == [
+        (
+            "POST",
+            "/api/v1/inst_123/runtime/credentials",
+            {"label": "dispatch", "permission_mode": "graph_write"},
+        ),
+        ("GET", "/api/v1/inst_123/runtime/credentials", None),
+        ("POST", "/api/v1/inst_123/runtime/credentials/rcred_123/revoke", None),
+        ("POST", "/api/v1/inst_123/runtime/credentials/rcred_123/rotate", None),
+    ]
+
+
+def test_runtime_credential_not_found_error_rehydrates():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={
+                "error_type": "RuntimeCredentialNotFoundError",
+                "message": "Runtime credential 'rcred_missing' not found",
+                "errors": [],
+                "context": {"credential_id": "rcred_missing"},
+                "mutation_receipt_id": None,
+            },
+        )
+
+    client = _build_client(handler)
+
+    with pytest.raises(RuntimeCredentialNotFoundError) as exc_info:
+        client.rotate_runtime_credential("inst_123", "rcred_missing")
+
+    assert exc_info.value.credential_id == "rcred_missing"
+
+
+def test_snapshot_create_serializes_actor_context_when_supplied():
+    captured: dict[str, Any] = {}
+    actor_context = {
+        "actor_type": "human_user",
+        "actor_id": "usr_1",
+        "org_id": "org_1",
+        "operation_id": "op_1",
+        "timestamp": "2026-06-05T12:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "snapshot": {
+                    "snapshot_id": "snap_1",
+                    "created_at": "2026-03-21T00:00:00Z",
+                    "label": "baseline",
+                    "config_digest": "sha256:abc",
+                    "lock_digest": None,
+                    "graph_digest": "sha256:def",
+                    "parent_snapshot_id": None,
+                    "origin_snapshot_id": None,
+                }
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.create_snapshot(
+        "inst_123",
+        label="baseline",
+        actor_context=actor_context,
+    )
+
+    assert result.snapshot.snapshot_id == "snap_1"
+    assert captured["payload"]["actor_context"] == actor_context
+
+
+def test_governed_write_clients_serialize_actor_context_when_supplied():
+    captured: dict[str, dict[str, Any]] = {}
+    actor_context = {
+        "actor_type": "human_user",
+        "actor_id": "usr_1",
+        "org_id": "org_1",
+        "operation_id": "op_1",
+        "timestamp": "2026-06-05T12:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = json.loads(request.content.decode())
+        path = request.url.path
+        if path.endswith("/feedback"):
+            return httpx.Response(200, json={"feedback_id": "FB-1", "applied": True})
+        if path.endswith("/workflows/run"):
+            return httpx.Response(
+                200,
+                json={
+                    "workflow": "wf",
+                    "output": {},
+                    "receipt_id": "RCP-1",
+                    "mode": "run",
+                    "workflow_type": "utility",
+                    "canonical": False,
+                },
+            )
+        if path.endswith("/source-artifacts/register"):
+            return httpx.Response(
+                200,
+                json={
+                    "source_artifact_id": "SRC-1",
+                    "source_kind": "markdown",
+                    "source_retention": "manifest_only",
+                    "content_hash": "sha256:abc",
+                    "byte_count": 10,
+                    "parser_version": "markdown-it-py@test",
+                    "archived": False,
+                    "chunks": [],
+                },
+            )
+        if path.endswith("/groups/propose"):
+            return httpx.Response(
+                200,
+                json={
+                    "group_id": "GRP-1",
+                    "signature": "sigv1:test",
+                    "status": "pending_review",
+                    "review_priority": "normal",
+                    "member_count": 0,
+                },
+            )
+        return httpx.Response(500, json={"error": f"unexpected path {path}"})
+
+    client = _build_client(handler)
+    client.feedback(
+        "inst_123",
+        receipt_id="RCP-1",
+        action="approve",
+        source="human",
+        from_type="Part",
+        from_id="P-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        actor_context=actor_context,
+    )
+    client.workflow_run(
+        "inst_123",
+        workflow_name="wf",
+        actor_context=actor_context,
+    )
+    client.register_source_artifact(
+        "inst_123",
+        source_path="docs/evidence.md",
+        actor_context=actor_context,
+    )
+    client.propose_group(
+        "inst_123",
+        relationship_type="fits",
+        members=[],
+        actor_context=actor_context,
+    )
+
+    assert captured["/api/v1/inst_123/feedback"]["actor_context"] == actor_context
+    assert captured["/api/v1/inst_123/workflows/run"]["actor_context"] == actor_context
+    assert (
+        captured["/api/v1/inst_123/source-artifacts/register"]["actor_context"]
+        == actor_context
+    )
+    assert captured["/api/v1/inst_123/groups/propose"]["actor_context"] == actor_context

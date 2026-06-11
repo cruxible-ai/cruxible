@@ -9,12 +9,15 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.decision.types import DecisionEvent
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import (
     OperationContext,
+    service_abandon_decision_record,
     service_create_decision_record,
     service_finalize_decision_record,
+    service_get_decision_record,
     service_list_decision_events,
     service_lock,
     service_query,
@@ -45,6 +48,16 @@ def workflow_instance(tmp_path, workflow_config_yaml: str) -> CruxibleInstance:
     return instance
 
 
+def _actor_context(actor_id: str, operation_id: str) -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id=actor_id,
+        org_id="org_1",
+        operation_id=operation_id,
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
 def test_digest_payload_is_deterministic() -> None:
     left = {"b": 2, "a": {"x": 1}}
     right = {"a": {"x": 1}, "b": 2}
@@ -53,6 +66,114 @@ def test_digest_payload_is_deterministic() -> None:
     digest, summary = digest_payload(left)
     assert digest.startswith("sha256:")
     assert summary == '{"a": {"x": 1}, "b": 2}'
+
+
+def test_decision_record_actor_context_round_trips_through_store(
+    populated_instance: CruxibleInstance,
+) -> None:
+    opened_actor = _actor_context("usr_open", "op_open")
+    finalized_actor = _actor_context("usr_finalize", "op_finalize")
+
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we investigate this vehicle impact?",
+        subject_type="Vehicle",
+        subject_id="V-2024-CIVIC-EX",
+        opened_by="agent",
+        actor_context=opened_actor,
+    ).record
+
+    loaded_open = service_get_decision_record(
+        populated_instance,
+        record.decision_record_id,
+    ).record
+    assert loaded_open.opened_actor_context is not None
+    assert loaded_open.opened_actor_context.actor_id == "usr_open"
+    assert loaded_open.opened_actor_context.operation_id == "op_open"
+    assert loaded_open.finalized_actor_context is None
+
+    service_finalize_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        final_decision="No action",
+        decision_class="deferred",
+        actor_context=finalized_actor,
+    )
+
+    loaded_final = service_get_decision_record(
+        populated_instance,
+        record.decision_record_id,
+    ).record
+    assert loaded_final.opened_actor_context is not None
+    assert loaded_final.opened_actor_context.actor_id == "usr_open"
+    assert loaded_final.opened_actor_context.operation_id == "op_open"
+    assert loaded_final.finalized_actor_context is not None
+    assert loaded_final.finalized_actor_context.actor_id == "usr_finalize"
+    assert loaded_final.finalized_actor_context.operation_id == "op_finalize"
+
+
+def test_abandoned_decision_record_actor_context_round_trips_through_store(
+    populated_instance: CruxibleInstance,
+) -> None:
+    opened_actor = _actor_context("usr_open", "op_open")
+    abandoned_actor = _actor_context("usr_abandon", "op_abandon")
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we abandon this investigation?",
+        actor_context=opened_actor,
+    ).record
+
+    service_abandon_decision_record(
+        populated_instance,
+        record.decision_record_id,
+        reason="Superseded",
+        actor_context=abandoned_actor,
+    )
+
+    loaded = service_get_decision_record(
+        populated_instance,
+        record.decision_record_id,
+    ).record
+    assert loaded.opened_actor_context is not None
+    assert loaded.opened_actor_context.actor_id == "usr_open"
+    assert loaded.finalized_actor_context is not None
+    assert loaded.finalized_actor_context.actor_id == "usr_abandon"
+    assert loaded.finalized_actor_context.operation_id == "op_abandon"
+
+
+def test_decision_event_actor_context_round_trips_through_store(
+    populated_instance: CruxibleInstance,
+) -> None:
+    event_actor = _actor_context("usr_event", "op_event")
+    record = service_create_decision_record(
+        populated_instance,
+        question="Should we log this event?",
+    ).record
+    started_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(timezone.utc)
+
+    with populated_instance.write_transaction() as uow:
+        uow.decisions.append_event(
+            DecisionEvent(
+                decision_record_id=record.decision_record_id,
+                command="manual",
+                status="success",
+                input_digest="sha256:input",
+                input_summary="{}",
+                actor_context=event_actor,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
+
+    events = service_list_decision_events(
+        populated_instance,
+        decision_record_id=record.decision_record_id,
+    ).items
+    assert len(events) == 1
+    assert events[0].actor_context is not None
+    assert events[0].actor_context.actor_id == "usr_event"
+    assert events[0].actor_context.operation_id == "op_event"
 
 
 def test_query_decision_record_context_records_audit_event(

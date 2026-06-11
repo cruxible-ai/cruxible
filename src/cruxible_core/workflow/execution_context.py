@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -38,6 +39,7 @@ class WorkflowExecutionContext:
     persist_traces: bool
     config_base_path: Path
     head_snapshot_id: str | None
+    actor_context: GovernedActorContext | None = None
     step_outputs: dict[str, Any] = field(default_factory=dict)
     alias_step_ids: dict[str, str] = field(default_factory=dict)
     step_trace_ids: dict[str, list[str]] = field(default_factory=dict)

@@ -15,6 +15,7 @@ from typing import Any
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
 from cruxible_core.errors import DataValidationError, QueryExecutionError
+from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -267,6 +268,7 @@ def apply_entity_set(
     *,
     persist_writes: bool,
     parent_id: str | None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ApplyEntitiesPreview:
     """Validate and preview or persist entity writes for a canonical workflow.
 
@@ -313,9 +315,15 @@ def apply_entity_set(
 
     for validated in validated_entities:
         entity = validated.entity
+        actor_metadata = (
+            {"actor_context": dump_actor_context(actor_context)}
+            if actor_context is not None
+            else {}
+        )
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
         if existing is None:
             create_count += 1
+            entity.metadata = {**entity.metadata, **actor_metadata}
             graph.add_entity(entity)
             if persist_writes:
                 receipt_builder.record_entity_write(
@@ -332,6 +340,12 @@ def apply_entity_set(
                 entity.entity_id,
                 dict(entity.properties),
             )
+            if actor_metadata:
+                graph.update_entity_metadata(
+                    entity_set.entity_type,
+                    entity.entity_id,
+                    actor_metadata,
+                )
             if persist_writes:
                 receipt_builder.record_entity_write(
                     entity_set.entity_type,
@@ -362,6 +376,7 @@ def apply_relationship_set(
     *,
     persist_writes: bool,
     parent_id: str | None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ApplyRelationshipsPreview:
     """Validate and preview or persist relationship writes for a workflow.
 
@@ -434,6 +449,7 @@ def apply_relationship_set(
                 "workflow_apply",
                 source_ref,
                 receipt_id=receipt_builder.receipt_id if persist_writes else None,
+                actor_context=actor_context,
             )
             if persist_writes:
                 receipt_builder.record_relationship_write(
@@ -452,7 +468,13 @@ def apply_relationship_set(
         )
         if existing.properties != rel.properties or evidence_changed:
             update_count += 1
-            apply_relationship(graph, validated, "workflow_apply", source_ref)
+            apply_relationship(
+                graph,
+                validated,
+                "workflow_apply",
+                source_ref,
+                actor_context=actor_context,
+            )
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,

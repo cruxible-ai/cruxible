@@ -74,6 +74,103 @@ class CruxibleClient:
             raise CoreError("Expected JSON object response from Cruxible server")
         return payload
 
+    @staticmethod
+    def _actor_context_payload(
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if actor_context is None:
+            return None
+        if isinstance(actor_context, contracts.GovernedActorContext):
+            return actor_context.model_dump(mode="json", exclude_none=True)
+        return dict(actor_context)
+
+    @classmethod
+    def _with_actor_context(
+        cls,
+        payload: dict[str, Any],
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        actor_payload = cls._actor_context_payload(actor_context)
+        if actor_payload is not None:
+            payload["actor_context"] = actor_payload
+        return payload
+
+    def claim_runtime_bootstrap(
+        self,
+        instance_id: str,
+        bootstrap_secret: str,
+    ) -> contracts.RuntimeCredentialBootstrapResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/runtime/bootstrap/claim",
+            json={"bootstrap_secret": bootstrap_secret},
+        )
+        return self._parse_model(response, contracts.RuntimeCredentialBootstrapResult)
+
+    def init_hosted_instance(
+        self,
+        *,
+        source_type: contracts.HostedInstanceSourceType,
+        instance_id: str | None = None,
+        kit_ref: str | None = None,
+        transport_ref: str | None = None,
+        state_ref: str | None = None,
+        overlay_kit_ref: str | None = None,
+        no_overlay_kit: bool = False,
+    ) -> contracts.HostedInstanceInitResult:
+        response = self._client.post(
+            "/api/v1/runtime/instances",
+            json={
+                "instance_id": instance_id,
+                "source_type": source_type,
+                "kit_ref": kit_ref,
+                "transport_ref": transport_ref,
+                "state_ref": state_ref,
+                "overlay_kit_ref": overlay_kit_ref,
+                "no_overlay_kit": no_overlay_kit,
+            },
+        )
+        return self._parse_model(response, contracts.HostedInstanceInitResult)
+
+    def create_runtime_credential(
+        self,
+        instance_id: str,
+        *,
+        label: str,
+        permission_mode: contracts.RuntimeCredentialPermissionMode = "admin",
+    ) -> contracts.RuntimeCredentialResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/runtime/credentials",
+            json={"label": label, "permission_mode": permission_mode},
+        )
+        return self._parse_model(response, contracts.RuntimeCredentialResult)
+
+    def list_runtime_credentials(
+        self,
+        instance_id: str,
+    ) -> contracts.RuntimeCredentialListResult:
+        response = self._client.get(f"/api/v1/{instance_id}/runtime/credentials")
+        return self._parse_model(response, contracts.RuntimeCredentialListResult)
+
+    def revoke_runtime_credential(
+        self,
+        instance_id: str,
+        credential_id: str,
+    ) -> contracts.RuntimeCredentialResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke",
+        )
+        return self._parse_model(response, contracts.RuntimeCredentialResult)
+
+    def rotate_runtime_credential(
+        self,
+        instance_id: str,
+        credential_id: str,
+    ) -> contracts.RuntimeCredentialResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
+        )
+        return self._parse_model(response, contracts.RuntimeCredentialResult)
+
     def init(
         self,
         root_dir: str,
@@ -213,15 +310,19 @@ class CruxibleClient:
         subject_type: str | None = None,
         subject_id: str | None = None,
         opened_by: str = "human",
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-records",
-            json={
-                "question": question,
-                "subject_type": subject_type,
-                "subject_id": subject_id,
-                "opened_by": opened_by,
-            },
+            json=self._with_actor_context(
+                {
+                    "question": question,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "opened_by": opened_by,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.DecisionRecordResult)
 
@@ -294,14 +395,18 @@ class CruxibleClient:
         final_decision: str,
         decision_class: contracts.DecisionClass,
         rationale: str = "",
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-records/{decision_record_id}/finalize",
-            json={
-                "final_decision": final_decision,
-                "decision_class": decision_class,
-                "rationale": rationale,
-            },
+            json=self._with_actor_context(
+                {
+                    "final_decision": final_decision,
+                    "decision_class": decision_class,
+                    "rationale": rationale,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.DecisionRecordResult)
 
@@ -311,10 +416,11 @@ class CruxibleClient:
         decision_record_id: str,
         *,
         reason: str = "",
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.DecisionRecordResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-records/{decision_record_id}/abandon",
-            json={"reason": reason},
+            json=self._with_actor_context({"reason": reason}, actor_context),
         )
         return self._parse_model(response, contracts.DecisionRecordResult)
 
@@ -386,25 +492,29 @@ class CruxibleClient:
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback",
-            json={
-                "receipt_id": receipt_id,
-                "action": action,
-                "source": source,
-                "from_type": from_type,
-                "from_id": from_id,
-                "relationship_type": relationship_type,
-                "to_type": to_type,
-                "to_id": to_id,
-                "edge_key": edge_key,
-                "reason": reason,
-                "reason_code": reason_code,
-                "scope_hints": scope_hints,
-                "corrections": corrections,
-                "group_override": group_override,
-            },
+            json=self._with_actor_context(
+                {
+                    "receipt_id": receipt_id,
+                    "action": action,
+                    "source": source,
+                    "from_type": from_type,
+                    "from_id": from_id,
+                    "relationship_type": relationship_type,
+                    "to_type": to_type,
+                    "to_id": to_id,
+                    "edge_key": edge_key,
+                    "reason": reason,
+                    "reason_code": reason_code,
+                    "scope_hints": scope_hints,
+                    "corrections": corrections,
+                    "group_override": group_override,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.FeedbackResult)
 
@@ -414,13 +524,17 @@ class CruxibleClient:
         *,
         items: list[contracts.FeedbackBatchItemInput],
         source: contracts.FeedbackSource,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackBatchResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/batch",
-            json={
-                "source": source,
-                "items": [item.model_dump(mode="json") for item in items],
-            },
+            json=self._with_actor_context(
+                {
+                    "source": source,
+                    "items": [item.model_dump(mode="json") for item in items],
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.FeedbackBatchResult)
 
@@ -439,22 +553,26 @@ class CruxibleClient:
         group_override: bool = False,
         path_index: int | None = None,
         path_alias: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/feedback/from-query",
-            json={
-                "receipt_id": receipt_id,
-                "result_index": result_index,
-                "action": action,
-                "source": source,
-                "reason": reason,
-                "reason_code": reason_code,
-                "scope_hints": scope_hints,
-                "corrections": corrections,
-                "group_override": group_override,
-                "path_index": path_index,
-                "path_alias": path_alias,
-            },
+            json=self._with_actor_context(
+                {
+                    "receipt_id": receipt_id,
+                    "result_index": result_index,
+                    "action": action,
+                    "source": source,
+                    "reason": reason,
+                    "reason_code": reason_code,
+                    "scope_hints": scope_hints,
+                    "corrections": corrections,
+                    "group_override": group_override,
+                    "path_index": path_index,
+                    "path_alias": path_alias,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.FeedbackResult)
 
@@ -471,20 +589,24 @@ class CruxibleClient:
         scope_hints: dict[str, Any] | None = None,
         outcome_profile_key: str | None = None,
         detail: dict[str, Any] | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.OutcomeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/outcome",
-            json={
-                "receipt_id": receipt_id,
-                "anchor_type": anchor_type,
-                "anchor_id": anchor_id,
-                "outcome": outcome,
-                "source": source,
-                "outcome_code": outcome_code,
-                "scope_hints": scope_hints,
-                "outcome_profile_key": outcome_profile_key,
-                "detail": detail,
-            },
+            json=self._with_actor_context(
+                {
+                    "receipt_id": receipt_id,
+                    "anchor_type": anchor_type,
+                    "anchor_id": anchor_id,
+                    "outcome": outcome,
+                    "source": source,
+                    "outcome_code": outcome_code,
+                    "scope_hints": scope_hints,
+                    "outcome_profile_key": outcome_profile_key,
+                    "detail": detail,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.OutcomeResult)
 
@@ -727,13 +849,17 @@ class CruxibleClient:
         relationships: builtins.list[contracts.RelationshipInput],
         *,
         dry_run: bool = False,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.AddRelationshipResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/relationships",
-            json={
-                "relationships": [item.model_dump(mode="json") for item in relationships],
-                "dry_run": dry_run,
-            },
+            json=self._with_actor_context(
+                {
+                    "relationships": [item.model_dump(mode="json") for item in relationships],
+                    "dry_run": dry_run,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.AddRelationshipResult)
 
@@ -743,13 +869,17 @@ class CruxibleClient:
         entities: builtins.list[contracts.EntityInput],
         *,
         dry_run: bool = False,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.AddEntityResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/entities",
-            json={
-                "entities": [item.model_dump(mode="json") for item in entities],
-                "dry_run": dry_run,
-            },
+            json=self._with_actor_context(
+                {
+                    "entities": [item.model_dump(mode="json") for item in entities],
+                    "dry_run": dry_run,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.AddEntityResult)
 
@@ -759,10 +889,14 @@ class CruxibleClient:
         payload: contracts.BatchDirectWritePayload,
         *,
         dry_run: bool = False,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.BatchDirectWriteResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/direct-writes/batch",
-            json={"payload": payload.model_dump(mode="json"), "dry_run": dry_run},
+            json=self._with_actor_context(
+                {"payload": payload.model_dump(mode="json"), "dry_run": dry_run},
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.BatchDirectWriteResult)
 
@@ -798,14 +932,18 @@ class CruxibleClient:
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
         decision_record_id: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.WorkflowRunResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/run",
-            json={
-                "workflow_name": workflow_name,
-                "input": input_payload or {},
-                "decision_record_id": decision_record_id,
-            },
+            json=self._with_actor_context(
+                {
+                    "workflow_name": workflow_name,
+                    "input": input_payload or {},
+                    "decision_record_id": decision_record_id,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.WorkflowRunResult)
 
@@ -818,16 +956,20 @@ class CruxibleClient:
         expected_head_snapshot_id: str | None = None,
         input_payload: dict[str, Any] | None = None,
         decision_record_id: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.WorkflowApplyResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/apply",
-            json={
-                "workflow_name": workflow_name,
-                "input": input_payload or {},
-                "expected_apply_digest": expected_apply_digest,
-                "expected_head_snapshot_id": expected_head_snapshot_id,
-                "decision_record_id": decision_record_id,
-            },
+            json=self._with_actor_context(
+                {
+                    "workflow_name": workflow_name,
+                    "input": input_payload or {},
+                    "expected_apply_digest": expected_apply_digest,
+                    "expected_head_snapshot_id": expected_head_snapshot_id,
+                    "decision_record_id": decision_record_id,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.WorkflowApplyResult)
 
@@ -836,10 +978,11 @@ class CruxibleClient:
         instance_id: str,
         *,
         name: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.WorkflowTestResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/test",
-            json={"name": name},
+            json=self._with_actor_context({"name": name}, actor_context),
         )
         return self._parse_model(response, contracts.WorkflowTestResult)
 
@@ -850,14 +993,18 @@ class CruxibleClient:
         workflow_name: str,
         input_payload: dict[str, Any] | None = None,
         decision_record_id: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.WorkflowProposeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/workflows/propose",
-            json={
-                "workflow_name": workflow_name,
-                "input": input_payload or {},
-                "decision_record_id": decision_record_id,
-            },
+            json=self._with_actor_context(
+                {
+                    "workflow_name": workflow_name,
+                    "input": input_payload or {},
+                    "decision_record_id": decision_record_id,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.WorkflowProposeResult)
 
@@ -866,10 +1013,11 @@ class CruxibleClient:
         instance_id: str,
         *,
         label: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.SnapshotCreateResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/snapshots",
-            json={"label": label},
+            json=self._with_actor_context({"label": label}, actor_context),
         )
         return self._parse_model(response, contracts.SnapshotCreateResult)
 
@@ -898,16 +1046,20 @@ class CruxibleClient:
         source_retention: contracts.SourceRetention = "manifest_only",
         original_uri: str | None = None,
         label: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.RegisterSourceArtifactResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/source-artifacts/register",
-            json={
-                "source_path": source_path,
-                "source_kind": source_kind,
-                "source_retention": source_retention,
-                "original_uri": original_uri,
-                "label": label,
-            },
+            json=self._with_actor_context(
+                {
+                    "source_path": source_path,
+                    "source_kind": source_kind,
+                    "source_retention": source_retention,
+                    "original_uri": original_uri,
+                    "label": label,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.RegisterSourceArtifactResult)
 
@@ -979,10 +1131,14 @@ class CruxibleClient:
         instance_id: str,
         *,
         expected_apply_digest: str,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.StatePullApplyResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/state/pull/apply",
-            json={"expected_apply_digest": expected_apply_digest},
+            json=self._with_actor_context(
+                {"expected_apply_digest": expected_apply_digest},
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.StatePullApplyResult)
 
@@ -994,15 +1150,19 @@ class CruxibleClient:
         rule: str,
         severity: contracts.ConstraintSeverity = "warning",
         description: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.AddConstraintResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/constraints",
-            json={
-                "name": name,
-                "rule": rule,
-                "severity": severity,
-                "description": description,
-            },
+            json=self._with_actor_context(
+                {
+                    "name": name,
+                    "rule": rule,
+                    "severity": severity,
+                    "description": description,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.AddConstraintResult)
 
@@ -1020,21 +1180,25 @@ class CruxibleClient:
         query_name: str | None = None,
         workflow_name: str | None = None,
         expires_at: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.AddDecisionPolicyResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/decision-policies",
-            json={
-                "name": name,
-                "applies_to": applies_to,
-                "relationship_type": relationship_type,
-                "effect": effect,
-                "match": match.model_dump(mode="json", by_alias=True) if match else None,
-                "description": description,
-                "rationale": rationale,
-                "query_name": query_name,
-                "workflow_name": workflow_name,
-                "expires_at": expires_at,
-            },
+            json=self._with_actor_context(
+                {
+                    "name": name,
+                    "applies_to": applies_to,
+                    "relationship_type": relationship_type,
+                    "effect": effect,
+                    "match": match.model_dump(mode="json", by_alias=True) if match else None,
+                    "description": description,
+                    "rationale": rationale,
+                    "query_name": query_name,
+                    "workflow_name": workflow_name,
+                    "expires_at": expires_at,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.AddDecisionPolicyResult)
 
@@ -1107,19 +1271,23 @@ class CruxibleClient:
         signal_sources_used: builtins.list[str] | None = None,
         proposed_by: contracts.GroupProposedBy = "agent",
         suggested_priority: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.ProposeGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/propose",
-            json={
-                "relationship_type": relationship_type,
-                "members": [item.model_dump(mode="json") for item in members],
-                "thesis_text": thesis_text,
-                "thesis_facts": thesis_facts,
-                "analysis_state": analysis_state,
-                "signal_sources_used": signal_sources_used,
-                "proposed_by": proposed_by,
-                "suggested_priority": suggested_priority,
-            },
+            json=self._with_actor_context(
+                {
+                    "relationship_type": relationship_type,
+                    "members": [item.model_dump(mode="json") for item in members],
+                    "thesis_text": thesis_text,
+                    "thesis_facts": thesis_facts,
+                    "analysis_state": analysis_state,
+                    "signal_sources_used": signal_sources_used,
+                    "proposed_by": proposed_by,
+                    "suggested_priority": suggested_priority,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.ProposeGroupToolResult)
 
@@ -1132,15 +1300,19 @@ class CruxibleClient:
         rationale: str = "",
         resolved_by: contracts.GroupResolvedBy = "human",
         expected_pending_version: int,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.ResolveGroupToolResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/groups/{group_id}/resolve",
-            json={
-                "action": action,
-                "rationale": rationale,
-                "resolved_by": resolved_by,
-                "expected_pending_version": expected_pending_version,
-            },
+            json=self._with_actor_context(
+                {
+                    "action": action,
+                    "rationale": rationale,
+                    "resolved_by": resolved_by,
+                    "expected_pending_version": expected_pending_version,
+                },
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.ResolveGroupToolResult)
 
@@ -1151,10 +1323,14 @@ class CruxibleClient:
         *,
         trust_status: contracts.GroupTrustStatus,
         reason: str = "",
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.UpdateTrustStatusToolResult:
         response = self._client.patch(
             f"/api/v1/{instance_id}/resolutions/{resolution_id}/trust",
-            json={"trust_status": trust_status, "reason": reason},
+            json=self._with_actor_context(
+                {"trust_status": trust_status, "reason": reason},
+                actor_context,
+            ),
         )
         return self._parse_model(response, contracts.UpdateTrustStatusToolResult)
 

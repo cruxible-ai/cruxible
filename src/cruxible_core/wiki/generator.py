@@ -760,9 +760,7 @@ class _WikiGenerator:
                 lines.append(f"- {_humanize(relationship_type)}: {count}")
             lines.append("")
 
-        top_connected = [
-            item for item in sorted(connected_counts, reverse=True) if item[0] > 0
-        ][:5]
+        top_connected = [item for item in sorted(connected_counts, reverse=True) if item[0] > 0][:5]
         if top_connected:
             lines.append("### Most Connected Subjects")
             for count, subject in top_connected:
@@ -828,9 +826,7 @@ class _WikiGenerator:
             )
         )
         lines.extend(self._render_outcome_history_section(outcomes))
-        lines.extend(
-            self._render_full_evidence_section(self._subject_path(subject), receipts)
-        )
+        lines.extend(self._render_full_evidence_section(self._subject_path(subject), receipts))
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_subject_at_a_glance(
@@ -1038,8 +1034,7 @@ class _WikiGenerator:
             relationship_schema = self.relationships_by_name.get(relationship_type)
             label = escape_mermaid_label(_humanize(relationship_type))
             governed = (
-                relationship_schema is not None
-                and relationship_schema.proposal_policy is not None
+                relationship_schema is not None and relationship_schema.proposal_policy is not None
             )
             if row.get("direction") == "outgoing":
                 source_node, target_node = subject_node, neighbor_node
@@ -1062,10 +1057,7 @@ class _WikiGenerator:
                 _mermaid_subgraph(
                     f"type_{mermaid_id(entity_type)}",
                     f"{_humanize(entity_type)} ({len(type_nodes)})",
-                    [
-                        type_nodes[node]
-                        for node in sorted(type_nodes)
-                    ],
+                    [type_nodes[node] for node in sorted(type_nodes)],
                 )
             )
 
@@ -1084,13 +1076,9 @@ class _WikiGenerator:
         if local_neighbor_nodes:
             lines.append(f"  class {','.join(sorted(local_neighbor_nodes))} localNeighbor")
         if upstream_neighbor_nodes:
-            lines.append(
-                f"  class {','.join(sorted(upstream_neighbor_nodes))} upstreamNeighbor"
-            )
+            lines.append(f"  class {','.join(sorted(upstream_neighbor_nodes))} upstreamNeighbor")
         if context_neighbor_nodes:
-            lines.append(
-                f"  class {','.join(sorted(context_neighbor_nodes))} contextNeighbor"
-            )
+            lines.append(f"  class {','.join(sorted(context_neighbor_nodes))} contextNeighbor")
         if deterministic_edge_indexes:
             lines.append(
                 f"  linkStyle {_format_mermaid_edge_indexes(deterministic_edge_indexes)} "
@@ -1222,7 +1210,8 @@ class _WikiGenerator:
             relevant_members = [
                 member
                 for member in members
-                if subject.key in (
+                if subject.key
+                in (
                     f"{member.from_type}:{member.from_id}",
                     f"{member.to_type}:{member.to_id}",
                 )
@@ -1265,9 +1254,7 @@ class _WikiGenerator:
                     self._subject_path(subject),
                     self._workflow_path(pending_group.source_workflow_name),
                 )
-                pending_lines.append(
-                    f"  Source: [{pending_group.source_workflow_name}]({wf_link})"
-                )
+                pending_lines.append(f"  Source: [{pending_group.source_workflow_name}]({wf_link})")
         if not pending_lines:
             return []
         lines.extend(pending_lines)
@@ -1589,9 +1576,7 @@ class _WikiGenerator:
         lines.append("## Summary")
         lines.append(f"- Mode: {schema.mode}")
         entry_label = (
-            _humanize(schema.entry_point)
-            if schema.entry_point is not None
-            else "Collection query"
+            _humanize(schema.entry_point) if schema.entry_point is not None else "Collection query"
         )
         lines.append(f"- Starting record type: {entry_label}")
         lines.append(f"- Produces: {schema.returns}")
@@ -1716,11 +1701,7 @@ class _WikiGenerator:
         else:
             lines.append("- Workflow input fields: none")
 
-        query_names = {
-            step.query
-            for step in schema.steps
-            if isinstance(step.query, str)
-        }
+        query_names = {step.query for step in schema.steps if isinstance(step.query, str)}
         inline_queries = [
             step.query.returns
             for step in schema.steps
@@ -1756,9 +1737,7 @@ class _WikiGenerator:
             if step.make_candidates is not None and step.as_ is not None:
                 relationship_outputs[step.as_] = step.make_candidates.relationship_type
             if step.propose_relationship_group is not None:
-                proposed_relationships.add(
-                    step.propose_relationship_group.relationship_type
-                )
+                proposed_relationships.add(step.propose_relationship_group.relationship_type)
 
         applied_entities = {
             entity_outputs[step.apply_entities.entities_from]
@@ -1883,9 +1862,7 @@ class _WikiGenerator:
                     )
             feedback_profile = self.config.get_feedback_profile(relationship_type)
             if feedback_profile is not None:
-                lines.append(
-                    f"  - Feedback reason codes: {len(feedback_profile.reason_codes)}"
-                )
+                lines.append(f"  - Feedback reason codes: {len(feedback_profile.reason_codes)}")
             outcome_profiles = [
                 (name, profile)
                 for name, profile in self.config.outcome_profiles.items()
@@ -1949,10 +1926,7 @@ class _WikiGenerator:
         if step.dedupe_items is not None:
             return "Deduplicate rows"
         if step.make_candidates is not None:
-            return (
-                "Build candidate "
-                f"{_humanize(step.make_candidates.relationship_type)} links"
-            )
+            return f"Build candidate {_humanize(step.make_candidates.relationship_type)} links"
         if step.map_signals is not None:
             return f"Map {_humanize(step.map_signals.signal_source)} signals"
         if step.propose_relationship_group is not None:
@@ -2017,9 +1991,7 @@ class _WikiGenerator:
             if step.make_entities is not None:
                 return f"{step.as_} ({_humanize(step.make_entities.entity_type)} records)"
             if step.make_relationships is not None:
-                return (
-                    f"{step.as_} ({_humanize(step.make_relationships.relationship_type)} links)"
-                )
+                return f"{step.as_} ({_humanize(step.make_relationships.relationship_type)} links)"
             if step.make_candidates is not None:
                 return (
                     f"{step.as_} ({_humanize(step.make_candidates.relationship_type)} candidates)"
@@ -2217,9 +2189,7 @@ class _WikiGenerator:
                         )
                         lines.append(f"  - {from_link} with {to_link}")
                     if len(members) > self.max_per_type:
-                        lines.append(
-                            f"  - +{len(members) - self.max_per_type} more subject(s)"
-                        )
+                        lines.append(f"  - +{len(members) - self.max_per_type} more subject(s)")
             lines.append("")
         if len(resolutions) > self.max_per_type:
             lines.append(f"- +{len(resolutions) - self.max_per_type} more decision(s)")
@@ -2233,9 +2203,7 @@ class _WikiGenerator:
             lines.extend(["No outcomes recorded.", ""])
             return "\n".join(lines).rstrip() + "\n"
 
-        lines.extend(
-            _render_count_summary("By Outcome", (outcome.outcome for outcome in outcomes))
-        )
+        lines.extend(_render_count_summary("By Outcome", (outcome.outcome for outcome in outcomes)))
         lines.extend(
             _render_count_summary(
                 "By Outcome Code",
@@ -2435,7 +2403,6 @@ def _counterpart_for_subject(subject: SubjectRef, member: CandidateMember) -> Su
     return None
 
 
-
 def _render_property_bullets(properties: dict[str, Any], depth: int = 1) -> list[str]:
     """Render non-empty properties as indented sub-bullets, recursing into nested structures."""
     filtered = {
@@ -2449,8 +2416,7 @@ def _render_property_bullets(properties: dict[str, Any], depth: int = 1) -> list
         if isinstance(value, list) and value and isinstance(value[0], dict):
             # If every dict has the same single key, flatten to values on one line.
             single_keys = {
-                next(iter(d.keys())) for d in value
-                if isinstance(d, dict) and len(d) == 1
+                next(iter(d.keys())) for d in value if isinstance(d, dict) and len(d) == 1
             }
             if len(single_keys) == 1 and all(isinstance(d, dict) and len(d) == 1 for d in value):
                 common_key = single_keys.pop()
@@ -2529,9 +2495,7 @@ def _markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> st
         "| " + " | ".join("---" for _header in headers) + " |",
     ]
     for row in rows:
-        lines.append(
-            "| " + " | ".join(_escape_markdown_table_cell(value) for value in row) + " |"
-        )
+        lines.append("| " + " | ".join(_escape_markdown_table_cell(value) for value in row) + " |")
     return "\n".join(lines)
 
 
@@ -2668,10 +2632,7 @@ def _shorten_common_edge_labels(labels: list[str]) -> list[str]:
     suffix_length = 0
     min_length = min(len(words) for words in word_lists)
     while prefix_length + suffix_length < min_length:
-        suffix_words = {
-            words[len(words) - suffix_length - 1]
-            for words in word_lists
-        }
+        suffix_words = {words[len(words) - suffix_length - 1] for words in word_lists}
         if len(suffix_words) != 1:
             break
         suffix_length += 1

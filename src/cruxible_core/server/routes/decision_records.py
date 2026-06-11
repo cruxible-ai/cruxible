@@ -27,6 +27,7 @@ async def create_decision_record(
         subject_type=req.subject_type,
         subject_id=req.subject_id,
         opened_by=req.opened_by,
+        actor_context=req.actor_context,
     )
 
 
@@ -106,6 +107,7 @@ async def finalize_decision_record(
         final_decision=req.final_decision,
         decision_class=req.decision_class,
         rationale=req.rationale,
+        actor_context=req.actor_context,
     )
 
 
@@ -122,4 +124,5 @@ async def abandon_decision_record(
         resolve_server_instance_id(instance_id),
         decision_record_id,
         reason=req.reason,
+        actor_context=req.actor_context,
     )

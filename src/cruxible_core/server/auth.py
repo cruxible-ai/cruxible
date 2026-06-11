@@ -12,17 +12,34 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+from cruxible_core.runtime.permissions import (
+    PermissionMode,
+    request_instance_scope,
+    request_permission_scope,
+)
 from cruxible_core.server.config import (
+    get_runtime_bootstrap_secret,
     get_server_token,
     is_server_auth_enabled,
 )
+from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.errors import ErrorResponse
+from cruxible_core.server.request_logging import log_runtime_request
+from cruxible_core.server.route_paths import (
+    HEALTH_PATH,
+    HOSTED_INSTANCE_INIT_PATH,
+    RUNTIME_BOOTSTRAP_CLAIM_PATH,
+    VERSION_PATH,
+    api_v1_path,
+    route_template_matches,
+)
 
 _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvars.ContextVar(
     "cruxible_auth_context",
     default=None,
 )
+
+EFFECTIVE_PERMISSION_MODE_HEADER = "X-Cruxible-Effective-Permission-Mode"
 
 
 @dataclass(frozen=True)
@@ -51,6 +68,35 @@ def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
     )
 
 
+def _unauthorized_request_response(request: Request, message: str = "Unauthorized") -> JSONResponse:
+    response = _unauthorized_response(message)
+    log_runtime_request(
+        request,
+        status=response.status_code,
+        auth_context=None,
+        error_type="AuthenticationError",
+    )
+    return response
+
+
+_RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
+_HOSTED_INSTANCE_INIT_ROUTE = api_v1_path(HOSTED_INSTANCE_INIT_PATH)
+
+
+def _is_bootstrap_claim_request(request: Request) -> bool:
+    return request.method == "POST" and route_template_matches(
+        request.url.path,
+        _RUNTIME_BOOTSTRAP_CLAIM_ROUTE,
+    )
+
+
+def _is_hosted_instance_init_request(request: Request) -> bool:
+    return request.method == "POST" and route_template_matches(
+        request.url.path,
+        _HOSTED_INSTANCE_INIT_ROUTE,
+    )
+
+
 @contextmanager
 def _auth_context_scope(
     context: ResolvedAuthContext | None,
@@ -67,21 +113,25 @@ async def token_auth_middleware(
     call_next: Callable[[Request], Awaitable[Any]],
 ) -> Any:
     """Resolve auth context and request-scoped permission mode for incoming requests."""
-    if request.url.path in {"/health", "/version"}:
+    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
         return await call_next(request)
+    if _is_bootstrap_claim_request(request):
+        return await _call_next_with_request_log(request, call_next, auth_context=None)
 
     auth_header = request.headers.get("Authorization", "")
     bearer_token: str | None = None
     if auth_header:
         prefix = "Bearer "
         if not auth_header.startswith(prefix):
-            return _unauthorized_response()
+            return _unauthorized_request_response(request)
         bearer_token = auth_header[len(prefix) :].strip()
         if not bearer_token:
-            return _unauthorized_response()
+            return _unauthorized_request_response(request)
 
     resolved_context: ResolvedAuthContext | None = None
     configured_token = get_server_token()
+    bootstrap_secret = get_runtime_bootstrap_secret()
+    auth_enabled = is_server_auth_enabled()
 
     if bearer_token is not None:
         if configured_token and hmac.compare_digest(bearer_token, configured_token):
@@ -94,14 +144,104 @@ async def token_auth_middleware(
                 effective_permission_mode=None,
                 created_by="legacy_server_token",
             )
-        elif is_server_auth_enabled():
-            return _unauthorized_response()
+        elif (
+            auth_enabled
+            and _is_hosted_instance_init_request(request)
+            and bootstrap_secret
+            and hmac.compare_digest(bearer_token, bootstrap_secret)
+            and not get_runtime_credential_store().bootstrap_secret_claimed(bootstrap_secret)
+        ):
+            resolved_context = ResolvedAuthContext(
+                principal_id="runtime_bootstrap",
+                principal_label="runtime_bootstrap",
+                credential_type="runtime_bootstrap",
+                instance_scope=None,
+                role="admin",
+                effective_permission_mode=PermissionMode.ADMIN,
+                created_by="runtime_bootstrap",
+            )
+        elif auth_enabled:
+            runtime_credential = get_runtime_credential_store().authenticate(bearer_token)
+            if runtime_credential is not None:
+                resolved_context = ResolvedAuthContext(
+                    principal_id=runtime_credential.credential_id,
+                    principal_label=runtime_credential.label,
+                    credential_type="runtime_credential",
+                    instance_scope=runtime_credential.instance_id,
+                    role=runtime_credential.permission_mode.name.lower(),
+                    effective_permission_mode=runtime_credential.permission_mode,
+                    created_by=runtime_credential.created_by,
+                )
+            else:
+                return _unauthorized_request_response(request)
 
-    if bearer_token is None and is_server_auth_enabled():
-        return _unauthorized_response()
+    if bearer_token is None and auth_enabled:
+        return _unauthorized_request_response(request)
+    if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None and (
+        resolved_context is None or resolved_context.credential_type != "runtime_credential"
+    ):
+        return _unauthorized_request_response(request)
 
     with _auth_context_scope(resolved_context):
         if resolved_context is not None and resolved_context.effective_permission_mode is not None:
-            with request_permission_scope(resolved_context.effective_permission_mode):
-                return await call_next(request)
-        return await call_next(request)
+            relayed_mode = _relayed_effective_permission_mode(request, resolved_context)
+            if relayed_mode is None:
+                return _unauthorized_request_response(request)
+            with (
+                request_permission_scope(relayed_mode),
+                request_instance_scope(resolved_context.instance_scope),
+            ):
+                return await _call_next_with_request_log(
+                    request,
+                    call_next,
+                    auth_context=resolved_context,
+                )
+        return await _call_next_with_request_log(
+            request,
+            call_next,
+            auth_context=resolved_context,
+        )
+
+
+def _relayed_effective_permission_mode(
+    request: Request,
+    context: ResolvedAuthContext,
+) -> PermissionMode | None:
+    raw_mode = request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER)
+    if raw_mode is None:
+        return context.effective_permission_mode
+    if context.credential_type != "runtime_credential":
+        return None
+    try:
+        relayed_mode = PermissionMode[raw_mode.strip().upper()]
+    except KeyError:
+        return None
+    credential_mode = context.effective_permission_mode
+    if credential_mode is None or relayed_mode > credential_mode:
+        return None
+    return relayed_mode
+
+
+async def _call_next_with_request_log(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Any]],
+    *,
+    auth_context: ResolvedAuthContext | None,
+) -> Any:
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        log_runtime_request(
+            request,
+            status=500,
+            auth_context=auth_context,
+            error_type=exc.__class__.__name__,
+        )
+        raise
+    log_runtime_request(
+        request,
+        status=response.status_code,
+        auth_context=auth_context,
+        error_type=getattr(request.state, "error_type", None),
+    )
+    return response

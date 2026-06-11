@@ -31,6 +31,7 @@ from cruxible_core.feedback.types import (
     FeedbackRecord,
     OutcomeRecord,
 )
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, GroupResolution
@@ -82,6 +83,7 @@ def _normalize_feedback_record(
     scope_hints: dict[str, Any] | None,
     corrections: dict[str, Any] | None,
     group_override: bool,
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackRecord:
     """Validate and normalize one feedback request into a record."""
     _validate_feedback_request_values(
@@ -178,6 +180,7 @@ def _normalize_feedback_record(
         decision_context=decision_context,
         context_snapshot=context_snapshot,
         corrections=normalized_corrections,
+        actor_context=actor_context,
     )
 
 
@@ -932,6 +935,7 @@ def service_feedback_input(
     item: FeedbackItemInput,
     *,
     source: Literal["human", "agent"],
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackServiceResult:
     """Normalize one feedback input payload, then record edge feedback."""
     return service_feedback(
@@ -945,6 +949,7 @@ def service_feedback_input(
         scope_hints=item.scope_hints,
         corrections=item.corrections,
         group_override=item.group_override,
+        actor_context=actor_context,
     )
 
 
@@ -962,6 +967,7 @@ def service_feedback_from_query_result(
     group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackServiceResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     _validate_feedback_request_values(
@@ -1012,6 +1018,7 @@ def service_feedback_from_query_result(
             "reason_code": reason_code,
             "scope_hints": scope_hints or {},
         },
+        actor_context=actor_context,
     )
 
 
@@ -1027,6 +1034,7 @@ def service_feedback(
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
     _feedback_from_query: dict[str, Any] | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackServiceResult:
     """Record feedback on an edge.
 
@@ -1059,6 +1067,7 @@ def service_feedback(
         scope_hints=scope_hints,
         corrections=corrections,
         group_override=group_override,
+        actor_context=actor_context,
     )
 
     receipt_parameters: dict[str, Any] = {
@@ -1110,12 +1119,14 @@ def service_feedback_batch_inputs(
     items: list[FeedbackItemInput],
     *,
     source: Literal["human", "agent"],
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackBatchServiceResult:
     """Normalize batch feedback input payloads, then record them together."""
     return service_feedback_batch(
         instance,
         [_feedback_batch_item_from_input(item) for item in items],
         source=source,
+        actor_context=actor_context,
     )
 
 
@@ -1124,6 +1135,7 @@ def service_feedback_batch(
     items: list[FeedbackBatchItem],
     *,
     source: Literal["human", "agent"],
+    actor_context: GovernedActorContext | None = None,
 ) -> FeedbackBatchServiceResult:
     """Record a batch of edge feedback with one top-level receipt."""
     if not items:
@@ -1158,6 +1170,7 @@ def service_feedback_batch(
             scope_hints=item.scope_hints,
             corrections=item.corrections,
             group_override=item.group_override,
+            actor_context=actor_context,
         )
         for item in items
     ]
@@ -1233,6 +1246,7 @@ def service_outcome(
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> OutcomeServiceResult:
     """Record an anchored outcome for a prior receipt or proposal resolution.
 
@@ -1332,6 +1346,7 @@ def service_outcome(
         relationship_type=relationship_type,
         source=source,
         detail=detail or {},
+        actor_context=actor_context,
     )
     with instance.write_transaction() as uow:
         uow.feedback.save_outcome(record)

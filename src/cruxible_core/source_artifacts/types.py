@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cruxible_core.governance.actors import GovernedActorContext
+
 SourceKind = Literal["markdown"]
 SourceRetention = Literal["manifest_only", "archive"]
 DereferenceStatus = Literal["available", "drifted", "unavailable"]
@@ -45,6 +47,7 @@ class SourceArtifactRecord(BaseModel):
     archived: bool = False
     archive_content_hash: str | None = None
     created_at: str
+    registered_actor_context: GovernedActorContext | None = None
 
     model_config = ConfigDict(extra="forbid")
 

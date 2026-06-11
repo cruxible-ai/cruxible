@@ -196,8 +196,7 @@ def test_approval_transition_applies_edge_group_resolution_and_receipt(
     assert receipt.operation_type == "group_resolve"
     assert receipt.committed is True
     assert (
-        instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        is not None
+        instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is not None
     )
 
 
@@ -227,10 +226,7 @@ def test_rejection_transition_resolves_without_edge_and_records_watch_trust(
     assert group.resolution_id == result.resolution_id
     resolution = _stored_resolution(instance, _require_resolution_id(result.resolution_id))
     assert resolution.trust_status == "watch"
-    assert (
-        instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        is None
-    )
+    assert instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
 
 
 def test_suppression_transition_keeps_public_shape_and_reasons(
@@ -334,10 +330,7 @@ def test_approval_transition_rolls_back_group_resolution_graph_and_success_recei
         assert store.list_resolutions(relationship_type="fits") == []
     finally:
         store.close()
-    assert (
-        instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        is None
-    )
+    assert instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
     receipt_store = instance.get_receipt_store()
     try:
         receipts = receipt_store.list_receipts(operation_type="group_resolve")
@@ -385,10 +378,7 @@ def test_approval_rejects_upstream_owned_relationship_type_and_rolls_back(
         assert store.list_resolutions(relationship_type="fits") == []
     finally:
         store.close()
-    assert (
-        instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        is None
-    )
+    assert instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
     receipt_store = instance.get_receipt_store()
     try:
         receipts = receipt_store.list_receipts(operation_type="group_resolve")

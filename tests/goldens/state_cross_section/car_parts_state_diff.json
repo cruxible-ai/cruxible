@@ -21,6 +21,7 @@
             },
             "provenance": {
               "created_at": "<TIMESTAMP>",
+              "receipt_id": "<RECEIPT_1>",
               "source": "fixture",
               "source_ref": "seed"
             }

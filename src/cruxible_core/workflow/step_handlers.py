@@ -423,6 +423,7 @@ def execute_apply_entities_handler(
         context.receipt_builder,
         persist_writes=context.execution_action == "apply",
         parent_id=step_node,
+        actor_context=context.actor_context,
     )
     preview_payload = entity_preview.model_dump(mode="python")
     context.set_step_output(compiled_step, preview_payload)
@@ -455,6 +456,7 @@ def execute_apply_relationships_handler(
         context.receipt_builder,
         persist_writes=context.execution_action == "apply",
         parent_id=step_node,
+        actor_context=context.actor_context,
     )
     preview_payload = relationship_preview.model_dump(mode="python")
     context.set_step_output(compiled_step, preview_payload)
@@ -493,6 +495,7 @@ def execute_apply_all_handler(
             context.receipt_builder,
             persist_writes=context.execution_action == "apply",
             parent_id=step_node,
+            actor_context=context.actor_context,
         )
         entity_results[alias] = entity_preview.model_dump(mode="python")
         if context.execution_action == "apply":
@@ -511,6 +514,7 @@ def execute_apply_all_handler(
             context.receipt_builder,
             persist_writes=context.execution_action == "apply",
             parent_id=step_node,
+            actor_context=context.actor_context,
         )
         relationship_results[alias] = relationship_preview.model_dump(mode="python")
         if context.execution_action == "apply":

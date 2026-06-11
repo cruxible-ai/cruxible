@@ -64,9 +64,7 @@ class MemberChanges:
 def member_signal_sources(members: list[CandidateMember]) -> list[str]:
     """Return ordered unique signal sources attached to proposal members."""
     return list(
-        ordered_unique(
-            signal.signal_source for member in members for signal in member.signals
-        )
+        ordered_unique(signal.signal_source for member in members for signal in member.signals)
     )
 
 
@@ -484,8 +482,7 @@ def validate_proposal_signals(
 
     if len(members) > proposal_policy.max_group_size:
         raise ConfigError(
-            f"Group size {len(members)} exceeds max_group_size "
-            f"{proposal_policy.max_group_size}"
+            f"Group size {len(members)} exceeds max_group_size {proposal_policy.max_group_size}"
         )
 
 

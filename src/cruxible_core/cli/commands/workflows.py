@@ -349,7 +349,7 @@ def run_cmd(
     """
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": resolved_decision_record_id}
         if resolved_decision_record_id is not None
         else {}
@@ -508,7 +508,7 @@ def apply_cmd(
     assert workflow_name is not None
     assert apply_digest is not None
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": resolved_decision_record_id}
         if resolved_decision_record_id is not None
         else {}
@@ -599,7 +599,7 @@ def propose_cmd(
     """Execute a workflow and bridge its output into a candidate group."""
     payload = _resolve_workflow_input(input_text=input_text, input_file=input_file)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": resolved_decision_record_id}
         if resolved_decision_record_id is not None
         else {}

@@ -14,6 +14,7 @@ from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
@@ -101,6 +102,16 @@ def set_edge_provenance(graph: EntityGraph, *, part_id: str = "P-1") -> None:
         "V-1",
         "fits",
         metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
+    )
+
+
+def actor_context() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_feedback",
+        org_id="org_1",
+        operation_id="op_feedback",
+        timestamp="2026-06-05T12:00:00Z",
     )
 
 
@@ -333,6 +344,7 @@ class TestApplier:
             receipt_id="RCP-test",
             action="approve",
             target=target,
+            actor_context=actor_context(),
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
@@ -341,6 +353,10 @@ class TestApplier:
         assert prov.source == "ingest"
         assert prov.last_modified_at is not None
         assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_actor_context is not None
+        assert prov.last_modified_actor_context.actor_id == "usr_feedback"
+        assert rel.metadata.assertion.review.actor_context is not None
+        assert rel.metadata.assertion.review.actor_context.operation_id == "op_feedback"
 
     def test_reject_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
         set_edge_provenance(graph)
@@ -393,9 +409,7 @@ class TestApplier:
         assert prov.last_modified_by == "feedback:correct"
         assert_review_state(rel, status="approved", source="human")
         assert rel.properties["_provenance"] == {"source": "spoofed"}
-        assert rel.properties["_assertion"] == {
-            "review": {"status": "rejected", "source": "human"}
-        }
+        assert rel.properties["_assertion"] == {"review": {"status": "rejected", "source": "human"}}
 
     def test_no_provenance_no_crash(self, graph: EntityGraph, target: RelationshipInstance):
         """Feedback on edges without provenance metadata works fine (no crash)."""
@@ -679,6 +693,7 @@ class TestOutcomeStore:
         store.save_outcome(OutcomeRecord(receipt_id="RCP-2", outcome="incorrect"))
         assert store.count_outcomes() == 3
         assert store.count_outcomes(receipt_id="RCP-1") == 2
+
 
 # ---------------------------------------------------------------------------
 # Integration: feedback reject → re-query excludes edge

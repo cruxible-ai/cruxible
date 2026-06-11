@@ -691,8 +691,7 @@ def _build_decision_policy_suggestion(
     return DecisionPolicySuggestion(
         name=name,
         description=(
-            f"Suggested from {len(rows)} rejected feedback records for reason_code "
-            f"'{reason_code}'"
+            f"Suggested from {len(rows)} rejected feedback records for reason_code '{reason_code}'"
         ),
         relationship_type=relationship_type,
         applies_to=applies_to,
@@ -929,10 +928,7 @@ def _resolve_outcome_row_remediation_hint(
         )
         return None
 
-    if (
-        row.outcome_profile_version is not None
-        and row.outcome_profile_version != profile.version
-    ):
+    if row.outcome_profile_version is not None and row.outcome_profile_version != profile.version:
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,
@@ -1215,8 +1211,7 @@ def _common_providers(rows: list[OutcomeRecord]) -> list[str]:
                 continue
             counts[provider] = counts.get(provider, 0) + 1
     return [
-        provider
-        for provider, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+        provider for provider, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
     ]
 
 
@@ -1243,8 +1238,7 @@ def _common_trace_patterns(rows: list[OutcomeRecord]) -> list[str]:
             seen.add(pattern)
             counts[pattern] = counts.get(pattern, 0) + 1
     return [
-        pattern
-        for pattern, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+        pattern for pattern, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
     ]
 
 
@@ -1292,10 +1286,7 @@ def _resolve_row_remediation_hint(
             ),
         )
         return None
-    if (
-        row.feedback_profile_version is not None
-        and row.feedback_profile_version != profile.version
-    ):
+    if row.feedback_profile_version is not None and row.feedback_profile_version != profile.version:
         _append_warning_once(
             warnings=warnings,
             warning_keys=warning_keys,

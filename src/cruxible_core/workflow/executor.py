@@ -12,6 +12,7 @@ from typing import Any
 
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
@@ -64,6 +65,7 @@ def execute_workflow(
     persist_receipt: bool = True,
     persist_query_receipts: bool | None = None,
     persist_traces: bool = True,
+    actor_context: GovernedActorContext | None = None,
 ) -> WorkflowExecutionResult:
     """Execute one compiled workflow plan and return its full runtime result.
 
@@ -135,6 +137,7 @@ def execute_workflow(
         persist_traces=persist_traces,
         config_base_path=config_base_path,
         head_snapshot_id=head_snapshot_id,
+        actor_context=actor_context,
     )
     results_recorded = False
     committed_snapshot_id: str | None = None
@@ -177,6 +180,7 @@ def execute_workflow(
                 context.graph,
                 entities=list(context.applied_entities.values()),
                 relationships=list(context.applied_relationships.values()),
+                actor_context=context.actor_context,
             )
             committed_snapshot_id = snapshot.snapshot_id
             receipt.nodes[0].detail["committed_snapshot_id"] = committed_snapshot_id

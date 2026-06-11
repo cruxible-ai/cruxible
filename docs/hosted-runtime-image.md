@@ -1,0 +1,78 @@
+# Hosted Runtime Image
+
+The hosted runtime image packages `cruxible-core[server]` for private runtime
+containers. It starts `cruxible-server` as a non-root `cruxible` user and stores
+mutable server state under `/var/lib/cruxible/server`.
+
+Build with any Docker-compatible backend. OrbStack works for local development:
+
+```bash
+docker build -f deploy/runtime/Dockerfile -t cruxible-core-runtime:test .
+```
+
+Run with a mounted state directory and a runtime-supplied bootstrap secret:
+
+```bash
+STATE_DIR="$(mktemp -d)"
+chmod 0777 "${STATE_DIR}"
+docker run --rm \
+  -e CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret \
+  -v "${STATE_DIR}":/var/lib/cruxible/server \
+  -p 127.0.0.1:8100:8100 \
+  cruxible-core-runtime:test
+```
+
+The image intentionally fails fast if `/var/lib/cruxible/server` is not an
+external Docker mount, or if the non-root `cruxible` user cannot write to it.
+This prevents hosted runtime state from being stored only in the container's
+ephemeral filesystem layer.
+
+The control-plane Docker provisioning backend prepares each per-instance host
+state directory before starting the runtime container. By default it applies
+mode `0777`, matching the local smoke-test pattern above so the non-root
+container user can write through the bind mount on a normal Linux host. For
+tighter deployments that manage host ownership separately, set
+`CRUXIBLE_CONTROL_PLANE_RUNTIME_STATE_DIR_MODE` to an octal directory mode such
+as `0770` or `0700`.
+
+Verify the server:
+
+```bash
+curl http://127.0.0.1:8100/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Do not bake bootstrap secrets, runtime credentials, or server tokens into the
+image. Provide them at container runtime through environment variables or the
+future deployment secret layer.
+
+## Private Runtime Network
+
+Hosted runtimes should not publish port `8100` on the public host interface.
+Public traffic should enter through the edge proxy or `cruxible-cloud-api`, and
+Cloud/API should reach runtimes over a private Docker network.
+
+For local development, create a writable state directory and run the private
+network proof:
+
+```bash
+STATE_DIR="$(mktemp -d)"
+chmod 0777 "${STATE_DIR}"
+CRUXIBLE_RUNTIME_STATE_DIR="${STATE_DIR}" \
+  docker compose -f deploy/local/private-runtime-network.compose.yml up \
+  --build --abort-on-container-exit runtime-probe
+```
+
+The `runtime` service uses `expose: ["8100"]` for same-network discovery but
+does not publish `8100` to the host. The `runtime-probe` service can reach
+`http://runtime:8100/health` because it joins the same private Docker network.
+
+On a future Droplet or VM deployment, this same boundary should be reinforced
+with firewall/VPC rules: public ingress is limited to the edge proxy ports
+(`80`/`443`) and SSH, while runtime port `8100` remains private to Cloud/API or
+the runtime network.

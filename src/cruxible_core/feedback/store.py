@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.instance_protocol import FeedbackStoreProtocol
 from cruxible_core.temporal import format_datetime
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     source TEXT NOT NULL DEFAULT 'human',
     model_id TEXT,
     corrections TEXT NOT NULL DEFAULT '{}',
+    actor_context TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS outcomes (
     decision_surface_name TEXT,
     source TEXT NOT NULL DEFAULT 'human',
     detail TEXT NOT NULL DEFAULT '{}',
+    actor_context TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_outcomes_receipt ON outcomes(receipt_id);
@@ -87,6 +90,19 @@ class FeedbackStore(FeedbackStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.executescript(_SCHEMA)
+            self._ensure_actor_context_columns()
+
+    def _ensure_actor_context_columns(self) -> None:
+        feedback_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(feedback)").fetchall()
+        }
+        if "actor_context" not in feedback_columns:
+            self._conn.execute("ALTER TABLE feedback ADD COLUMN actor_context TEXT")
+        outcome_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(outcomes)").fetchall()
+        }
+        if "actor_context" not in outcome_columns:
+            self._conn.execute("ALTER TABLE outcomes ADD COLUMN actor_context TEXT")
 
     # -----------------------------------------------------------------
     # Feedback
@@ -114,8 +130,8 @@ class FeedbackStore(FeedbackStoreProtocol):
             "reason, reason_code, reason_remediation_hint, scope_hints, "
             "feedback_profile_key, feedback_profile_version, "
             "decision_context, context_snapshot, decision_surface_type, "
-            "decision_surface_name, source, model_id, corrections, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "decision_surface_name, source, model_id, corrections, actor_context, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.feedback_id,
                 record.receipt_id,
@@ -140,6 +156,7 @@ class FeedbackStore(FeedbackStoreProtocol):
                 record.source,
                 record.model_id,
                 json.dumps(record.corrections),
+                json.dumps(dump_actor_context(record.actor_context)),
                 format_datetime(record.created_at),
             ),
         )
@@ -244,6 +261,9 @@ class FeedbackStore(FeedbackStoreProtocol):
             source=row["source"],
             model_id=row["model_id"],
             corrections=json.loads(row["corrections"]),
+            actor_context=load_actor_context(
+                json.loads(row["actor_context"]) if row["actor_context"] else None
+            ),
             created_at=row["created_at"],
         )
 
@@ -261,8 +281,8 @@ class FeedbackStore(FeedbackStoreProtocol):
             "outcome_remediation_hint, scope_hints, outcome_profile_key, "
             "outcome_profile_version, decision_context, lineage_snapshot, "
             "relationship_type, decision_surface_type, decision_surface_name, source, "
-            "detail, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "detail, actor_context, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.outcome_id,
                 record.receipt_id,
@@ -281,6 +301,7 @@ class FeedbackStore(FeedbackStoreProtocol):
                 decision_surface_name,
                 record.source,
                 json.dumps(record.detail),
+                json.dumps(dump_actor_context(record.actor_context)),
                 format_datetime(record.created_at),
             ),
         )
@@ -368,6 +389,9 @@ class FeedbackStore(FeedbackStoreProtocol):
             relationship_type=row["relationship_type"],
             source=row["source"],
             detail=json.loads(row["detail"]),
+            actor_context=load_actor_context(
+                json.loads(row["actor_context"]) if row["actor_context"] else None
+            ),
             created_at=row["created_at"],
         )
 

@@ -74,4 +74,5 @@ async def state_pull_apply(
     return api.state_pull_apply(
         resolved_instance_id,
         expected_apply_digest=req.expected_apply_digest,
+        actor_context=req.actor_context,
     )

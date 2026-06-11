@@ -24,6 +24,7 @@ from cruxible_core.config.schema import CoreConfig
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.feedback.store import FeedbackStore
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
@@ -357,9 +358,19 @@ class CruxibleInstance(InstanceProtocol):
             (snapshot_dir / artifact_name).write_bytes(content)
         return snapshot_dir
 
-    def create_snapshot(self, label: str | None = None) -> StateSnapshot:
+    def create_snapshot(
+        self,
+        label: str | None = None,
+        *,
+        actor_context: GovernedActorContext | None = None,
+    ) -> StateSnapshot:
         """Persist an immutable full snapshot of the current graph + config state."""
-        return self._write_snapshot(self.load_graph(), label=label, persist_live_graph=False)
+        return self._write_snapshot(
+            self.load_graph(),
+            label=label,
+            persist_live_graph=False,
+            actor_context=actor_context,
+        )
 
     def commit_graph_snapshot(
         self,
@@ -368,6 +379,7 @@ class CruxibleInstance(InstanceProtocol):
         *,
         entities: Sequence[EntityInstance] | None = None,
         relationships: Sequence[RelationshipInstance] | None = None,
+        actor_context: GovernedActorContext | None = None,
     ) -> StateSnapshot:
         """Persist a snapshot for a provided graph, then atomically advance live state."""
         return self._write_snapshot(
@@ -376,6 +388,7 @@ class CruxibleInstance(InstanceProtocol):
             persist_live_graph=True,
             entities=entities,
             relationships=relationships,
+            actor_context=actor_context,
         )
 
     def _write_snapshot(
@@ -386,6 +399,7 @@ class CruxibleInstance(InstanceProtocol):
         persist_live_graph: bool,
         entities: Sequence[EntityInstance] | None = None,
         relationships: Sequence[RelationshipInstance] | None = None,
+        actor_context: GovernedActorContext | None = None,
     ) -> StateSnapshot:
         """Persist DB-authoritative snapshot state and export portable artifacts."""
         snapshot_id = new_id("snap", length=16, separator="_")
@@ -414,6 +428,7 @@ class CruxibleInstance(InstanceProtocol):
             graph_digest=graph_digest,
             parent_snapshot_id=self.get_head_snapshot_id(),
             origin_snapshot_id=self._get_origin_snapshot_id(),
+            actor_context=actor_context,
         )
         artifacts["snapshot.json"] = json.dumps(
             snapshot.model_dump(mode="json"),

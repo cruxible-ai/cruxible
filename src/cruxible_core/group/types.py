@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.temporal import utc_now
@@ -96,11 +97,7 @@ class QuerySourceEvidence(BaseModel):
 
     @model_serializer(mode="wrap")
     def _serialize_compact(self, handler: Any) -> dict[str, Any]:
-        data = {
-            key: value
-            for key, value in handler(self).items()
-            if value is not None
-        }
+        data = {key: value for key, value in handler(self).items() if value is not None}
         if self.row_index is not None and self.feedback_addressable is True:
             data.pop("feedback_addressable", None)
         return data
@@ -144,9 +141,11 @@ class GroupResolution(BaseModel):
     analysis_state: dict[str, Any] = Field(default_factory=dict)
     trust_status: TrustStatus = "watch"
     trust_reason: str = ""
+    trust_actor_context: GovernedActorContext | None = None
     confirmed: bool = False
     resolved_by: Literal["human", "agent"] = "human"
     resolved_at: datetime
+    resolved_actor_context: GovernedActorContext | None = None
 
 
 class CandidateGroup(BaseModel):
@@ -172,4 +171,5 @@ class CandidateGroup(BaseModel):
     source_trace_ids: list[str] = Field(default_factory=list)
     source_step_ids: list[str] = Field(default_factory=list)
     resolution_id: str | None = None
+    proposed_actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)

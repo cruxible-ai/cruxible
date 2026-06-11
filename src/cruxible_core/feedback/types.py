@@ -13,6 +13,7 @@ from cruxible_core.config.schema import (
     OutcomeLabel,
     OutcomeRemediationHint,
 )
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
@@ -36,6 +37,7 @@ class FeedbackRecord(BaseModel):
     source: Literal["human", "agent"] = "human"
     model_id: str | None = None
     corrections: dict[str, Any] = Field(default_factory=dict)
+    actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -70,6 +72,7 @@ class OutcomeRecord(BaseModel):
     relationship_type: str | None = None
     source: Literal["human", "agent"] = "human"
     detail: dict[str, Any] = Field(default_factory=dict)
+    actor_context: GovernedActorContext | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,8 +84,17 @@ def get_server_token(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the configured legacy bearer token, if any."""
     env = environ or os.environ
     token = env.get("CRUXIBLE_SERVER_TOKEN")
-    if token:
-        return token
+    if token and token.strip():
+        return token.strip()
+    return None
+
+
+def get_runtime_bootstrap_secret(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the configured one-time runtime bootstrap secret, if any."""
+    env = environ or os.environ
+    secret = env.get("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET")
+    if secret and secret.strip():
+        return secret.strip()
     return None
 
 
@@ -99,3 +109,51 @@ def get_runtime_bearer_token(environ: Mapping[str, str] | None = None) -> str | 
     if token:
         return token
     return None
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_server_startup_settings(
+    environ: Mapping[str, str] | None = None,
+    *,
+    runtime_credentials_available: bool = False,
+) -> None:
+    """Validate HTTP server startup settings that are unsafe when miscombined."""
+    env = environ or os.environ
+
+    auth_enabled = is_server_auth_enabled(env)
+    token = get_server_token(env)
+    bootstrap_secret = get_runtime_bootstrap_secret(env)
+
+    if (
+        auth_enabled
+        and token is None
+        and bootstrap_secret is None
+        and not runtime_credentials_available
+    ):
+        raise ConfigError(
+            "CRUXIBLE_SERVER_AUTH=true requires CRUXIBLE_SERVER_TOKEN, "
+            "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET, or stored runtime credentials."
+        )
+
+    if env.get("CRUXIBLE_SERVER_SOCKET"):
+        return
+
+    host = env.get("CRUXIBLE_HOST", "127.0.0.1")
+    if not _is_loopback_host(host) and not auth_enabled:
+        raise ConfigError(
+            "Refusing to bind cruxible-server to a non-loopback host without auth. "
+            "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_SERVER_TOKEN, "
+            "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET, or stored runtime credentials, "
+            "or bind CRUXIBLE_HOST to 127.0.0.1/localhost."
+        )

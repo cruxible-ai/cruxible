@@ -13,14 +13,26 @@ from cruxible_core import __version__
 from cruxible_core.errors import CoreError
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
+from cruxible_core.server.config import (
+    get_runtime_bootstrap_secret,
+    get_server_token,
+    is_server_auth_enabled,
+    validate_server_startup_settings,
+)
+from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.registry import get_registry
+from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.routes.decision_records import router as decision_records_router
 from cruxible_core.server.routes.feedback import router as feedback_router
 from cruxible_core.server.routes.groups import router as groups_router
+from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
 from cruxible_core.server.routes.instances import router as instances_router
 from cruxible_core.server.routes.mutations import router as mutations_router
 from cruxible_core.server.routes.queries import router as queries_router
+from cruxible_core.server.routes.runtime_credentials import (
+    router as runtime_credentials_router,
+)
 from cruxible_core.server.routes.snapshots import router as snapshots_router
 from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
 from cruxible_core.server.routes.state import router as state_router
@@ -34,7 +46,8 @@ def create_app() -> FastAPI:
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)
-    async def core_error_handler(_request: Request, exc: CoreError) -> JSONResponse:
+    async def core_error_handler(request: Request, exc: CoreError) -> JSONResponse:
+        request.state.error_type = exc.__class__.__name__
         status_code, body = error_to_response(exc)
         return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
@@ -54,7 +67,8 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
     @app.exception_handler(Exception)
-    async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        request.state.error_type = exc.__class__.__name__
         body = ErrorResponse(error_type=exc.__class__.__name__, message=str(exc))
         return JSONResponse(status_code=500, content=body.model_dump(mode="json"))
 
@@ -67,8 +81,10 @@ def create_app() -> FastAPI:
         return {"version": __version__}
 
     app.include_router(instances_router)
+    app.include_router(hosted_instances_router)
     app.include_router(state_router)
     app.include_router(queries_router)
+    app.include_router(runtime_credentials_router)
     app.include_router(decision_records_router)
     app.include_router(mutations_router)
     app.include_router(feedback_router)
@@ -81,8 +97,18 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     """Run the Cruxible server using UDS or host/port transport."""
+    runtime_credentials_available = False
+    if (
+        is_server_auth_enabled()
+        and get_server_token() is None
+        and get_runtime_bootstrap_secret() is None
+    ):
+        runtime_credentials_available = get_runtime_credential_store().has_active_credentials()
+    validate_server_startup_settings(runtime_credentials_available=runtime_credentials_available)
+
     import uvicorn
 
+    configure_request_logging()
     init_permissions()
     app = create_app()
 

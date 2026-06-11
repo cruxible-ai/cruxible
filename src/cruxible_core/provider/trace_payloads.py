@@ -113,10 +113,7 @@ def _preview_value(value: Any, *, depth: int) -> Any:
     if isinstance(value, dict):
         return _preview_dict(value, depth=depth)
     if isinstance(value, list):
-        retained = [
-            _preview_value(item, depth=depth + 1)
-            for item in value[:_MAX_PREVIEW_ITEMS]
-        ]
+        retained = [_preview_value(item, depth=depth + 1) for item in value[:_MAX_PREVIEW_ITEMS]]
         return {
             "_cruxible_type": json_type_name(value),
             "item_count": len(value),
@@ -137,10 +134,7 @@ def _preview_value(value: Any, *, depth: int) -> Any:
 def _preview_dict(value: dict[str, Any], *, depth: int) -> dict[str, Any]:
     keys = sorted(value)
     retained_keys = keys[:_MAX_PREVIEW_ITEMS]
-    preview = {
-        key: _preview_value(value[key], depth=depth + 1)
-        for key in retained_keys
-    }
+    preview = {key: _preview_value(value[key], depth=depth + 1) for key in retained_keys}
     preview[_PREVIEW_KEY] = {
         "item_count": len(value),
         "retained_keys": retained_keys,

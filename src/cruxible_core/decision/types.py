@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.temporal import utc_now
 
@@ -24,8 +25,10 @@ class DecisionRecord(BaseModel):
     subject_id: str | None = None
     status: DecisionStatus = "open"
     opened_by: Literal["human", "agent", "service"] = "human"
+    opened_actor_context: GovernedActorContext | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     finalized_at: datetime | None = None
+    finalized_actor_context: GovernedActorContext | None = None
     final_decision: str | None = None
     decision_class: DecisionClass | None = None
     rationale: str = ""
@@ -67,5 +70,6 @@ class DecisionEvent(BaseModel):
     error_message: str | None = None
     surface: Literal["cli", "mcp", "http", "local"] | None = None
     request_id: str | None = None
+    actor_context: GovernedActorContext | None = None
     started_at: datetime
     finished_at: datetime

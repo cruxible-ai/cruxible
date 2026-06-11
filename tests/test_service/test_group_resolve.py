@@ -10,6 +10,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, GroupNotFoundError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -145,6 +146,16 @@ def _member(
     )
 
 
+def _actor() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_resolver",
+        org_id="org_1",
+        operation_id="op_resolve",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
 def _agent_signature_facts(
     instance: CruxibleInstance,
     members: list[CandidateMember],
@@ -153,9 +164,7 @@ def _agent_signature_facts(
 ) -> dict[str, Any]:
     rel_schema = instance.load_config().get_relationship("fits")
     assert rel_schema is not None
-    signal_sources = [
-        signal.signal_source for member in members for signal in member.signals
-    ]
+    signal_sources = [signal.signal_source for member in members for signal in member.signals]
     return build_agent_proposal_signature_facts(
         rel_schema=rel_schema,
         relationship_type="fits",
@@ -258,8 +267,23 @@ class TestApproveBasic:
         assert result.edges_skipped == 0
 
     def test_created_edges_have_provenance(self, instance: CruxibleInstance) -> None:
-        group_id = _propose(instance, [_member("BP-1", "V-1")])
-        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        actor = _actor()
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts={"style": "casual"},
+            actor_context=actor,
+        )
+        group_id = proposed.group_id
+        resolved = service_resolve_group(
+            instance,
+            group_id,
+            "approve",
+            expected_pending_version=1,
+            actor_context=actor,
+        )
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None
@@ -267,13 +291,27 @@ class TestApproveBasic:
         assert rel.metadata.provenance is not None
         assert rel.metadata.provenance.source == "group_resolve"
         assert rel.metadata.provenance.source_ref == f"group:{group_id}"
-        assert rel.metadata.provenance.receipt_id == result.receipt_id
+        assert rel.metadata.provenance.receipt_id == resolved.receipt_id
         assert rel.metadata.provenance.receipt_id is not None
-        assert rel.metadata.provenance.resolution_id == result.resolution_id
+        assert rel.metadata.provenance.resolution_id == resolved.resolution_id
         assert rel.metadata.provenance.resolution_id is not None
+        assert rel.metadata.provenance.created_actor_context is not None
+        assert rel.metadata.provenance.created_actor_context.actor_id == "usr_resolver"
         assert rel.metadata.assertion.review.status == "approved"
         assert rel.metadata.assertion.review.source == "group"
         assert rel.metadata.assertion.lifecycle.status == "active"
+        store = instance.get_group_store()
+        try:
+            stored_group = store.get_group(group_id)
+            resolution = store.get_resolution(resolved.resolution_id)
+        finally:
+            store.close()
+        assert stored_group is not None
+        assert stored_group.proposed_actor_context is not None
+        assert stored_group.proposed_actor_context.operation_id == "op_resolve"
+        assert resolution is not None
+        assert resolution.resolved_actor_context is not None
+        assert resolution.resolved_actor_context.actor_id == "usr_resolver"
 
     def test_relationship_lineage_links_to_group_resolution_and_traces(
         self,

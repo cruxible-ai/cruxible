@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
@@ -17,9 +18,11 @@ from cruxible_core.service.types import (
 def service_create_snapshot(
     instance: InstanceProtocol,
     label: str | None = None,
+    *,
+    actor_context: GovernedActorContext | None = None,
 ) -> SnapshotCreateResult:
     """Create an immutable full snapshot for the current instance."""
-    snapshot = instance.create_snapshot(label=label)
+    snapshot = instance.create_snapshot(label=label, actor_context=actor_context)
     return SnapshotCreateResult(snapshot=snapshot)
 
 

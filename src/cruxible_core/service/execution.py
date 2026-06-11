@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import canonical_json, ordered_unique
@@ -374,6 +375,7 @@ def service_run(
             workflow_name,
             input_payload,
             mode=execution_action,
+            actor_context=context.actor_context if context is not None else None,
         )
         service_result = _build_workflow_execution_result(result, RunServiceResult)
     except Exception as exc:
@@ -458,6 +460,7 @@ def service_apply_workflow(
             mode="preview",
             persist_receipt=False,
             persist_traces=False,
+            actor_context=context.actor_context if context is not None else None,
         )
         if preview.apply_digest != expected_apply_digest:
             raise ConfigError("Workflow apply digest mismatch; rerun workflow preview before apply")
@@ -482,6 +485,7 @@ def service_apply_workflow(
                 mode="apply",
                 persist_receipt=True,
                 persist_traces=True,
+                actor_context=context.actor_context if context is not None else None,
             )
         service_result = _build_workflow_execution_result(result, ApplyWorkflowResult)
     except Exception as exc:
@@ -548,6 +552,7 @@ def service_propose_workflow(
             input_payload,
             persist_receipt=False,
             persist_query_receipts=True,
+            actor_context=context.actor_context if context is not None else None,
         )
         try:
             proposal_payload = RelationshipGroupProposalArtifact.model_validate(result.output)
@@ -680,6 +685,7 @@ def service_propose_workflow(
                 source_query_receipt_ids=source_query_receipt_ids,
                 source_trace_ids=source_trace_ids,
                 source_step_ids=source_step_ids,
+                actor_context=context.actor_context if context is not None else None,
             )
             proposal_receipt = _finalize_proposal_receipt(
                 result.receipt,
@@ -742,7 +748,12 @@ def service_propose_workflow(
     return service_result
 
 
-def service_test(instance: InstanceProtocol, test_name: str | None = None) -> TestServiceResult:
+def service_test(
+    instance: InstanceProtocol,
+    test_name: str | None = None,
+    *,
+    actor_context: GovernedActorContext | None = None,
+) -> TestServiceResult:
     """Execute config-defined workflow fixture tests.
 
     Config tests validate workflow output shape and canonical preview behavior.
@@ -775,6 +786,7 @@ def service_test(instance: InstanceProtocol, test_name: str | None = None) -> Te
                 test.workflow,
                 test.input,
                 mode=execution_action,
+                actor_context=actor_context,
             )
             _validate_test_expectation(
                 test.expect.output_equals,

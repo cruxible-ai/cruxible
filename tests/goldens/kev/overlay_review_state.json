@@ -5849,6 +5849,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -5934,6 +5935,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6019,6 +6021,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6104,6 +6107,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6189,6 +6193,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6274,6 +6279,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6359,6 +6365,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6444,6 +6451,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6529,6 +6537,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6614,6 +6623,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6699,6 +6709,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6784,6 +6795,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -6843,6 +6855,7 @@
         }
       ],
       "pending_version": 1,
+      "proposed_actor_context": null,
       "proposed_by": "agent",
       "relationship_type": "asset_runs_product",
       "resolution": {
@@ -6868,6 +6881,7 @@
         "rationale": "",
         "relationship_type": "asset_runs_product",
         "resolution_id": "<RESOLUTION_1>",
+        "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
         "resolved_by": "human",
         "thesis_facts": {
@@ -6901,6 +6915,7 @@
           }
         },
         "thesis_text": "Fuzzy software-to-product matching from CMDB inventory\n",
+        "trust_actor_context": null,
         "trust_reason": "",
         "trust_status": "watch"
       },
@@ -7026,6 +7041,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -7219,6 +7235,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -7407,6 +7424,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -7595,6 +7613,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -7847,6 +7866,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -8091,6 +8111,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -8383,6 +8404,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -8675,6 +8697,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -8951,6 +8974,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -9179,6 +9203,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -9415,6 +9440,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -10027,6 +10053,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -11285,6 +11312,7 @@
         }
       ],
       "pending_version": 1,
+      "proposed_actor_context": null,
       "proposed_by": "agent",
       "relationship_type": "asset_vulnerability_posture",
       "resolution": {
@@ -11314,6 +11342,7 @@
         "rationale": "",
         "relationship_type": "asset_vulnerability_posture",
         "resolution_id": "<RESOLUTION_2>",
+        "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
         "resolved_by": "human",
         "thesis_facts": {
@@ -11351,6 +11380,7 @@
           }
         },
         "thesis_text": "Installed versions fall within KEV reference ranges and exposed asset posture requires action\n",
+        "trust_actor_context": null,
         "trust_reason": "",
         "trust_status": "watch"
       },
@@ -11457,6 +11487,7 @@
                 "supersedes": null
               },
               "review": {
+                "actor_context": null,
                 "source": "system",
                 "status": "unreviewed",
                 "updated_at": null,
@@ -11491,6 +11522,7 @@
         }
       ],
       "pending_version": 1,
+      "proposed_actor_context": null,
       "proposed_by": "agent",
       "relationship_type": "vulnerability_classified_as",
       "resolution": {
@@ -11510,6 +11542,7 @@
         "rationale": "",
         "relationship_type": "vulnerability_classified_as",
         "resolution_id": "<RESOLUTION_3>",
+        "resolved_actor_context": null,
         "resolved_at": "<TIMESTAMP>",
         "resolved_by": "human",
         "thesis_facts": {
@@ -11543,6 +11576,7 @@
           }
         },
         "thesis_text": "Agent-selected operational vulnerability classification\n",
+        "trust_actor_context": null,
         "trust_reason": "",
         "trust_status": "watch"
       },

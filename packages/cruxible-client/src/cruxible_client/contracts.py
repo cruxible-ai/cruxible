@@ -36,6 +36,15 @@ DecisionClass = Literal["recommended", "rejected", "deferred", "escalated"]
 StateCompatibility = Literal["data_only", "additive_schema", "breaking"]
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
 WorkflowMode = Literal["run", "preview", "apply", "proposal"]
+RuntimeCredentialPermissionMode = Literal[
+    "read_only",
+    "governed_write",
+    "graph_write",
+    "admin",
+]
+HostedInstanceSourceType = Literal["kit", "reference_model"]
+HostedInstanceInitStatus = Literal["initialized", "already_initialized"]
+GovernedActorType = Literal["human_user", "service_account", "system"]
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -73,6 +82,27 @@ class BatchDirectWritePayload(BaseModel):
     entities: list[EntityInput] = Field(default_factory=list)
     relationships: list[BatchRelationshipInput] = Field(default_factory=list)
     shared_evidence: dict[str, SharedEvidenceInput] = Field(default_factory=dict)
+
+
+class GovernedActorContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_type: GovernedActorType
+    actor_id: str = Field(min_length=1)
+    org_id: str = Field(min_length=1)
+    operation_id: str = Field(min_length=1)
+    timestamp: str
+    request_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_nonblank_fields(self) -> GovernedActorContext:
+        for field_name in ("actor_id", "org_id", "operation_id", "timestamp"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must not be blank")
+        if self.request_id is not None and not self.request_id.strip():
+            raise ValueError("request_id must not be blank when provided")
+        return self
 
 
 class SignalBucketBasis(BaseModel):
@@ -275,6 +305,43 @@ class InitResult(BaseModel):
     instance_id: str
     status: str
     warnings: list[str] = Field(default_factory=list)
+
+
+class RuntimeCredentialBootstrapResult(BaseModel):
+    credential_id: str
+    instance_id: str
+    permission_mode: Literal["admin"]
+    token: str
+
+
+class HostedInstanceInitResult(BaseModel):
+    instance_id: str
+    status: HostedInstanceInitStatus
+    source_type: HostedInstanceSourceType
+    source_ref: str
+    resolved_source_ref: str | None = None
+    overlay_kit_ref: str | None = None
+    manifest: "PublishedStateManifest | None" = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RuntimeCredentialMetadata(BaseModel):
+    credential_id: str
+    instance_id: str
+    label: str
+    permission_mode: RuntimeCredentialPermissionMode
+    created_at: str
+    created_by: str | None = None
+    revoked_at: str | None = None
+
+
+class RuntimeCredentialResult(BaseModel):
+    credential: RuntimeCredentialMetadata
+    token: str | None = None
+
+
+class RuntimeCredentialListResult(BaseModel):
+    credentials: list[RuntimeCredentialMetadata] = Field(default_factory=list)
 
 
 class ValidateResult(BaseModel):

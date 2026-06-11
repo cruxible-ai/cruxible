@@ -40,11 +40,7 @@ class EvidenceRef(BaseModel):
         metadata = payload.get("metadata") or {}
         if not isinstance(metadata, Mapping):
             raise ValueError("EvidenceRef metadata must be an object")
-        extra = {
-            str(key): payload.pop(key)
-            for key in list(payload)
-            if key not in known
-        }
+        extra = {str(key): payload.pop(key) for key in list(payload) if key not in known}
         payload["metadata"] = {**dict(metadata), **extra}
         return payload
 

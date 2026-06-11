@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import (
+    GovernedActorContext,
+    dump_actor_context,
+)
 from cruxible_core.graph.evidence import EvidenceRef, merge_evidence_ref_objects
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
@@ -35,6 +39,7 @@ def service_register_source_artifact(
     original_uri: str | None = None,
     label: str | None = None,
     parser_version: str = MARKDOWN_CHUNKS_V1,
+    actor_context: GovernedActorContext | None = None,
 ) -> RegisterSourceArtifactResult:
     """Register a local source document as proposal evidence."""
     if source_kind != "markdown":
@@ -78,6 +83,7 @@ def service_register_source_artifact(
         archived=archived,
         archive_content_hash=content_hash if archived else None,
         created_at=created_at,
+        registered_actor_context=actor_context,
     )
     with instance.write_transaction() as uow:
         uow.source_artifacts.save_artifact(
@@ -122,9 +128,7 @@ def service_dereference_source_evidence(
     try:
         artifact = store.get_artifact(source_evidence.source_artifact_id)
         if artifact is None:
-            raise ConfigError(
-                f"Source artifact '{source_evidence.source_artifact_id}' not found"
-            )
+            raise ConfigError(f"Source artifact '{source_evidence.source_artifact_id}' not found")
         chunk = _resolve_chunk(store, source_evidence)
         if (
             source_evidence.expected_content_hash is not None
@@ -199,6 +203,8 @@ def service_dereference_source_evidence(
 def resolve_source_evidence_refs(
     instance: InstanceProtocol,
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]],
+    *,
+    actor_context: GovernedActorContext | None = None,
 ) -> list[EvidenceRef]:
     """Resolve source-evidence locators to existing compact evidence refs."""
     if not source_evidence:
@@ -241,6 +247,14 @@ def resolve_source_evidence_refs(
                         "line_start": chunk.line_start,
                         "line_end": chunk.line_end,
                         "source_retention": artifact.source_retention,
+                        **(
+                            {
+                                "actor_context": dump_actor_context(actor_context),
+                                "operation_id": actor_context.operation_id,
+                            }
+                            if actor_context is not None
+                            else {}
+                        ),
                     },
                 )
             )
@@ -275,9 +289,7 @@ def _resolve_chunk(
             f"{locator.block_selector}"
         )
     if len(matches) > 1:
-        raise ConfigError(
-            "Source evidence locator matched multiple chunks; use chunk_id instead"
-        )
+        raise ConfigError("Source evidence locator matched multiple chunks; use chunk_id instead")
     return matches[0]
 
 

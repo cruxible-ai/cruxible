@@ -26,6 +26,7 @@ errors (runtime data), making it easy to catch by category.
     ├── OutcomeNotFoundError (feedback store lookup)
     ├── InstanceNotFoundError (instance registry lookup)
     ├── GroupNotFoundError (group store lookup)
+    ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     └── PermissionDeniedError (MCP permission mode)
@@ -302,6 +303,14 @@ class GroupNotFoundError(CoreError):
     def __init__(self, group_id: str):
         self.group_id = group_id
         super().__init__(f"Group '{group_id}' not found")
+
+
+class RuntimeCredentialNotFoundError(CoreError):
+    """Runtime credential ID not found in the server credential store."""
+
+    def __init__(self, credential_id: str):
+        self.credential_id = credential_id
+        super().__init__(f"Runtime credential '{credential_id}' not found")
 
 
 class AuthenticationError(CoreError):

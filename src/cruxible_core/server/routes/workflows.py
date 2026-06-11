@@ -54,6 +54,7 @@ async def workflow_run(
         req.input,
         decision_record_id=req.decision_record_id,
         surface="http",
+        actor_context=req.actor_context,
     )
 
 
@@ -71,6 +72,7 @@ async def workflow_apply(
         req.input,
         decision_record_id=req.decision_record_id,
         surface="http",
+        actor_context=req.actor_context,
     )
 
 
@@ -80,7 +82,11 @@ async def workflow_test(
     req: WorkflowTestRequest,
 ) -> contracts.WorkflowTestResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return api.workflow_test(resolved_instance_id, req.name)
+    return api.workflow_test(
+        resolved_instance_id,
+        req.name,
+        actor_context=req.actor_context,
+    )
 
 
 @router.post("/{instance_id}/workflows/propose", response_model=contracts.WorkflowProposeResult)
@@ -95,4 +101,5 @@ async def workflow_propose(
         req.input,
         decision_record_id=req.decision_record_id,
         surface="http",
+        actor_context=req.actor_context,
     )

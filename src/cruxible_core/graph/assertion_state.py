@@ -17,6 +17,7 @@ from pydantic import (
     field_validator,
 )
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.temporal import ensure_utc, format_datetime, is_effective
 
 RelationshipReviewStatus = Literal[
@@ -35,6 +36,7 @@ RelationshipLifecycleStatus = Literal[
     "retracted",
 ]
 
+
 class RelationshipReviewState(BaseModel):
     """Review/adjudication state for a relationship assertion."""
 
@@ -44,6 +46,7 @@ class RelationshipReviewState(BaseModel):
     source: RelationshipReviewSource = "system"
     updated_at: datetime | None = None
     updated_by: str | None = None
+    actor_context: GovernedActorContext | None = None
 
     @field_validator("updated_at")
     @classmethod
@@ -90,9 +93,7 @@ class RelationshipAssertion(BaseModel):
     model_config = ConfigDict(extra="allow", validate_assignment=True)
 
     review: RelationshipReviewState = Field(default_factory=RelationshipReviewState)
-    lifecycle: RelationshipLifecycleState = Field(
-        default_factory=RelationshipLifecycleState
-    )
+    lifecycle: RelationshipLifecycleState = Field(default_factory=RelationshipLifecycleState)
     group_override: bool = False
 
 

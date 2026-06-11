@@ -169,9 +169,8 @@ def test_client_package_does_not_import_core_modules():
                     for alias in node.names
                 )
             elif isinstance(node, ast.ImportFrom):
-                imports_core = (
-                    node.module == "cruxible_core"
-                    or (node.module is not None and node.module.startswith("cruxible_core."))
+                imports_core = node.module == "cruxible_core" or (
+                    node.module is not None and node.module.startswith("cruxible_core.")
                 )
             if imports_core:
                 break
@@ -250,9 +249,7 @@ def test_governance_internals_do_not_import_surface_or_presentation_layers() -> 
                     for prefix in forbidden_prefixes
                 ):
                     line_number = getattr(node, "lineno", 0)
-                    violations.append(
-                        f"{path.relative_to(_repo_root())}:{line_number}:{module}"
-                    )
+                    violations.append(f"{path.relative_to(_repo_root())}:{line_number}:{module}")
 
     assert violations == []
 
@@ -283,8 +280,7 @@ def test_governance_does_not_reintroduce_relationship_identity_wrappers() -> Non
 
 def _compares_compiled_step_kind(node: ast.Compare) -> bool:
     return any(
-        _is_compiled_step_kind_ref(expression)
-        for expression in [node.left, *node.comparators]
+        _is_compiled_step_kind_ref(expression) for expression in [node.left, *node.comparators]
     )
 
 

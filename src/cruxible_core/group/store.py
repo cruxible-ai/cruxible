@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
+from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.group.types import (
     CandidateGroup,
     CandidateMember,
@@ -34,9 +35,11 @@ CREATE TABLE IF NOT EXISTS group_resolutions (
     analysis_state TEXT NOT NULL DEFAULT '{}',
     trust_status TEXT NOT NULL DEFAULT 'watch',
     trust_reason TEXT NOT NULL DEFAULT '',
+    trust_actor_context TEXT,
     confirmed INTEGER NOT NULL DEFAULT 0,
     resolved_by TEXT NOT NULL,
-    resolved_at TEXT NOT NULL
+    resolved_at TEXT NOT NULL,
+    resolved_actor_context TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_group_resolutions_match
     ON group_resolutions(relationship_type, group_signature);
@@ -64,7 +67,8 @@ CREATE TABLE IF NOT EXISTS candidate_groups (
     source_trace_ids TEXT NOT NULL DEFAULT '[]',
     source_step_ids TEXT NOT NULL DEFAULT '[]',
     resolution_id TEXT REFERENCES group_resolutions(resolution_id),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    proposed_actor_context TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_signature ON candidate_groups(signature);
 CREATE INDEX IF NOT EXISTS idx_candidate_groups_status ON candidate_groups(status);
@@ -118,6 +122,27 @@ class GroupStore(GroupStoreProtocol):
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SCHEMA)
+            self._ensure_actor_context_columns()
+
+    def _ensure_actor_context_columns(self) -> None:
+        resolution_columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(group_resolutions)").fetchall()
+        }
+        if "resolved_actor_context" not in resolution_columns:
+            self._conn.execute(
+                "ALTER TABLE group_resolutions ADD COLUMN resolved_actor_context TEXT"
+            )
+        if "trust_actor_context" not in resolution_columns:
+            self._conn.execute("ALTER TABLE group_resolutions ADD COLUMN trust_actor_context TEXT")
+        group_columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(candidate_groups)").fetchall()
+        }
+        if "proposed_actor_context" not in group_columns:
+            self._conn.execute(
+                "ALTER TABLE candidate_groups ADD COLUMN proposed_actor_context TEXT"
+            )
 
     # -----------------------------------------------------------------
     # Groups
@@ -131,8 +156,9 @@ class GroupStore(GroupStoreProtocol):
             "thesis_facts, analysis_state, signal_sources_used, proposed_by, "
             "member_count, pending_version, review_priority, suggested_priority, "
             "source_workflow_name, source_workflow_receipt_id, source_query_receipt_ids, "
-            "source_trace_ids, source_step_ids, resolution_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "source_trace_ids, source_step_ids, resolution_id, created_at, "
+            "proposed_actor_context) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(group_id) DO UPDATE SET "
             "relationship_type = excluded.relationship_type, "
             "signature = excluded.signature, "
@@ -153,7 +179,8 @@ class GroupStore(GroupStoreProtocol):
             "source_trace_ids = excluded.source_trace_ids, "
             "source_step_ids = excluded.source_step_ids, "
             "resolution_id = excluded.resolution_id, "
-            "created_at = excluded.created_at",
+            "created_at = excluded.created_at, "
+            "proposed_actor_context = excluded.proposed_actor_context",
             (
                 group.group_id,
                 group.relationship_type,
@@ -176,6 +203,7 @@ class GroupStore(GroupStoreProtocol):
                 json.dumps(group.source_step_ids),
                 group.resolution_id,
                 format_datetime(group.created_at),
+                json.dumps(dump_actor_context(group.proposed_actor_context)),
             ),
         )
         return group.group_id
@@ -345,6 +373,9 @@ class GroupStore(GroupStoreProtocol):
             source_trace_ids=json.loads(row["source_trace_ids"]),
             source_step_ids=json.loads(row["source_step_ids"]),
             resolution_id=row["resolution_id"],
+            proposed_actor_context=load_actor_context(
+                json.loads(row["proposed_actor_context"]) if row["proposed_actor_context"] else None
+            ),
             created_at=row["created_at"],
         )
 
@@ -512,6 +543,7 @@ class GroupStore(GroupStoreProtocol):
         resolved_by: str,
         trust_status: str = "watch",
         confirmed: bool = False,
+        resolved_actor_context: Any | None = None,
     ) -> str:
         """Persist a resolution. Does NOT commit. Returns resolution_id."""
         resolution_id = new_id("RES")
@@ -519,8 +551,8 @@ class GroupStore(GroupStoreProtocol):
             "INSERT INTO group_resolutions "
             "(resolution_id, relationship_type, group_signature, action, rationale, "
             "thesis_text, thesis_facts, analysis_state, trust_status, confirmed, "
-            "resolved_by, resolved_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "resolved_by, resolved_at, resolved_actor_context) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 resolution_id,
                 relationship_type,
@@ -534,6 +566,7 @@ class GroupStore(GroupStoreProtocol):
                 1 if confirmed else 0,
                 resolved_by,
                 format_datetime(utc_now()),
+                json.dumps(dump_actor_context(resolved_actor_context)),
             ),
         )
         return resolution_id
@@ -695,12 +728,19 @@ class GroupStore(GroupStoreProtocol):
         resolution_id: str,
         trust_status: str,
         trust_reason: str = "",
+        trust_actor_context: Any | None = None,
     ) -> bool:
         """Update trust_status + trust_reason on a resolution. Does NOT commit."""
         cursor = self._conn.execute(
-            "UPDATE group_resolutions SET trust_status = ?, trust_reason = ? "
+            "UPDATE group_resolutions SET trust_status = ?, trust_reason = ?, "
+            "trust_actor_context = ? "
             "WHERE resolution_id = ?",
-            (trust_status, trust_reason, resolution_id),
+            (
+                trust_status,
+                trust_reason,
+                json.dumps(dump_actor_context(trust_actor_context)),
+                resolution_id,
+            ),
         )
         return cursor.rowcount > 0
 
@@ -717,9 +757,15 @@ class GroupStore(GroupStoreProtocol):
             analysis_state=json.loads(row["analysis_state"]),
             trust_status=row["trust_status"],
             trust_reason=row["trust_reason"],
+            trust_actor_context=load_actor_context(
+                json.loads(row["trust_actor_context"]) if row["trust_actor_context"] else None
+            ),
             confirmed=bool(row["confirmed"]),
             resolved_by=row["resolved_by"],
             resolved_at=row["resolved_at"],
+            resolved_actor_context=load_actor_context(
+                json.loads(row["resolved_actor_context"]) if row["resolved_actor_context"] else None
+            ),
         )
 
     # -----------------------------------------------------------------

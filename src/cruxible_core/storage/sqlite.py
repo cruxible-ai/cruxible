@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from cruxible_core.decision.store import DecisionStore
 from cruxible_core.feedback.store import FeedbackStore
+from cruxible_core.governance.actors import dump_actor_context, load_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.store import GroupStore
@@ -119,7 +120,8 @@ CREATE TABLE IF NOT EXISTS source_artifacts (
     local_path TEXT,
     archived INTEGER NOT NULL DEFAULT 0,
     archive_content_hash TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    registered_actor_context TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_source_artifacts_kind
     ON source_artifacts(source_kind);
@@ -433,6 +435,17 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
         if initialize_schema:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SOURCE_ARTIFACT_SCHEMA)
+            self._ensure_actor_context_columns()
+
+    def _ensure_actor_context_columns(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(source_artifacts)").fetchall()
+        }
+        if "registered_actor_context" not in columns:
+            self._conn.execute(
+                "ALTER TABLE source_artifacts ADD COLUMN registered_actor_context TEXT"
+            )
 
     def save_artifact(
         self,
@@ -447,8 +460,8 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             "INSERT OR REPLACE INTO source_artifacts "
             "(source_artifact_id, source_kind, source_retention, original_uri, label, "
             "parser_version, content_hash, byte_count, local_path, archived, "
-            "archive_content_hash, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "archive_content_hash, created_at, registered_actor_context) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.source_artifact_id,
                 record.source_kind,
@@ -462,6 +475,7 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
                 int(record.archived),
                 record.archive_content_hash,
                 record.created_at,
+                json.dumps(dump_actor_context(record.registered_actor_context)),
             ),
         )
         self._conn.execute(
@@ -584,6 +598,11 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             archived=bool(row["archived"]),
             archive_content_hash=row["archive_content_hash"],
             created_at=row["created_at"],
+            registered_actor_context=load_actor_context(
+                json.loads(row["registered_actor_context"])
+                if "registered_actor_context" in row.keys() and row["registered_actor_context"]
+                else None
+            ),
         )
 
     @staticmethod

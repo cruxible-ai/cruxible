@@ -22,6 +22,54 @@ class ValidateRequest(BaseModel):
     config_yaml: str | None = None
 
 
+class BootstrapClaimRequest(BaseModel):
+    bootstrap_secret: str = Field(min_length=1)
+
+
+class RuntimeCredentialCreateRequest(BaseModel):
+    label: str = Field(min_length=1)
+    permission_mode: contracts.RuntimeCredentialPermissionMode = "admin"
+
+
+class HostedInstanceInitRequest(BaseModel):
+    instance_id: str | None = None
+    source_type: contracts.HostedInstanceSourceType
+    kit_ref: str | None = None
+    transport_ref: str | None = None
+    state_ref: str | None = None
+    overlay_kit_ref: str | None = None
+    no_overlay_kit: bool = False
+
+    @model_validator(mode="after")
+    def validate_source(self) -> HostedInstanceInitRequest:
+        if self.source_type == "kit":
+            if not (self.kit_ref or "").strip():
+                raise ValueError("kit_ref is required when source_type=kit")
+            if any(
+                (value or "").strip()
+                for value in (self.transport_ref, self.state_ref, self.overlay_kit_ref)
+            ):
+                raise ValueError(
+                    "transport_ref, state_ref, and overlay_kit_ref require "
+                    "source_type=reference_model"
+                )
+            if self.no_overlay_kit:
+                raise ValueError("no_overlay_kit requires source_type=reference_model")
+            return self
+
+        has_transport = bool((self.transport_ref or "").strip())
+        has_state = bool((self.state_ref or "").strip())
+        if has_transport == has_state:
+            raise ValueError(
+                "Provide exactly one of transport_ref or state_ref when source_type=reference_model"
+            )
+        if (self.overlay_kit_ref or "").strip() and self.no_overlay_kit:
+            raise ValueError("Provide overlay_kit_ref or no_overlay_kit, not both")
+        if (self.kit_ref or "").strip():
+            raise ValueError("kit_ref requires source_type=kit")
+        return self
+
+
 class QueryRequest(BaseModel):
     query_name: str
     params: dict[str, Any] | None = None
@@ -64,16 +112,19 @@ class IngestRequest(BaseModel):
 class AddEntitiesRequest(BaseModel):
     entities: list[contracts.EntityInput]
     dry_run: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class AddRelationshipsRequest(BaseModel):
     relationships: list[contracts.RelationshipInput]
     dry_run: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class BatchDirectWriteRequest(BaseModel):
     payload: contracts.BatchDirectWritePayload
     dry_run: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -91,15 +142,17 @@ class FeedbackRequest(BaseModel):
     scope_hints: dict[str, Any] | None = None
     corrections: dict[str, Any] | None = None
     group_override: bool = False
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class FeedbackBatchRequest(BaseModel):
     source: contracts.FeedbackSource
     items: list[contracts.FeedbackBatchItemInput]
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class FeedbackFromQueryRequest(contracts.FeedbackFromQueryInput):
-    pass
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class OutcomeRequest(BaseModel):
@@ -112,6 +165,7 @@ class OutcomeRequest(BaseModel):
     scope_hints: dict[str, Any] | None = None
     outcome_profile_key: str | None = None
     detail: dict[str, Any] | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class ProposeGroupRequest(BaseModel):
@@ -123,6 +177,7 @@ class ProposeGroupRequest(BaseModel):
     signal_sources_used: list[str] | None = None
     proposed_by: contracts.GroupProposedBy = "agent"
     suggested_priority: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class ResolveGroupRequest(BaseModel):
@@ -130,11 +185,13 @@ class ResolveGroupRequest(BaseModel):
     rationale: str = ""
     resolved_by: contracts.GroupResolvedBy = "human"
     expected_pending_version: int
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class UpdateTrustStatusRequest(BaseModel):
     trust_status: contracts.GroupTrustStatus
     reason: str = ""
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class RegisterSourceArtifactRequest(BaseModel):
@@ -143,6 +200,7 @@ class RegisterSourceArtifactRequest(BaseModel):
     source_retention: contracts.SourceRetention = "manifest_only"
     original_uri: str | None = None
     label: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class DereferenceSourceEvidenceRequest(BaseModel):
@@ -206,6 +264,7 @@ class AddConstraintRequest(BaseModel):
     rule: str
     severity: contracts.ConstraintSeverity = "warning"
     description: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class AddDecisionPolicyRequest(BaseModel):
@@ -219,12 +278,14 @@ class AddDecisionPolicyRequest(BaseModel):
     query_name: str | None = None
     workflow_name: str | None = None
     expires_at: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class WorkflowInputRequest(BaseModel):
     workflow_name: str
     input: dict[str, Any] | None = None
     decision_record_id: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class WorkflowApplyRequest(BaseModel):
@@ -233,6 +294,7 @@ class WorkflowApplyRequest(BaseModel):
     expected_apply_digest: str
     expected_head_snapshot_id: str | None = None
     decision_record_id: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class DecisionRecordCreateRequest(BaseModel):
@@ -240,20 +302,24 @@ class DecisionRecordCreateRequest(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     opened_by: Literal["human", "agent", "service"] = "human"
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class DecisionRecordFinalizeRequest(BaseModel):
     final_decision: str
     decision_class: contracts.DecisionClass
     rationale: str = ""
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class DecisionRecordAbandonRequest(BaseModel):
     reason: str = ""
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class WorkflowTestRequest(BaseModel):
     name: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class WorkflowLockRequest(BaseModel):
@@ -267,6 +333,7 @@ class ReloadConfigRequest(BaseModel):
 
 class SnapshotCreateRequest(BaseModel):
     label: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
 
 
 class CloneSnapshotRequest(BaseModel):
@@ -299,3 +366,4 @@ class StateOverlayRequest(BaseModel):
 
 class StatePullApplyRequest(BaseModel):
     expected_apply_digest: str
+    actor_context: contracts.GovernedActorContext | None = None

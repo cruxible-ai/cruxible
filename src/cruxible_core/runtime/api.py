@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import (
+    GovernedActorContext,
+    dump_actor_context,
+    require_hosted_actor_context,
+)
 from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
+from cruxible_core.primitives import canonical_json
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -107,12 +116,15 @@ from cruxible_core.service.types import (
     RelationshipWriteInput,
     SharedEvidenceInput,
 )
+from cruxible_core.temporal import format_datetime, utc_now
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
     contracts.WorkflowRunResult,
     contracts.WorkflowApplyResult,
 )
+
+_HOSTED_INIT_METADATA_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "hosted_init.json"
 
 
 def _build_workflow_execution_contract(
@@ -143,10 +155,30 @@ def _operation_context(
     decision_record_id: str | None,
     *,
     surface: str = "local",
+    actor_context: GovernedActorContext | None = None,
 ) -> OperationContext | None:
-    if decision_record_id is None:
+    if decision_record_id is None and actor_context is None:
         return None
-    return OperationContext(decision_record_id=decision_record_id, surface=surface)  # type: ignore[arg-type]
+    return OperationContext(
+        decision_record_id=decision_record_id,
+        surface=surface,  # type: ignore[arg-type]
+        actor_context=actor_context,
+    )
+
+
+def _requires_hosted_actor_context() -> bool:
+    from cruxible_core.server.auth import get_current_auth_context
+
+    auth_context = get_current_auth_context()
+    return auth_context is not None and auth_context.credential_type == "runtime_credential"
+
+
+def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
+    if value is None:
+        if _requires_hosted_actor_context():
+            raise ConfigError("hosted governed actor context is required")
+        return None
+    return require_hosted_actor_context(value)
 
 
 def _has_init_config(
@@ -160,7 +192,11 @@ def _has_init_config(
 def _check_init_permissions(root_dir: str, *, has_config: bool) -> None:
     check_permission("cruxible_init")
     if has_config:
-        check_permission("cruxible_init_with_config", instance_id=root_dir)
+        check_permission(
+            "cruxible_init_with_config",
+            instance_id=root_dir,
+            enforce_instance_scope=False,
+        )
     validate_root_dir(root_dir)
 
 
@@ -231,6 +267,11 @@ def init_governed(
     kit: str | None = None,
 ) -> contracts.InitResult:
     """Initialize or reload a daemon-owned governed instance."""
+    check_permission(
+        "cruxible_governed_instance_lifecycle",
+        instance_id=root_dir,
+        enforce_instance_scope=False,
+    )
     has_config = _has_init_config(config_path, config_yaml, kit)
     _check_init_permissions(root_dir, has_config=has_config)
     registered = get_registry().get_or_create_governed_instance(root_dir)
@@ -261,6 +302,275 @@ def init_governed(
         ),
         initialize=initialize_governed,
         include_initialized_warnings=True,
+    )
+
+
+def init_hosted_instance(
+    *,
+    instance_id: str | None = None,
+    source_type: contracts.HostedInstanceSourceType,
+    kit_ref: str | None = None,
+    transport_ref: str | None = None,
+    state_ref: str | None = None,
+    overlay_kit_ref: str | None = None,
+    no_overlay_kit: bool = False,
+) -> contracts.HostedInstanceInitResult:
+    """Initialize a fresh server-owned hosted instance from a first-class source ref."""
+    registry = get_registry()
+    selected_instance_id = (instance_id or "").strip() or registry.generate_governed_instance_id()
+    check_permission("cruxible_hosted_instance_init", instance_id=selected_instance_id)
+    _validate_hosted_init_inputs(
+        source_type=source_type,
+        kit_ref=kit_ref,
+        transport_ref=transport_ref,
+        state_ref=state_ref,
+        overlay_kit_ref=overlay_kit_ref,
+        no_overlay_kit=no_overlay_kit,
+    )
+    kit_ref = (kit_ref or "").strip() or None
+    transport_ref = (transport_ref or "").strip() or None
+    state_ref = (state_ref or "").strip() or None
+    overlay_kit_ref = (overlay_kit_ref or "").strip() or None
+
+    source_payload = _hosted_init_source_payload(
+        source_type=source_type,
+        kit_ref=kit_ref,
+        transport_ref=transport_ref,
+        state_ref=state_ref,
+        overlay_kit_ref=overlay_kit_ref,
+        no_overlay_kit=no_overlay_kit,
+    )
+    request_digest = _hosted_init_digest(source_payload)
+
+    existing = registry.get(selected_instance_id)
+    instance_root = registry.governed_instance_location(selected_instance_id)
+    if existing is not None:
+        if existing.backend != GOVERNED_DAEMON_BACKEND:
+            raise ConfigError(f"Instance '{selected_instance_id}' is not a hosted instance")
+        return _load_hosted_instance_idempotently(
+            instance_id=selected_instance_id,
+            instance_root=Path(existing.location),
+            expected_digest=request_digest,
+        )
+    if instance_root.exists():
+        raise ConfigError(f"Hosted instance root already exists for {selected_instance_id}")
+
+    try:
+        if source_type == "kit":
+            assert kit_ref is not None
+            init_result = service_init(
+                root_dir=instance_root,
+                kit=kit_ref,
+                instance_mode=CruxibleInstance.GOVERNED_MODE,
+            )
+            instance = init_result.instance
+            manifest: contracts.PublishedStateManifest | None = None
+            resolved_source_ref: str | None = None
+            warnings = init_result.warnings
+        else:
+            overlay_result = service_create_state_overlay(
+                transport_ref=transport_ref,
+                state_ref=state_ref,
+                kit=overlay_kit_ref,
+                no_kit=no_overlay_kit,
+                root_dir=instance_root,
+                instance_mode=CruxibleInstance.GOVERNED_MODE,
+            )
+            instance = overlay_result.instance
+            manifest = contracts.PublishedStateManifest.model_validate(
+                overlay_result.manifest.model_dump(mode="json")
+            )
+            upstream = instance.get_upstream_metadata()
+            resolved_source_ref = upstream.transport_ref if upstream is not None else None
+            warnings = []
+
+        metadata = _hosted_init_metadata(
+            request_digest=request_digest,
+            source_payload=source_payload,
+            resolved_source_ref=resolved_source_ref,
+            manifest=manifest,
+            warnings=warnings,
+        )
+        _write_hosted_init_metadata(instance_root, metadata)
+        registered = registry.create_governed_instance_with_id(selected_instance_id)
+    except Exception:
+        shutil.rmtree(instance_root, ignore_errors=True)
+        raise
+
+    get_manager().register(registered.record.instance_id, instance)
+    return _hosted_init_result_from_metadata(
+        instance_id=registered.record.instance_id,
+        status="initialized",
+        metadata=metadata,
+    )
+
+
+def _validate_hosted_init_inputs(
+    *,
+    source_type: contracts.HostedInstanceSourceType,
+    kit_ref: str | None,
+    transport_ref: str | None,
+    state_ref: str | None,
+    overlay_kit_ref: str | None,
+    no_overlay_kit: bool,
+) -> None:
+    if source_type == "kit":
+        if not (kit_ref or "").strip():
+            raise ConfigError("kit_ref is required when source_type=kit")
+        if any((value or "").strip() for value in (transport_ref, state_ref, overlay_kit_ref)):
+            raise ConfigError(
+                "transport_ref, state_ref, and overlay_kit_ref require source_type=reference_model"
+            )
+        if no_overlay_kit:
+            raise ConfigError("no_overlay_kit requires source_type=reference_model")
+        return
+
+    has_transport = bool((transport_ref or "").strip())
+    has_state = bool((state_ref or "").strip())
+    if has_transport == has_state:
+        raise ConfigError(
+            "Provide exactly one of transport_ref or state_ref when source_type=reference_model"
+        )
+    if (overlay_kit_ref or "").strip() and no_overlay_kit:
+        raise ConfigError("Provide overlay_kit_ref or no_overlay_kit, not both")
+    if (kit_ref or "").strip():
+        raise ConfigError("kit_ref requires source_type=kit")
+
+
+def _load_hosted_instance_idempotently(
+    *,
+    instance_id: str,
+    instance_root: Path,
+    expected_digest: str,
+) -> contracts.HostedInstanceInitResult:
+    metadata = _read_hosted_init_metadata(instance_root)
+    if metadata is None:
+        raise ConfigError(
+            f"Hosted instance '{instance_id}' already exists without hosted init metadata"
+        )
+    if metadata.get("request_digest") != expected_digest:
+        raise ConfigError(
+            f"Hosted instance '{instance_id}' is already initialized with different material"
+        )
+    instance = CruxibleInstance.load(instance_root)
+    get_manager().register(instance_id, instance)
+    return _hosted_init_result_from_metadata(
+        instance_id=instance_id,
+        status="already_initialized",
+        metadata=metadata,
+    )
+
+
+def _hosted_init_source_payload(
+    *,
+    source_type: contracts.HostedInstanceSourceType,
+    kit_ref: str | None,
+    transport_ref: str | None,
+    state_ref: str | None,
+    overlay_kit_ref: str | None,
+    no_overlay_kit: bool,
+) -> dict[str, Any]:
+    if source_type == "kit":
+        return {
+            "source_type": source_type,
+            "kit_ref": kit_ref,
+        }
+    return {
+        "source_type": source_type,
+        "transport_ref": transport_ref,
+        "state_ref": state_ref,
+        "overlay_kit_ref": overlay_kit_ref,
+        "no_overlay_kit": no_overlay_kit,
+    }
+
+
+def _hosted_init_digest(payload: dict[str, Any]) -> str:
+    encoded = canonical_json(payload).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _hosted_init_metadata(
+    *,
+    request_digest: str,
+    source_payload: dict[str, Any],
+    resolved_source_ref: str | None,
+    manifest: contracts.PublishedStateManifest | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    initialized_at = format_datetime(utc_now())
+    assert initialized_at is not None
+    return {
+        "version": 1,
+        "initialized_at": initialized_at,
+        "request_digest": request_digest,
+        "source": source_payload,
+        "resolved_source_ref": resolved_source_ref,
+        "manifest": manifest.model_dump(mode="json") if manifest is not None else None,
+        "warnings": warnings,
+    }
+
+
+def _hosted_init_metadata_path(instance_root: Path) -> Path:
+    return instance_root / _HOSTED_INIT_METADATA_RELATIVE_PATH
+
+
+def _read_hosted_init_metadata(instance_root: Path) -> dict[str, Any] | None:
+    path = _hosted_init_metadata_path(instance_root)
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ConfigError(f"Hosted init metadata at {path} must be a JSON object")
+    return payload
+
+
+def _write_hosted_init_metadata(instance_root: Path, metadata: dict[str, Any]) -> None:
+    path = _hosted_init_metadata_path(instance_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+
+
+def _hosted_init_result_from_metadata(
+    *,
+    instance_id: str,
+    status: contracts.HostedInstanceInitStatus,
+    metadata: dict[str, Any],
+) -> contracts.HostedInstanceInitResult:
+    source = metadata.get("source")
+    if not isinstance(source, dict):
+        raise ConfigError("Hosted init metadata source must be a JSON object")
+    source_type_raw = source.get("source_type")
+    if source_type_raw not in ("kit", "reference_model"):
+        raise ConfigError("Hosted init metadata source_type is invalid")
+    source_type = cast(contracts.HostedInstanceSourceType, source_type_raw)
+    if source_type == "kit":
+        source_ref = str(source.get("kit_ref") or "")
+        overlay_kit_ref = None
+    else:
+        source_ref = str(source.get("state_ref") or source.get("transport_ref") or "")
+        overlay_kit_ref = source.get("overlay_kit_ref")
+        if overlay_kit_ref is not None:
+            overlay_kit_ref = str(overlay_kit_ref)
+    manifest_payload = metadata.get("manifest")
+    manifest = (
+        contracts.PublishedStateManifest.model_validate(manifest_payload)
+        if manifest_payload is not None
+        else None
+    )
+    warnings = metadata.get("warnings") or []
+    return contracts.HostedInstanceInitResult(
+        instance_id=instance_id,
+        status=status,
+        source_type=source_type,
+        source_ref=source_ref,
+        resolved_source_ref=(
+            str(metadata["resolved_source_ref"])
+            if metadata.get("resolved_source_ref") is not None
+            else None
+        ),
+        overlay_kit_ref=overlay_kit_ref,
+        manifest=manifest,
+        warnings=list(warnings) if isinstance(warnings, list) else [],
     )
 
 
@@ -330,15 +640,17 @@ def workflow_run(
     *,
     decision_record_id: str | None = None,
     surface: str = "local",
+    actor_context: Any | None = None,
 ) -> contracts.WorkflowRunResult:
     """Execute a workflow through the governed service layer."""
     check_permission("cruxible_run_workflow", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_run(
         instance,
         workflow_name,
         input_payload or {},
-        context=_operation_context(decision_record_id, surface=surface),
+        context=_operation_context(decision_record_id, surface=surface, actor_context=actor),
     )
     return _build_workflow_execution_contract(result, contracts.WorkflowRunResult)
 
@@ -352,9 +664,11 @@ def workflow_apply(
     *,
     decision_record_id: str | None = None,
     surface: str = "local",
+    actor_context: Any | None = None,
 ) -> contracts.WorkflowApplyResult:
     """Apply a canonical workflow through the governed service layer."""
     check_permission("cruxible_apply_workflow", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_apply_workflow(
         instance,
@@ -362,7 +676,7 @@ def workflow_apply(
         input_payload or {},
         expected_apply_digest=expected_apply_digest,
         expected_head_snapshot_id=expected_head_snapshot_id,
-        context=_operation_context(decision_record_id, surface=surface),
+        context=_operation_context(decision_record_id, surface=surface, actor_context=actor),
     )
     return _build_workflow_execution_contract(result, contracts.WorkflowApplyResult)
 
@@ -370,11 +684,13 @@ def workflow_apply(
 def workflow_test(
     instance_id: str,
     name: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.WorkflowTestResult:
     """Execute config-defined workflow tests through the governed service layer."""
     check_permission("cruxible_test_workflow", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    result = service_test(instance, test_name=name)
+    result = service_test(instance, test_name=name, actor_context=actor)
     return contracts.WorkflowTestResult(
         total=result.total,
         passed=result.passed,
@@ -400,18 +716,20 @@ def propose_workflow(
     *,
     decision_record_id: str | None = None,
     surface: str = "local",
+    actor_context: Any | None = None,
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and bridge its output into a governed relationship proposal."""
     check_permission(
         "cruxible_propose_workflow",
         instance_id=instance_id,
     )
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_propose_workflow(
         instance,
         workflow_name,
         input_payload or {},
-        context=_operation_context(decision_record_id, surface=surface),
+        context=_operation_context(decision_record_id, surface=surface, actor_context=actor),
     )
     return contracts.WorkflowProposeResult(
         workflow=result.workflow,
@@ -445,11 +763,13 @@ def propose_workflow(
 def create_snapshot(
     instance_id: str,
     label: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.SnapshotCreateResult:
     """Create an immutable full snapshot for an instance."""
     check_permission("cruxible_create_snapshot", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    result = service_create_snapshot(instance, label=label)
+    result = service_create_snapshot(instance, label=label, actor_context=actor)
     return contracts.SnapshotCreateResult(
         snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json"))
     )
@@ -462,8 +782,10 @@ def create_decision_record(
     subject_type: str | None = None,
     subject_id: str | None = None,
     opened_by: str = "human",
+    actor_context: Any | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_create_decision_record", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_create_decision_record(
         instance,
@@ -471,6 +793,7 @@ def create_decision_record(
         subject_type=subject_type,
         subject_id=subject_id,
         opened_by=opened_by,
+        actor_context=actor,
     )
     return contracts.DecisionRecordResult(record=result.record.model_dump(mode="json"))
 
@@ -563,8 +886,10 @@ def finalize_decision_record(
     final_decision: str,
     decision_class: str,
     rationale: str = "",
+    actor_context: Any | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_finalize_decision_record", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_finalize_decision_record(
         instance,
@@ -572,6 +897,7 @@ def finalize_decision_record(
         final_decision=final_decision,
         decision_class=decision_class,  # type: ignore[arg-type]
         rationale=rationale,
+        actor_context=actor,
     )
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
@@ -584,10 +910,17 @@ def abandon_decision_record(
     decision_record_id: str,
     *,
     reason: str = "",
+    actor_context: Any | None = None,
 ) -> contracts.DecisionRecordResult:
     check_permission("cruxible_abandon_decision_record", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    result = service_abandon_decision_record(instance, decision_record_id, reason=reason)
+    result = service_abandon_decision_record(
+        instance,
+        decision_record_id,
+        reason=reason,
+        actor_context=actor,
+    )
     return contracts.DecisionRecordResult(
         record=result.record.model_dump(mode="json"),
         events=[event.model_dump(mode="json") for event in result.events],
@@ -845,9 +1178,11 @@ def feedback(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    actor_context: Any | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
     check_permission("cruxible_feedback", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
     target = RelationshipTargetInput(
@@ -871,6 +1206,7 @@ def feedback(
             group_override=group_override,
         ),
         source=source,
+        actor_context=actor,
     )
     return contracts.FeedbackResult(
         feedback_id=result.feedback_id,
@@ -884,9 +1220,11 @@ def feedback_batch(
     items: list[contracts.FeedbackBatchItemInput],
     *,
     source: contracts.FeedbackSource,
+    actor_context: Any | None = None,
 ) -> contracts.FeedbackBatchResult:
     """Record batch edge feedback tied to prior receipts."""
     check_permission("cruxible_feedback_batch", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_feedback_batch_inputs(
         instance,
@@ -911,6 +1249,7 @@ def feedback_batch(
             for item in items
         ],
         source=source,
+        actor_context=actor,
     )
     return contracts.FeedbackBatchResult(
         feedback_ids=result.feedback_ids,
@@ -934,9 +1273,11 @@ def feedback_from_query(
     group_override: bool = False,
     path_index: int | None = None,
     path_alias: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.FeedbackResult:
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     check_permission("cruxible_feedback_from_query", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_feedback_from_query_result(
         instance,
@@ -951,6 +1292,7 @@ def feedback_from_query(
         group_override=group_override,
         path_index=path_index,
         path_alias=path_alias,
+        actor_context=actor,
     )
     return contracts.FeedbackResult(
         feedback_id=result.feedback_id,
@@ -970,9 +1312,11 @@ def outcome(
     scope_hints: dict[str, Any] | None = None,
     outcome_profile_key: str | None = None,
     detail: dict[str, Any] | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.OutcomeResult:
     """Record a structured outcome for a prior receipt or proposal resolution."""
     check_permission("cruxible_outcome", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_outcome(
         instance,
@@ -985,6 +1329,7 @@ def outcome(
         scope_hints=scope_hints,
         outcome_profile_key=outcome_profile_key,
         detail=detail,
+        actor_context=actor,
     )
     return contracts.OutcomeResult(outcome_id=result.outcome_id)
 
@@ -1617,9 +1962,11 @@ def add_relationships_with_provenance(
     provenance_source: str,
     provenance_source_ref: str,
     dry_run: bool = False,
+    actor_context: Any | None = None,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
     check_permission("cruxible_add_relationship", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
     inputs = [_relationship_input_to_service(edge) for edge in relationships]
@@ -1629,6 +1976,7 @@ def add_relationships_with_provenance(
         source=provenance_source,
         source_ref=provenance_source_ref,
         dry_run=dry_run,
+        actor_context=actor,
     )
     return contracts.AddRelationshipResult(
         added=result.added,
@@ -1723,10 +2071,12 @@ def batch_direct_write(
     dry_run: bool = False,
     provenance_source: str = "mcp_add",
     provenance_source_ref: str = SOURCE_REF_BATCH_DIRECT_WRITE,
+    actor_context: Any | None = None,
 ) -> contracts.BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
     check_permission("cruxible_add_relationship", instance_id=instance_id)
     check_permission("cruxible_add_entity", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_batch_direct_write(
         instance,
@@ -1734,6 +2084,7 @@ def batch_direct_write(
         dry_run=dry_run,
         source=provenance_source,
         source_ref=provenance_source_ref,
+        actor_context=actor,
     )
     return contracts.BatchDirectWriteResult(
         dry_run=result.dry_run,
@@ -1754,9 +2105,11 @@ def add_entities(
     entities: list[contracts.EntityInput],
     *,
     dry_run: bool = False,
+    actor_context: Any | None = None,
 ) -> contracts.AddEntityResult:
     """Add or update one or more entities in the graph (upsert)."""
     check_permission("cruxible_add_entity", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
     inputs = [
@@ -1764,7 +2117,10 @@ def add_entities(
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
-            metadata=entity.metadata,
+            metadata={
+                **entity.metadata,
+                **({"actor_context": dump_actor_context(actor)} if actor is not None else {}),
+            },
         )
         for entity in entities
     ]
@@ -1782,9 +2138,11 @@ def add_constraint(
     rule: str,
     severity: contracts.ConstraintSeverity = "warning",
     description: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.AddConstraintResult:
     """Add a constraint rule to the config and write back to YAML."""
     check_permission("cruxible_add_constraint", instance_id=instance_id)
+    _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_add_constraint(
         instance,
@@ -1814,9 +2172,11 @@ def add_decision_policy(
     query_name: str | None = None,
     workflow_name: str | None = None,
     expires_at: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.AddDecisionPolicyResult:
     """Add a decision policy to the config and write back to YAML."""
     check_permission("cruxible_add_decision_policy", instance_id=instance_id)
+    _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     result = service_add_decision_policy(
         instance,
@@ -1949,9 +2309,11 @@ def propose_group(
     signal_sources_used: list[str] | None = None,
     proposed_by: contracts.GroupProposedBy = "agent",
     suggested_priority: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.ProposeGroupToolResult:
     """Propose a candidate group for batch edge review."""
     check_permission("cruxible_propose_group", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
     service_members = [
@@ -1998,6 +2360,7 @@ def propose_group(
         signal_sources_used=signal_sources_used,
         proposed_by=proposed_by,
         suggested_priority=suggested_priority,
+        actor_context=actor,
     )
     return contracts.ProposeGroupToolResult(
         group_id=result.group_id,
@@ -2027,9 +2390,11 @@ def register_source_artifact(
     source_retention: contracts.SourceRetention = "manifest_only",
     original_uri: str | None = None,
     label: str | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.RegisterSourceArtifactResult:
     """Register a local source artifact for source-backed proposal evidence."""
     check_permission("cruxible_register_source_artifact", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
     record = get_registry().get(instance_id)
     workspace_root = (
@@ -2061,6 +2426,7 @@ def register_source_artifact(
         source_retention=source_retention,
         original_uri=resolved_original_uri,
         label=label,
+        actor_context=actor,
     )
     return contracts.RegisterSourceArtifactResult.model_validate(result.model_dump(mode="json"))
 
@@ -2094,9 +2460,11 @@ def resolve_group(
     rationale: str = "",
     resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
+    actor_context: Any | None = None,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     check_permission("cruxible_resolve_group", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
     result = service_resolve_group(
@@ -2106,6 +2474,7 @@ def resolve_group(
         rationale=rationale,
         resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
+        actor_context=actor,
     )
     return contracts.ResolveGroupToolResult(
         group_id=result.group_id,
@@ -2122,12 +2491,20 @@ def update_trust_status(
     resolution_id: str,
     trust_status: contracts.GroupTrustStatus,
     reason: str = "",
+    actor_context: Any | None = None,
 ) -> contracts.UpdateTrustStatusToolResult:
     """Update trust status on a resolution."""
     check_permission("cruxible_update_trust_status", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
 
-    result = service_update_trust_status(instance, resolution_id, trust_status, reason=reason)
+    result = service_update_trust_status(
+        instance,
+        resolution_id,
+        trust_status,
+        reason=reason,
+        actor_context=actor,
+    )
     return contracts.UpdateTrustStatusToolResult(
         resolution_id=result.resolution_id,
         trust_status=result.trust_status,
@@ -2358,11 +2735,17 @@ def state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
 def state_pull_apply(
     instance_id: str,
     expected_apply_digest: str,
+    actor_context: Any | None = None,
 ) -> contracts.StatePullApplyResult:
     """Apply a previewed upstream pull to a tracked overlay."""
     check_permission("cruxible_state_pull_apply", instance_id=instance_id)
+    actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    result = service_pull_state_apply(instance, expected_apply_digest=expected_apply_digest)
+    result = service_pull_state_apply(
+        instance,
+        expected_apply_digest=expected_apply_digest,
+        actor_context=actor,
+    )
     return contracts.StatePullApplyResult(
         release_id=result.release_id,
         apply_digest=result.apply_digest,

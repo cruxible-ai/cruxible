@@ -329,9 +329,7 @@ def service_reload_config(
                 overlay_config_path = str(overlay_path.relative_to(root))
             except ValueError:
                 overlay_config_path = str(overlay_path)
-            updated = upstream.model_copy(
-                update={"overlay_config_path": overlay_config_path}
-            )
+            updated = upstream.model_copy(update={"overlay_config_path": overlay_config_path})
             instance.set_upstream_metadata(updated)
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),

@@ -218,7 +218,7 @@ def handle_workflow_run(
     decision_record_id: str | None = None,
 ) -> contracts.WorkflowRunResult:
     """Execute a configured workflow."""
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(
@@ -250,7 +250,7 @@ def handle_workflow_apply(
     decision_record_id: str | None = None,
 ) -> contracts.WorkflowApplyResult:
     """Commit a previously previewed canonical workflow after verifying identity."""
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(
@@ -296,7 +296,7 @@ def handle_propose_workflow(
     decision_record_id: str | None = None,
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and create a governed relationship proposal."""
-    decision_kwargs = (
+    decision_kwargs: dict[str, Any] = (
         {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(

@@ -38,6 +38,7 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         scope_hints=req.scope_hints,
         corrections=req.corrections,
         group_override=req.group_override,
+        actor_context=req.actor_context,
     )
 
 
@@ -51,6 +52,7 @@ async def feedback_batch(
         instance_id=resolved_instance_id,
         items=req.items,
         source=req.source,
+        actor_context=req.actor_context,
     )
 
 
@@ -73,6 +75,7 @@ async def feedback_from_query(
         group_override=req.group_override,
         path_index=req.path_index,
         path_alias=req.path_alias,
+        actor_context=req.actor_context,
     )
 
 
@@ -123,6 +126,7 @@ async def outcome(instance_id: str, req: OutcomeRequest) -> contracts.OutcomeRes
         scope_hints=req.scope_hints,
         outcome_profile_key=req.outcome_profile_key,
         detail=req.detail,
+        actor_context=req.actor_context,
     )
 
 

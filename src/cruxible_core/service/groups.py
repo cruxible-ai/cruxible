@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.governance import (
     apply_workflow_policies,
@@ -85,6 +86,7 @@ class _ProposalMetadata:
     source_query_receipt_ids: list[str]
     source_trace_ids: list[str]
     source_step_ids: list[str]
+    proposed_actor_context: GovernedActorContext | None
 
 
 def _proposal_result(
@@ -166,6 +168,7 @@ def _new_candidate_group(
         source_query_receipt_ids=metadata.source_query_receipt_ids,
         source_trace_ids=metadata.source_trace_ids,
         source_step_ids=metadata.source_step_ids,
+        proposed_actor_context=metadata.proposed_actor_context,
         created_at=utc_now(),
     )
 
@@ -443,6 +446,8 @@ def _source_query_receipt_ids_from_members(members: list[CandidateMember]) -> li
 def _candidate_signal_from_input(
     instance: InstanceProtocol,
     signal: GroupSignalInput,
+    *,
+    actor_context: GovernedActorContext | None = None,
 ) -> CandidateSignal:
     return CandidateSignal(
         signal_source=signal.signal_source,
@@ -452,6 +457,7 @@ def _candidate_signal_from_input(
             instance,
             evidence_refs=signal.evidence_refs,
             source_evidence=signal.source_evidence,
+            actor_context=actor_context,
         ),
         basis=(
             SignalBucketBasis.model_validate(signal.basis) if signal.basis is not None else None
@@ -462,6 +468,8 @@ def _candidate_signal_from_input(
 def _candidate_member_from_input(
     instance: InstanceProtocol,
     member: GroupMemberInput,
+    *,
+    actor_context: GovernedActorContext | None = None,
 ) -> CandidateMember:
     return CandidateMember(
         from_type=member.from_type,
@@ -469,12 +477,20 @@ def _candidate_member_from_input(
         to_type=member.to_type,
         to_id=member.to_id,
         relationship_type=member.relationship_type,
-        signals=[_candidate_signal_from_input(instance, signal) for signal in member.signals],
+        signals=[
+            _candidate_signal_from_input(
+                instance,
+                signal,
+                actor_context=actor_context,
+            )
+            for signal in member.signals
+        ],
         source_query_evidence=_query_source_evidence_from_input(member.source_query_evidence),
         evidence_refs=resolve_evidence_refs(
             instance,
             evidence_refs=member.evidence_refs,
             source_evidence=member.source_evidence,
+            actor_context=actor_context,
         ),
         evidence_rationale=member.evidence_rationale,
         properties=member.properties,
@@ -503,12 +519,20 @@ def service_propose_group_inputs(
     source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
     """Normalize proposal input payloads, then propose a candidate group."""
     return service_propose_group(
         instance,
         relationship_type,
-        [_candidate_member_from_input(instance, member) for member in members],
+        [
+            _candidate_member_from_input(
+                instance,
+                member,
+                actor_context=actor_context,
+            )
+            for member in members
+        ],
         thesis_text=thesis_text,
         thesis_facts=thesis_facts,
         pending_refresh_mode=pending_refresh_mode,
@@ -521,6 +545,7 @@ def service_propose_group_inputs(
         source_query_receipt_ids=source_query_receipt_ids,
         source_trace_ids=source_trace_ids,
         source_step_ids=source_step_ids,
+        actor_context=actor_context,
     )
 
 
@@ -540,6 +565,7 @@ def service_propose_group(
     source_query_receipt_ids: list[str] | None = None,
     source_trace_ids: list[str] | None = None,
     source_step_ids: list[str] | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
     """Propose a group of candidate edges for batch review/approval."""
     config = instance.load_config()
@@ -592,6 +618,7 @@ def service_propose_group(
         source_query_receipt_ids=source_query_receipt_ids,
         source_trace_ids=source_trace_ids,
         source_step_ids=source_step_ids,
+        proposed_actor_context=actor_context,
     )
 
     validate_group_proposal_inputs(
@@ -799,6 +826,7 @@ def service_resolve_group(
     rationale: str = "",
     resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
     return resolve_group_transition(
@@ -808,6 +836,7 @@ def service_resolve_group(
         rationale=rationale,
         resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
+        actor_context=actor_context,
     )
 
 
@@ -868,6 +897,7 @@ def service_update_trust_status(
     resolution_id: str,
     trust_status: Literal["trusted", "watch", "invalidated"],
     reason: str = "",
+    actor_context: GovernedActorContext | None = None,
 ) -> UpdateTrustStatusResult:
     """Update trust_status on a confirmed approved resolution (thesis-scoped)."""
     return update_trust_status_transition(
@@ -875,4 +905,5 @@ def service_update_trust_status(
         resolution_id,
         trust_status,
         reason=reason,
+        actor_context=actor_context,
     )

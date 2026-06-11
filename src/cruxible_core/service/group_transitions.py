@@ -12,6 +12,7 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupNotFoundError,
 )
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -67,9 +68,7 @@ def validate_resolve_request(
     expected_pending_version: int | None,
 ) -> None:
     if action not in _VALID_RESOLVE_ACTIONS:
-        raise ConfigError(
-            f"Invalid action '{action}'. Use: {', '.join(_VALID_RESOLVE_ACTIONS)}"
-        )
+        raise ConfigError(f"Invalid action '{action}'. Use: {', '.join(_VALID_RESOLVE_ACTIONS)}")
     if resolved_by not in _VALID_RESOLVE_SOURCES:
         raise ConfigError(
             f"Invalid resolved_by '{resolved_by}'. Use: {', '.join(_VALID_RESOLVE_SOURCES)}"
@@ -85,6 +84,7 @@ def resolve_group_transition(
     rationale: str = "",
     resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> ResolveGroupResult:
     """Resolve a candidate group through one mutation receipt/UOW boundary."""
     validate_resolve_request(
@@ -118,6 +118,7 @@ def resolve_group_transition(
                 members=target.members,
                 rationale=rationale,
                 resolved_by=resolved_by,
+                actor_context=actor_context,
                 builder=ctx.builder,
             )
         else:
@@ -128,6 +129,7 @@ def resolve_group_transition(
                 members=target.members,
                 rationale=rationale,
                 resolved_by=resolved_by,
+                actor_context=actor_context,
                 is_retry=target.is_retry,
                 builder=ctx.builder,
             )
@@ -143,6 +145,7 @@ def update_trust_status_transition(
     resolution_id: str,
     trust_status: Literal["trusted", "watch", "invalidated"],
     reason: str = "",
+    actor_context: GovernedActorContext | None = None,
 ) -> UpdateTrustStatusResult:
     """Update trust on the latest confirmed approval through one UOW boundary."""
     if trust_status not in _VALID_TRUST_STATUSES:
@@ -201,7 +204,12 @@ def update_trust_status_transition(
                 "reason": reason,
             },
         )
-        ctx.uow.groups.update_resolution_trust_status(resolution_id, trust_status, reason)
+        ctx.uow.groups.update_resolution_trust_status(
+            resolution_id,
+            trust_status,
+            reason,
+            trust_actor_context=actor_context,
+        )
         ctx.set_result(
             UpdateTrustStatusResult(
                 resolution_id=resolution_id,
@@ -259,6 +267,7 @@ def _reject_group(
     members: list[CandidateMember],
     rationale: str,
     resolved_by: Literal["human", "agent"],
+    actor_context: GovernedActorContext | None,
     builder: ReceiptBuilder,
 ) -> ResolveGroupResult:
     builder.record_validation(
@@ -280,6 +289,7 @@ def _reject_group(
         resolved_by,
         trust_status="watch",
         confirmed=True,
+        resolved_actor_context=actor_context,
     )
     group_store.update_group_status(
         group.group_id,
@@ -390,6 +400,7 @@ def _start_approval_resolution(
     resolved_by: Literal["human", "agent"],
     is_retry: bool,
     validation: _ApprovalValidation,
+    actor_context: GovernedActorContext | None,
 ) -> str:
     if is_retry:
         return cast(str, group.resolution_id)
@@ -419,6 +430,7 @@ def _start_approval_resolution(
         resolved_by,
         trust_status=_inherited_trust_status(prior),
         confirmed=False,
+        resolved_actor_context=actor_context,
     )
     group_store.update_group_status(
         group.group_id,
@@ -453,6 +465,7 @@ def _apply_resolved_relationships(
     uow: UnitOfWorkProtocol,
     receipt_id: str | None = None,
     resolution_id: str | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> int:
     if not relationships:
         return 0
@@ -467,6 +480,7 @@ def _apply_resolved_relationships(
             f"group:{group_id}",
             receipt_id=receipt_id,
             resolution_id=resolution_id,
+            actor_context=actor_context,
         )
         persisted = graph.get_relationship(
             relationship.from_type,
@@ -529,6 +543,7 @@ def _approve_group(
     members: list[CandidateMember],
     rationale: str,
     resolved_by: Literal["human", "agent"],
+    actor_context: GovernedActorContext | None,
     is_retry: bool,
     builder: ReceiptBuilder,
 ) -> ResolveGroupResult:
@@ -554,6 +569,7 @@ def _approve_group(
         resolved_by=resolved_by,
         is_retry=is_retry,
         validation=validation,
+        actor_context=actor_context,
     )
     _record_relationship_write_nodes(builder, validation.valid_inputs)
     edges_created = _apply_resolved_relationships(
@@ -564,6 +580,7 @@ def _approve_group(
         uow=uow,
         receipt_id=builder.receipt_id,
         resolution_id=resolution_id,
+        actor_context=actor_context,
     )
     _confirm_approval_resolution(
         group_store=uow.groups,

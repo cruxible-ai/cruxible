@@ -32,6 +32,7 @@ async def add_entities(
         instance_id=resolve_server_instance_id(instance_id),
         entities=req.entities,
         dry_run=req.dry_run,
+        actor_context=req.actor_context,
     )
 
 
@@ -47,6 +48,7 @@ async def add_relationships(
         dry_run=req.dry_run,
         provenance_source="http_api",
         provenance_source_ref=SOURCE_REF_ADD_RELATIONSHIP,
+        actor_context=req.actor_context,
     )
 
 
@@ -65,6 +67,7 @@ async def batch_direct_write(
         dry_run=req.dry_run,
         provenance_source="http_api",
         provenance_source_ref=SOURCE_REF_BATCH_DIRECT_WRITE,
+        actor_context=req.actor_context,
     )
 
 
@@ -80,6 +83,7 @@ async def add_constraint(
         rule=req.rule,
         severity=req.severity,
         description=req.description,
+        actor_context=req.actor_context,
     )
 
 
@@ -104,6 +108,7 @@ async def add_decision_policy(
         query_name=req.query_name,
         workflow_name=req.workflow_name,
         expires_at=req.expires_at,
+        actor_context=req.actor_context,
     )
 
 

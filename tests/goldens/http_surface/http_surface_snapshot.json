@@ -2,6 +2,9 @@
   "/api/v1/instances": {
     "POST": "InitResult"
   },
+  "/api/v1/runtime/instances": {
+    "POST": "HostedInstanceInitResult"
+  },
   "/api/v1/server/info": {
     "GET": "ServerInfoResult"
   },
@@ -131,6 +134,19 @@
   },
   "/api/v1/{instance_id}/resolutions/{resolution_id}/trust": {
     "PATCH": "UpdateTrustStatusToolResult"
+  },
+  "/api/v1/{instance_id}/runtime/bootstrap/claim": {
+    "POST": "RuntimeCredentialBootstrapResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials": {
+    "GET": "RuntimeCredentialListResult",
+    "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke": {
+    "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate": {
+    "POST": "RuntimeCredentialResult"
   },
   "/api/v1/{instance_id}/sample/{entity_type}": {
     "GET": "SampleResult"

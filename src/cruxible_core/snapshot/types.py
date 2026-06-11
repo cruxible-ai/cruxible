@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.temporal import utc_now
 
 _RELEASE_ID_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
@@ -42,6 +43,7 @@ class StateSnapshot(BaseModel):
     graph_digest: str
     parent_snapshot_id: str | None = None
     origin_snapshot_id: str | None = None
+    actor_context: GovernedActorContext | None = None
 
 
 class PublishedStateManifest(BaseModel):

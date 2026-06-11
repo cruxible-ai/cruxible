@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from cruxible_core.errors import DataValidationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.evidence import (
     EvidenceRef,
     merge_evidence_ref_objects,
@@ -32,6 +33,7 @@ def resolve_evidence_refs(
     *,
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = (),
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = (),
+    actor_context: GovernedActorContext | None = None,
 ) -> list[EvidenceRef]:
     """Resolve explicit and source-backed evidence into canonical refs."""
     try:
@@ -42,7 +44,11 @@ def resolve_evidence_refs(
             errors=_validation_errors(exc),
         ) from exc
     try:
-        source_refs = resolve_source_evidence_refs(instance, source_evidence)
+        source_refs = resolve_source_evidence_refs(
+            instance,
+            source_evidence,
+            actor_context=actor_context,
+        )
     except ValidationError as exc:
         raise DataValidationError(
             "Invalid source_evidence",

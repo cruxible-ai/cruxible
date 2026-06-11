@@ -9,6 +9,7 @@ from typing import Any
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.errors import DataValidationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.operations import (
@@ -352,6 +353,7 @@ def service_batch_direct_write(
     dry_run: bool = False,
     source: str = "batch_direct_write",
     source_ref: str = SOURCE_REF_BATCH_DIRECT_WRITE,
+    actor_context: GovernedActorContext | None = None,
 ) -> BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
     check_upstream_type_ownership(
@@ -420,6 +422,7 @@ def service_batch_direct_write(
                 source,
                 source_ref,
                 receipt_id=builder.receipt_id if builder else None,
+                actor_context=actor_context,
             )
             persisted_relationship = prepared.graph.get_relationship(
                 edge.from_type,
@@ -622,6 +625,7 @@ def service_add_relationship_inputs(
     source_ref: str,
     *,
     dry_run: bool = False,
+    actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Normalize relationship write inputs, then add or update graph relationships."""
@@ -631,6 +635,7 @@ def service_add_relationship_inputs(
         source=source,
         source_ref=source_ref,
         dry_run=dry_run,
+        actor_context=actor_context,
         _create_receipt=_create_receipt,
     )
 
@@ -642,6 +647,7 @@ def service_add_relationships(
     source_ref: str,
     *,
     dry_run: bool = False,
+    actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
@@ -736,6 +742,7 @@ def service_add_relationships(
                 source,
                 source_ref,
                 receipt_id=builder.receipt_id if builder else None,
+                actor_context=actor_context,
             )
             persisted = graph.get_relationship(
                 edge.from_type,

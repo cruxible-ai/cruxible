@@ -42,8 +42,7 @@ def service_add_constraint(
     parsed = parse_constraint_rule(rule)
     if parsed is None:
         raise ConfigError(
-            f"Rule syntax not supported: {rule!r}. "
-            f"Expected: {CONSTRAINT_RULE_SYNTAX}"
+            f"Rule syntax not supported: {rule!r}. Expected: {CONSTRAINT_RULE_SYNTAX}"
         )
     validated_severity = _constraint_severity(severity)
 

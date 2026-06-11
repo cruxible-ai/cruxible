@@ -10,6 +10,7 @@ from typing import Any
 
 from cruxible_core.decision.types import DecisionClass, DecisionEvent, DecisionRecord
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.service.types import (
     DecisionEventListResult,
@@ -37,6 +38,7 @@ def service_create_decision_record(
     subject_type: str | None = None,
     subject_id: str | None = None,
     opened_by: str = "human",
+    actor_context: GovernedActorContext | None = None,
 ) -> DecisionRecordServiceResult:
     """Create a new open decision record."""
     record = DecisionRecord(
@@ -44,6 +46,7 @@ def service_create_decision_record(
         subject_type=subject_type,
         subject_id=subject_id,
         opened_by=opened_by,  # type: ignore[arg-type]
+        opened_actor_context=actor_context,
     )
     with instance.write_transaction() as uow:
         uow.decisions.save_record(record)
@@ -138,6 +141,7 @@ def service_finalize_decision_record(
     final_decision: str,
     decision_class: DecisionClass,
     rationale: str = "",
+    actor_context: GovernedActorContext | None = None,
 ) -> DecisionRecordServiceResult:
     with instance.write_transaction() as uow:
         record = uow.decisions.finalize_record(
@@ -146,6 +150,9 @@ def service_finalize_decision_record(
             decision_class=decision_class,
             rationale=rationale,
         )
+        if actor_context is not None:
+            record = record.model_copy(update={"finalized_actor_context": actor_context})
+            uow.decisions.update_record(record)
         events = uow.decisions.list_events(decision_record_id)
     return DecisionRecordServiceResult(record=record, events=events)
 
@@ -155,9 +162,13 @@ def service_abandon_decision_record(
     decision_record_id: str,
     *,
     reason: str = "",
+    actor_context: GovernedActorContext | None = None,
 ) -> DecisionRecordServiceResult:
     with instance.write_transaction() as uow:
         record = uow.decisions.abandon_record(decision_record_id, reason=reason)
+        if actor_context is not None:
+            record = record.model_copy(update={"finalized_actor_context": actor_context})
+            uow.decisions.update_record(record)
         events = uow.decisions.list_events(decision_record_id)
     return DecisionRecordServiceResult(record=record, events=events)
 
@@ -221,6 +232,7 @@ def record_decision_event_for_context(
         error_message=str(error) if error is not None else None,
         surface=context.surface,
         request_id=context.request_id,
+        actor_context=context.actor_context,
         started_at=started_at,
         finished_at=utc_now(),
     )

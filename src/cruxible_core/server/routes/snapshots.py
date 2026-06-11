@@ -18,7 +18,7 @@ async def create_snapshot(
     req: SnapshotCreateRequest,
 ) -> contracts.SnapshotCreateResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return api.create_snapshot(resolved_instance_id, req.label)
+    return api.create_snapshot(resolved_instance_id, req.label, actor_context=req.actor_context)
 
 
 @router.get("/{instance_id}/snapshots", response_model=contracts.SnapshotListResult)

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from cruxible_core.errors import ConfigError
 from cruxible_core.primitives import new_id
 from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.temporal import format_datetime, utc_now
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
+_INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -113,13 +116,59 @@ class InstanceRegistry:
             return RegisteredInstance(record=existing, created=False)
         return self._create_governed_instance(workspace_root=resolved_workspace_root)
 
+    def get_governed_instance_by_workspace_root(
+        self,
+        workspace_root: str | Path,
+    ) -> InstanceRecord | None:
+        """Return a governed instance already registered for *workspace_root*."""
+        resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        return self._get_by_backend_workspace_root(
+            GOVERNED_DAEMON_BACKEND,
+            resolved_workspace_root,
+        )
+
     def create_governed_instance(
-        self, workspace_root: str | Path | None = None,
+        self,
+        workspace_root: str | Path | None = None,
     ) -> RegisteredInstance:
         resolved_workspace_root: str | None = None
         if workspace_root is not None:
             resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
         return self._create_governed_instance(workspace_root=resolved_workspace_root)
+
+    def generate_governed_instance_id(self) -> str:
+        """Return an unused governed instance ID without inserting a registry row."""
+        for _attempt in range(100):
+            instance_id = new_id("inst", length=16, separator="_")
+            if (
+                self.get(instance_id) is None
+                and not self.governed_instance_location(instance_id).exists()
+            ):
+                return instance_id
+        raise ConfigError("Failed to generate a unique hosted instance ID")
+
+    def governed_instance_location(self, instance_id: str) -> Path:
+        """Return the server-owned governed instance path for a valid instance ID."""
+        _validate_instance_id(instance_id)
+        state_dir = Path(get_server_state_dir())
+        return (state_dir / "instances" / instance_id).resolve()
+
+    def create_governed_instance_with_id(
+        self,
+        instance_id: str,
+        workspace_root: str | Path | None = None,
+    ) -> RegisteredInstance:
+        """Register a server-owned governed instance with a caller-selected ID."""
+        location = str(self.governed_instance_location(instance_id))
+        resolved_workspace_root: str | None = None
+        if workspace_root is not None:
+            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        return self._insert_instance(
+            backend=GOVERNED_DAEMON_BACKEND,
+            location=location,
+            workspace_root=resolved_workspace_root,
+            preferred_instance_id=instance_id,
+        )
 
     def _create_governed_instance(
         self,
@@ -188,7 +237,9 @@ class InstanceRegistry:
         return self._row_to_record(row)
 
     def _get_by_backend_workspace_root(
-        self, backend: str, workspace_root: str,
+        self,
+        backend: str,
+        workspace_root: str,
     ) -> InstanceRecord | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -211,6 +262,14 @@ class InstanceRegistry:
             location=row["location"],
             workspace_root=row["workspace_root"],
             created_at=row["created_at"],
+        )
+
+
+def _validate_instance_id(instance_id: str) -> None:
+    if not _INSTANCE_ID_RE.fullmatch(instance_id):
+        raise ConfigError(
+            "Hosted instance_id must start with 'inst_' and contain only letters, "
+            "numbers, '.', '_', or '-'"
         )
 
 

@@ -526,6 +526,7 @@ def test_no_direct_sqlite_imports_outside_storage_implementation() -> None:
         Path("src/cruxible_core/group/store.py"),
         Path("src/cruxible_core/decision/store.py"),
         Path("src/cruxible_core/server/registry.py"),
+        Path("src/cruxible_core/server/credentials.py"),
     }
     offenders: list[str] = []
     for path in Path("src/cruxible_core").rglob("*.py"):

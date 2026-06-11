@@ -13,6 +13,7 @@ from cruxible_core.config.composer import (
     write_runtime_composed_config,
 )
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.kits import materialize_kit
@@ -201,6 +202,7 @@ def service_pull_state_apply(
     instance: InstanceProtocol,
     *,
     expected_apply_digest: str,
+    actor_context: GovernedActorContext | None = None,
 ) -> StatePullApplyResult:
     """Apply a previewed upstream pull to a release-backed overlay instance."""
     upstream = instance.get_upstream_metadata()
@@ -217,6 +219,7 @@ def service_pull_state_apply(
     pre_pull_snapshot_id = service_create_snapshot(
         instance,
         label=f"pre-pull-{preview.target_release_id}",
+        actor_context=actor_context,
     ).snapshot.snapshot_id
 
     root = instance.get_root_path()

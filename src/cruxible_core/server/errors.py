@@ -26,6 +26,7 @@ from cruxible_core.errors import (
     ReceiptNotFoundError,
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
+    RuntimeCredentialNotFoundError,
     TraceNotFoundError,
 )
 
@@ -57,6 +58,7 @@ def _status_for_error(exc: CoreError) -> int:
             TraceNotFoundError,
             InstanceNotFoundError,
             GroupNotFoundError,
+            RuntimeCredentialNotFoundError,
         ),
     ):
         return 404
@@ -110,6 +112,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["credential_scope"] = exc.credential_scope
     if isinstance(exc, GroupNotFoundError):
         context["group_id"] = exc.group_id
+    if isinstance(exc, RuntimeCredentialNotFoundError):
+        context["credential_id"] = exc.credential_id
 
     body = ErrorResponse(
         error_type=exc.__class__.__name__,

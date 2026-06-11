@@ -198,6 +198,12 @@ class GroupNotFoundError(CoreError):
         super().__init__(f"Group '{group_id}' not found")
 
 
+class RuntimeCredentialNotFoundError(CoreError):
+    def __init__(self, credential_id: str):
+        self.credential_id = credential_id
+        super().__init__(f"Runtime credential '{credential_id}' not found")
+
+
 class AuthenticationError(CoreError):
     pass
 
@@ -284,6 +290,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
     elif body.error_type == "GroupNotFoundError":
         exc = GroupNotFoundError(context.get("group_id", "unknown"))
+    elif body.error_type == "RuntimeCredentialNotFoundError":
+        exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
     elif body.error_type == "AuthenticationError":
         exc = AuthenticationError(body.message)
     elif body.error_type == "InstanceScopeError":

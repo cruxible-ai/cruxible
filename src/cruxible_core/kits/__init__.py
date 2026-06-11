@@ -35,9 +35,7 @@ _SHIPPED_KIT_CATALOG: dict[str, str] = {
     "kev-reference": "oci://ghcr.io/cruxible-ai/kits/kev-reference:0.2.0",
     "kev-triage": "oci://ghcr.io/cruxible-ai/kits/kev-triage:0.2.0",
     "retail-catalog": "oci://ghcr.io/cruxible-ai/kits/retail-catalog:0.2.0",
-    "supply-chain-blast-radius": (
-        "oci://ghcr.io/cruxible-ai/kits/supply-chain-blast-radius:0.2.0"
-    ),
+    "supply-chain-blast-radius": ("oci://ghcr.io/cruxible-ai/kits/supply-chain-blast-radius:0.2.0"),
 }
 
 
@@ -235,9 +233,7 @@ def find_materialized_kit_root(config_base_path: Path) -> Path:
         if (candidate / KIT_MANIFEST_FILE).exists():
             _validate_dev_tree_metadata(candidate)
             return candidate
-    raise ConfigError(
-        "kit:// provider refs require a materialized kit root with cruxible-kit.yaml"
-    )
+    raise ConfigError("kit:// provider refs require a materialized kit root with cruxible-kit.yaml")
 
 
 def resolve_kit_provider_ref(ref: str, config_base_path: Path) -> tuple[Path, str, Path]:
@@ -384,9 +380,7 @@ def _pull_oci_kit(ref: str) -> Path:
     except FileNotFoundError as exc:
         raise ConfigError("oras binary not found in PATH for oci:// kit refs") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ConfigError(
-            f"Timed out pulling oci:// kit ref '{ref}' after {exc.timeout}s"
-        ) from exc
+        raise ConfigError(f"Timed out pulling oci:// kit ref '{ref}' after {exc.timeout}s") from exc
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() if exc.stderr else str(exc)
         raise ConfigError(f"Failed to pull oci:// kit ref '{ref}': {detail}") from exc
@@ -528,9 +522,7 @@ def _parse_kit_provider_ref(ref: str) -> tuple[str, str]:
     target = ref.removeprefix("kit://")
     path_part, sep, attr = target.partition("::")
     if not sep or not path_part or not attr:
-        raise ConfigError(
-            f"Invalid kit provider ref '{ref}'. Use kit://relative/path.py::callable"
-        )
+        raise ConfigError(f"Invalid kit provider ref '{ref}'. Use kit://relative/path.py::callable")
     try:
         _validate_relative_path(path_part, field_name="provider ref")
     except ValueError as exc:

@@ -8,6 +8,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.signature import compute_group_signature
 from cruxible_core.group.types import CandidateMember, CandidateSignal
@@ -127,10 +128,26 @@ def _propose_and_approve(instance, from_id="BP-1", to_id="V-1", facts=None):
         store.close()
 
 
+def _actor() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_trust",
+        org_id="org_1",
+        operation_id="op_trust",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
 class TestUpdateTrustStatus:
     def test_watch_to_trusted(self, instance: CruxibleInstance) -> None:
         res_id = _propose_and_approve(instance)
-        result = service_update_trust_status(instance, res_id, "trusted", "earned by review")
+        result = service_update_trust_status(
+            instance,
+            res_id,
+            "trusted",
+            "earned by review",
+            actor_context=_actor(),
+        )
         assert result.resolution_id == res_id
         assert result.trust_status == "trusted"
         assert result.receipt_id is not None
@@ -139,6 +156,9 @@ class TestUpdateTrustStatus:
             res = store.get_resolution(res_id)
             assert res.trust_status == "trusted"
             assert res.trust_reason == "earned by review"
+            assert res.trust_actor_context is not None
+            assert res.trust_actor_context.actor_id == "usr_trust"
+            assert res.trust_actor_context.operation_id == "op_trust"
         finally:
             store.close()
         receipt_store = instance.get_receipt_store()
