@@ -65,9 +65,28 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible add-entity
+## cruxible entity
 
-**Usage:** `cruxible add-entity [OPTIONS]`
+**Usage:** `cruxible entity [OPTIONS]`
+
+**Purpose:** Entity reads and writes.
+
+**Subcommands:**
+
+- `cruxible entity add` - Add or update an entity in the graph.
+- `cruxible entity get` - Look up a specific entity by type and ID.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible entity add
+
+**Usage:** `cruxible entity add [OPTIONS]`
 
 **Purpose:** Add or update an entity in the graph.
 
@@ -78,6 +97,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
 | `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
 | `--props` | no | `` | text | JSON object of properties. |
+| `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -87,9 +107,50 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible add-relationship
+## cruxible entity get
 
-**Usage:** `cruxible add-relationship [OPTIONS]`
+**Usage:** `cruxible entity get [OPTIONS]`
+
+**Purpose:** Look up a specific entity by type and ID.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship
+
+**Usage:** `cruxible relationship [OPTIONS]`
+
+**Purpose:** Relationship reads and writes.
+
+**Subcommands:**
+
+- `cruxible relationship add` - Add or update a relationship in the graph.
+- `cruxible relationship get` - Look up a specific relationship by its endpoints and type.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship add
+
+**Usage:** `cruxible relationship add [OPTIONS]`
 
 **Purpose:** Add or update a relationship in the graph.
 
@@ -106,6 +167,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
+| `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
 
 **Output And Side Effects:**
 - Writes live relationship state and records a mutation receipt. Evidence refs
@@ -116,7 +178,7 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 **Example:**
 
 ```bash
-cruxible add-relationship \
+cruxible relationship add \
   --from-type RoadmapItem \
   --from-id ri-compact-workflow-trace-payloads \
   --relationship roadmap_item_depends_on_roadmap_item \
@@ -125,6 +187,32 @@ cruxible add-relationship \
   --source-evidence '{"source_artifact_id":"SRC-...","chunk_id":"CHK-..."}' \
   --evidence-rationale "Extracted from the P0 section."
 ```
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship get
+
+**Usage:** `cruxible relationship get [OPTIONS]`
+
+**Purpose:** Look up a specific relationship by its endpoints and type.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -743,54 +831,6 @@ shared_evidence:
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
-
-**Output And Side Effects:**
-- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
-
-## cruxible get-entity
-
-**Usage:** `cruxible get-entity [OPTIONS]`
-
-**Purpose:** Look up a specific entity by type and ID.
-
-**Options And Arguments:**
-
-| Name | Required | Default | Type | Description |
-| --- | --- | --- | --- | --- |
-| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
-| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
-| `--json` | no | `False` | boolean | Output as JSON. |
-
-**Output And Side Effects:**
-- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
-
-## cruxible get-relationship
-
-**Usage:** `cruxible get-relationship [OPTIONS]`
-
-**Purpose:** Look up a specific relationship by its endpoints and type.
-
-**Options And Arguments:**
-
-| Name | Required | Default | Type | Description |
-| --- | --- | --- | --- | --- |
-| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
-| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
-| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
-| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
-| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
-| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
-| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
@@ -1507,19 +1547,34 @@ shared_evidence:
 
 **Usage:** `cruxible query [OPTIONS]`
 
-**Purpose:** Execute a named query, or discover the query surfaces on this instance.
+**Purpose:** Run, inspect, and discover named queries on this instance.
 
 **Subcommands:**
 
 - `cruxible query describe` - Describe one named query with required params and example IDs.
 - `cruxible query inline` - Execute a bounded inline query definition for exploration.
 - `cruxible query list` - List named queries with entry points and required params.
+- `cruxible query run` - Execute a named query and display results plus the receipt.
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible query run
+
+**Usage:** `cruxible query run [OPTIONS] QUERY_NAME`
+
+**Purpose:** Execute a named query and display results plus the receipt.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--query` | no | `Sentinel.UNSET` | text | Named query from config. |
+| `query_name` | yes | `Sentinel.UNSET` | text | Positional argument. |
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
 | `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, `pending`, or `reviewable`. The named query must set `allow_relationship_state_override: true`. |

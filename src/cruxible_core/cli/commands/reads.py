@@ -392,7 +392,7 @@ def _run_query_command(
                     relationship_state=effective_relationship_state,
                     decision_record_id=resolved_decision_record_id,
                 )
-        except (CoreError, ClientCoreError):
+        except ClientCoreError:
             hints = _lookup_query_param_hints_server(
                 client,
                 instance_id,
@@ -579,8 +579,13 @@ def _run_query_command(
         click.echo(f"Receipt: {local_result.receipt_id}")
 
 
-@click.group(invoke_without_command=True)
-@click.option("--query", "query_name", required=False, help="Named query from config.")
+@click.group()
+def query() -> None:
+    """Run, inspect, and discover named queries on this instance."""
+
+
+@query.command("run")
+@click.argument("query_name")
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
 @click.option(
@@ -592,11 +597,9 @@ def _run_query_command(
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
-@click.pass_context
 @handle_errors
-def query(
-    ctx: click.Context,
-    query_name: str | None,
+def query_run(
+    query_name: str,
     param: tuple[str, ...],
     limit: int | None,
     relationship_state: str | None,
@@ -604,11 +607,7 @@ def query(
     decision_record_id: str | None,
     output_json: bool,
 ) -> None:
-    """Execute a named query, or discover the query surfaces on this instance."""
-    if ctx.invoked_subcommand is not None:
-        return
-    if not query_name:
-        raise click.UsageError("--query is required unless using a subcommand")
+    """Execute a named query and display results plus the receipt."""
     _run_query_command(
         query_name=query_name,
         param=param,
@@ -1582,7 +1581,9 @@ def analyze_feedback_cmd(
             property_pairs=[(pair.from_property, pair.to_property) for pair in property_pairs]
             or None,
         )
-        payload = asdict(local_result)
+        payload = contracts.AnalyzeFeedbackResult.model_validate(
+            asdict(local_result)
+        ).model_dump(mode="json")
 
     click.echo(f"Feedback analyzed: {payload['feedback_count']} row(s)")
     if payload["action_counts"]:
@@ -1692,6 +1693,8 @@ def analyze_outcomes_cmd(
             limit=limit,
             min_support=min_support,
         )
-        payload = asdict(local_result)
+        payload = contracts.AnalyzeOutcomesResult.model_validate(
+            asdict(local_result)
+        ).model_dump(mode="json")
 
     click.echo(yaml.safe_dump(payload, sort_keys=False))

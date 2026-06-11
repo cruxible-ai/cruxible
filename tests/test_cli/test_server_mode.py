@@ -27,7 +27,7 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: CliRunner):
     monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
-    result = runner.invoke(cli, ["query", "--query", "parts_for_vehicle"])
+    result = runner.invoke(cli, ["query", "run", "parts_for_vehicle"])
     assert result.exit_code == 2
     assert "Server mode is required" in result.output
 
@@ -119,7 +119,7 @@ def test_server_mode_query_error_prints_param_hints(
             "--instance-id",
             "inst_x",
             "query",
-            "--query",
+            "run",
             "parts_for_vehicle",
         ],
     )
@@ -542,7 +542,7 @@ def test_query_decision_record_requires_explicit_flag(
             "--instance-id",
             "inst_123",
             "query",
-            "--query",
+            "run",
             "parts_for_vehicle",
             "--param",
             "vehicle_id=V-1",
@@ -587,7 +587,7 @@ def test_query_uses_explicit_decision_record_flag(
             "--instance-id",
             "inst_123",
             "query",
-            "--query",
+            "run",
             "parts_for_vehicle",
             "--param",
             "vehicle_id=V-1",
@@ -2072,7 +2072,7 @@ def test_propose_json_includes_no_candidates_status(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["group_id"] is None
-    assert payload["status"] == "no_candidates"
+    assert payload["group_status"] == "no_candidates"
     assert payload["output"]["group_created"] is False
 
 
@@ -2554,7 +2554,7 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     [
         (["init", "--config", "config.yaml"], "init"),
         (["run", "--workflow", "wf"], "run"),
-        (["add-entity", "--type", "Vehicle", "--id", "V-1"], "add-entity"),
+        (["entity", "add", "--type", "Vehicle", "--id", "V-1"], "entity add"),
         (
             [
                 "world",
@@ -2609,7 +2609,8 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add-relationship",
+            "relationship",
+            "add",
             "--from-type",
             "Part",
             "--from-id",
@@ -2729,7 +2730,8 @@ def test_add_relationship_rejects_malformed_evidence_flag(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add-relationship",
+            "relationship",
+            "add",
             "--from-type",
             "Part",
             "--from-id",
@@ -2774,7 +2776,8 @@ def test_add_relationship_rejects_malformed_source_evidence_flag(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add-relationship",
+            "relationship",
+            "add",
             "--from-type",
             "Part",
             "--from-id",

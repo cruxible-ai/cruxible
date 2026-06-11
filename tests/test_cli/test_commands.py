@@ -182,7 +182,7 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
         assert "Receipt:" in result.output
@@ -196,7 +196,7 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "nonexistent", "--param", "id=1"],
+            ["query", "run", "nonexistent", "--param", "id=1"],
         )
         assert result.exit_code == 1
 
@@ -210,7 +210,7 @@ class TestQuery:
             populated_instance.root,
             [
                 "query",
-                "--query",
+                "run",
                 "parts_for_vehicle",
                 "--param",
                 "vehicle_id=V-2024-CIVIC-EX",
@@ -231,7 +231,7 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=UNKNOWN"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=UNKNOWN"],
         )
         assert result.exit_code == 1
         assert "Param hints:" in result.output
@@ -254,7 +254,7 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "all_parts", "--count"],
+            ["query", "run", "all_parts", "--count"],
         )
 
         assert result.exit_code == 0
@@ -325,7 +325,7 @@ class TestExplain:
         result = _chdir_run(
             runner,
             instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         # Extract receipt ID from output
         for line in result.output.splitlines():
@@ -917,7 +917,7 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -957,7 +957,7 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -997,7 +997,7 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -1044,7 +1044,7 @@ class TestOutcome:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -1066,7 +1066,7 @@ class TestOutcome:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -1117,7 +1117,7 @@ class TestList:
         _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         result = _chdir_run(
             runner,
@@ -1211,7 +1211,7 @@ class TestSample:
 
 
 # ---------------------------------------------------------------------------
-# get-entity
+# entity get
 # ---------------------------------------------------------------------------
 
 
@@ -1224,7 +1224,7 @@ class TestGetEntity:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["get-entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+            ["entity", "get", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
         assert "V-2024-CIVIC-EX" in result.output
@@ -1237,14 +1237,14 @@ class TestGetEntity:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["get-entity", "--type", "Vehicle", "--id", "NONEXISTENT"],
+            ["entity", "get", "--type", "Vehicle", "--id", "NONEXISTENT"],
         )
         assert result.exit_code == 0
         assert "Not found." in result.output
 
 
 # ---------------------------------------------------------------------------
-# get-relationship
+# relationship get
 # ---------------------------------------------------------------------------
 
 
@@ -1258,7 +1258,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1283,7 +1284,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1327,7 +1329,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1345,7 +1348,7 @@ class TestGetRelationship:
 
 
 # ---------------------------------------------------------------------------
-# add-entity
+# entity add
 # ---------------------------------------------------------------------------
 
 
@@ -1359,7 +1362,8 @@ class TestAddEntity:
             runner,
             populated_instance.root,
             [
-                "add-entity",
+                "entity",
+                "add",
                 "--type",
                 "Vehicle",
                 "--id",
@@ -1367,7 +1371,7 @@ class TestAddEntity:
                 "--props",
                 '{"vehicle_id": "V-NEW", "year": 2025, "make": "Toyota"}',
             ],
-            "add-entity",
+            "entity add",
         )
 
     def test_update(
@@ -1379,7 +1383,8 @@ class TestAddEntity:
             runner,
             populated_instance.root,
             [
-                "add-entity",
+                "entity",
+                "add",
                 "--type",
                 "Vehicle",
                 "--id",
@@ -1387,7 +1392,7 @@ class TestAddEntity:
                 "--props",
                 '{"vehicle_id": "V-2024-CIVIC-EX", "year": 2025}',
             ],
-            "add-entity",
+            "entity add",
         )
 
     def test_bad_type(
@@ -1398,13 +1403,13 @@ class TestAddEntity:
         _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
-            ["add-entity", "--type", "NoSuchType", "--id", "X1"],
-            "add-entity",
+            ["entity", "add", "--type", "NoSuchType", "--id", "X1"],
+            "entity add",
         )
 
 
 # ---------------------------------------------------------------------------
-# add-relationship
+# relationship add
 # ---------------------------------------------------------------------------
 
 
@@ -1418,7 +1423,8 @@ class TestAddRelationship:
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1432,7 +1438,7 @@ class TestAddRelationship:
                 "--props",
                 '{"verified": true, "source": "manual"}',
             ],
-            "add-relationship",
+            "relationship add",
         )
 
     def test_update(
@@ -1444,7 +1450,8 @@ class TestAddRelationship:
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1458,7 +1465,7 @@ class TestAddRelationship:
                 "--props",
                 '{"verified": true, "source": "updated"}',
             ],
-            "add-relationship",
+            "relationship add",
         )
 
     def test_missing_entity(
@@ -1470,7 +1477,8 @@ class TestAddRelationship:
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -1482,7 +1490,7 @@ class TestAddRelationship:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
-            "add-relationship",
+            "relationship add",
         )
 
     def test_bad_direction(
@@ -1494,7 +1502,8 @@ class TestAddRelationship:
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Vehicle",
                 "--from-id",
@@ -1506,7 +1515,7 @@ class TestAddRelationship:
                 "--to-id",
                 "BP-1001",
             ],
-            "add-relationship",
+            "relationship add",
         )
 
 
@@ -1947,7 +1956,7 @@ class TestStoreLifecycle:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         # The command should fail due to the injected error
         assert result.exit_code == 1
@@ -1963,7 +1972,7 @@ class TestStoreLifecycle:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -2039,7 +2048,7 @@ class TestFeedbackValidation:
         result = _chdir_run(
             runner,
             instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         for line in result.output.splitlines():
             if line.startswith("Receipt:"):

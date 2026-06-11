@@ -11,7 +11,7 @@ import click
 
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.cli.context import load_cli_context
-from cruxible_core.errors import ConfigError, CoreError
+from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
 
@@ -40,13 +40,17 @@ def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
 
 
 def handle_errors(f: Any) -> Any:
-    """Decorator that catches core and client CoreError and prints a friendly message."""
+    """Decorator that catches any Cruxible error and prints a friendly message.
+
+    Core errors subclass the client base, so the client hierarchy is the
+    single catch surface for local and remote failures.
+    """
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return f(*args, **kwargs)
-        except (CoreError, ClientCoreError) as e:
+        except ClientCoreError as e:
             click.secho(f"Error: {e}", fg="red", err=True)
             sys.exit(1)
 
@@ -181,10 +185,16 @@ cli.add_command(sample)
 cli.add_command(evaluate)
 cli.add_command(lint_cmd, "lint")
 cli.add_command(inspect_group, "inspect")
-cli.add_command(get_entity_cmd, "get-entity")
-cli.add_command(get_relationship_cmd, "get-relationship")
-cli.add_command(add_entity_cmd, "add-entity")
-cli.add_command(add_relationship_cmd, "add-relationship")
+entity_group = click.Group("entity", help="Entity reads and writes.")
+entity_group.add_command(add_entity_cmd, "add")
+entity_group.add_command(get_entity_cmd, "get")
+
+relationship_group = click.Group("relationship", help="Relationship reads and writes.")
+relationship_group.add_command(add_relationship_cmd, "add")
+relationship_group.add_command(get_relationship_cmd, "get")
+
+cli.add_command(entity_group, "entity")
+cli.add_command(relationship_group, "relationship")
 cli.add_command(batch_direct_write_cmd, "batch-direct-write")
 cli.add_command(add_constraint_cmd, "add-constraint")
 cli.add_command(add_decision_policy_cmd, "add-decision-policy")

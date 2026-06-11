@@ -172,7 +172,7 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None, dry_run:
             dry_run=dry_run,
         ),
         allow_local=False,
-        command_name="add-entity",
+        command_name="entity add",
     )
 
     label = f"{entity_type}:{entity_id}"
@@ -280,7 +280,7 @@ def add_relationship_cmd(
             dry_run=dry_run,
         ),
         allow_local=False,
-        command_name="add-relationship",
+        command_name="relationship add",
     )
 
     edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"

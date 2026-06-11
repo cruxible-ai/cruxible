@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands import _common
@@ -385,20 +385,7 @@ def run_cmd(
             apply_previews=result.apply_previews,
         )
     if output_json:
-        _emit_json(
-            {
-                "workflow": result.workflow,
-                "mode": result.mode,
-                "workflow_type": result.workflow_type,
-                "canonical": result.canonical,
-                "apply_digest": result.apply_digest,
-                "head_snapshot_id": result.head_snapshot_id,
-                "receipt_id": result.receipt_id,
-                "trace_ids": result.trace_ids or [],
-                "read_metadata": result.read_metadata,
-                "output": result.output,
-            }
-        )
+        _emit_json(cast(BaseModel, result).model_dump(mode="json"))
         return
     click.echo(f"Workflow {result.workflow} completed.")
     if result.mode != "run":
@@ -559,21 +546,7 @@ def apply_cmd(
             command_name="apply",
         )
     if output_json:
-        _emit_json(
-            {
-                "workflow": result.workflow,
-                "mode": result.mode,
-                "workflow_type": result.workflow_type,
-                "canonical": result.canonical,
-                "apply_digest": result.apply_digest,
-                "head_snapshot_id": result.head_snapshot_id,
-                "committed_snapshot_id": result.committed_snapshot_id,
-                "receipt_id": result.receipt_id,
-                "trace_ids": result.trace_ids or [],
-                "read_metadata": result.read_metadata,
-                "output": result.output,
-            }
-        )
+        _emit_json(cast(BaseModel, result).model_dump(mode="json"))
         return
     click.echo(f"Workflow {result.workflow} applied.")
     if result.committed_snapshot_id:
@@ -649,36 +622,7 @@ def propose_cmd(
     )
 
     if output_json:
-        _emit_json(
-            {
-                "workflow": result.workflow,
-                "mode": result.mode,
-                "workflow_type": result.workflow_type,
-                "canonical": result.canonical,
-                "group_id": result.group_id,
-                "status": result.group_status,
-                "suppressed": result.suppressed,
-                "suppressed_members": [
-                    {
-                        "relationship_type": item.relationship_type,
-                        "from_type": item.from_type,
-                        "from_id": item.from_id,
-                        "to_type": item.to_type,
-                        "to_id": item.to_id,
-                        "reason": item.reason,
-                        "existing_group_id": item.existing_group_id,
-                        "existing_group_status": item.existing_group_status,
-                        "existing_signature": item.existing_signature,
-                        "source_workflow_name": item.source_workflow_name,
-                    }
-                    for item in result.suppressed_members
-                ],
-                "receipt_id": result.receipt_id,
-                "trace_ids": result.trace_ids or [],
-                "read_metadata": result.read_metadata,
-                "output": result.output,
-            }
-        )
+        _emit_json(cast(BaseModel, result).model_dump(mode="json"))
         return
 
     if result.group_status == "no_candidates":

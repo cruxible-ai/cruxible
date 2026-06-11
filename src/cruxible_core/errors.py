@@ -33,21 +33,15 @@ errors (runtime data), making it easy to catch by category.
 
 from __future__ import annotations
 
+from cruxible_client.errors import CoreError as _ClientCoreError
 
-class CoreError(Exception):
-    """Base exception for all Cruxible Core errors."""
 
-    def __init__(self, message: str, *, mutation_receipt_id: str | None = None) -> None:
-        self.mutation_receipt_id = mutation_receipt_id
-        super().__init__(message)
+class CoreError(_ClientCoreError):
+    """Base exception for all Cruxible Core errors.
 
-    def _receipt_suffix(self) -> str:
-        if self.mutation_receipt_id:
-            return f" (receipt: {self.mutation_receipt_id})"
-        return ""
-
-    def __str__(self) -> str:
-        return super().__str__() + self._receipt_suffix()
+    Inherits the client base so one `except cruxible_client.errors.CoreError`
+    catches local and remote failures alike — no parallel hierarchies.
+    """
 
 
 # ---------------------------------------------------------------------------

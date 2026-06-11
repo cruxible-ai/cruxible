@@ -65,8 +65,8 @@ cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> apply \
 Run a query and inspect its receipt:
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query \
-  --query vulnerability_products \
+cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query run \
+  vulnerability_products \
   --param cve_id=CVE-2020-1472
 ```
 

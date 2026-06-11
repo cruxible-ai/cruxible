@@ -114,7 +114,7 @@ cruxible init --kit file://./my-risk-kit
 cruxible lock
 cruxible run --workflow build_local_state --save-preview preview.json
 cruxible apply --preview-file preview.json
-cruxible query --query asset_owner --param asset_id=ASSET-1
+cruxible query run asset_owner --param asset_id=ASSET-1
 ```
 
 Inspect the returned receipt:
@@ -212,8 +212,7 @@ cruxible group resolve \
 ### 5. Query The Accepted Result
 
 ```bash
-cruxible query \
-  --query vulnerability_asset_context \
+cruxible query run vulnerability_asset_context \
   --param cve_id=CVE-2020-1472
 ```
 
