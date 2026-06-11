@@ -29,7 +29,7 @@ async def feedback(instance_id: str, req: FeedbackRequest) -> contracts.Feedback
         source=req.source,
         from_type=req.from_type,
         from_id=req.from_id,
-        relationship=req.relationship,
+        relationship_type=req.relationship_type,
         to_type=req.to_type,
         to_id=req.to_id,
         edge_key=req.edge_key,

@@ -94,7 +94,7 @@ class TestInputSchema:
         def_name = ref.split("/")[-1]
         rel_def = schema["$defs"][def_name]
         required = set(rel_def["required"])
-        assert {"from_type", "from_id", "relationship", "to_type", "to_id"} <= required
+        assert {"from_type", "from_id", "relationship_type", "to_type", "to_id"} <= required
         assert {
             "evidence_refs",
             "source_evidence",

@@ -113,16 +113,16 @@ class RelationshipAmbiguityError(GraphError):
         from_id: str,
         to_type: str,
         to_id: str,
-        relationship: str,
+        relationship_type: str,
     ) -> None:
         self.from_type = from_type
         self.from_id = from_id
         self.to_type = to_type
         self.to_id = to_id
-        self.relationship = relationship
+        self.relationship_type = relationship_type
         super().__init__(
             "Ambiguous edge target for "
-            f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "
+            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
             "specify edge_key to target a single edge"
         )
 
@@ -272,7 +272,7 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             from_id=context.get("from_id", "unknown"),
             to_type=context.get("to_type", "unknown"),
             to_id=context.get("to_id", "unknown"),
-            relationship=context.get("relationship", "unknown"),
+            relationship_type=context.get("relationship_type", "unknown"),
         )
     elif body.error_type == "ReceiptNotFoundError":
         exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))

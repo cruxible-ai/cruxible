@@ -79,7 +79,7 @@ class FeedbackRequest(BaseModel):
     source: contracts.FeedbackSource
     from_type: str
     from_id: str
-    relationship: str
+    relationship_type: str
     to_type: str
     to_id: str
     edge_key: int | None = None

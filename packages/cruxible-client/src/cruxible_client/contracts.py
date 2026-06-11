@@ -44,7 +44,7 @@ WorkflowMode = Literal["run", "preview", "apply", "proposal"]
 class RelationshipInput(BaseModel):
     from_type: str
     from_id: str
-    relationship: str
+    relationship_type: str
     to_type: str
     to_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
@@ -197,7 +197,7 @@ class SignalInput(BaseModel):
 class EdgeTargetInput(BaseModel):
     from_type: str
     from_id: str
-    relationship: str
+    relationship_type: str
     to_type: str
     to_id: str
     edge_key: int | None = None

@@ -1825,8 +1825,8 @@
                 "title": "Properties",
                 "type": "object"
               },
-              "relationship": {
-                "title": "Relationship",
+              "relationship_type": {
+                "title": "Relationship Type",
                 "type": "string"
               },
               "shared_evidence_keys": {
@@ -1855,7 +1855,7 @@
             "required": [
               "from_type",
               "from_id",
-              "relationship",
+              "relationship_type",
               "to_type",
               "to_id"
             ],
@@ -2363,13 +2363,13 @@
             "type": "object"
           }
         },
-        "relationship": {
+        "relationship_type": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "relationship",
+          "json_name": "relationship_type",
           "required": true,
           "schema": {
-            "title": "Relationship",
+            "title": "Relationship Type",
             "type": "string"
           }
         },
@@ -2604,8 +2604,8 @@
             "title": "Properties",
             "type": "object"
           },
-          "relationship": {
-            "title": "Relationship",
+          "relationship_type": {
+            "title": "Relationship Type",
             "type": "string"
           },
           "shared_evidence_keys": {
@@ -2634,7 +2634,7 @@
         "required": [
           "from_type",
           "from_id",
-          "relationship",
+          "relationship_type",
           "to_type",
           "to_id"
         ],
@@ -2644,7 +2644,7 @@
       "required_fields": [
         "from_id",
         "from_type",
-        "relationship",
+        "relationship_type",
         "to_id",
         "to_type"
       ]
@@ -4135,13 +4135,13 @@
             "type": "string"
           }
         },
-        "relationship": {
+        "relationship_type": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "relationship",
+          "json_name": "relationship_type",
           "required": true,
           "schema": {
-            "title": "Relationship",
+            "title": "Relationship Type",
             "type": "string"
           }
         },
@@ -4188,8 +4188,8 @@
             "title": "From Type",
             "type": "string"
           },
-          "relationship": {
-            "title": "Relationship",
+          "relationship_type": {
+            "title": "Relationship Type",
             "type": "string"
           },
           "to_id": {
@@ -4204,7 +4204,7 @@
         "required": [
           "from_type",
           "from_id",
-          "relationship",
+          "relationship_type",
           "to_type",
           "to_id"
         ],
@@ -4214,7 +4214,7 @@
       "required_fields": [
         "from_id",
         "from_type",
-        "relationship",
+        "relationship_type",
         "to_id",
         "to_type"
       ]
@@ -4760,8 +4760,8 @@
                 "title": "From Type",
                 "type": "string"
               },
-              "relationship": {
-                "title": "Relationship",
+              "relationship_type": {
+                "title": "Relationship Type",
                 "type": "string"
               },
               "to_id": {
@@ -4776,7 +4776,7 @@
             "required": [
               "from_type",
               "from_id",
-              "relationship",
+              "relationship_type",
               "to_type",
               "to_id"
             ],
@@ -12751,13 +12751,13 @@
             "type": "object"
           }
         },
-        "relationship": {
+        "relationship_type": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "relationship",
+          "json_name": "relationship_type",
           "required": true,
           "schema": {
-            "title": "Relationship",
+            "title": "Relationship Type",
             "type": "string"
           }
         },
@@ -12979,8 +12979,8 @@
             "title": "Properties",
             "type": "object"
           },
-          "relationship": {
-            "title": "Relationship",
+          "relationship_type": {
+            "title": "Relationship Type",
             "type": "string"
           },
           "source_evidence": {
@@ -13002,7 +13002,7 @@
         "required": [
           "from_type",
           "from_id",
-          "relationship",
+          "relationship_type",
           "to_type",
           "to_id"
         ],
@@ -13012,7 +13012,7 @@
       "required_fields": [
         "from_id",
         "from_type",
-        "relationship",
+        "relationship_type",
         "to_id",
         "to_type"
       ]

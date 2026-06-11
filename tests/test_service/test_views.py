@@ -45,9 +45,7 @@ def test_service_inspect_view_overview_queries_include_result_shape_metadata(
     result = service_inspect_view(populated_instance, "overview")
 
     query = next(
-        item
-        for item in result.payload["queries"]["queries"]
-        if item["name"] == "parts_for_vehicle"
+        item for item in result.payload["queries"]["queries"] if item["name"] == "parts_for_vehicle"
     )
     assert query["result_shape"] == "path"
     assert query["dedupe"] == "path"
@@ -71,11 +69,7 @@ def test_service_describe_query_infers_required_input_refs(
                     {
                         "relationship": "fits",
                         "direction": "outgoing",
-                        "edge": {
-                            "properties.confidence": {
-                                "gte": "$input.related_confidence"
-                            }
-                        },
+                        "edge": {"properties.confidence": {"gte": "$input.related_confidence"}},
                     }
                 ],
                 constraint="target.year >= $min_year",
@@ -165,9 +159,7 @@ def test_entryless_named_query_metadata_surfaces(
 
     described = service_describe_query(populated_instance, "all_parts")
     listed = next(
-        query
-        for query in service_list_queries(populated_instance)
-        if query.name == "all_parts"
+        query for query in service_list_queries(populated_instance) if query.name == "all_parts"
     )
     inspected = service_inspect_view(populated_instance, "queries")
     inspected_query = next(
@@ -225,7 +217,7 @@ def test_service_explain_receipt_renders_markdown(
 def test_service_export_edges_builds_csv_ready_rows(
     populated_instance: CruxibleInstance,
 ) -> None:
-    result = service_export_edges(populated_instance, relationship="fits")
+    result = service_export_edges(populated_instance, relationship_type="fits")
 
     assert result.count == 3
     assert result.fieldnames == [

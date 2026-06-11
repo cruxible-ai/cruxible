@@ -340,7 +340,7 @@ class CruxibleClient:
         source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
-        relationship: str,
+        relationship_type: str,
         to_type: str,
         to_id: str,
         edge_key: int | None = None,
@@ -358,7 +358,7 @@ class CruxibleClient:
                 "source": source,
                 "from_type": from_type,
                 "from_id": from_id,
-                "relationship": relationship,
+                "relationship_type": relationship_type,
                 "to_type": to_type,
                 "to_id": to_id,
                 "edge_key": edge_key,
@@ -518,9 +518,7 @@ class CruxibleClient:
         instance_id: str,
         relationship_type: str,
     ) -> contracts.FeedbackProfileResult:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/feedback/profiles/{relationship_type}"
-        )
+        response = self._client.get(f"/api/v1/{instance_id}/feedback/profiles/{relationship_type}")
         return self._parse_model(response, contracts.FeedbackProfileResult)
 
     def get_outcome_profile(

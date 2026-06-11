@@ -414,7 +414,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `source` | yes | enum: human, agent |  |
 | `from_type` | yes | string |  |
 | `from_id` | yes | string |  |
-| `relationship` | yes | string |  |
+| `relationship_type` | yes | string |  |
 | `to_type` | yes | string |  |
 | `to_id` | yes | string |  |
 | `edge_key` | no | integer | null |  |
@@ -928,7 +928,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer proposal workflows or candidate group proposal flows so Cruxible can preserve tri-state signal-source evidence (support, unsure, contradict) and review history. For bulk state loading, use workflows with tabular providers, dataflow steps, and apply_relationships.
+**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship_type, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer proposal workflows or candidate group proposal flows so Cruxible can preserve tri-state signal-source evidence (support, unsure, contradict) and review history. For bulk state loading, use workflows with tabular providers, dataflow steps, and apply_relationships.
 
 **Arguments:**
 

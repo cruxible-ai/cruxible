@@ -772,7 +772,7 @@ class TestFeedbackGroupOverride:
                     {
                         "from_type": "Part",
                         "from_id": "BP-1",
-                        "relationship": "fits",
+                        "relationship_type": "fits",
                         "to_type": "Vehicle",
                         "to_id": "V-1",
                         "properties": {"verified": True},
@@ -803,7 +803,7 @@ class TestFeedbackGroupOverride:
                 "source": "human",
                 "from_type": "Part",
                 "from_id": "BP-1",
-                "relationship": "fits",
+                "relationship_type": "fits",
                 "to_type": "Vehicle",
                 "to_id": "V-1",
                 "group_override": True,

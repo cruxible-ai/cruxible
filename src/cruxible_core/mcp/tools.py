@@ -270,7 +270,7 @@ def register_tools(server: FastMCP) -> list[str]:
         source: contracts.FeedbackSource,
         from_type: str,
         from_id: str,
-        relationship: str,
+        relationship_type: str,
         to_type: str,
         to_id: str,
         edge_key: int | None = None,
@@ -303,7 +303,7 @@ def register_tools(server: FastMCP) -> list[str]:
             source,
             from_type,
             from_id,
-            relationship,
+            relationship_type,
             to_type,
             to_id,
             edge_key,
@@ -634,7 +634,7 @@ def register_tools(server: FastMCP) -> list[str]:
     ) -> contracts.AddRelationshipResult:
         """Add or update relationships in the graph (upsert).
 
-        Each relationship needs: from_type, from_id, relationship, to_type, to_id.
+        Each relationship needs: from_type, from_id, relationship_type, to_type, to_id.
         Optional properties must be declared by the relationship schema.
         Entities must already exist. Re-submitting an existing edge merges
         declared domain properties while preserving relationship metadata.

@@ -801,7 +801,7 @@ def feedback(
     source: contracts.FeedbackSource,
     from_type: str,
     from_id: str,
-    relationship: str,
+    relationship_type: str,
     to_type: str,
     to_id: str,
     edge_key: int | None = None,
@@ -818,7 +818,7 @@ def feedback(
     target = RelationshipTargetInput(
         from_type=from_type,
         from_id=from_id,
-        relationship_type=relationship,
+        relationship_type=relationship_type,
         to_type=to_type,
         to_id=to_id,
         edge_key=edge_key,
@@ -862,7 +862,7 @@ def feedback_batch(
                 target=RelationshipTargetInput(
                     from_type=item.target.from_type,
                     from_id=item.target.from_id,
-                    relationship_type=item.target.relationship,
+                    relationship_type=item.target.relationship_type,
                     to_type=item.target.to_type,
                     to_id=item.target.to_id,
                     edge_key=item.target.edge_key,
@@ -1600,7 +1600,7 @@ def _relationship_input_to_service(
     return RelationshipWriteInput(
         from_type=edge.from_type,
         from_id=edge.from_id,
-        relationship_type=edge.relationship,
+        relationship_type=edge.relationship_type,
         to_type=edge.to_type,
         to_id=edge.to_id,
         properties=edge.properties,
@@ -1630,7 +1630,7 @@ def _batch_payload_to_service(
             BatchRelationshipWriteInput(
                 from_type=edge.from_type,
                 from_id=edge.from_id,
-                relationship_type=edge.relationship,
+                relationship_type=edge.relationship_type,
                 to_type=edge.to_type,
                 to_id=edge.to_id,
                 properties=edge.properties,

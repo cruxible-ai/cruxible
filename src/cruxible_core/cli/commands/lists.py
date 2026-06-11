@@ -279,7 +279,7 @@ def export_edges(output: str, relationship: str | None, exclude_rejected: bool) 
     instance = _require_local_instance("export edges")
     result = service_export_edges(
         instance,
-        relationship=relationship,
+        relationship_type=relationship,
         exclude_rejected=exclude_rejected,
     )
 

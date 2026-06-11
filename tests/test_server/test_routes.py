@@ -203,7 +203,7 @@ def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
         {
             "from_type": "Part",
             "from_id": "BP-1001",
-            "relationship": "fits",
+            "relationship_type": "fits",
             "to_type": "Vehicle",
             "to_id": "V-2024-CIVIC-EX",
             "properties": {"verified": True, "source": "catalog"},
@@ -211,7 +211,7 @@ def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
         {
             "from_type": "Part",
             "from_id": "BP-1001",
-            "relationship": "fits",
+            "relationship_type": "fits",
             "to_type": "Vehicle",
             "to_id": "V-2024-ACCORD-SPORT",
             "properties": {"verified": True, "source": "catalog"},
@@ -219,7 +219,7 @@ def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
         {
             "from_type": "Part",
             "from_id": "BP-1002",
-            "relationship": "fits",
+            "relationship_type": "fits",
             "to_type": "Vehicle",
             "to_id": "V-2024-CIVIC-EX",
             "properties": {"verified": True, "source": "user_report"},
@@ -1250,7 +1250,7 @@ def test_add_relationship_stamps_http_api_provenance(
                 {
                     "from_type": "Part",
                     "from_id": "BP-1",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
@@ -1303,7 +1303,7 @@ def test_add_relationship_rejects_malformed_evidence_ref(
                 {
                     "from_type": "Part",
                     "from_id": "BP-1",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "evidence_refs": [{"source": "roadmap_doc"}],
@@ -1346,7 +1346,7 @@ def test_batch_direct_write_route_dry_run_and_apply(
             {
                 "from_type": "Part",
                 "from_id": "BP-BATCH",
-                "relationship": "fits",
+                "relationship_type": "fits",
                 "to_type": "Vehicle",
                 "to_id": "V-BATCH",
                 "properties": {"verified": True, "source": "batch"},
@@ -1444,7 +1444,7 @@ def test_feedback_batch_route(
                 {
                     "from_type": "Part",
                     "from_id": "BP-1",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
@@ -1452,7 +1452,7 @@ def test_feedback_batch_route(
                 {
                     "from_type": "Part",
                     "from_id": "BP-2",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
@@ -1494,7 +1494,7 @@ def test_feedback_batch_route(
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-1",
-                        "relationship": "fits",
+                        "relationship_type": "fits",
                         "to_type": "Vehicle",
                         "to_id": "V-1",
                     },
@@ -1505,7 +1505,7 @@ def test_feedback_batch_route(
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-2",
-                        "relationship": "fits",
+                        "relationship_type": "fits",
                         "to_type": "Vehicle",
                         "to_id": "V-1",
                     },

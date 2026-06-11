@@ -115,7 +115,7 @@ def feedback_cmd(
             source=cast(contracts.FeedbackSource, source),
             from_type=from_type,
             from_id=from_id,
-            relationship=relationship,
+            relationship_type=relationship,
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
@@ -319,7 +319,7 @@ def feedback_batch_cmd(
                     target=RelationshipTargetInput(
                         from_type=item.target.from_type,
                         from_id=item.target.from_id,
-                        relationship_type=item.target.relationship,
+                        relationship_type=item.target.relationship_type,
                         to_type=item.target.to_type,
                         to_id=item.target.to_id,
                         edge_key=item.target.edge_key,

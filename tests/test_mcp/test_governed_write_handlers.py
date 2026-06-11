@@ -118,7 +118,7 @@ def instance_id(server, tmp_path):
                 {
                     "from_type": "Part",
                     "from_id": "BP-1",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True, "source": "catalog"},
@@ -126,7 +126,7 @@ def instance_id(server, tmp_path):
                 {
                     "from_type": "Part",
                     "from_id": "BP-2",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True, "source": "catalog"},
@@ -161,7 +161,7 @@ def test_feedback_batch_tool(server, instance_id):
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-1",
-                        "relationship": "fits",
+                        "relationship_type": "fits",
                         "to_type": "Vehicle",
                         "to_id": "V-1",
                     },
@@ -172,7 +172,7 @@ def test_feedback_batch_tool(server, instance_id):
                     "target": {
                         "from_type": "Part",
                         "from_id": "BP-2",
-                        "relationship": "fits",
+                        "relationship_type": "fits",
                         "to_type": "Vehicle",
                         "to_id": "V-1",
                     },

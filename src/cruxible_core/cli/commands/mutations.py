@@ -112,16 +112,12 @@ def _contract_batch_payload_to_service(
             BatchRelationshipWriteInput(
                 from_type=edge.from_type,
                 from_id=edge.from_id,
-                relationship_type=edge.relationship,
+                relationship_type=edge.relationship_type,
                 to_type=edge.to_type,
                 to_id=edge.to_id,
                 properties=edge.properties,
-                evidence_refs=[
-                    ref.model_dump(mode="python") for ref in edge.evidence_refs
-                ],
-                source_evidence=[
-                    ref.model_dump(mode="python") for ref in edge.source_evidence
-                ],
+                evidence_refs=[ref.model_dump(mode="python") for ref in edge.evidence_refs],
+                source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
             )
@@ -129,12 +125,8 @@ def _contract_batch_payload_to_service(
         ],
         shared_evidence={
             key: SharedEvidenceInput(
-                evidence_refs=[
-                    ref.model_dump(mode="python") for ref in evidence.evidence_refs
-                ],
-                source_evidence=[
-                    ref.model_dump(mode="python") for ref in evidence.source_evidence
-                ],
+                evidence_refs=[ref.model_dump(mode="python") for ref in evidence.evidence_refs],
+                source_evidence=[ref.model_dump(mode="python") for ref in evidence.source_evidence],
             )
             for key, evidence in payload.shared_evidence.items()
         },
@@ -239,12 +231,8 @@ def add_relationship_cmd(
         raise click.BadParameter("--props must be a JSON object")
     parsed_evidence_refs = [_parse_evidence_ref(raw) for raw in evidence_refs]
     parsed_source_evidence = [_parse_source_evidence(raw) for raw in source_evidence]
-    local_evidence_refs = [
-        item.model_dump(mode="python") for item in parsed_evidence_refs
-    ]
-    local_source_evidence = [
-        item.model_dump(mode="python") for item in parsed_source_evidence
-    ]
+    local_evidence_refs = [item.model_dump(mode="python") for item in parsed_evidence_refs]
+    local_source_evidence = [item.model_dump(mode="python") for item in parsed_source_evidence]
 
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.add_relationships(
@@ -253,7 +241,7 @@ def add_relationship_cmd(
                 contracts.RelationshipInput(
                     from_type=from_type,
                     from_id=from_id,
-                    relationship=relationship,
+                    relationship_type=relationship,
                     to_type=to_type,
                     to_id=to_id,
                     properties=properties,
@@ -347,10 +335,7 @@ def batch_direct_write_cmd(
         f"{result_payload['relationships_updated']} updated"
     )
     if result_payload["evidence_sources_used"]:
-        click.echo(
-            "  Evidence sources: "
-            + ", ".join(result_payload["evidence_sources_used"])
-        )
+        click.echo("  Evidence sources: " + ", ".join(result_payload["evidence_sources_used"]))
     for warning in result_payload["validation_warnings"]:
         click.secho(f"  Warning: {warning}", fg="yellow")
     for error in result_payload["validation_errors"]:
@@ -403,9 +388,7 @@ def reload_config_cmd(config_path: str | None) -> None:
         lambda client, instance_id: client.reload_config(
             instance_id,
             config_yaml=(
-                _read_validation_yaml_or_error(config_path)
-                if config_path is not None
-                else None
+                _read_validation_yaml_or_error(config_path) if config_path is not None else None
             ),
         ),
         lambda instance: service_reload_config(instance, config_path=config_path),

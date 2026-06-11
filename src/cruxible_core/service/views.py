@@ -192,7 +192,7 @@ def service_explain_receipt(
 def service_export_edges(
     instance: InstanceProtocol,
     *,
-    relationship: str | None = None,
+    relationship_type: str | None = None,
     exclude_rejected: bool = False,
 ) -> ExportEdgesResult:
     """Build CSV-ready edge export rows."""
@@ -208,7 +208,7 @@ def service_export_edges(
     ]
     graph = instance.load_graph()
     rows: list[dict[str, object]] = []
-    for edge in graph.iter_edges(relationship_type=relationship):
+    for edge in graph.iter_edges(relationship_type=relationship_type):
         if exclude_rejected:
             if (
                 edge.get("metadata", {}).get("assertion", {}).get("review", {}).get("status")

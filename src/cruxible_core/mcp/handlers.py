@@ -80,8 +80,7 @@ def _dispatch_remote_or_local(
         return remote_call(client)
     if not allow_local:
         raise ConfigError(
-            f"Local mutation disabled for {operation_name or 'this operation'}; "
-            "configure a server."
+            f"Local mutation disabled for {operation_name or 'this operation'}; configure a server."
         )
     return local_call()
 
@@ -116,6 +115,7 @@ def handle_init(
     uploaded_yaml = config_yaml
     if uploaded_yaml is None and config_path is not None:
         uploaded_yaml = _config_yaml_for_upload(config_path, root_dir=root_dir)
+
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
         return client.init(
             root_dir=root_dir,
@@ -219,9 +219,7 @@ def handle_workflow_run(
 ) -> contracts.WorkflowRunResult:
     """Execute a configured workflow."""
     decision_kwargs = (
-        {"decision_record_id": decision_record_id}
-        if decision_record_id is not None
-        else {}
+        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(
         lambda client: client.workflow_run(
@@ -253,9 +251,7 @@ def handle_workflow_apply(
 ) -> contracts.WorkflowApplyResult:
     """Commit a previously previewed canonical workflow after verifying identity."""
     decision_kwargs = (
-        {"decision_record_id": decision_record_id}
-        if decision_record_id is not None
-        else {}
+        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(
         lambda client: client.workflow_apply(
@@ -301,9 +297,7 @@ def handle_propose_workflow(
 ) -> contracts.WorkflowProposeResult:
     """Execute a workflow and create a governed relationship proposal."""
     decision_kwargs = (
-        {"decision_record_id": decision_record_id}
-        if decision_record_id is not None
-        else {}
+        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
     )
     return _dispatch_remote_or_local(
         lambda client: client.propose_workflow(
@@ -641,7 +635,7 @@ def handle_feedback(
     source: contracts.FeedbackSource,
     from_type: str,
     from_id: str,
-    relationship: str,
+    relationship_type: str,
     to_type: str,
     to_id: str,
     edge_key: int | None = None,
@@ -660,7 +654,7 @@ def handle_feedback(
             source=source,
             from_type=from_type,
             from_id=from_id,
-            relationship=relationship,
+            relationship_type=relationship_type,
             to_type=to_type,
             to_id=to_id,
             edge_key=edge_key,
@@ -677,7 +671,7 @@ def handle_feedback(
             source,
             from_type,
             from_id,
-            relationship,
+            relationship_type,
             to_type,
             to_id,
             edge_key=edge_key,

@@ -2384,7 +2384,7 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     "target": {
       "from_type": "Part",
       "from_id": "BP-1",
-      "relationship": "fits",
+      "relationship_type": "fits",
       "to_type": "Vehicle",
       "to_id": "V-1"
     }

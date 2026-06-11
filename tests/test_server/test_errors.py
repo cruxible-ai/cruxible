@@ -87,7 +87,7 @@ from cruxible_core.server.errors import (
                 "from_id": "P-1",
                 "to_type": "Vehicle",
                 "to_id": "V-1",
-                "relationship": "fits",
+                "relationship_type": "fits",
             },
         ),
         (

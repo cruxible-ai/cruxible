@@ -404,7 +404,7 @@ def test_add_relationships_serializes_evidence_fields():
             contracts.RelationshipInput(
                 from_type="Part",
                 from_id="BP-1",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
                 properties={"verified": True},
@@ -433,7 +433,7 @@ def test_add_relationships_serializes_evidence_fields():
                 {
                     "from_type": "Part",
                     "from_id": "BP-1",
-                    "relationship": "fits",
+                    "relationship_type": "fits",
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},

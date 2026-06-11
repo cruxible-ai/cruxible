@@ -98,7 +98,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["from_id"] = exc.from_id
         context["to_type"] = exc.to_type
         context["to_id"] = exc.to_id
-        context["relationship"] = exc.relationship_type
+        context["relationship_type"] = exc.relationship_type
     if isinstance(exc, ReceiptNotFoundError | OutcomeNotFoundError):
         context["receipt_id"] = exc.receipt_id
     if isinstance(exc, TraceNotFoundError):

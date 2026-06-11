@@ -62,7 +62,7 @@ def test_handle_add_relationship_preserves_evidence_fields(
             contracts.RelationshipInput(
                 from_type="Part",
                 from_id="BP-1",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
                 evidence_refs=[
@@ -286,7 +286,7 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
                 "source": "human",
                 "from_type": "Part",
                 "from_id": "BP-1",
-                "relationship": "fits",
+                "relationship_type": "fits",
                 "to_type": "Vehicle",
                 "to_id": "V-1",
             },
