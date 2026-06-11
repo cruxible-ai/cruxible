@@ -226,7 +226,7 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         rows = self._conn.execute(
             "SELECT receipt_id, query_name, parameters, created_at, duration_ms, "
             "operation_type "
-            f"FROM receipts{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"FROM receipts{where} ORDER BY created_at DESC, receipt_id DESC LIMIT ? OFFSET ?",
             params,
         ).fetchall()
 
@@ -265,7 +265,8 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
         rows = self._conn.execute(
             "SELECT trace_id, workflow_name, step_id, provider_name, provider_version, "
             "runtime, created_at, trace_json "
-            f"FROM execution_traces{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"FROM execution_traces{where} ORDER BY created_at DESC, trace_id DESC "
+            "LIMIT ? OFFSET ?",
             params,
         ).fetchall()
         summaries: list[dict[str, Any]] = []
@@ -290,6 +291,29 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
                 )
             summaries.append(summary)
         return summaries
+
+    def count_traces(
+        self,
+        *,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+    ) -> int:
+        """Count execution-trace records with optional workflow/provider filters."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if workflow_name is not None:
+            conditions.append("workflow_name = ?")
+            params.append(workflow_name)
+        if provider_name is not None:
+            conditions.append("provider_name = ?")
+            params.append(provider_name)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS count FROM execution_traces{where}",
+            params,
+        ).fetchone()
+        return int(row["count"]) if row else 0
 
     def count_receipts(
         self,

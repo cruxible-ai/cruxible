@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from cruxible_client import contracts
 from cruxible_core.runtime import api
@@ -22,12 +22,16 @@ async def create_snapshot(
 
 
 @router.get("/{instance_id}/snapshots", response_model=contracts.SnapshotListResult)
-async def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
+async def list_snapshots(
+    instance_id: str,
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
+) -> contracts.SnapshotListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    return api.list_snapshots(resolved_instance_id)
+    return api.list_snapshots(resolved_instance_id, limit=limit, offset=offset)
 
 
-@router.post("/{instance_id}/clone", response_model=contracts.CloneSnapshotResult)
+@router.post("/{instance_id}/snapshots/clone", response_model=contracts.CloneSnapshotResult)
 async def clone_snapshot(
     instance_id: str,
     req: CloneSnapshotRequest,

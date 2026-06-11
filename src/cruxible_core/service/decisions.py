@@ -87,9 +87,15 @@ def service_list_decision_records(
             limit=limit,
             offset=offset,
         )
+        total = store.count_records(
+            status=status,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision_class=decision_class,
+        )
     finally:
         store.close()
-    return DecisionRecordListResult(items=records)
+    return DecisionRecordListResult(items=records, total=total)
 
 
 def service_list_decision_events(
@@ -100,21 +106,29 @@ def service_list_decision_events(
     trace_id: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> DecisionEventListResult:
     store = instance.get_decision_store()
     try:
         if decision_record_id is not None:
-            events = store.list_events(decision_record_id, limit=limit)
+            events = store.list_events(decision_record_id, limit=limit, offset=offset)
+            total = store.count_events(decision_record_id=decision_record_id)
         else:
             events = store.find_events(
                 receipt_id=receipt_id,
                 trace_id=trace_id,
                 status=status,
                 limit=limit,
+                offset=offset,
+            )
+            total = store.count_events(
+                receipt_id=receipt_id,
+                trace_id=trace_id,
+                status=status,
             )
     finally:
         store.close()
-    return DecisionEventListResult(items=events)
+    return DecisionEventListResult(items=events, total=total)
 
 
 def service_finalize_decision_record(

@@ -498,6 +498,7 @@ def list_decision_records(
     subject_id: str | None = None,
     decision_class: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> contracts.DecisionRecordListResult:
     check_permission("cruxible_list_decision_records", instance_id=instance_id)
     instance = get_manager().get(instance_id)
@@ -508,9 +509,16 @@ def list_decision_records(
         subject_id=subject_id,
         decision_class=decision_class,
         limit=limit,
+        offset=offset,
     )
     records = [record.model_dump(mode="json") for record in result.items]
-    return contracts.DecisionRecordListResult(items=records, total=len(records), limit=limit)
+    return contracts.DecisionRecordListResult(
+        items=records,
+        total=result.total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(records) < result.total,
+    )
 
 
 def list_decision_events(
@@ -521,6 +529,7 @@ def list_decision_events(
     trace_id: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> contracts.DecisionEventListResult:
     check_permission("cruxible_list_decision_events", instance_id=instance_id)
     instance = get_manager().get(instance_id)
@@ -531,9 +540,16 @@ def list_decision_events(
         trace_id=trace_id,
         status=status,
         limit=limit,
+        offset=offset,
     )
     events = [event.model_dump(mode="json") for event in result.items]
-    return contracts.DecisionEventListResult(items=events, total=len(events), limit=limit)
+    return contracts.DecisionEventListResult(
+        items=events,
+        total=result.total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(events) < result.total,
+    )
 
 
 def finalize_decision_record(
@@ -574,16 +590,27 @@ def abandon_decision_record(
     )
 
 
-def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
+def list_snapshots(
+    instance_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.SnapshotListResult:
     """List immutable snapshots for an instance."""
     check_permission("cruxible_list_snapshots", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_list_snapshots(instance)
+    result = service_list_snapshots(instance, limit=limit, offset=offset)
     snapshots = [
         contracts.SnapshotMetadata.model_validate(snapshot.model_dump(mode="json"))
         for snapshot in result.items
     ]
-    return contracts.SnapshotListResult(items=snapshots, total=len(snapshots))
+    return contracts.SnapshotListResult(
+        items=snapshots,
+        total=result.total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(snapshots) < result.total,
+    )
 
 
 def clone_snapshot_local(
@@ -791,6 +818,7 @@ def list_traces(
         total=result.total,
         limit=limit,
         offset=offset,
+        truncated=offset + len(result.items) < result.total,
     )
 
 
@@ -964,6 +992,7 @@ def list_resources(
     limit: int = 50,
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
+    offset: int = 0,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     check_permission("cruxible_list", instance_id=instance_id)
@@ -979,6 +1008,7 @@ def list_resources(
         property_filter=property_filter,
         operation_type=operation_type,
         limit=limit,
+        offset=offset,
     )
 
     if resource_type in ("entities", "feedback", "outcomes"):
@@ -989,7 +1019,13 @@ def list_resources(
     else:
         items = result.items
 
-    return contracts.ListResult(items=items, total=result.total)
+    return contracts.ListResult(
+        items=items,
+        total=result.total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(items) < result.total,
+    )
 
 
 def evaluate(
@@ -1069,13 +1105,24 @@ def schema(instance_id: str) -> dict[str, Any]:
     return config.model_dump(mode="json")
 
 
-def list_queries(instance_id: str) -> contracts.QueryListResult:
-    """List named-query definitions for an instance."""
+def list_queries(
+    instance_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.QueryListResult:
+    """List named-query definitions for an instance, ordered by name."""
     check_permission("cruxible_list_queries", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     queries = service_list_queries(instance)
+    total = len(queries)
+    end = None if limit is None else offset + limit
+    page = queries[offset:end]
     return contracts.QueryListResult(
-        total=len(queries),
+        total=total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(page) < total,
         items=[
             contracts.NamedQueryInfoResult(
                 name=query.name,
@@ -1096,7 +1143,7 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
                 description=query.description,
                 example_ids=query.example_ids,
             )
-            for query in queries
+            for query in page
         ],
     )
 
@@ -1562,6 +1609,7 @@ def add_relationships_with_provenance(
     *,
     provenance_source: str,
     provenance_source_ref: str,
+    dry_run: bool = False,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
     check_permission("cruxible_add_relationship", instance_id=instance_id)
@@ -1573,6 +1621,7 @@ def add_relationships_with_provenance(
         inputs,
         source=provenance_source,
         source_ref=provenance_source_ref,
+        dry_run=dry_run,
     )
     return contracts.AddRelationshipResult(
         added=result.added,
@@ -1584,11 +1633,14 @@ def add_relationships_with_provenance(
 def add_relationships(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
+    *,
+    dry_run: bool = False,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
     return add_relationships_with_provenance(
         instance_id,
         relationships,
+        dry_run=dry_run,
         provenance_source="mcp_add",
         provenance_source_ref="cruxible_add_relationship",
     )
@@ -1693,6 +1745,8 @@ def batch_direct_write(
 def add_entities(
     instance_id: str,
     entities: list[contracts.EntityInput],
+    *,
+    dry_run: bool = False,
 ) -> contracts.AddEntityResult:
     """Add or update one or more entities in the graph (upsert)."""
     check_permission("cruxible_add_entity", instance_id=instance_id)
@@ -1707,7 +1761,7 @@ def add_entities(
         )
         for entity in entities
     ]
-    result = service_add_entity_inputs(instance, inputs)
+    result = service_add_entity_inputs(instance, inputs, dry_run=dry_run)
     return contracts.AddEntityResult(
         entities_added=result.added,
         entities_updated=result.updated,
@@ -2099,6 +2153,7 @@ def list_groups(
     relationship_type: str | None = None,
     status: contracts.GroupStatus | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> contracts.ListGroupsToolResult:
     """List candidate groups with optional filters."""
     check_permission("cruxible_list_groups", instance_id=instance_id)
@@ -2109,11 +2164,14 @@ def list_groups(
         relationship_type=relationship_type,
         status=status,
         limit=limit,
+        offset=offset,
     )
     return contracts.ListGroupsToolResult(
         items=[group.model_dump(mode="json") for group in result.items],
         total=result.total,
         limit=limit,
+        offset=offset,
+        truncated=offset + len(result.items) < result.total,
     )
 
 
@@ -2158,6 +2216,7 @@ def list_resolutions(
     relationship_type: str | None = None,
     action: contracts.GroupAction | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> contracts.ListResolutionsToolResult:
     """List group resolutions with optional filters."""
     check_permission("cruxible_list_resolutions", instance_id=instance_id)
@@ -2168,11 +2227,14 @@ def list_resolutions(
         relationship_type=relationship_type,
         action=action,
         limit=limit,
+        offset=offset,
     )
     return contracts.ListResolutionsToolResult(
         items=[r.model_dump(mode="json") for r in result.items],
         total=result.total,
         limit=limit,
+        offset=offset,
+        truncated=offset + len(result.items) < result.total,
     )
 
 

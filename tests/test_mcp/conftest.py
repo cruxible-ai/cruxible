@@ -229,6 +229,7 @@ class GovernedLocalClient:
         subject_id: str | None = None,
         decision_class: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ):
         return api.list_decision_records(
             instance_id,
@@ -237,6 +238,7 @@ class GovernedLocalClient:
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         )
 
     def list_decision_events(
@@ -248,6 +250,7 @@ class GovernedLocalClient:
         trace_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ):
         return api.list_decision_events(
             instance_id,
@@ -256,6 +259,7 @@ class GovernedLocalClient:
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         )
 
     def finalize_decision_record(
@@ -288,8 +292,8 @@ class GovernedLocalClient:
             reason=reason,
         )
 
-    def list_queries(self, instance_id: str):
-        return api.list_queries(instance_id)
+    def list_queries(self, instance_id: str, *, limit: int | None = None, offset: int = 0):
+        return api.list_queries(instance_id, limit=limit, offset=offset)
 
     def describe_query(self, instance_id: str, query_name: str):
         return api.describe_query(instance_id, query_name)
@@ -341,6 +345,8 @@ class GovernedLocalClient:
         entity_type: str | None = None,
         relationship_type: str | None = None,
         property_filter: dict | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ):
         return api.list_resources(
             instance_id,
@@ -348,6 +354,8 @@ class GovernedLocalClient:
             entity_type=entity_type,
             relationship_type=relationship_type,
             property_filter=property_filter,
+            limit=limit,
+            offset=offset,
         )
 
     def evaluate(
@@ -369,11 +377,11 @@ class GovernedLocalClient:
     def sample(self, instance_id: str, entity_type: str, limit: int | None = None):
         return api.sample(instance_id, entity_type, limit=limit)
 
-    def add_relationships(self, instance_id: str, relationships):
-        return api.add_relationships(instance_id, relationships)
+    def add_relationships(self, instance_id: str, relationships, *, dry_run: bool = False):
+        return api.add_relationships(instance_id, relationships, dry_run=dry_run)
 
-    def add_entities(self, instance_id: str, entities):
-        return api.add_entities(instance_id, entities)
+    def add_entities(self, instance_id: str, entities, *, dry_run: bool = False):
+        return api.add_entities(instance_id, entities, dry_run=dry_run)
 
     def add_constraint(
         self,
@@ -548,12 +556,14 @@ class GovernedLocalClient:
         relationship_type: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ):
         return api.list_groups(
             instance_id,
             relationship_type=relationship_type,
             status=status,
             limit=limit,
+            offset=offset,
         )
 
     def list_resolutions(
@@ -563,12 +573,14 @@ class GovernedLocalClient:
         relationship_type: str | None = None,
         action: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ):
         return api.list_resolutions(
             instance_id,
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+            offset=offset,
         )
 
     def create_world_overlay(

@@ -451,7 +451,7 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     runner: CliRunner,
 ):
     class StubClient:
-        def list_queries(self, instance_id):
+        def list_queries(self, instance_id, *, limit=None, offset=0):
             assert instance_id == "inst_123"
             return contracts.QueryListResult(
                 items=[
@@ -743,6 +743,7 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
             subject_id=None,
             decision_class=None,
             limit=100,
+            offset=0,
         ):
             captured["list"] = (
                 instance_id,
@@ -2210,7 +2211,7 @@ def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(
                 )
             )
 
-        def list_snapshots(self, instance_id):
+        def list_snapshots(self, instance_id, *, limit=None, offset=0):
             assert instance_id == "inst_123"
             return contracts.SnapshotListResult(
                 items=[
@@ -2590,9 +2591,10 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def add_relationships(self, instance_id, relationships):
+        def add_relationships(self, instance_id, relationships, *, dry_run=False):
             captured["instance_id"] = instance_id
             captured["relationships"] = relationships
+            captured["dry_run"] = dry_run
             return contracts.AddRelationshipResult(
                 added=1,
                 updated=0,
@@ -2829,3 +2831,40 @@ def test_server_mode_uses_env_bearer_token_for_client_construction(monkeypatch, 
     assert captured["base_url"] == "http://server"
     assert captured["token"] == "local-secret"
     assert captured["instance_id"] == "inst_123"
+
+
+def test_list_entities_forwards_offset_to_client(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def list(self, instance_id, **kwargs):
+            captured.update(kwargs)
+            return contracts.ListResult(items=[], total=0, limit=5, offset=10)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "list",
+            "entities",
+            "--type",
+            "Vehicle",
+            "--limit",
+            "5",
+            "--offset",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["limit"] == 5
+    assert captured["offset"] == 10

@@ -140,7 +140,7 @@ class CruxibleClient:
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/query",
+            f"/api/v1/{instance_id}/queries/run",
             json={
                 "query_name": query_name,
                 "params": params,
@@ -161,7 +161,7 @@ class CruxibleClient:
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/query/inline",
+            f"/api/v1/{instance_id}/queries/run-inline",
             json={
                 "definition": definition.model_dump(mode="json", exclude_none=True),
                 "params": params,
@@ -214,6 +214,7 @@ class CruxibleClient:
         subject_id: str | None = None,
         decision_class: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> contracts.DecisionRecordListResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/decision-records",
@@ -223,6 +224,7 @@ class CruxibleClient:
                 "subject_id": subject_id,
                 "decision_class": decision_class,
                 "limit": limit,
+                "offset": offset,
             },
         )
         return self._parse_model(response, contracts.DecisionRecordListResult)
@@ -236,6 +238,7 @@ class CruxibleClient:
         trace_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> contracts.DecisionEventListResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/decision-records/events",
@@ -245,6 +248,7 @@ class CruxibleClient:
                 "trace_id": trace_id,
                 "status": status,
                 "limit": limit,
+                "offset": offset,
             },
         )
         return self._parse_model(response, contracts.DecisionEventListResult)
@@ -461,6 +465,7 @@ class CruxibleClient:
         query_name: str | None = None,
         receipt_id: str | None = None,
         limit: int = 50,
+        offset: int = 0,
         property_filter: dict[str, Any] | None = None,
         operation_type: str | None = None,
     ) -> contracts.ListResult:
@@ -470,6 +475,7 @@ class CruxibleClient:
             "query_name": query_name,
             "receipt_id": receipt_id,
             "limit": limit,
+            "offset": offset,
             "operation_type": operation_type,
         }
         if property_filter is not None:
@@ -601,8 +607,20 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/schema")
         return self._parse_json(response)
 
-    def list_queries(self, instance_id: str) -> contracts.QueryListResult:
-        response = self._client.get(f"/api/v1/{instance_id}/queries")
+    def list_queries(
+        self,
+        instance_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> contracts.QueryListResult:
+        params: dict[str, int] = {"offset": offset}
+        if limit is not None:
+            params["limit"] = limit
+        response = self._client.get(
+            f"/api/v1/{instance_id}/queries",
+            params=params,
+        )
         return self._parse_model(response, contracts.QueryListResult)
 
     def describe_query(
@@ -674,10 +692,15 @@ class CruxibleClient:
         self,
         instance_id: str,
         relationships: builtins.list[contracts.RelationshipInput],
+        *,
+        dry_run: bool = False,
     ) -> contracts.AddRelationshipResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/relationships",
-            json={"relationships": [item.model_dump(mode="json") for item in relationships]},
+            json={
+                "relationships": [item.model_dump(mode="json") for item in relationships],
+                "dry_run": dry_run,
+            },
         )
         return self._parse_model(response, contracts.AddRelationshipResult)
 
@@ -685,10 +708,15 @@ class CruxibleClient:
         self,
         instance_id: str,
         entities: builtins.list[contracts.EntityInput],
+        *,
+        dry_run: bool = False,
     ) -> contracts.AddEntityResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/entities",
-            json={"entities": [item.model_dump(mode="json") for item in entities]},
+            json={
+                "entities": [item.model_dump(mode="json") for item in entities],
+                "dry_run": dry_run,
+            },
         )
         return self._parse_model(response, contracts.AddEntityResult)
 
@@ -812,8 +840,20 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SnapshotCreateResult)
 
-    def list_snapshots(self, instance_id: str) -> contracts.SnapshotListResult:
-        response = self._client.get(f"/api/v1/{instance_id}/snapshots")
+    def list_snapshots(
+        self,
+        instance_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> contracts.SnapshotListResult:
+        params: dict[str, int] = {"offset": offset}
+        if limit is not None:
+            params["limit"] = limit
+        response = self._client.get(
+            f"/api/v1/{instance_id}/snapshots",
+            params=params,
+        )
         return self._parse_model(response, contracts.SnapshotListResult)
 
     def register_source_artifact(
@@ -868,7 +908,7 @@ class CruxibleClient:
         root_dir: str,
     ) -> contracts.CloneSnapshotResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/clone",
+            f"/api/v1/{instance_id}/snapshots/clone",
             json={"snapshot_id": snapshot_id, "root_dir": root_dir},
         )
         return self._parse_model(response, contracts.CloneSnapshotResult)
@@ -1112,8 +1152,12 @@ class CruxibleClient:
         relationship_type: str | None = None,
         status: contracts.GroupStatus | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> contracts.ListGroupsToolResult:
-        params: dict[str, str | int | float | bool | None] = {"limit": limit}
+        params: dict[str, str | int | float | bool | None] = {
+            "limit": limit,
+            "offset": offset,
+        }
         if relationship_type is not None:
             params["relationship_type"] = relationship_type
         if status is not None:
@@ -1131,8 +1175,12 @@ class CruxibleClient:
         relationship_type: str | None = None,
         action: contracts.GroupAction | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> contracts.ListResolutionsToolResult:
-        params: dict[str, str | int | float | bool | None] = {"limit": limit}
+        params: dict[str, str | int | float | bool | None] = {
+            "limit": limit,
+            "offset": offset,
+        }
         if relationship_type is not None:
             params["relationship_type"] = relationship_type
         if action is not None:

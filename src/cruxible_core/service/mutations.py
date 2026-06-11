@@ -336,9 +336,7 @@ def _batch_direct_write_result(
         relationships_added=sum(
             1 for item in prepared.relationships if not item.validated.is_update
         ),
-        relationships_updated=sum(
-            1 for item in prepared.relationships if item.validated.is_update
-        ),
+        relationships_updated=sum(1 for item in prepared.relationships if item.validated.is_update),
         validation_errors=list(prepared.validation_errors),
         validation_warnings=list(prepared.validation_warnings),
         evidence_sources_used=list(prepared.evidence_sources_used),
@@ -430,14 +428,11 @@ def service_batch_direct_write(
                 if edge.metadata.evidence is not None:
                     evidence_detail = {
                         "evidence_refs": [
-                            ref.to_payload()
-                            for ref in edge.metadata.evidence.evidence_refs
+                            ref.to_payload() for ref in edge.metadata.evidence.evidence_refs
                         ],
                     }
                     if edge.metadata.evidence.rationale is not None:
-                        evidence_detail["evidence_rationale"] = (
-                            edge.metadata.evidence.rationale
-                        )
+                        evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,
@@ -466,12 +461,14 @@ def service_add_entity_inputs(
     instance: InstanceProtocol,
     entities: Sequence[EntityWriteInput],
     *,
+    dry_run: bool = False,
     _create_receipt: bool = True,
 ) -> AddEntityResult:
     """Normalize entity write inputs, then add or update graph entities."""
     return service_add_entities(
         instance,
         [_entity_from_input(entity) for entity in entities],
+        dry_run=dry_run,
         _create_receipt=_create_receipt,
     )
 
@@ -480,6 +477,7 @@ def service_add_entities(
     instance: InstanceProtocol,
     entities: Sequence[EntityInstance],
     *,
+    dry_run: bool = False,
     _create_receipt: bool = True,
 ) -> AddEntityResult:
     """Add or update entities in the graph (batch upsert).
@@ -498,7 +496,7 @@ def service_add_entities(
         instance,
         "add_entity",
         {"count": len(entities)},
-        enabled=_create_receipt,
+        enabled=_create_receipt and not dry_run,
     ) as ctx:
         builder = ctx.builder
         errors: list[str] = []
@@ -569,6 +567,12 @@ def service_add_entities(
                 errors=guard_errors,
             )
 
+        if dry_run:
+            return AddEntityResult(
+                added=sum(1 for validated in pending if not validated.is_update),
+                updated=sum(1 for validated in pending if validated.is_update),
+            )
+
         added = 0
         updated = 0
         touched_entities = []
@@ -610,6 +614,7 @@ def service_add_relationship_inputs(
     source: str,
     source_ref: str,
     *,
+    dry_run: bool = False,
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Normalize relationship write inputs, then add or update graph relationships."""
@@ -618,6 +623,7 @@ def service_add_relationship_inputs(
         [_relationship_from_input(instance, relationship) for relationship in relationships],
         source=source,
         source_ref=source_ref,
+        dry_run=dry_run,
         _create_receipt=_create_receipt,
     )
 
@@ -628,6 +634,7 @@ def service_add_relationships(
     source: str,
     source_ref: str,
     *,
+    dry_run: bool = False,
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
@@ -648,7 +655,7 @@ def service_add_relationships(
         instance,
         "add_relationship",
         {"count": len(relationships), "source": source},
-        enabled=_create_receipt,
+        enabled=_create_receipt and not dry_run,
     ) as ctx:
         builder = ctx.builder
         errors: list[str] = []
@@ -706,6 +713,12 @@ def service_add_relationships(
                 errors=errors,
             )
 
+        if dry_run:
+            return AddRelationshipResult(
+                added=sum(1 for validated, _ in pending if not validated.is_update),
+                updated=sum(1 for validated, _ in pending if validated.is_update),
+            )
+
         added = 0
         updated = 0
         touched_relationships = []
@@ -725,14 +738,11 @@ def service_add_relationships(
                 if edge.metadata.evidence is not None:
                     evidence_detail = {
                         "evidence_refs": [
-                            ref.to_payload()
-                            for ref in edge.metadata.evidence.evidence_refs
+                            ref.to_payload() for ref in edge.metadata.evidence.evidence_refs
                         ],
                     }
                     if edge.metadata.evidence.rationale is not None:
-                        evidence_detail["evidence_rationale"] = (
-                            edge.metadata.evidence.rationale
-                        )
+                        evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,

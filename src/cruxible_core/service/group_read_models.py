@@ -166,6 +166,7 @@ def list_groups_read_model(
     relationship_type: str | None = None,
     status: (Literal["pending_review", "auto_resolved", "applying", "resolved"] | None) = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> ListGroupsResult:
     """List candidate groups with optional filters, sorted by review priority."""
     valid_statuses = ("pending_review", "auto_resolved", "applying", "resolved")
@@ -178,13 +179,13 @@ def list_groups_read_model(
             relationship_type=relationship_type,
             status=status,
             limit=limit,
+            offset=offset,
+            order_by="review_priority",
         )
         total = group_store.count_groups(
             relationship_type=relationship_type,
             status=status,
         )
-        priority_order = {"critical": 0, "review": 1, "normal": 2}
-        groups.sort(key=lambda group: priority_order.get(group.review_priority, 9))
         return ListGroupsResult(items=groups, total=total)
     finally:
         group_store.close()
@@ -195,6 +196,7 @@ def list_resolutions_read_model(
     relationship_type: str | None = None,
     action: Literal["approve", "reject"] | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> ListResolutionsResult:
     """List resolutions for agents querying prior analysis state."""
     group_store = instance.get_group_store()
@@ -203,8 +205,13 @@ def list_resolutions_read_model(
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+            offset=offset,
         )
-        return ListResolutionsResult(items=resolutions, total=len(resolutions))
+        total = group_store.count_resolutions(
+            relationship_type=relationship_type,
+            action=action,
+        )
+        return ListResolutionsResult(items=resolutions, total=total)
     finally:
         group_store.close()
 

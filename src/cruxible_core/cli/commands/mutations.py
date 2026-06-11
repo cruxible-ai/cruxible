@@ -137,8 +137,9 @@ def _contract_batch_payload_to_service(
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
 @click.option("--props", default=None, help="JSON object of properties.")
+@click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @handle_errors
-def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
+def add_entity_cmd(entity_type: str, entity_id: str, props: str | None, dry_run: bool) -> None:
     """Add or update an entity in the graph."""
     try:
         properties = json.loads(props) if props else {}
@@ -157,6 +158,7 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
                     properties=properties,
                 )
             ],
+            dry_run=dry_run,
         ),
         lambda instance: service_add_entity_inputs(
             instance,
@@ -167,6 +169,7 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
                     properties=properties,
                 )
             ],
+            dry_run=dry_run,
         ),
         allow_local=False,
         command_name="add-entity",
@@ -178,7 +181,10 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
         if isinstance(result, contracts.AddEntityResult)
         else result.updated
     )
-    if updated:
+    verb = "updated" if updated else "added"
+    if dry_run:
+        click.echo(f"Dry run: entity {label} would be {verb}.")
+    elif updated:
         click.echo(f"Entity {label} updated.")
     else:
         click.echo(f"Entity {label} added.")
@@ -210,6 +216,7 @@ def add_entity_cmd(entity_type: str, entity_id: str, props: str | None) -> None:
     default=None,
     help="Optional rationale for the attached relationship evidence.",
 )
+@click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @handle_errors
 def add_relationship_cmd(
     from_type: str,
@@ -221,6 +228,7 @@ def add_relationship_cmd(
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
+    dry_run: bool,
 ) -> None:
     """Add or update a relationship in the graph."""
     try:
@@ -250,6 +258,7 @@ def add_relationship_cmd(
                     evidence_rationale=evidence_rationale,
                 )
             ],
+            dry_run=dry_run,
         ),
         lambda instance: service_add_relationship_inputs(
             instance,
@@ -268,13 +277,17 @@ def add_relationship_cmd(
             ],
             source="cli_add",
             source_ref="add-relationship",
+            dry_run=dry_run,
         ),
         allow_local=False,
         command_name="add-relationship",
     )
 
     edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
-    if result.updated:
+    verb = "updated" if result.updated else "added"
+    if dry_run:
+        click.echo(f"Dry run: relationship would be {verb}: {edge_label}")
+    elif result.updated:
         click.echo(f"Relationship updated: {edge_label}")
     else:
         click.echo(f"Relationship added: {edge_label}")

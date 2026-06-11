@@ -936,6 +936,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `relationships` | yes | array |  |
+| `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
 
 **Returns:** Top-level fields: `added`, `updated`, `receipt_id`
 
@@ -958,6 +959,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `entities` | yes | array |  |
+| `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
 
 **Returns:** Top-level fields: `entities_added`, `entities_updated`, `receipt_id`
 

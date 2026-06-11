@@ -82,7 +82,7 @@ def test_init_handler_delegates_kit_to_client(monkeypatch: pytest.MonkeyPatch):
 
 def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def list_queries(self, instance_id):
+        def list_queries(self, instance_id, *, limit=None, offset=0):
             assert instance_id == "inst_123"
             return contracts.QueryListResult(
                 items=[
@@ -207,7 +207,7 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
                 page_count=1,
             )
 
-        def list_snapshots(self, instance_id):
+        def list_snapshots(self, instance_id, *, limit=None, offset=0):
             assert instance_id == "inst_123"
             return contracts.SnapshotListResult(items=[snapshot], total=1)
 

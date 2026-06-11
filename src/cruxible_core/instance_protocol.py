@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from cruxible_core.config.schema import CoreConfig
@@ -48,6 +48,13 @@ class ReceiptStoreProtocol(ABC):
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]: ...
+    @abstractmethod
+    def count_traces(
+        self,
+        *,
+        workflow_name: str | None = None,
+        provider_name: str | None = None,
+    ) -> int: ...
     @abstractmethod
     def list_receipts(
         self,
@@ -86,6 +93,15 @@ class DecisionStoreProtocol(ABC):
         offset: int = 0,
     ) -> list[DecisionRecord]: ...
     @abstractmethod
+    def count_records(
+        self,
+        *,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+    ) -> int: ...
+    @abstractmethod
     def update_record(self, record: DecisionRecord) -> None: ...
     @abstractmethod
     def append_event(self, event: DecisionEvent) -> str: ...
@@ -105,7 +121,17 @@ class DecisionStoreProtocol(ABC):
         trace_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[DecisionEvent]: ...
+    @abstractmethod
+    def count_events(
+        self,
+        *,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
     @abstractmethod
     def finalize_record(
         self,
@@ -140,6 +166,7 @@ class FeedbackStoreProtocol(ABC):
         decision_surface_type: str | None = None,
         decision_surface_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[FeedbackRecord]: ...
     @abstractmethod
     def list_feedback_by_entity_ids(
@@ -164,6 +191,7 @@ class FeedbackStoreProtocol(ABC):
         decision_surface_type: str | None = None,
         decision_surface_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[OutcomeRecord]: ...
     @abstractmethod
     def count_outcomes(self, *, receipt_id: str | None = None) -> int: ...
@@ -186,6 +214,8 @@ class GroupStoreProtocol(ABC):
         signature: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
+        order_by: Literal["created_at", "review_priority"] = "created_at",
     ) -> list[CandidateGroup]: ...
     @abstractmethod
     def count_groups(
@@ -257,7 +287,17 @@ class GroupStoreProtocol(ABC):
         action: str | None = None,
         confirmed: bool | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[GroupResolution]: ...
+    @abstractmethod
+    def count_resolutions(
+        self,
+        *,
+        relationship_type: str | None = None,
+        signature: str | None = None,
+        action: str | None = None,
+        confirmed: bool | None = None,
+    ) -> int: ...
     @abstractmethod
     def list_approved_relationship_tuples(
         self,

@@ -160,10 +160,39 @@ class DecisionStore(DecisionStoreProtocol):
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self._conn.execute(
             f"SELECT record_json FROM decision_records{where} "
-            "ORDER BY opened_at DESC LIMIT ? OFFSET ?",
+            "ORDER BY opened_at DESC, decision_record_id DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
         return [DecisionRecord.model_validate_json(row["record_json"]) for row in rows]
+
+    def count_records(
+        self,
+        *,
+        status: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        decision_class: str | None = None,
+    ) -> int:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+        if subject_type is not None:
+            conditions.append("subject_type = ?")
+            params.append(subject_type)
+        if subject_id is not None:
+            conditions.append("subject_id = ?")
+            params.append(subject_id)
+        if decision_class is not None:
+            conditions.append("decision_class = ?")
+            params.append(decision_class)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS count FROM decision_records{where}",
+            params,
+        ).fetchone()
+        return int(row["count"]) if row else 0
 
     def update_record(self, record: DecisionRecord) -> None:
         if self.get_record(record.decision_record_id) is None:
@@ -230,9 +259,53 @@ class DecisionStore(DecisionStoreProtocol):
         trace_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[DecisionEvent]:
+        where, params = self._event_filters(
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+        )
+        rows = self._conn.execute(
+            f"SELECT event_json FROM decision_events{where} "
+            "ORDER BY finished_at DESC, decision_event_id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        return [DecisionEvent.model_validate_json(row["event_json"]) for row in rows]
+
+    def count_events(
+        self,
+        *,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._event_filters(
+            decision_record_id=decision_record_id,
+            receipt_id=receipt_id,
+            trace_id=trace_id,
+            status=status,
+        )
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS count FROM decision_events{where}",
+            params,
+        ).fetchone()
+        return int(row["count"]) if row else 0
+
+    @staticmethod
+    def _event_filters(
+        *,
+        decision_record_id: str | None = None,
+        receipt_id: str | None = None,
+        trace_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
         conditions: list[str] = []
         params: list[Any] = []
+        if decision_record_id is not None:
+            conditions.append("decision_record_id = ?")
+            params.append(decision_record_id)
         if receipt_id is not None:
             conditions.append("receipt_id = ?")
             params.append(receipt_id)
@@ -248,11 +321,7 @@ class DecisionStore(DecisionStoreProtocol):
             conditions.append("status = ?")
             params.append(status)
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = self._conn.execute(
-            f"SELECT event_json FROM decision_events{where} ORDER BY finished_at DESC LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-        return [DecisionEvent.model_validate_json(row["event_json"]) for row in rows]
+        return where, params
 
     def finalize_record(
         self,

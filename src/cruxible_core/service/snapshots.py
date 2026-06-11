@@ -23,9 +23,25 @@ def service_create_snapshot(
     return SnapshotCreateResult(snapshot=snapshot)
 
 
-def service_list_snapshots(instance: InstanceProtocol) -> SnapshotListResult:
-    """List snapshots for the current instance."""
-    return SnapshotListResult(items=instance.list_snapshots())
+def service_list_snapshots(
+    instance: InstanceProtocol,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> SnapshotListResult:
+    """List snapshots for the current instance, newest first.
+
+    Snapshots are ordered by created_at then snapshot_id (descending);
+    ``total`` reflects the full count before limit/offset are applied.
+    """
+    snapshots = sorted(
+        instance.list_snapshots(),
+        key=lambda snapshot: (snapshot.created_at, snapshot.snapshot_id),
+        reverse=True,
+    )
+    total = len(snapshots)
+    end = None if limit is None else offset + limit
+    return SnapshotListResult(items=snapshots[offset:end], total=total)
 
 
 def service_clone_snapshot(

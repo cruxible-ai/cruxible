@@ -135,7 +135,7 @@ def test_query_inline_uses_expected_route_and_payload():
 
     assert result.receipt_id == "RCP-inline"
     assert captured == {
-        "path": "/api/v1/inst_123/query/inline",
+        "path": "/api/v1/inst_123/queries/run-inline",
         "payload": {
             "definition": {
                 "name": "brake_parts",
@@ -255,6 +255,32 @@ def test_trace_methods_call_trace_routes():
         "workflow_name=wf&provider_name=provider&limit=25&offset=5"
     )
     assert seen[1][1] == expected_url
+
+
+def test_paginated_client_methods_serialize_offset():
+    captured: dict[str, dict[str, str]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = dict(request.url.params)
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    client = _build_client(handler)
+
+    client.list("inst_123", resource_type="entities", limit=10, offset=3)
+    client.list_decision_records("inst_123", limit=10, offset=4)
+    client.list_decision_events("inst_123", limit=10, offset=5)
+    client.list_queries("inst_123", limit=10, offset=6)
+    client.list_snapshots("inst_123", limit=10, offset=7)
+    client.list_groups("inst_123", limit=10, offset=8)
+    client.list_resolutions("inst_123", limit=10, offset=9)
+
+    assert captured["/api/v1/inst_123/list/entities"]["offset"] == "3"
+    assert captured["/api/v1/inst_123/decision-records"]["offset"] == "4"
+    assert captured["/api/v1/inst_123/decision-records/events"]["offset"] == "5"
+    assert captured["/api/v1/inst_123/queries"]["offset"] == "6"
+    assert captured["/api/v1/inst_123/snapshots"]["offset"] == "7"
+    assert captured["/api/v1/inst_123/groups"]["offset"] == "8"
+    assert captured["/api/v1/inst_123/resolutions"]["offset"] == "9"
 
 
 def test_feedback_from_query_uses_expected_route_and_payload():
@@ -460,7 +486,8 @@ def test_add_relationships_serializes_evidence_fields():
                     ],
                     "evidence_rationale": "Accepted direct source-backed assertion.",
                 }
-            ]
+            ],
+            "dry_run": False,
         },
     }
 
@@ -622,7 +649,7 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
         path = request.url.path
         payload = json.loads(request.content.decode())
         captured.append((path, payload))
-        if path.endswith("/query"):
+        if path.endswith("/queries/run"):
             return httpx.Response(
                 200,
                 json={
@@ -1032,18 +1059,25 @@ def test_group_routes_omit_none_query_params():
         )
 
     client = _build_client(handler)
-    groups_result = client.list_groups("inst_123", status=None, relationship_type=None, limit=25)
+    groups_result = client.list_groups(
+        "inst_123",
+        status=None,
+        relationship_type=None,
+        limit=25,
+        offset=5,
+    )
     resolutions_result = client.list_resolutions(
         "inst_123",
         action=None,
         relationship_type=None,
         limit=25,
+        offset=5,
     )
 
     assert groups_result.total == 0
     assert resolutions_result.total == 0
-    assert captured["groups"].endswith("/api/v1/inst_123/groups?limit=25")
-    assert captured["resolutions"].endswith("/api/v1/inst_123/resolutions?limit=25")
+    assert captured["groups"].endswith("/api/v1/inst_123/groups?limit=25&offset=5")
+    assert captured["resolutions"].endswith("/api/v1/inst_123/resolutions?limit=25&offset=5")
 
 
 def test_evaluate_uses_expected_route():

@@ -164,6 +164,7 @@ class FeedbackStore(FeedbackStoreProtocol):
         decision_surface_type: str | None = None,
         decision_surface_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[FeedbackRecord]:
         """List feedback records with optional filter."""
         clauses: list[str] = []
@@ -188,8 +189,8 @@ class FeedbackStore(FeedbackStoreProtocol):
         sql = "SELECT * FROM feedback"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY created_at DESC, feedback_id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
         rows = self._conn.execute(sql, tuple(params)).fetchall()
 
@@ -305,6 +306,7 @@ class FeedbackStore(FeedbackStoreProtocol):
         decision_surface_type: str | None = None,
         decision_surface_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[OutcomeRecord]:
         """List outcome records with optional filter."""
         clauses: list[str] = []
@@ -331,8 +333,8 @@ class FeedbackStore(FeedbackStoreProtocol):
         sql = "SELECT * FROM outcomes"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY created_at DESC, outcome_id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
         rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_outcome(r) for r in rows]

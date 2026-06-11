@@ -750,12 +750,14 @@ def snapshot_create_cmd(label: str | None) -> None:
 
 
 @snapshot_group.command("list")
+@click.option("--limit", default=None, type=click.IntRange(min=1), help="Max snapshots to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @handle_errors
-def snapshot_list_cmd() -> None:
+def snapshot_list_cmd(limit: int | None, offset: int) -> None:
     """List snapshots for the current instance."""
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_snapshots(instance_id),
-        service_list_snapshots,
+        lambda client, instance_id: client.list_snapshots(instance_id, limit=limit, offset=offset),
+        lambda instance: service_list_snapshots(instance, limit=limit, offset=offset),
     )
 
     if not result.items:

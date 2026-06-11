@@ -150,6 +150,7 @@ def get_cmd(decision_record_id: str, include_events: bool, output_json: bool) ->
     default=None,
 )
 @click.option("--limit", default=100, type=click.IntRange(min=1))
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
 def list_cmd(
@@ -158,6 +159,7 @@ def list_cmd(
     subject_id: str | None,
     decision_class: str | None,
     limit: int,
+    offset: int,
     output_json: bool,
 ) -> None:
     """List decision records."""
@@ -169,6 +171,7 @@ def list_cmd(
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list_decision_records(
             instance,
@@ -177,6 +180,7 @@ def list_cmd(
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         ),
     )
     records = [_record_payload(record) for record in cast(Any, result).items]
@@ -196,6 +200,7 @@ def list_cmd(
 @click.option("--trace", "trace_id", default=None, help="Trace ID.")
 @click.option("--status", type=click.Choice(["success", "error"]), default=None)
 @click.option("--limit", default=100, type=click.IntRange(min=1))
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
 def events_cmd(
@@ -204,6 +209,7 @@ def events_cmd(
     trace_id: str | None,
     status: str | None,
     limit: int,
+    offset: int,
     output_json: bool,
 ) -> None:
     """List decision-record events."""
@@ -215,6 +221,7 @@ def events_cmd(
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list_decision_events(
             instance,
@@ -223,6 +230,7 @@ def events_cmd(
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         ),
     )
     events = [_event_payload(event) for event in cast(Any, result).items]

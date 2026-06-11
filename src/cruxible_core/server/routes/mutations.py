@@ -27,6 +27,7 @@ async def add_entities(
     return api.add_entities(
         instance_id=resolve_server_instance_id(instance_id),
         entities=req.entities,
+        dry_run=req.dry_run,
     )
 
 
@@ -39,6 +40,7 @@ async def add_relationships(
     return api.add_relationships_with_provenance(
         instance_id=resolved_instance_id,
         relationships=req.relationships,
+        dry_run=req.dry_run,
         provenance_source="http_api",
         provenance_source_ref="cruxible_add_relationship",
     )

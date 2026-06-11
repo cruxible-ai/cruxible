@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from cruxible_core.group.types import (
     CandidateGroup,
@@ -207,8 +207,10 @@ class GroupStore(GroupStoreProtocol):
         signature: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
+        order_by: Literal["created_at", "review_priority"] = "created_at",
     ) -> list[CandidateGroup]:
-        """List groups with optional filters."""
+        """List groups with optional filters and deterministic ordering."""
         clauses: list[str] = []
         params: list[Any] = []
         if relationship_type is not None:
@@ -221,10 +223,19 @@ class GroupStore(GroupStoreProtocol):
             clauses.append("status = ?")
             params.append(status)
 
+        if order_by == "review_priority":
+            order_sql = (
+                "ORDER BY CASE review_priority "
+                "WHEN 'critical' THEN 0 WHEN 'review' THEN 1 WHEN 'normal' THEN 2 ELSE 9 END, "
+                "created_at DESC, group_id DESC"
+            )
+        else:
+            order_sql = "ORDER BY created_at DESC, group_id DESC"
+
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._conn.execute(
-            f"SELECT * FROM candidate_groups{where} ORDER BY created_at DESC LIMIT ?",
-            (*params, limit),
+            f"SELECT * FROM candidate_groups{where} {order_sql} LIMIT ? OFFSET ?",
+            (*params, limit, offset),
         ).fetchall()
         return [self._row_to_group(r) for r in rows]
 
@@ -589,8 +600,51 @@ class GroupStore(GroupStoreProtocol):
         action: str | None = None,
         confirmed: bool | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[GroupResolution]:
         """List resolutions with optional filters."""
+        where, params = self._resolution_filters(
+            relationship_type=relationship_type,
+            signature=signature,
+            action=action,
+            confirmed=confirmed,
+        )
+        rows = self._conn.execute(
+            f"SELECT * FROM group_resolutions{where} "
+            "ORDER BY resolved_at DESC, resolution_id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        return [self._row_to_resolution(r) for r in rows]
+
+    def count_resolutions(
+        self,
+        *,
+        relationship_type: str | None = None,
+        signature: str | None = None,
+        action: str | None = None,
+        confirmed: bool | None = None,
+    ) -> int:
+        """Count resolutions with optional filters."""
+        where, params = self._resolution_filters(
+            relationship_type=relationship_type,
+            signature=signature,
+            action=action,
+            confirmed=confirmed,
+        )
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS count FROM group_resolutions{where}",
+            tuple(params),
+        ).fetchone()
+        return int(row["count"]) if row else 0
+
+    @staticmethod
+    def _resolution_filters(
+        *,
+        relationship_type: str | None = None,
+        signature: str | None = None,
+        action: str | None = None,
+        confirmed: bool | None = None,
+    ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if relationship_type is not None:
@@ -605,13 +659,8 @@ class GroupStore(GroupStoreProtocol):
         if confirmed is not None:
             clauses.append("confirmed = ?")
             params.append(1 if confirmed else 0)
-
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = self._conn.execute(
-            f"SELECT * FROM group_resolutions{where} ORDER BY resolved_at DESC LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-        return [self._row_to_resolution(r) for r in rows]
+        return where, params
 
     def list_approved_relationship_tuples(
         self,

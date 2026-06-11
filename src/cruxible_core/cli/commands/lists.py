@@ -38,9 +38,10 @@ def list_group() -> None:
 @list_group.command("entities")
 @click.option("--type", "entity_type", required=True, help="Entity type to list.")
 @click.option("--limit", default=50, help="Max entities to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
+def list_entities(entity_type: str, limit: int, offset: int, output_json: bool) -> None:
     """List entities of a given type."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -48,8 +49,11 @@ def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
             resource_type="entities",
             entity_type=entity_type,
             limit=limit,
+            offset=offset,
         ),
-        lambda instance: service_list(instance, "entities", entity_type=entity_type, limit=limit),
+        lambda instance: service_list(
+            instance, "entities", entity_type=entity_type, limit=limit, offset=offset
+        ),
     )
     entities = (
         _entities_from_payload(result.items)
@@ -72,12 +76,14 @@ def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
 @click.option("--query-name", default=None, help="Filter by query name.")
 @click.option("--operation-type", default=None, help="Filter by operation type.")
 @click.option("--limit", default=50, help="Max receipts to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
 def list_receipts(
     query_name: str | None,
     operation_type: str | None,
     limit: int,
+    offset: int,
     output_json: bool,
 ) -> None:
     """List receipt summaries."""
@@ -88,6 +94,7 @@ def list_receipts(
             query_name=query_name,
             operation_type=operation_type,
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list(
             instance,
@@ -95,6 +102,7 @@ def list_receipts(
             query_name=query_name,
             operation_type=operation_type,
             limit=limit,
+            offset=offset,
         ),
     )
     if output_json:
@@ -157,9 +165,10 @@ def list_traces(
 @list_group.command("feedback")
 @click.option("--receipt", "receipt_id", default=None, help="Filter by receipt ID.")
 @click.option("--limit", default=50, help="Max records to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_feedback(receipt_id: str | None, limit: int, output_json: bool) -> None:
+def list_feedback(receipt_id: str | None, limit: int, offset: int, output_json: bool) -> None:
     """List feedback records."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -167,8 +176,11 @@ def list_feedback(receipt_id: str | None, limit: int, output_json: bool) -> None
             resource_type="feedback",
             receipt_id=receipt_id,
             limit=limit,
+            offset=offset,
         ),
-        lambda instance: service_list(instance, "feedback", receipt_id=receipt_id, limit=limit),
+        lambda instance: service_list(
+            instance, "feedback", receipt_id=receipt_id, limit=limit, offset=offset
+        ),
     )
     records = (
         _feedback_from_payload(result.items)
@@ -190,9 +202,10 @@ def list_feedback(receipt_id: str | None, limit: int, output_json: bool) -> None
 @list_group.command("outcomes")
 @click.option("--receipt", "receipt_id", default=None, help="Filter by receipt ID.")
 @click.option("--limit", default=50, help="Max records to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_outcomes(receipt_id: str | None, limit: int, output_json: bool) -> None:
+def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: bool) -> None:
     """List outcome records."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -200,8 +213,11 @@ def list_outcomes(receipt_id: str | None, limit: int, output_json: bool) -> None
             resource_type="outcomes",
             receipt_id=receipt_id,
             limit=limit,
+            offset=offset,
         ),
-        lambda instance: service_list(instance, "outcomes", receipt_id=receipt_id, limit=limit),
+        lambda instance: service_list(
+            instance, "outcomes", receipt_id=receipt_id, limit=limit, offset=offset
+        ),
     )
     records = (
         _outcomes_from_payload(result.items)
@@ -223,9 +239,10 @@ def list_outcomes(receipt_id: str | None, limit: int, output_json: bool) -> None
 @list_group.command("edges")
 @click.option("--relationship", default=None, help="Filter by relationship type.")
 @click.option("--limit", default=50, help="Max edges to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_edges(relationship: str | None, limit: int, output_json: bool) -> None:
+def list_edges(relationship: str | None, limit: int, offset: int, output_json: bool) -> None:
     """List edges in the graph."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
@@ -233,12 +250,14 @@ def list_edges(relationship: str | None, limit: int, output_json: bool) -> None:
             resource_type="edges",
             relationship_type=relationship,
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list(
             instance,
             "edges",
             relationship_type=relationship,
             limit=limit,
+            offset=offset,
         ),
     )
     if output_json:

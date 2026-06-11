@@ -417,11 +417,16 @@ def _client_query(
     )
 
 
-def handle_list_queries(instance_id: str) -> contracts.QueryListResult:
+def handle_list_queries(
+    instance_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.QueryListResult:
     """List named-query definitions for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.list_queries(instance_id),
-        lambda: api.list_queries(instance_id),
+        lambda client: client.list_queries(instance_id, limit=limit, offset=offset),
+        lambda: api.list_queries(instance_id, limit=limit, offset=offset),
     )
 
 
@@ -478,6 +483,7 @@ def handle_list_decision_records(
     subject_id: str | None = None,
     decision_class: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> contracts.DecisionRecordListResult:
     return _dispatch_remote_or_local(
         lambda client: client.list_decision_records(
@@ -487,6 +493,7 @@ def handle_list_decision_records(
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         ),
         lambda: api.list_decision_records(
             instance_id,
@@ -495,6 +502,7 @@ def handle_list_decision_records(
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         ),
     )
 
@@ -506,6 +514,7 @@ def handle_list_decision_events(
     trace_id: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> contracts.DecisionEventListResult:
     return _dispatch_remote_or_local(
         lambda client: client.list_decision_events(
@@ -515,6 +524,7 @@ def handle_list_decision_events(
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         ),
         lambda: api.list_decision_events(
             instance_id,
@@ -523,6 +533,7 @@ def handle_list_decision_events(
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         ),
     )
 
@@ -914,6 +925,7 @@ def handle_list(
     query_name: str | None = None,
     receipt_id: str | None = None,
     limit: int = 50,
+    offset: int = 0,
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
 ) -> contracts.ListResult:
@@ -927,6 +939,7 @@ def handle_list(
             query_name=query_name,
             receipt_id=receipt_id,
             limit=limit,
+            offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
         ),
@@ -938,6 +951,7 @@ def handle_list(
             query_name=query_name,
             receipt_id=receipt_id,
             limit=limit,
+            offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
         ),
@@ -1120,11 +1134,13 @@ def handle_reload_config(
 def handle_add_relationship(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
+    *,
+    dry_run: bool = False,
 ) -> contracts.AddRelationshipResult:
     """Add or update one or more relationships in the graph (upsert)."""
     return _dispatch_remote_or_local(
-        lambda client: client.add_relationships(instance_id, relationships),
-        lambda: api.add_relationships(instance_id, relationships),
+        lambda client: client.add_relationships(instance_id, relationships, dry_run=dry_run),
+        lambda: api.add_relationships(instance_id, relationships, dry_run=dry_run),
         allow_local=False,
         operation_name="cruxible_add_relationship",
     )
@@ -1133,11 +1149,13 @@ def handle_add_relationship(
 def handle_add_entity(
     instance_id: str,
     entities: list[contracts.EntityInput],
+    *,
+    dry_run: bool = False,
 ) -> contracts.AddEntityResult:
     """Add or update one or more entities in the graph (upsert)."""
     return _dispatch_remote_or_local(
-        lambda client: client.add_entities(instance_id, entities),
-        lambda: api.add_entities(instance_id, entities),
+        lambda client: client.add_entities(instance_id, entities, dry_run=dry_run),
+        lambda: api.add_entities(instance_id, entities, dry_run=dry_run),
         allow_local=False,
         operation_name="cruxible_add_entity",
     )
@@ -1449,6 +1467,7 @@ def handle_list_groups(
     relationship_type: str | None = None,
     status: contracts.GroupStatus | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> contracts.ListGroupsToolResult:
     """List candidate groups with optional filters."""
     return _dispatch_remote_or_local(
@@ -1457,6 +1476,7 @@ def handle_list_groups(
             relationship_type=relationship_type,
             status=status,
             limit=limit,
+            offset=offset,
         ),
         lambda: api.list_groups(
             instance_id,
@@ -1472,6 +1492,7 @@ def handle_list_resolutions(
     relationship_type: str | None = None,
     action: contracts.GroupAction | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> contracts.ListResolutionsToolResult:
     """List group resolutions with optional filters."""
     return _dispatch_remote_or_local(
@@ -1480,6 +1501,7 @@ def handle_list_resolutions(
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+            offset=offset,
         ),
         lambda: api.list_resolutions(
             instance_id,
@@ -1531,11 +1553,16 @@ def handle_create_snapshot(
     )
 
 
-def handle_list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
+def handle_list_snapshots(
+    instance_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> contracts.SnapshotListResult:
     """List snapshots for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.list_snapshots(instance_id),
-        lambda: api.list_snapshots(instance_id),
+        lambda client: client.list_snapshots(instance_id, limit=limit, offset=offset),
+        lambda: api.list_snapshots(instance_id, limit=limit, offset=offset),
     )
 
 

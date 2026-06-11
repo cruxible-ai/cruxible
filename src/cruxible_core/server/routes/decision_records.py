@@ -38,6 +38,7 @@ async def list_decision_records(
     subject_id: str | None = None,
     decision_class: contracts.DecisionClass | None = None,
     limit: int = Query(default=100, ge=1),
+    offset: int = Query(default=0, ge=0),
 ) -> contracts.DecisionRecordListResult:
     return api.list_decision_records(
         resolve_server_instance_id(instance_id),
@@ -46,6 +47,7 @@ async def list_decision_records(
         subject_id=subject_id,
         decision_class=decision_class,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -60,6 +62,7 @@ async def list_decision_events(
     trace_id: str | None = None,
     status: str | None = None,
     limit: int = Query(default=100, ge=1),
+    offset: int = Query(default=0, ge=0),
 ) -> contracts.DecisionEventListResult:
     return api.list_decision_events(
         resolve_server_instance_id(instance_id),
@@ -68,6 +71,7 @@ async def list_decision_events(
         trace_id=trace_id,
         status=status,
         limit=limit,
+        offset=offset,
     )
 
 

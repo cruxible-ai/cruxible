@@ -34,7 +34,7 @@ def _parse_property_filter(property_filter: str | None) -> dict[str, Any] | None
     return parsed
 
 
-@router.post("/{instance_id}/query", response_model=contracts.QueryToolResult)
+@router.post("/{instance_id}/queries/run", response_model=contracts.QueryToolResult)
 async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.query(
@@ -48,7 +48,7 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
     )
 
 
-@router.post("/{instance_id}/query/inline", response_model=contracts.QueryToolResult)
+@router.post("/{instance_id}/queries/run-inline", response_model=contracts.QueryToolResult)
 async def query_inline(
     instance_id: str,
     req: InlineQueryRequest,
@@ -123,6 +123,7 @@ async def list_resources(
     query_name: str | None = None,
     receipt_id: str | None = None,
     limit: int = 50,
+    offset: int = Query(default=0, ge=0),
     property_filter: str | None = None,
     operation_type: str | None = None,
 ) -> contracts.ListResult:
@@ -135,6 +136,7 @@ async def list_resources(
         query_name=query_name,
         receipt_id=receipt_id,
         limit=limit,
+        offset=offset,
         property_filter=_parse_property_filter(property_filter),
         operation_type=operation_type,
     )
@@ -146,8 +148,16 @@ async def schema(instance_id: str) -> dict[str, Any]:
 
 
 @router.get("/{instance_id}/queries", response_model=contracts.QueryListResult)
-async def list_queries(instance_id: str) -> contracts.QueryListResult:
-    return api.list_queries(resolve_server_instance_id(instance_id))
+async def list_queries(
+    instance_id: str,
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
+) -> contracts.QueryListResult:
+    return api.list_queries(
+        resolve_server_instance_id(instance_id),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -343,6 +353,7 @@ async def list_groups(
     relationship_type: str | None = None,
     status: contracts.GroupStatus | None = None,
     limit: int = 50,
+    offset: int = Query(default=0, ge=0),
 ) -> contracts.ListGroupsToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_groups(
@@ -350,6 +361,7 @@ async def list_groups(
         relationship_type=relationship_type,
         status=status,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -359,6 +371,7 @@ async def list_resolutions(
     relationship_type: str | None = None,
     action: contracts.GroupAction | None = None,
     limit: int = 50,
+    offset: int = Query(default=0, ge=0),
 ) -> contracts.ListResolutionsToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_resolutions(
@@ -366,4 +379,5 @@ async def list_resolutions(
         relationship_type=relationship_type,
         action=action,
         limit=limit,
+        offset=offset,
     )

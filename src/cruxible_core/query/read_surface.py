@@ -80,8 +80,9 @@ def list_entities(
     config: CoreConfig | None = None,
     property_filter: dict[str, Any] | None = None,
     limit: int | None = None,
+    offset: int = 0,
 ) -> ReadListResult:
-    """List entities of a type with shared limit/filter semantics."""
+    """List entities of a type with shared limit/offset/filter semantics."""
     if config is None:
         entities = graph.list_entities(entity_type, property_filter=property_filter)
     else:
@@ -94,12 +95,11 @@ def list_entities(
                 entity
                 for entity in entities
                 if all(
-                    entity.properties.get(key) == value
-                    for key, value in property_filter.items()
+                    entity.properties.get(key) == value for key, value in property_filter.items()
                 )
             ]
     entities = sorted(entities, key=lambda entity: (entity.entity_type, entity.entity_id))
-    items = entities[:limit] if limit is not None else entities
+    items = _paginate(entities, limit=limit, offset=offset)
     return ReadListResult(items=items, total=len(entities))
 
 
@@ -109,8 +109,9 @@ def list_relationships(
     relationship_type: str | None = None,
     property_filter: dict[str, Any] | None = None,
     limit: int | None = None,
+    offset: int = 0,
 ) -> ReadListResult:
-    """List relationships with shared limit/filter semantics."""
+    """List relationships with shared limit/offset/filter semantics."""
     relationships = graph.list_edges(relationship_type=relationship_type)
     if property_filter:
         relationships = [
@@ -119,8 +120,13 @@ def list_relationships(
             if all(edge["properties"].get(key) == value for key, value in property_filter.items())
         ]
     relationships = sorted(relationships, key=_relationship_sort_key)
-    items = relationships[:limit] if limit is not None else relationships
+    items = _paginate(relationships, limit=limit, offset=offset)
     return ReadListResult(items=items, total=len(relationships))
+
+
+def _paginate(items: list[Any], *, limit: int | None, offset: int) -> list[Any]:
+    end = None if limit is None else offset + limit
+    return items[offset:end]
 
 
 def _relationship_sort_key(edge: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
@@ -264,8 +270,7 @@ def graph_stats(
 ) -> ReadStatsResult:
     """Return graph counts grouped by entity and relationship type."""
     entity_counts = {
-        entity_type: graph.entity_count(entity_type)
-        for entity_type in graph.list_entity_types()
+        entity_type: graph.entity_count(entity_type) for entity_type in graph.list_entity_types()
     }
     relationship_counts = {
         relationship_type: graph.edge_count(relationship_type)

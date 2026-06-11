@@ -62,10 +62,12 @@ class IngestRequest(BaseModel):
 
 class AddEntitiesRequest(BaseModel):
     entities: list[contracts.EntityInput]
+    dry_run: bool = False
 
 
 class AddRelationshipsRequest(BaseModel):
     relationships: list[contracts.RelationshipInput]
+    dry_run: bool = False
 
 
 class BatchDirectWriteRequest(BaseModel):

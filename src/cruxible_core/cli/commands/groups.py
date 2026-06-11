@@ -402,9 +402,16 @@ def group_get(group_id: str, output_json: bool) -> None:
     help="Filter by status.",
 )
 @click.option("--limit", default=50, help="Max groups to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def group_list(relationship: str | None, status: str | None, limit: int, output_json: bool) -> None:
+def group_list(
+    relationship: str | None,
+    status: str | None,
+    limit: int,
+    offset: int,
+    output_json: bool,
+) -> None:
     """List candidate groups."""
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list_groups(
@@ -412,12 +419,14 @@ def group_list(relationship: str | None, status: str | None, limit: int, output_
             relationship_type=relationship,
             status=cast(contracts.GroupStatus | None, status),
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list_groups(
             instance,
             relationship_type=relationship,
             status=_group_status_filter(status),
             limit=limit,
+            offset=offset,
         ),
     )
     if isinstance(result, contracts.ListGroupsToolResult):
@@ -447,12 +456,14 @@ def group_list(relationship: str | None, status: str | None, limit: int, output_
     help="Filter by action.",
 )
 @click.option("--limit", default=50, help="Max resolutions to show.")
+@click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
 def group_resolutions(
     relationship: str | None,
     action: str | None,
     limit: int,
+    offset: int,
     output_json: bool,
 ) -> None:
     """List group resolutions."""
@@ -462,12 +473,14 @@ def group_resolutions(
             relationship_type=relationship,
             action=cast(contracts.GroupAction | None, action),
             limit=limit,
+            offset=offset,
         ),
         lambda instance: service_list_resolutions(
             instance,
             relationship_type=relationship,
             action=_resolution_action_filter(action),
             limit=limit,
+            offset=offset,
         ),
     )
     if isinstance(result, contracts.ListResolutionsToolResult):

@@ -698,9 +698,13 @@ def service_list_traces(
             limit=limit,
             offset=offset,
         )
+        total = store.count_traces(
+            workflow_name=workflow_name,
+            provider_name=provider_name,
+        )
     finally:
         store.close()
-    return TraceListResult(items=traces, total=len(traces))
+    return TraceListResult(items=traces, total=total)
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +723,7 @@ def service_list(
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     _VALID_RESOURCES = ("entities", "edges", "receipts", "feedback", "outcomes")
@@ -739,6 +744,7 @@ def service_list(
             config=config,
             property_filter=property_filter,
             limit=limit,
+            offset=offset,
         )
         return ListResult(items=result.items, total=result.total)
 
@@ -749,6 +755,7 @@ def service_list(
             relationship_type=relationship_type,
             property_filter=property_filter,
             limit=limit,
+            offset=offset,
         )
         return ListResult(items=result.items, total=result.total)
 
@@ -756,7 +763,10 @@ def service_list(
         store = instance.get_receipt_store()
         try:
             summaries = store.list_receipts(
-                query_name=query_name, operation_type=operation_type, limit=limit
+                query_name=query_name,
+                operation_type=operation_type,
+                limit=limit,
+                offset=offset,
             )
             total = store.count_receipts(query_name=query_name, operation_type=operation_type)
         finally:
@@ -766,7 +776,11 @@ def service_list(
     if resource == "feedback":
         feedback_store = instance.get_feedback_store()
         try:
-            feedback_records = feedback_store.list_feedback(receipt_id=receipt_id, limit=limit)
+            feedback_records = feedback_store.list_feedback(
+                receipt_id=receipt_id,
+                limit=limit,
+                offset=offset,
+            )
             total = feedback_store.count_feedback(receipt_id=receipt_id)
         finally:
             feedback_store.close()
@@ -775,7 +789,11 @@ def service_list(
     # outcomes
     feedback_store = instance.get_feedback_store()
     try:
-        outcome_records = feedback_store.list_outcomes(receipt_id=receipt_id, limit=limit)
+        outcome_records = feedback_store.list_outcomes(
+            receipt_id=receipt_id,
+            limit=limit,
+            offset=offset,
+        )
         total = feedback_store.count_outcomes(receipt_id=receipt_id)
     finally:
         feedback_store.close()

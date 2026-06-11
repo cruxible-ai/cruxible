@@ -70,11 +70,13 @@ class DecisionRecordServiceResult:
 @dataclass
 class DecisionRecordListResult:
     items: list[DecisionRecord]
+    total: int = 0
 
 
 @dataclass
 class DecisionEventListResult:
     items: list[DecisionEvent]
+    total: int = 0
 
 
 NeighborDirection = Literal["incoming", "outgoing"]
@@ -702,6 +704,7 @@ class SnapshotCreateResult:
 @dataclass
 class SnapshotListResult:
     items: list[WorldSnapshot] = field(default_factory=list)
+    total: int = 0
 
 
 @dataclass

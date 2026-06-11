@@ -217,9 +217,11 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_list_queries(
         instance_id: str,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> contracts.QueryListResult:
         """List named queries with their entry points, required params, and example IDs."""
-        return handlers.handle_list_queries(instance_id)
+        return handlers.handle_list_queries(instance_id, limit=limit, offset=offset)
 
     @_tool
     def cruxible_describe_query(
@@ -395,6 +397,7 @@ def register_tools(server: FastMCP) -> list[str]:
         query_name: str | None = None,
         receipt_id: str | None = None,
         limit: int = 50,
+        offset: int = 0,
         property_filter: dict[str, Any] | None = None,
         operation_type: str | None = None,
     ) -> contracts.ListResult:
@@ -417,6 +420,7 @@ def register_tools(server: FastMCP) -> list[str]:
             query_name=query_name,
             receipt_id=receipt_id,
             limit=limit,
+            offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
         )
@@ -631,6 +635,7 @@ def register_tools(server: FastMCP) -> list[str]:
     def cruxible_add_relationship(
         instance_id: str,
         relationships: list[contracts.RelationshipInput],
+        dry_run: bool = False,
     ) -> contracts.AddRelationshipResult:
         """Add or update relationships in the graph (upsert).
 
@@ -648,12 +653,13 @@ def register_tools(server: FastMCP) -> list[str]:
         Batch size: practical limit is ~500 relationships per call.
         For bulk loading, use workflow dataflow steps plus apply_relationships.
         """
-        return handlers.handle_add_relationship(instance_id, relationships)
+        return handlers.handle_add_relationship(instance_id, relationships, dry_run=dry_run)
 
     @_tool
     def cruxible_add_entity(
         instance_id: str,
         entities: list[contracts.EntityInput],
+        dry_run: bool = False,
     ) -> contracts.AddEntityResult:
         """Add or update entities in the graph (upsert).
 
@@ -663,7 +669,7 @@ def register_tools(server: FastMCP) -> list[str]:
         Use for entities from free text or external sources when CSV ingestion
         is not available.
         """
-        return handlers.handle_add_entity(instance_id, entities)
+        return handlers.handle_add_entity(instance_id, entities, dry_run=dry_run)
 
     @_tool
     def cruxible_batch_direct_write(
@@ -809,6 +815,7 @@ def register_tools(server: FastMCP) -> list[str]:
         subject_id: str | None = None,
         decision_class: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> contracts.DecisionRecordListResult:
         """List decision records with lifecycle and subject filters."""
         return handlers.handle_list_decision_records(
@@ -818,6 +825,7 @@ def register_tools(server: FastMCP) -> list[str]:
             subject_id=subject_id,
             decision_class=decision_class,
             limit=limit,
+            offset=offset,
         )
 
     @_tool
@@ -828,6 +836,7 @@ def register_tools(server: FastMCP) -> list[str]:
         trace_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> contracts.DecisionEventListResult:
         """List decision-record events by record, receipt, trace, or status."""
         return handlers.handle_list_decision_events(
@@ -837,6 +846,7 @@ def register_tools(server: FastMCP) -> list[str]:
             trace_id=trace_id,
             status=status,
             limit=limit,
+            offset=offset,
         )
 
     @_tool
@@ -969,6 +979,7 @@ def register_tools(server: FastMCP) -> list[str]:
         relationship_type: str | None = None,
         status: contracts.GroupStatus | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> contracts.ListGroupsToolResult:
         """List candidate groups with optional filters.
 
@@ -982,6 +993,7 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_type=relationship_type,
             status=status,
             limit=limit,
+            offset=offset,
         )
 
     @_tool
@@ -990,6 +1002,7 @@ def register_tools(server: FastMCP) -> list[str]:
         relationship_type: str | None = None,
         action: contracts.GroupAction | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> contracts.ListResolutionsToolResult:
         """List group resolutions with optional filters.
 
@@ -1003,6 +1016,7 @@ def register_tools(server: FastMCP) -> list[str]:
             relationship_type=relationship_type,
             action=action,
             limit=limit,
+            offset=offset,
         )
 
     @_tool
@@ -1046,9 +1060,11 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_list_snapshots(
         instance_id: str,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> contracts.SnapshotListResult:
         """List immutable snapshots for the current instance."""
-        return handlers.handle_list_snapshots(instance_id)
+        return handlers.handle_list_snapshots(instance_id, limit=limit, offset=offset)
 
     @_tool
     def cruxible_register_source_artifact(

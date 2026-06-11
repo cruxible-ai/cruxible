@@ -454,9 +454,7 @@ def _candidate_signal_from_input(
             source_evidence=signal.source_evidence,
         ),
         basis=(
-            SignalBucketBasis.model_validate(signal.basis)
-            if signal.basis is not None
-            else None
+            SignalBucketBasis.model_validate(signal.basis) if signal.basis is not None else None
         ),
     )
 
@@ -471,12 +469,8 @@ def _candidate_member_from_input(
         to_type=member.to_type,
         to_id=member.to_id,
         relationship_type=member.relationship_type,
-        signals=[
-            _candidate_signal_from_input(instance, signal) for signal in member.signals
-        ],
-        source_query_evidence=_query_source_evidence_from_input(
-            member.source_query_evidence
-        ),
+        signals=[_candidate_signal_from_input(instance, signal) for signal in member.signals],
+        source_query_evidence=_query_source_evidence_from_input(member.source_query_evidence),
         evidence_refs=resolve_evidence_refs(
             instance,
             evidence_refs=member.evidence_refs,
@@ -568,9 +562,7 @@ def service_propose_group(
     if source_workflow_name is None:
         member_sources = member_signal_sources(members)
         unknown_caller_sources = [
-            source
-            for source in caller_signal_sources_used
-            if source not in member_sources
+            source for source in caller_signal_sources_used if source not in member_sources
         ]
         if unknown_caller_sources:
             raise ConfigError(
@@ -633,9 +625,7 @@ def service_propose_group(
     try:
         pending_group = group_store.find_pending_group(relationship_type, signature)
         old_members = (
-            group_store.get_members(pending_group.group_id)
-            if pending_group is not None
-            else []
+            group_store.get_members(pending_group.group_id) if pending_group is not None else []
         )
         suppressed_members: list[SuppressedProposalMember] = []
         if rel_schema.proposal_identity == "relationship_tuple":
@@ -644,9 +634,7 @@ def service_propose_group(
                 group_store=group_store,
                 relationship_type=relationship_type,
                 members=members,
-                exclude_group_id=(
-                    pending_group.group_id if pending_group is not None else None
-                ),
+                exclude_group_id=(pending_group.group_id if pending_group is not None else None),
             )
 
         validate_proposal_signals(
@@ -672,8 +660,7 @@ def service_propose_group(
                 suppressed_members,
                 [
                     suppressed_member_from_relationship(
-                        member.as_relationship(),
-                        reason="existing_edge"
+                        member.as_relationship(), reason="existing_edge"
                     )
                     for member in members
                     if member.as_relationship().identity_tuple() in approved_store_tuples
@@ -847,6 +834,7 @@ def service_list_groups(
     relationship_type: str | None = None,
     status: (Literal["pending_review", "auto_resolved", "applying", "resolved"] | None) = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> ListGroupsResult:
     """List candidate groups with optional filters, sorted by review_priority."""
     return list_groups_read_model(
@@ -854,6 +842,7 @@ def service_list_groups(
         relationship_type=relationship_type,
         status=status,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -862,6 +851,7 @@ def service_list_resolutions(
     relationship_type: str | None = None,
     action: Literal["approve", "reject"] | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> ListResolutionsResult:
     """List resolutions — the reuse interface for agents querying prior analysis_state."""
     return list_resolutions_read_model(
@@ -869,6 +859,7 @@ def service_list_resolutions(
         relationship_type=relationship_type,
         action=action,
         limit=limit,
+        offset=offset,
     )
 
 

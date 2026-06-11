@@ -315,7 +315,7 @@ def test_init_then_seed_then_query_round_trip(
     _seed_car_parts_state(app_client, instance_id)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/query",
+        f"/api/v1/{instance_id}/queries/run",
         json={
             "query_name": "parts_for_vehicle",
             "params": {"vehicle_id": "V-2024-CIVIC-EX"},
@@ -348,7 +348,7 @@ def test_inline_query_route_executes_without_persisting_config(
     _seed_car_parts_state(app_client, instance_id)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/query/inline",
+        f"/api/v1/{instance_id}/queries/run-inline",
         json={
             "definition": {
                 "name": "brake_parts",
@@ -379,7 +379,7 @@ def test_inline_query_route_rejects_malformed_definition(
     instance_id = _init_instance(app_client, server_project)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/query/inline",
+        f"/api/v1/{instance_id}/queries/run-inline",
         json={
             "definition": {
                 "name": "broken",
@@ -400,7 +400,7 @@ def test_inline_query_route_rejects_stringified_budget_caps(
     instance_id = _init_instance(app_client, server_project)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/query/inline",
+        f"/api/v1/{instance_id}/queries/run-inline",
         json={
             "definition": {
                 "name": "too_many_paths",
@@ -459,7 +459,7 @@ def test_decision_record_routes_and_query_context_round_trip(
     ]
 
     query = app_client.post(
-        f"/api/v1/{instance_id}/query",
+        f"/api/v1/{instance_id}/queries/run",
         json={
             "query_name": "parts_for_vehicle",
             "params": {"vehicle_id": "V-2024-CIVIC-EX"},
@@ -1463,7 +1463,7 @@ def test_feedback_batch_route(
     assert response.status_code == 200
 
     query = app_client.post(
-        f"/api/v1/{instance_id}/query",
+        f"/api/v1/{instance_id}/queries/run",
         json={"query_name": "parts_for_vehicle", "params": {"vehicle_id": "V-1"}},
     )
     assert query.status_code == 200
@@ -1617,7 +1617,7 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
 
     clone_root = workflow_server_project.parent / "cloned-server-project"
     clone = app_client.post(
-        f"/api/v1/{instance_id}/clone",
+        f"/api/v1/{instance_id}/snapshots/clone",
         json={"snapshot_id": snapshot_id, "root_dir": str(clone_root)},
     )
     assert clone.status_code == 200
@@ -1872,7 +1872,7 @@ def test_server_routes_reject_unknown_instance_ids(
     _init_instance(app_client, server_project)
 
     response = app_client.post(
-        "/api/v1/inst_missing/query",
+        "/api/v1/inst_missing/queries/run",
         json={"query_name": "parts_for_vehicle", "params": {"vehicle_id": "V-1"}},
     )
 
@@ -1962,7 +1962,7 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
     edge = exposure_edges.json()["items"][0]
 
     query = app_client.post(
-        f"/api/v1/{instance_id}/query",
+        f"/api/v1/{instance_id}/queries/run",
         json={
             "query_name": "vulnerability_asset_context",
             "params": {"cve_id": edge["to_id"]},
@@ -1972,3 +1972,208 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
     query_payload = query.json()
     assert query_payload["total"] > 0
     assert query_payload["receipt_id"]
+
+
+def test_relationship_route_respects_dry_run(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    entities = [
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-DRY-RUN",
+            "properties": {
+                "part_number": "BP-DRY-RUN",
+                "name": "Dry Run Brake Pads",
+                "category": "brakes",
+                "price": 1.0,
+            },
+        },
+        {
+            "entity_type": "Vehicle",
+            "entity_id": "V-DRY-RUN",
+            "properties": {
+                "vehicle_id": "V-DRY-RUN",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        },
+    ]
+    seeded = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": entities})
+    assert seeded.status_code == 200
+
+    relationship = {
+        "from_type": "Part",
+        "from_id": "BP-DRY-RUN",
+        "relationship_type": "fits",
+        "to_type": "Vehicle",
+        "to_id": "V-DRY-RUN",
+        "properties": {"verified": True, "source": "dry_run"},
+    }
+    dry_run = app_client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={"relationships": [relationship], "dry_run": True},
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json() == {"added": 1, "updated": 0, "receipt_id": None}
+
+    edges = app_client.get(
+        f"/api/v1/{instance_id}/list/edges",
+        params={"relationship_type": "fits"},
+    )
+    assert edges.status_code == 200
+    assert edges.json()["total"] == 0
+
+
+def test_entity_list_pagination_is_deterministic_and_honest(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    entities = [
+        {
+            "entity_type": "Vehicle",
+            "entity_id": f"V-PAGE-{i:02d}",
+            "properties": {
+                "vehicle_id": f"V-PAGE-{i:02d}",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        }
+        for i in range(5)
+    ]
+    seeded = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": entities})
+    assert seeded.status_code == 200
+
+    page1 = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={"entity_type": "Vehicle", "limit": 2, "offset": 0},
+    ).json()
+    page2 = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={"entity_type": "Vehicle", "limit": 2, "offset": 2},
+    ).json()
+
+    assert page1["total"] == 5
+    assert page1["limit"] == 2
+    assert page1["offset"] == 0
+    assert page1["truncated"] is True
+    assert page2["offset"] == 2
+    ids1 = [item["entity_id"] for item in page1["items"]]
+    ids2 = [item["entity_id"] for item in page2["items"]]
+    assert len(ids1) == 2 and len(ids2) == 2
+    assert not set(ids1) & set(ids2)
+    assert ids1 == sorted(ids1)
+
+    tail = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={"entity_type": "Vehicle", "limit": 2, "offset": 4},
+    ).json()
+    assert len(tail["items"]) == 1
+    assert tail["truncated"] is False
+
+
+def test_decision_record_pagination_orders_and_counts(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    for i in range(4):
+        created = app_client.post(
+            f"/api/v1/{instance_id}/decision-records",
+            json={"question": f"Question {i}?"},
+        )
+        assert created.status_code == 200
+
+    page1 = app_client.get(
+        f"/api/v1/{instance_id}/decision-records",
+        params={"limit": 3, "offset": 0},
+    ).json()
+    page2 = app_client.get(
+        f"/api/v1/{instance_id}/decision-records",
+        params={"limit": 3, "offset": 3},
+    ).json()
+
+    assert page1["total"] == 4
+    assert page1["truncated"] is True
+    assert len(page1["items"]) == 3
+    assert len(page2["items"]) == 1
+    assert page2["truncated"] is False
+    ids1 = {record["decision_record_id"] for record in page1["items"]}
+    ids2 = {record["decision_record_id"] for record in page2["items"]}
+    assert not ids1 & ids2
+
+
+def test_snapshot_and_query_discovery_pagination(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    for label in ("first", "second", "third"):
+        created = app_client.post(
+            f"/api/v1/{instance_id}/snapshots",
+            json={"label": label},
+        )
+        assert created.status_code == 200
+
+    snaps = app_client.get(
+        f"/api/v1/{instance_id}/snapshots",
+        params={"limit": 2, "offset": 0},
+    ).json()
+    assert snaps["total"] >= 3
+    assert len(snaps["items"]) == 2
+    assert snaps["truncated"] is True
+
+    queries = app_client.get(
+        f"/api/v1/{instance_id}/queries",
+        params={"limit": 1, "offset": 0},
+    ).json()
+    assert queries["total"] >= 1
+    assert len(queries["items"]) == 1
+    names = [item["name"] for item in queries["items"]]
+    assert names == sorted(names)
+
+
+def test_relationship_dry_run_validates_without_persisting(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1002",
+                    "relationship_type": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-2024-ACCORD-SPORT",
+                    "properties": {"verified": True},
+                }
+            ],
+            "dry_run": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["added"] == 1
+    assert payload["updated"] == 0
+    assert payload["receipt_id"] is None
+
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-1002",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-ACCORD-SPORT",
+        },
+    )
+    assert lookup.json()["found"] is False

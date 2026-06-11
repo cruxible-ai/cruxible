@@ -82,9 +82,7 @@ def _batch_payload() -> BatchDirectWriteInput:
         ],
         shared_evidence={
             "doc": SharedEvidenceInput(
-                evidence_refs=[
-                    {"source": "roadmap_doc", "source_record_id": "batch-section"}
-                ],
+                evidence_refs=[{"source": "roadmap_doc", "source_record_id": "batch-section"}],
             )
         },
     )
@@ -420,9 +418,7 @@ class TestEntityMutationGuards:
             for node in failed_validations
         )
 
-    def test_add_entity_update_allows_closed_with_approved_review(
-        self, tmp_path: Path
-    ) -> None:
+    def test_add_entity_update_allows_closed_with_approved_review(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)
         _seed_work_item(instance)
         _seed_approved_review(instance)
@@ -443,9 +439,7 @@ class TestEntityMutationGuards:
         assert entity is not None
         assert entity.properties["status"] == "closed"
 
-    def test_batch_dry_run_reports_guard_failure_without_mutating(
-        self, tmp_path: Path
-    ) -> None:
+    def test_batch_dry_run_reports_guard_failure_without_mutating(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)
         _seed_work_item(instance)
 
@@ -465,8 +459,7 @@ class TestEntityMutationGuards:
 
         assert result.valid is False
         assert any(
-            "work_item_closed_requires_review" in error
-            for error in result.validation_errors
+            "work_item_closed_requires_review" in error for error in result.validation_errors
         )
         entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
         assert entity is not None
@@ -642,12 +635,68 @@ class TestEntityMutationGuards:
         assert relationship.metadata.provenance is not None
         assert relationship.metadata.provenance.source == "trusted_batch"
 
+    def test_dry_run_validates_guards_without_mutating(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+
+        with pytest.raises(DataValidationError, match="work_item_closed_requires_review"):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-dry",
+                        properties={"work_item_id": "wi-dry", "status": "closed"},
+                    )
+                ],
+                dry_run=True,
+            )
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-dry",
+                    properties={"work_item_id": "wi-dry", "status": "planned"},
+                )
+            ],
+            dry_run=True,
+        )
+
+        assert result.added == 1
+        assert result.updated == 0
+        assert result.receipt_id is None
+        assert instance.load_graph().get_entity("WorkItem", "wi-dry") is None
+
+    def test_dry_run_add_relationships_does_not_mutate(self, tmp_path: Path) -> None:
+        instance = _guarded_instance(tmp_path)
+        _seed_work_item(instance)
+        _seed_approved_review(instance)
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Review",
+                    from_id="rev-approved",
+                    relationship_type="review_approves_work_item",
+                    to_type="WorkItem",
+                    to_id="wi-guarded",
+                )
+            ],
+            source="test",
+            source_ref="dry-run",
+            dry_run=True,
+        )
+
+        assert result.added == 0
+        assert result.updated == 1
+        assert result.receipt_id is None
+
     def test_create_with_guarded_value_rejected(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)
 
-        with pytest.raises(
-            DataValidationError, match="work_item_closed_requires_review"
-        ):
+        with pytest.raises(DataValidationError, match="work_item_closed_requires_review"):
             service_add_entity_inputs(
                 instance,
                 [
@@ -661,9 +710,7 @@ class TestEntityMutationGuards:
 
         assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
 
-    def test_batch_create_with_guarded_value_rejected_atomically(
-        self, tmp_path: Path
-    ) -> None:
+    def test_batch_create_with_guarded_value_rejected_atomically(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)
 
         with pytest.raises(DataValidationError, match="Batch direct write validation failed"):
@@ -722,9 +769,7 @@ class TestEntityMutationGuards:
         assert entity is not None
         assert entity.properties["status"] == "closed"
 
-    def test_reasserting_guarded_value_is_not_a_transition(
-        self, tmp_path: Path
-    ) -> None:
+    def test_reasserting_guarded_value_is_not_a_transition(self, tmp_path: Path) -> None:
         # Work closed before a guard existed must stay editable: re-asserting
         # status=closed alongside other changes is not a transition.
         tmp_path.mkdir(parents=True, exist_ok=True)
@@ -752,9 +797,7 @@ class TestEntityMutationGuards:
         assert entity is not None
         assert entity.properties["title"] == "Retitled closed item"
 
-    def test_current_ref_guard_rejects_creates_fail_closed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_current_ref_guard_rejects_creates_fail_closed(self, tmp_path: Path) -> None:
         # $current.* params have no prior state on creates; such guards are
         # transition-only in practice and must reject creates, not pass them.
         current_ref_guard = dedent(
@@ -776,9 +819,7 @@ class TestEntityMutationGuards:
         (tmp_path / "config.yaml").write_text(dedent(config_yaml))
         instance = CruxibleInstance.init(tmp_path, "config.yaml")
 
-        with pytest.raises(
-            DataValidationError, match="Missing mutation guard param reference"
-        ):
+        with pytest.raises(DataValidationError, match="Missing mutation guard param reference"):
             service_add_entity_inputs(
                 instance,
                 [
@@ -810,13 +851,16 @@ class TestBatchDirectWrite:
         assert result.receipt_id is None
         graph = initialized_instance.load_graph()
         assert graph.get_entity("Vehicle", "V-BATCH") is None
-        assert graph.get_relationship(
-            "Part",
-            "BP-BATCH",
-            "Vehicle",
-            "V-BATCH",
-            "fits",
-        ) is None
+        assert (
+            graph.get_relationship(
+                "Part",
+                "BP-BATCH",
+                "Vehicle",
+                "V-BATCH",
+                "fits",
+            )
+            is None
+        )
 
     def test_apply_writes_batch_and_compact_receipt_summary(
         self,
@@ -989,9 +1033,7 @@ class TestAddRelationships:
         assert rel.metadata.assertion.review.status == "unreviewed"
         assert rel.metadata.evidence is not None
         assert rel.metadata.evidence.rationale == "Accepted direct source-backed assertion."
-        assert [ref.source for ref in rel.metadata.evidence.evidence_refs] == [
-            "roadmap_doc"
-        ]
+        assert [ref.source for ref in rel.metadata.evidence.evidence_refs] == ["roadmap_doc"]
         assert rel.metadata.evidence.evidence_refs[0].source_record_id == "section-p0"
 
     def test_input_wrapper_persists_source_evidence_refs(
