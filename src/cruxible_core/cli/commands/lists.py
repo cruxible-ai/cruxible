@@ -57,10 +57,12 @@ def list_entities(entity_type: str, limit: int, output_json: bool) -> None:
         else result.items
     )
     if output_json:
-        _emit_json({
-            "items": [e.model_dump(mode="python") for e in entities],
-            "total": result.total,
-        })
+        _emit_json(
+            {
+                "items": [e.model_dump(mode="python") for e in entities],
+                "total": result.total,
+            }
+        )
         return
     console.print(entities_table(entities, entity_type))
     click.echo(f"{len(entities)} entity(ies) shown.")
@@ -96,10 +98,12 @@ def list_receipts(
         ),
     )
     if output_json:
-        _emit_json({
-            "items": result.items,
-            "total": result.total,
-        })
+        _emit_json(
+            {
+                "items": result.items,
+                "total": result.total,
+            }
+        )
         return
     console.print(receipts_table(result.items))
     click.echo(f"{len(result.items)} receipt(s) shown.")
@@ -136,20 +140,18 @@ def list_traces(
             offset=offset,
         ),
     )
-    traces = result.traces
+    traces = result.items
     if output_json:
-        _emit_json({"traces": traces, "count": result.count})
+        _emit_json({"items": traces, "total": result.total})
         return
     if not traces:
         click.echo("No traces found.")
         return
     for trace in traces:
         click.echo(
-            "{trace_id}  {workflow_name}:{step_id}  {provider_name}  {created_at}".format(
-                **trace
-            )
+            "{trace_id}  {workflow_name}:{step_id}  {provider_name}  {created_at}".format(**trace)
         )
-    click.echo(f"{result.count} trace(s) shown.")
+    click.echo(f"{result.total} trace(s) shown.")
 
 
 @list_group.command("feedback")
@@ -174,10 +176,12 @@ def list_feedback(receipt_id: str | None, limit: int, output_json: bool) -> None
         else result.items
     )
     if output_json:
-        _emit_json({
-            "items": [r.model_dump(mode="python") for r in records],
-            "total": result.total,
-        })
+        _emit_json(
+            {
+                "items": [r.model_dump(mode="python") for r in records],
+                "total": result.total,
+            }
+        )
         return
     console.print(feedback_table(records))
     click.echo(f"{len(records)} record(s) shown.")
@@ -205,10 +209,12 @@ def list_outcomes(receipt_id: str | None, limit: int, output_json: bool) -> None
         else result.items
     )
     if output_json:
-        _emit_json({
-            "items": [r.model_dump(mode="python") for r in records],
-            "total": result.total,
-        })
+        _emit_json(
+            {
+                "items": [r.model_dump(mode="python") for r in records],
+                "total": result.total,
+            }
+        )
         return
     console.print(outcomes_table(records))
     click.echo(f"{len(records)} record(s) shown.")
@@ -236,10 +242,12 @@ def list_edges(relationship: str | None, limit: int, output_json: bool) -> None:
         ),
     )
     if output_json:
-        _emit_json({
-            "items": result.items,
-            "total": result.total,
-        })
+        _emit_json(
+            {
+                "items": result.items,
+                "total": result.total,
+            }
+        )
         return
     console.print(edges_table(result.items))
     click.echo(f"{len(result.items)} edge(s) shown.")

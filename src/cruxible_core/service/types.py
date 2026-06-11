@@ -69,12 +69,14 @@ class DecisionRecordServiceResult:
 
 @dataclass
 class DecisionRecordListResult:
-    records: list[DecisionRecord]
+    items: list[DecisionRecord]
 
 
 @dataclass
 class DecisionEventListResult:
-    events: list[DecisionEvent]
+    items: list[DecisionEvent]
+
+
 NeighborDirection = Literal["incoming", "outgoing"]
 
 # ---------------------------------------------------------------------------
@@ -99,18 +101,14 @@ class RelationshipWriteInput:
     to_id: str
     properties: dict[str, Any] = field(default_factory=dict)
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
-    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(
-        default_factory=list
-    )
+    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
     evidence_rationale: str | None = None
 
 
 @dataclass
 class SharedEvidenceInput:
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
-    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(
-        default_factory=list
-    )
+    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -191,10 +189,10 @@ class QueryParamHints:
 
 @dataclass
 class QueryServiceResult:
-    results: list[QueryRow]
+    items: list[QueryRow]
     receipt_id: str | None
     receipt: Receipt | None
-    total_results: int
+    total: int
     limit: int | None
     truncated: bool
     steps_executed: int
@@ -301,8 +299,8 @@ class ReceiptExplanationResult:
 
 @dataclass
 class TraceListResult:
-    traces: list[dict[str, Any]] = field(default_factory=list)
-    count: int = 0
+    items: list[dict[str, Any]] = field(default_factory=list)
+    total: int = 0
 
 
 @dataclass
@@ -703,7 +701,7 @@ class SnapshotCreateResult:
 
 @dataclass
 class SnapshotListResult:
-    snapshots: list[WorldSnapshot] = field(default_factory=list)
+    items: list[WorldSnapshot] = field(default_factory=list)
 
 
 @dataclass
@@ -773,9 +771,7 @@ class GroupSignalInput:
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(
-        default_factory=list
-    )
+    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
     basis: dict[str, Any] | None = None
 
 
@@ -788,13 +784,9 @@ class GroupMemberInput:
     relationship_type: str
     signals: list[GroupSignalInput] = field(default_factory=list)
     properties: dict[str, Any] = field(default_factory=dict)
-    source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(
-        default_factory=list
-    )
+    source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(default_factory=list)
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(
-        default_factory=list
-    )
+    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
     evidence_rationale: str | None = None
 
 
@@ -850,13 +842,13 @@ class RelationshipLineageResult:
 
 @dataclass
 class ListGroupsResult:
-    groups: list[CandidateGroup]
+    items: list[CandidateGroup]
     total: int
 
 
 @dataclass
 class ListResolutionsResult:
-    resolutions: list[GroupResolution]
+    items: list[GroupResolution]
     total: int
 
 

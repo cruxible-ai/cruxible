@@ -472,7 +472,7 @@ def _build_queries_section(
             "name": query.name,
             "params": dict(query.params),
             "limit": query.limit,
-            "total_results": result.total_results,
+            "total_results": result.total,
             "truncated": result.truncated,
             "results": sorted(
                 [
@@ -481,7 +481,7 @@ def _build_queries_section(
                         "entity_id": item.entity_id,
                         "properties": item.properties,
                     }
-                    for item in result.results
+                    for item in result.items
                 ],
                 key=lambda item: (item["entity_type"], item["entity_id"], _canonical_json(item)),
             ),
@@ -618,8 +618,7 @@ def _diff_item_list(
     after_keys = set(after_index)
     result: JsonObject = {}
     added = [
-        _diff_item(after_index[key], "after", annotator)
-        for key in sorted(after_keys - before_keys)
+        _diff_item(after_index[key], "after", annotator) for key in sorted(after_keys - before_keys)
     ]
     removed = [
         _diff_item(before_index[key], "before", annotator)
@@ -676,10 +675,7 @@ def _compact_default_assertion_state(value: Any) -> Any:
         return [_compact_default_assertion_state(item) for item in value]
     if not isinstance(value, dict):
         return value
-    result = {
-        key: _compact_default_assertion_state(item)
-        for key, item in value.items()
-    }
+    result = {key: _compact_default_assertion_state(item) for key, item in value.items()}
     if result.get("group_override") is False:
         result.pop("group_override")
     return result
@@ -902,10 +898,7 @@ def _receipt_group_sort_keys(
         groups = store.list_groups(limit=1000)
     finally:
         store.close()
-    return {
-        group.group_id: _group_stable_sort_key(_model_dump(group))
-        for group in groups
-    }
+    return {group.group_id: _group_stable_sort_key(_model_dump(group)) for group in groups}
 
 
 def _upstream_metadata(cross_section: Mapping[str, Any]) -> Mapping[str, Any]:

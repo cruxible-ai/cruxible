@@ -179,9 +179,9 @@ def list_cmd(
             limit=limit,
         ),
     )
-    records = [_record_payload(record) for record in cast(Any, result).records]
+    records = [_record_payload(record) for record in cast(Any, result).items]
     if output_json:
-        _emit_json({"records": records})
+        _emit_json({"items": records})
         return
     if not records:
         click.echo("No decision records found.")
@@ -225,9 +225,9 @@ def events_cmd(
             limit=limit,
         ),
     )
-    events = [_event_payload(event) for event in cast(Any, result).events]
+    events = [_event_payload(event) for event in cast(Any, result).items]
     if output_json:
-        _emit_json({"events": events})
+        _emit_json({"items": events})
         return
     if not events:
         click.echo("No decision events found.")

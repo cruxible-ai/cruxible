@@ -323,7 +323,7 @@ def test_init_then_seed_then_query_round_trip(
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total_results"] == 2
+    assert payload["total"] == 2
     assert payload["receipt_id"]
     assert payload["param_hints"]["primary_key"] == "vehicle_id"
 
@@ -363,13 +363,13 @@ def test_inline_query_route_executes_without_persisting_config(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total_results"] == 2
+    assert payload["total"] == 2
     assert payload["receipt_id"]
     assert payload["limit"] == 50
 
     queries = app_client.get(f"/api/v1/{instance_id}/queries")
     assert queries.status_code == 200
-    assert "brake_parts" not in [query["name"] for query in queries.json()["queries"]]
+    assert "brake_parts" not in [query["name"] for query in queries.json()["items"]]
 
 
 def test_inline_query_route_rejects_malformed_definition(
@@ -454,7 +454,7 @@ def test_decision_record_routes_and_query_context_round_trip(
         params={"status": "open", "subject_type": "Vehicle"},
     )
     assert listed.status_code == 200
-    assert [record["decision_record_id"] for record in listed.json()["records"]] == [
+    assert [record["decision_record_id"] for record in listed.json()["items"]] == [
         decision_record_id
     ]
 
@@ -473,7 +473,7 @@ def test_decision_record_routes_and_query_context_round_trip(
         params={"decision_record_id": decision_record_id},
     )
     assert events.status_code == 200
-    event_payload = events.json()["events"]
+    event_payload = events.json()["items"]
     assert len(event_payload) == 1
     assert event_payload[0]["command"] == "query:parts_for_vehicle"
     assert event_payload[0]["receipt_id"] == query.json()["receipt_id"]
@@ -517,9 +517,7 @@ def test_stats_and_inspect_routes_return_expected_shapes(
     assert stats_payload["edge_count"] == 3
     assert stats_payload["entity_counts"]["Vehicle"] == 2
 
-    inspect = app_client.get(
-        f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-2024-CIVIC-EX"
-    )
+    inspect = app_client.get(f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-2024-CIVIC-EX")
     assert inspect.status_code == 200
     inspect_payload = inspect.json()
     assert inspect_payload["found"] is True
@@ -548,9 +546,9 @@ def test_query_discovery_routes_return_expected_shapes(
     listed = app_client.get(f"/api/v1/{instance_id}/queries")
     assert listed.status_code == 200
     listed_payload = listed.json()
-    assert listed_payload["queries"]
-    assert listed_payload["queries"][0]["name"]
-    assert listed_payload["queries"][0]["mode"] in {"collection", "traversal"}
+    assert listed_payload["items"]
+    assert listed_payload["items"][0]["name"]
+    assert listed_payload["items"][0]["mode"] in {"collection", "traversal"}
 
     described = app_client.get(f"/api/v1/{instance_id}/queries/parts_for_vehicle")
     assert described.status_code == 200
@@ -593,7 +591,7 @@ def test_trace_routes_return_trace_payloads(
     assert fetched.status_code == 200
     assert fetched.json()["output_payload"]["rows"] == 3
     assert listed.status_code == 200
-    assert listed.json()["traces"][0]["trace_id"] == trace.trace_id
+    assert listed.json()["items"][0]["trace_id"] == trace.trace_id
     assert missing.status_code == 404
     assert missing.json()["error_type"] == "TraceNotFoundError"
 
@@ -687,9 +685,7 @@ def test_server_init_creates_daemon_owned_governed_instance(
     assert isinstance(instance, CruxibleInstance)
     assert instance.is_governed_mode()
     assert instance.get_root_path() == Path(record.location)
-    assert instance.get_config_path() == (
-        expected_root / ".cruxible" / "configs" / "active.yaml"
-    )
+    assert instance.get_config_path() == (expected_root / ".cruxible" / "configs" / "active.yaml")
     assert instance.load_config().name == "car_parts_compatibility"
 
 
@@ -839,9 +835,7 @@ def test_source_artifact_relative_path_cannot_escape_workspace(
     with sqlite3.connect(instance.get_instance_dir() / "state.db") as conn:
         artifact_count = conn.execute("SELECT COUNT(*) FROM source_artifacts").fetchone()[0]
         chunk_count = conn.execute("SELECT COUNT(*) FROM source_artifact_chunks").fetchone()[0]
-        archive_count = conn.execute(
-            "SELECT COUNT(*) FROM source_artifact_archives"
-        ).fetchone()[0]
+        archive_count = conn.execute("SELECT COUNT(*) FROM source_artifact_archives").fetchone()[0]
     assert artifact_count == 0
     assert chunk_count == 0
     assert archive_count == 0
@@ -1216,7 +1210,7 @@ def test_server_restart_can_reload_existing_instance(
     client2 = TestClient(create_app())
     response = client2.get(f"/api/v1/{instance_id}/sample/Vehicle", params={"limit": 5})
     assert response.status_code == 200
-    assert response.json()["count"] == 2
+    assert response.json()["total"] == 2
 
 
 def test_add_relationship_stamps_http_api_provenance(
@@ -1362,9 +1356,7 @@ def test_batch_direct_write_route_dry_run_and_apply(
         ],
         "shared_evidence": {
             "doc": {
-                "evidence_refs": [
-                    {"source": "roadmap_doc", "source_record_id": "batch-section"}
-                ]
+                "evidence_refs": [{"source": "roadmap_doc", "source_record_id": "batch-section"}]
             }
         },
     }
@@ -1611,8 +1603,7 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
     assert lineage_payload["group"]["group_id"] == group_id
     assert "assertion" not in lineage_payload
     assert (
-        lineage_payload["relationship"]["metadata"]["assertion"]["review"]["status"]
-        == "approved"
+        lineage_payload["relationship"]["metadata"]["assertion"]["review"]["status"] == "approved"
     )
     assert lineage_payload["source_trace_ids"]
 
@@ -1622,7 +1613,7 @@ def test_workflow_propose_snapshot_and_overlay_round_trip(
 
     listed = app_client.get(f"/api/v1/{instance_id}/snapshots")
     assert listed.status_code == 200
-    assert listed.json()["snapshots"][0]["snapshot_id"] == snapshot_id
+    assert listed.json()["items"][0]["snapshot_id"] == snapshot_id
 
     clone_root = workflow_server_project.parent / "cloned-server-project"
     clone = app_client.post(
@@ -1759,10 +1750,10 @@ def test_workflow_run_route_appends_decision_record_event(
         params={"decision_record_id": decision_record_id},
     )
     assert events.status_code == 200
-    assert len(events.json()["events"]) == 1
-    assert events.json()["events"][0]["command"] == "workflow_run:evaluate_promo"
-    assert events.json()["events"][0]["receipt_id"] == run.json()["receipt_id"]
-    assert events.json()["events"][0]["surface"] == "http"
+    assert len(events.json()["items"]) == 1
+    assert events.json()["items"][0]["command"] == "workflow_run:evaluate_promo"
+    assert events.json()["items"][0]["receipt_id"] == run.json()["receipt_id"]
+    assert events.json()["items"][0]["surface"] == "http"
 
 
 def test_workflow_propose_route_refreshes_same_signature_tuple_group(
@@ -1979,5 +1970,5 @@ def test_local_daemon_kev_smoke_runs_workflows_and_query(
     )
     assert query.status_code == 200
     query_payload = query.json()
-    assert query_payload["total_results"] > 0
+    assert query_payload["total"] > 0
     assert query_payload["receipt_id"]

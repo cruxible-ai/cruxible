@@ -509,9 +509,8 @@ def list_decision_records(
         decision_class=decision_class,
         limit=limit,
     )
-    return contracts.DecisionRecordListResult(
-        records=[record.model_dump(mode="json") for record in result.records]
-    )
+    records = [record.model_dump(mode="json") for record in result.items]
+    return contracts.DecisionRecordListResult(items=records, total=len(records), limit=limit)
 
 
 def list_decision_events(
@@ -533,9 +532,8 @@ def list_decision_events(
         status=status,
         limit=limit,
     )
-    return contracts.DecisionEventListResult(
-        events=[event.model_dump(mode="json") for event in result.events]
-    )
+    events = [event.model_dump(mode="json") for event in result.items]
+    return contracts.DecisionEventListResult(items=events, total=len(events), limit=limit)
 
 
 def finalize_decision_record(
@@ -581,12 +579,11 @@ def list_snapshots(instance_id: str) -> contracts.SnapshotListResult:
     check_permission("cruxible_list_snapshots", instance_id=instance_id)
     instance = get_manager().get(instance_id)
     result = service_list_snapshots(instance)
-    return contracts.SnapshotListResult(
-        snapshots=[
-            contracts.SnapshotMetadata.model_validate(snapshot.model_dump(mode="json"))
-            for snapshot in result.snapshots
-        ]
-    )
+    snapshots = [
+        contracts.SnapshotMetadata.model_validate(snapshot.model_dump(mode="json"))
+        for snapshot in result.items
+    ]
+    return contracts.SnapshotListResult(items=snapshots, total=len(snapshots))
 
 
 def clone_snapshot_local(
@@ -694,15 +691,12 @@ def _query_tool_result(
     include_receipt: bool,
 ) -> contracts.QueryToolResult:
     return contracts.QueryToolResult(
-        results=[
-            dump_query_row(row, mode="json")
-            for row in result.results
-        ],
+        items=[dump_query_row(row, mode="json") for row in result.items],
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None
         ),
-        total_results=result.total_results,
+        total=result.total,
         limit=result.limit,
         truncated=result.truncated,
         limit_truncated=result.limit_truncated,
@@ -752,8 +746,7 @@ def render_wiki(
     )
     return contracts.WikiRenderResult(
         pages=[
-            contracts.WikiPageResult(path=page.path, content=page.content)
-            for page in result.pages
+            contracts.WikiPageResult(path=page.path, content=page.content) for page in result.pages
         ],
         page_count=result.page_count,
     )
@@ -793,7 +786,12 @@ def list_traces(
         limit=limit,
         offset=offset,
     )
-    return contracts.TraceListResult(traces=result.traces, count=result.count)
+    return contracts.TraceListResult(
+        items=result.items,
+        total=result.total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def feedback(
@@ -1077,7 +1075,8 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
     instance = get_manager().get(instance_id)
     queries = service_list_queries(instance)
     return contracts.QueryListResult(
-        queries=[
+        total=len(queries),
+        items=[
             contracts.NamedQueryInfoResult(
                 name=query.name,
                 mode=query.mode,
@@ -1098,7 +1097,7 @@ def list_queries(instance_id: str) -> contracts.QueryListResult:
                 example_ids=query.example_ids,
             )
             for query in queries
-        ]
+        ],
     )
 
 
@@ -1550,9 +1549,10 @@ def sample(
     instance = get_manager().get(instance_id)
     sampled = service_sample(instance, entity_type, limit=limit)
     return contracts.SampleResult(
-        entities=[entity.model_dump(mode="json") for entity in sampled],
+        items=[entity.model_dump(mode="json") for entity in sampled],
         entity_type=entity_type,
-        count=len(sampled),
+        total=len(sampled),
+        limit=limit,
     )
 
 
@@ -1608,9 +1608,7 @@ def _relationship_input_to_service(
             ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
             for ref in edge.evidence_refs
         ],
-        source_evidence=[
-            ref.model_dump(mode="python") for ref in edge.source_evidence
-        ],
+        source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
         evidence_rationale=edge.evidence_rationale,
     )
 
@@ -1640,9 +1638,7 @@ def _batch_payload_to_service(
                     ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
                     for ref in edge.evidence_refs
                 ],
-                source_evidence=[
-                    ref.model_dump(mode="python") for ref in edge.source_evidence
-                ],
+                source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
             )
@@ -1654,9 +1650,7 @@ def _batch_payload_to_service(
                     ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
                     for ref in evidence.evidence_refs
                 ],
-                source_evidence=[
-                    ref.model_dump(mode="python") for ref in evidence.source_evidence
-                ],
+                source_evidence=[ref.model_dump(mode="python") for ref in evidence.source_evidence],
             )
             for key, evidence in payload.shared_evidence.items()
         },
@@ -1871,16 +1865,12 @@ def get_relationship_lineage(
     return contracts.RelationshipLineageResult(
         found=result.found,
         relationship=(
-            result.relationship.model_dump(mode="json")
-            if result.relationship is not None
-            else None
+            result.relationship.model_dump(mode="json") if result.relationship is not None else None
         ),
         provenance=result.provenance,
         group=result.group.model_dump(mode="json") if result.group is not None else None,
         resolution=(
-            result.resolution.model_dump(mode="json")
-            if result.resolution is not None
-            else None
+            result.resolution.model_dump(mode="json") if result.resolution is not None else None
         ),
         source_workflow_receipt_id=result.source_workflow_receipt_id,
         source_trace_ids=result.source_trace_ids,
@@ -1916,9 +1906,7 @@ def propose_group(
                     signal=signal.signal,
                     evidence=signal.evidence,
                     evidence_refs=[
-                        ref.model_dump(mode="python")
-                        if isinstance(ref, BaseModel)
-                        else ref
+                        ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
                         for ref in signal.evidence_refs
                     ],
                     source_evidence=[
@@ -1930,14 +1918,10 @@ def propose_group(
             ],
             properties=member.properties,
             evidence_refs=[
-                ref.model_dump(mode="python")
-                if isinstance(ref, BaseModel)
-                else ref
+                ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
                 for ref in member.evidence_refs
             ],
-            source_evidence=[
-                ref.model_dump(mode="python") for ref in member.source_evidence
-            ],
+            source_evidence=[ref.model_dump(mode="python") for ref in member.source_evidence],
             evidence_rationale=member.evidence_rationale,
         )
         for member in members
@@ -2006,9 +1990,7 @@ def register_source_artifact(
         try:
             workspace_relative_uri = path.relative_to(workspace_root).as_posix()
         except ValueError as exc:
-            raise ConfigError(
-                "source_path must stay within the registered workspace"
-            ) from exc
+            raise ConfigError("source_path must stay within the registered workspace") from exc
         resolved_original_uri = original_uri or workspace_relative_uri
     validate_root_dir(str(path))
     result = service_register_source_artifact(
@@ -2041,9 +2023,7 @@ def dereference_source_evidence(
         block_selector=block_selector,
         expected_content_hash=expected_content_hash,
     )
-    return contracts.DereferenceSourceEvidenceResult.model_validate(
-        result.model_dump(mode="json")
-    )
+    return contracts.DereferenceSourceEvidenceResult.model_validate(result.model_dump(mode="json"))
 
 
 def resolve_group(
@@ -2107,9 +2087,7 @@ def get_group(
         group=result.group.model_dump(mode="json"),
         members=[member.model_dump(mode="json") for member in result.members],
         resolution=(
-            result.resolution.model_dump(mode="json")
-            if result.resolution is not None
-            else None
+            result.resolution.model_dump(mode="json") if result.resolution is not None else None
         ),
         bucket_status=asdict(result.bucket_status) if result.bucket_status is not None else None,
         member_review=[asdict(item) for item in result.member_review],
@@ -2133,8 +2111,9 @@ def list_groups(
         limit=limit,
     )
     return contracts.ListGroupsToolResult(
-        groups=[group.model_dump(mode="json") for group in result.groups],
+        items=[group.model_dump(mode="json") for group in result.items],
         total=result.total,
+        limit=limit,
     )
 
 
@@ -2191,8 +2170,9 @@ def list_resolutions(
         limit=limit,
     )
     return contracts.ListResolutionsToolResult(
-        resolutions=[r.model_dump(mode="json") for r in result.resolutions],
+        items=[r.model_dump(mode="json") for r in result.items],
         total=result.total,
+        limit=limit,
     )
 
 

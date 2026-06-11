@@ -306,15 +306,15 @@ def build_named_query_surface_cross_section(
                 "name": query_name,
                 "params": params,
                 "limit": query_limit,
-                "total_results": result.total_results,
-                "returned_results": len(result.results),
+                "total_results": result.total,
+                "returned_results": len(result.items),
                 "truncated": result.truncated,
                 "limit_truncated": result.limit_truncated,
                 "path_truncated": result.path_truncated,
                 "truncation_reasons": result.truncation_reasons,
                 "result_shape": result.result_shape,
                 "relationship_state": result.relationship_state,
-                "results": [_query_row_summary(row) for row in result.results],
+                "results": [_query_row_summary(row) for row in result.items],
             }
         )
     return normalize_cross_section_value({"queries": reports})
@@ -581,8 +581,7 @@ def _add_stale_exposure_for_reconciliation_golden(instance: CruxibleInstance) ->
     graph = instance.load_graph()
     current_affected_pairs = _current_reconciliation_affected_pairs(instance)
     existing_postures = {
-        (edge["from_id"], edge["to_id"])
-        for edge in graph.list_edges("asset_vulnerability_posture")
+        (edge["from_id"], edge["to_id"]) for edge in graph.list_edges("asset_vulnerability_posture")
     }
     existing_remediations = {
         (edge["from_id"], edge["to_id"])
@@ -852,8 +851,7 @@ def _proposal_output_summary(output: Any) -> Any:
     members = output.get("members")
     if isinstance(members, list):
         summary["members"] = [
-            _payload_cross_section(member, item_limit=4)
-            for member in members[:8]
+            _payload_cross_section(member, item_limit=4) for member in members[:8]
         ]
     return summary
 
@@ -884,8 +882,7 @@ def _payload_cross_section(value: Any, *, item_limit: int) -> Any:
             if isinstance(item, list):
                 result[f"{key}_count"] = len(item)
                 result[key] = [
-                    _payload_cross_section(row, item_limit=item_limit)
-                    for row in item[:item_limit]
+                    _payload_cross_section(row, item_limit=item_limit) for row in item[:item_limit]
                 ]
             else:
                 result[str(key)] = _payload_cross_section(item, item_limit=item_limit)
@@ -908,10 +905,7 @@ def _query_row_summary(row: Any) -> JsonObject:
         return {
             "entry": _entity_summary(getattr(row, "entry")),
             "result": _entity_summary(getattr(row, "result")),
-            "entities": [
-                _entity_summary(entity)
-                for entity in getattr(row, "entities", [])
-            ],
+            "entities": [_entity_summary(entity) for entity in getattr(row, "entities", [])],
             "path": [_edge_summary(segment) for segment in getattr(row, "path", [])],
             "includes": {
                 alias: _include_summary(include)

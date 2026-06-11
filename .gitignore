@@ -13,6 +13,8 @@ build/
 htmlcov/
 *.db
 *.csv
+!kits/kev-reference/data/epss_kev_nvd.csv
+!kits/kev-reference/data/known_exploited_vulnerabilities.csv
 !kits/kev-triage/data/seed/*.csv
 !kits/kev-triage/source_data/*.csv
 .DS_Store

@@ -109,11 +109,7 @@ class EvidenceRef(BaseModel):
         metadata = payload.get("metadata") or {}
         if not isinstance(metadata, Mapping):
             raise ValueError("EvidenceRef metadata must be an object")
-        extra = {
-            str(key): payload.pop(key)
-            for key in list(payload)
-            if key not in known
-        }
+        extra = {str(key): payload.pop(key) for key in list(payload) if key not in known}
         payload["metadata"] = {**dict(metadata), **extra}
         return payload
 
@@ -272,7 +268,6 @@ class DecisionPolicyMatchInput(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-
 # ── Tool return contracts ─────────────────────────────────────────────
 
 
@@ -291,12 +286,22 @@ class ValidateResult(BaseModel):
     warnings: list[str]
 
 
+class ListEnvelopeFields(BaseModel):
+    """Standard list envelope carried by every top-level list result."""
+
+    total: int
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
+
+
 class QueryToolResult(BaseModel):
-    results: list[dict[str, Any]]
+    items: list[dict[str, Any]]
     receipt_id: str | None
     receipt: dict[str, Any] | None
-    total_results: int
+    total: int
     limit: int | None = None
+    offset: int = 0
     truncated: bool = False
     limit_truncated: bool = False
     path_truncated: bool = False
@@ -345,12 +350,12 @@ class DecisionRecordResult(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class DecisionRecordListResult(BaseModel):
-    records: list[dict[str, Any]] = Field(default_factory=list)
+class DecisionRecordListResult(ListEnvelopeFields):
+    items: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class DecisionEventListResult(BaseModel):
-    events: list[dict[str, Any]] = Field(default_factory=list)
+class DecisionEventListResult(ListEnvelopeFields):
+    items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FeedbackResult(BaseModel):
@@ -377,14 +382,12 @@ class OutcomeProfileResult(BaseModel):
     profile: dict[str, Any] = Field(default_factory=dict)
 
 
-class ListResult(BaseModel):
+class ListResult(ListEnvelopeFields):
     items: list[dict[str, Any]]
-    total: int
 
 
-class TraceListResult(BaseModel):
-    traces: list[dict[str, Any]] = Field(default_factory=list)
-    count: int
+class TraceListResult(ListEnvelopeFields):
+    items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EvaluateResult(BaseModel):
@@ -406,10 +409,9 @@ class LintSummary(BaseModel):
     outcome_issue_count: int = 0
 
 
-class SampleResult(BaseModel):
-    entities: list[dict[str, Any]]
+class SampleResult(ListEnvelopeFields):
+    items: list[dict[str, Any]]
     entity_type: str
-    count: int
 
 
 class AddRelationshipResult(BaseModel):
@@ -519,8 +521,8 @@ class NamedQueryInfoResult(BaseModel):
     example_ids: list[str] = Field(default_factory=list)
 
 
-class QueryListResult(BaseModel):
-    queries: list[NamedQueryInfoResult] = Field(default_factory=list)
+class QueryListResult(ListEnvelopeFields):
+    items: list[NamedQueryInfoResult] = Field(default_factory=list)
 
 
 class WikiPageResult(BaseModel):
@@ -662,8 +664,8 @@ class SnapshotCreateResult(BaseModel):
     snapshot: SnapshotMetadata
 
 
-class SnapshotListResult(BaseModel):
-    snapshots: list[SnapshotMetadata] = Field(default_factory=list)
+class SnapshotListResult(ListEnvelopeFields):
+    items: list[SnapshotMetadata] = Field(default_factory=list)
 
 
 class CloneSnapshotResult(BaseModel):
@@ -956,14 +958,12 @@ class GetGroupToolResult(BaseModel):
     member_review: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ListGroupsToolResult(BaseModel):
-    groups: list[dict[str, Any]]
-    total: int
+class ListGroupsToolResult(ListEnvelopeFields):
+    items: list[dict[str, Any]]
 
 
-class ListResolutionsToolResult(BaseModel):
-    resolutions: list[dict[str, Any]]
-    total: int
+class ListResolutionsToolResult(ListEnvelopeFields):
+    items: list[dict[str, Any]]
 
 
 class GroupStatusHistoryItem(BaseModel):

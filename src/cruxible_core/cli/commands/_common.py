@@ -362,7 +362,7 @@ def _lookup_query_param_hints_server(
     if query_schema.entry_point is None:
         return _build_query_param_hints(config, query_name, [])
     sample = client.sample(instance_id, query_schema.entry_point, limit=3)
-    examples = _entities_from_payload(sample.entities)
+    examples = _entities_from_payload(sample.items)
     return _build_query_param_hints(config, query_name, examples)
 
 

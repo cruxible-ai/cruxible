@@ -139,9 +139,9 @@ def _build_governance(instance: InstanceProtocol, *, limit: int) -> GovernanceVi
     resolutions = service_list_resolutions(instance, limit=limit)
     return build_governance_view(
         config,
-        pending_groups=groups.groups,
+        pending_groups=groups.items,
         pending_total=groups.total,
-        resolutions=resolutions.resolutions,
+        resolutions=resolutions.items,
         resolution_total=resolutions.total,
     )
 
@@ -211,21 +211,20 @@ def service_export_edges(
     for edge in graph.iter_edges(relationship_type=relationship):
         if exclude_rejected:
             if (
-                edge.get("metadata", {})
-                .get("assertion", {})
-                .get("review", {})
-                .get("status")
+                edge.get("metadata", {}).get("assertion", {}).get("review", {}).get("status")
                 == "rejected"
             ):
                 continue
-        rows.append({
-            "from_type": edge["from_type"],
-            "from_id": edge["from_id"],
-            "to_type": edge["to_type"],
-            "to_id": edge["to_id"],
-            "relationship_type": edge["relationship_type"],
-            "edge_key": edge["edge_key"],
-            "properties_json": json.dumps(edge["properties"], sort_keys=True),
-            "metadata_json": json.dumps(edge.get("metadata", {}), sort_keys=True),
-        })
+        rows.append(
+            {
+                "from_type": edge["from_type"],
+                "from_id": edge["from_id"],
+                "to_type": edge["to_type"],
+                "to_id": edge["to_id"],
+                "relationship_type": edge["relationship_type"],
+                "edge_key": edge["edge_key"],
+                "properties_json": json.dumps(edge["properties"], sort_keys=True),
+                "metadata_json": json.dumps(edge.get("metadata", {}), sort_keys=True),
+            }
+        )
     return ExportEdgesResult(fieldnames=fieldnames, rows=rows, count=len(rows))

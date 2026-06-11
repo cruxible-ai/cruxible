@@ -301,10 +301,7 @@ class TestInit:
         _write_minimal_standalone_kit(workspace)
         providers = workspace / "providers"
         providers.mkdir()
-        (providers / "main.py").write_text(
-            "def run(_input, _context):\n"
-            "    return {}\n"
-        )
+        (providers / "main.py").write_text("def run(_input, _context):\n    return {}\n")
 
         service_init_governed_upload(
             governed_root,
@@ -453,9 +450,7 @@ class TestConfigMutationServices:
         assert result.config_updated is True
         config = populated_instance.load_config()
         added = next(
-            constraint
-            for constraint in config.constraints
-            if constraint.name == "new_constraint"
+            constraint for constraint in config.constraints if constraint.name == "new_constraint"
         )
         assert added.rule == "fits.FROM.category == fits.TO.make"
         assert added.description == "test"
@@ -507,9 +502,7 @@ class TestConfigMutationServices:
         assert result.config_updated is True
         config = populated_instance.load_config()
         added = next(
-            policy
-            for policy in config.decision_policies
-            if policy.name == "suppress_old_fitment"
+            policy for policy in config.decision_policies if policy.name == "suppress_old_fitment"
         )
         assert added.applies_to == "query"
         assert added.query_name == "parts_for_vehicle"
@@ -644,9 +637,7 @@ class TestGetEntity:
         assert entity is not None
         assert entity.properties["vehicle_id"] == "V-1"
 
-    def test_get_entity_preserves_metadata(
-        self, initialized_instance: CruxibleInstance
-    ) -> None:
+    def test_get_entity_preserves_metadata(self, initialized_instance: CruxibleInstance) -> None:
         service_add_entities(
             initialized_instance,
             [
@@ -701,8 +692,7 @@ class TestGetEntity:
         assert {neighbor.direction for neighbor in result.neighbors} == {"incoming"}
         metadata_rows = [neighbor.metadata for neighbor in result.neighbors if neighbor.metadata]
         assert any(
-            metadata.get("provenance", {}).get("source") == "ingest"
-            for metadata in metadata_rows
+            metadata.get("provenance", {}).get("source") == "ingest" for metadata in metadata_rows
         )
 
     def test_inspect_entity_not_found(self, populated_instance: CruxibleInstance) -> None:
@@ -980,8 +970,8 @@ class TestTraceReads:
 
         result = service_list_traces(populated_instance, workflow_name="wf_a", limit=10)
 
-        assert result.count == 1
-        assert result.traces[0]["trace_id"] == "TRC-a"
+        assert result.total == 1
+        assert result.items[0]["trace_id"] == "TRC-a"
 
 
 # ---------------------------------------------------------------------------

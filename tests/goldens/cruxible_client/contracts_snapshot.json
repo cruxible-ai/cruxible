@@ -3143,36 +3143,123 @@
     },
     "DecisionEventListResult": {
       "fields": {
-        "events": {
+        "items": {
           "has_default": false,
           "has_default_factory": true,
-          "json_name": "events",
+          "json_name": "items",
           "required": false,
           "schema": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Events",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
       "json_schema": {
         "properties": {
-          "events": {
+          "items": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Events",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
+        "required": [
+          "total"
+        ],
         "title": "DecisionEventListResult",
         "type": "object"
       },
-      "required_fields": []
+      "required_fields": [
+        "total"
+      ]
     },
     "DecisionPolicyMatchInput": {
       "fields": {
@@ -3493,36 +3580,123 @@
     },
     "DecisionRecordListResult": {
       "fields": {
-        "records": {
+        "items": {
           "has_default": false,
           "has_default_factory": true,
-          "json_name": "records",
+          "json_name": "items",
           "required": false,
           "schema": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Records",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
       "json_schema": {
         "properties": {
-          "records": {
+          "items": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Records",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
+        "required": [
+          "total"
+        ],
         "title": "DecisionRecordListResult",
         "type": "object"
       },
-      "required_fields": []
+      "required_fields": [
+        "total"
+      ]
     },
     "DecisionRecordResult": {
       "fields": {
@@ -8340,20 +8514,39 @@
       },
       "required_fields": []
     },
-    "ListGroupsToolResult": {
+    "ListEnvelopeFields": {
       "fields": {
-        "groups": {
-          "has_default": false,
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
-          "json_name": "groups",
-          "required": true,
+          "json_name": "limit",
+          "required": false,
           "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Groups",
-            "type": "array"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           }
         },
         "total": {
@@ -8365,49 +8558,230 @@
             "title": "Total",
             "type": "integer"
           }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
         }
       },
       "json_schema": {
+        "description": "Standard list envelope carried by every top-level list result.",
         "properties": {
-          "groups": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Groups",
-            "type": "array"
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           },
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
-          "groups",
           "total"
+        ],
+        "title": "ListEnvelopeFields",
+        "type": "object"
+      },
+      "required_fields": [
+        "total"
+      ]
+    },
+    "ListGroupsToolResult": {
+      "fields": {
+        "items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "items",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "items"
         ],
         "title": "ListGroupsToolResult",
         "type": "object"
       },
       "required_fields": [
-        "groups",
+        "items",
         "total"
       ]
     },
     "ListResolutionsToolResult": {
       "fields": {
-        "resolutions": {
+        "items": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "resolutions",
+          "json_name": "items",
           "required": true,
           "schema": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Resolutions",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           }
         },
         "total": {
@@ -8419,32 +8793,67 @@
             "title": "Total",
             "type": "integer"
           }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
         }
       },
       "json_schema": {
         "properties": {
-          "resolutions": {
+          "items": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Resolutions",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           },
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
-          "resolutions",
-          "total"
+          "total",
+          "items"
         ],
         "title": "ListResolutionsToolResult",
         "type": "object"
       },
       "required_fields": [
-        "resolutions",
+        "items",
         "total"
       ]
     },
@@ -8464,6 +8873,39 @@
             "type": "array"
           }
         },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
         "total": {
           "has_default": false,
           "has_default_factory": false,
@@ -8472,6 +8914,19 @@
           "schema": {
             "title": "Total",
             "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -8485,14 +8940,36 @@
             "title": "Items",
             "type": "array"
           },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
-          "items",
-          "total"
+          "total",
+          "items"
         ],
         "title": "ListResult",
         "type": "object"
@@ -10817,17 +11294,73 @@
     },
     "QueryListResult": {
       "fields": {
-        "queries": {
+        "items": {
           "has_default": false,
           "has_default_factory": true,
-          "json_name": "queries",
+          "json_name": "items",
           "required": false,
           "schema": {
             "items": {
               "$ref": "#/$defs/NamedQueryInfoResult"
             },
-            "title": "Queries",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -11001,18 +11534,49 @@
           }
         },
         "properties": {
-          "queries": {
+          "items": {
             "items": {
               "$ref": "#/$defs/NamedQueryInfoResult"
             },
-            "title": "Queries",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
+        "required": [
+          "total"
+        ],
         "title": "QueryListResult",
         "type": "object"
       },
-      "required_fields": []
+      "required_fields": [
+        "total"
+      ]
     },
     "QueryParamHints": {
       "fields": {
@@ -11248,6 +11812,20 @@
             "type": "string"
           }
         },
+        "items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "items",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
         "limit": {
           "default": null,
           "default_json_serializable": true,
@@ -11319,6 +11897,19 @@
             ],
             "default": null,
             "title": "Max Paths Per Result"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           }
         },
         "param_hints": {
@@ -11438,20 +12029,6 @@
             "type": "string"
           }
         },
-        "results": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "results",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Results",
-            "type": "array"
-          }
-        },
         "retained_path_count": {
           "default": null,
           "default_json_serializable": true,
@@ -11482,6 +12059,16 @@
             "type": "integer"
           }
         },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
         "total_path_count": {
           "default": null,
           "default_json_serializable": true,
@@ -11500,16 +12087,6 @@
             ],
             "default": null,
             "title": "Total Path Count"
-          }
-        },
-        "total_results": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "total_results",
-          "required": true,
-          "schema": {
-            "title": "Total Results",
-            "type": "integer"
           }
         },
         "truncated": {
@@ -11599,6 +12176,14 @@
             "title": "Dedupe",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
           "limit": {
             "anyOf": [
               {
@@ -11639,6 +12224,11 @@
             ],
             "default": null,
             "title": "Max Paths Per Result"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
           },
           "param_hints": {
             "anyOf": [
@@ -11707,14 +12297,6 @@
             "title": "Result Shape",
             "type": "string"
           },
-          "results": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Results",
-            "type": "array"
-          },
           "retained_path_count": {
             "anyOf": [
               {
@@ -11731,6 +12313,10 @@
             "title": "Steps Executed",
             "type": "integer"
           },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
           "total_path_count": {
             "anyOf": [
               {
@@ -11742,10 +12328,6 @@
             ],
             "default": null,
             "title": "Total Path Count"
-          },
-          "total_results": {
-            "title": "Total Results",
-            "type": "integer"
           },
           "truncated": {
             "default": false,
@@ -11761,21 +12343,21 @@
           }
         },
         "required": [
-          "results",
+          "items",
           "receipt_id",
           "receipt",
-          "total_results",
+          "total",
           "steps_executed"
         ],
         "title": "QueryToolResult",
         "type": "object"
       },
       "required_fields": [
+        "items",
         "receipt",
         "receipt_id",
-        "results",
         "steps_executed",
-        "total_results"
+        "total"
       ]
     },
     "RegisterSourceArtifactResult": {
@@ -12883,30 +13465,6 @@
     },
     "SampleResult": {
       "fields": {
-        "count": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "count",
-          "required": true,
-          "schema": {
-            "title": "Count",
-            "type": "integer"
-          }
-        },
-        "entities": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "entities",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Entities",
-            "type": "array"
-          }
-        },
         "entity_type": {
           "has_default": false,
           "has_default_factory": false,
@@ -12916,39 +13474,131 @@
             "title": "Entity Type",
             "type": "string"
           }
-        }
-      },
-      "json_schema": {
-        "properties": {
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
-          "entities": {
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "items",
+          "required": true,
+          "schema": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Entities",
+            "title": "Items",
             "type": "array"
-          },
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
           "entity_type": {
             "title": "Entity Type",
             "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
-          "entities",
-          "entity_type",
-          "count"
+          "total",
+          "items",
+          "entity_type"
         ],
         "title": "SampleResult",
         "type": "object"
       },
       "required_fields": [
-        "count",
-        "entities",
-        "entity_type"
+        "entity_type",
+        "items",
+        "total"
       ]
     },
     "ServerInfoResult": {
@@ -13796,17 +14446,73 @@
     },
     "SnapshotListResult": {
       "fields": {
-        "snapshots": {
+        "items": {
           "has_default": false,
           "has_default_factory": true,
-          "json_name": "snapshots",
+          "json_name": "items",
           "required": false,
           "schema": {
             "items": {
               "$ref": "#/$defs/SnapshotMetadata"
             },
-            "title": "Snapshots",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -13890,18 +14596,49 @@
           }
         },
         "properties": {
-          "snapshots": {
+          "items": {
             "items": {
               "$ref": "#/$defs/SnapshotMetadata"
             },
-            "title": "Snapshots",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
+        "required": [
+          "total"
+        ],
         "title": "SnapshotListResult",
         "type": "object"
       },
-      "required_fields": []
+      "required_fields": [
+        "total"
+      ]
     },
     "SnapshotMetadata": {
       "fields": {
@@ -14865,54 +15602,122 @@
     },
     "TraceListResult": {
       "fields": {
-        "count": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "count",
-          "required": true,
-          "schema": {
-            "title": "Count",
-            "type": "integer"
-          }
-        },
-        "traces": {
+        "items": {
           "has_default": false,
           "has_default_factory": true,
-          "json_name": "traces",
+          "json_name": "items",
           "required": false,
           "schema": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Traces",
+            "title": "Items",
             "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "offset": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "offset",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
       "json_schema": {
         "properties": {
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
-          "traces": {
+          "items": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Traces",
+            "title": "Items",
             "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
-          "count"
+          "total"
         ],
         "title": "TraceListResult",
         "type": "object"
       },
       "required_fields": [
-        "count"
+        "total"
       ]
     },
     "TrustAdjustmentSuggestion": {

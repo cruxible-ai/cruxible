@@ -108,10 +108,10 @@ def test_query_inline_uses_expected_route_and_payload():
         return httpx.Response(
             200,
             json={
-                "results": [],
+                "items": [],
                 "receipt_id": "RCP-inline",
                 "receipt": None,
-                "total_results": 0,
+                "total": 0,
                 "limit": 50,
                 "truncated": False,
                 "steps_executed": 0,
@@ -225,14 +225,14 @@ def test_trace_methods_call_trace_routes():
         return httpx.Response(
             200,
             json={
-                "traces": [
+                "items": [
                     {
                         "trace_id": "TRC-1",
                         "workflow_name": "wf",
                         "provider_name": "provider",
                     }
                 ],
-                "count": 1,
+                "total": 1,
             },
         )
 
@@ -248,7 +248,7 @@ def test_trace_methods_call_trace_routes():
     )
 
     assert trace["trace_id"] == "TRC-1"
-    assert listed.traces[0]["provider_name"] == "provider"
+    assert listed.items[0]["provider_name"] == "provider"
     assert seen[0] == ("GET", "http://cruxible/api/v1/inst_123/traces/TRC-1")
     expected_url = (
         "http://cruxible/api/v1/inst_123/traces?"
@@ -541,12 +541,12 @@ def test_decision_record_client_routes_round_trip():
             "status": "open",
         }
         if request.method == "GET" and path.endswith("/decision-records"):
-            return httpx.Response(200, json={"records": [record]})
+            return httpx.Response(200, json={"items": [record], "total": 1})
         if request.method == "GET" and path.endswith("/decision-records/events"):
             return httpx.Response(
                 200,
                 json={
-                    "events": [
+                    "items": [
                         {
                             "decision_event_id": "DE-1",
                             "decision_record_id": "DR-1",
@@ -554,7 +554,8 @@ def test_decision_record_client_routes_round_trip():
                             "command": "query:q",
                             "status": "success",
                         }
-                    ]
+                    ],
+                    "total": 1,
                 },
             )
         return httpx.Response(200, json={"record": record, "events": []})
@@ -581,8 +582,8 @@ def test_decision_record_client_routes_round_trip():
 
     assert created.record["decision_record_id"] == "DR-1"
     assert fetched.record["decision_record_id"] == "DR-1"
-    assert listed.records[0]["decision_record_id"] == "DR-1"
-    assert events.events[0]["decision_record_id"] == "DR-1"
+    assert listed.items[0]["decision_record_id"] == "DR-1"
+    assert events.items[0]["decision_record_id"] == "DR-1"
     assert finalized.record["decision_record_id"] == "DR-1"
     assert abandoned.record["decision_record_id"] == "DR-1"
     assert captured[0] == (
@@ -625,10 +626,10 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
             return httpx.Response(
                 200,
                 json={
-                    "results": [],
+                    "items": [],
                     "receipt_id": "RCP-query",
                     "receipt": None,
-                    "total_results": 0,
+                    "total": 0,
                     "truncated": False,
                     "steps_executed": 1,
                     "policy_summary": {},
@@ -663,9 +664,7 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
                 "output": {},
                 "receipt_id": "RCP-workflow",
                 "mode": "run" if path.endswith("/workflows/run") else "apply",
-                "workflow_type": "utility"
-                if path.endswith("/workflows/run")
-                else "canonical",
+                "workflow_type": "utility" if path.endswith("/workflows/run") else "canonical",
                 "canonical": path.endswith("/workflows/apply"),
                 "apply_digest": "sha256:abc",
                 "head_snapshot_id": "snap_1",
@@ -681,9 +680,7 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
 
     client = _build_client(handler)
     client.query("inst_123", "q", {}, decision_record_id="DR-1")
-    run_result = client.workflow_run(
-        "inst_123", workflow_name="wf", decision_record_id="DR-1"
-    )
+    run_result = client.workflow_run("inst_123", workflow_name="wf", decision_record_id="DR-1")
     apply_result = client.workflow_apply(
         "inst_123",
         workflow_name="wf",
@@ -1028,9 +1025,9 @@ def test_group_routes_omit_none_query_params():
         return httpx.Response(
             200,
             json=(
-                {"groups": [], "total": 0}
+                {"items": [], "total": 0}
                 if request.url.path.endswith("/groups")
-                else {"resolutions": [], "total": 0}
+                else {"items": [], "total": 0}
             ),
         )
 
@@ -1244,26 +1241,35 @@ def test_world_endpoints_use_expected_routes():
         )
 
     client = _build_client(handler)
-    assert client.create_world_overlay(
-        transport_ref="file:///tmp/releases/current",
-        root_dir="/tmp/overlay",
-    ).instance_id == "inst_overlay"
-    assert client.world_publish(
-        "inst_123",
-        transport_ref="file:///tmp/releases/current",
-        world_id="case-law",
-        release_id="v1.0.0",
-        compatibility="data_only",
-    ).manifest.release_id == "v1.0.0"
+    assert (
+        client.create_world_overlay(
+            transport_ref="file:///tmp/releases/current",
+            root_dir="/tmp/overlay",
+        ).instance_id
+        == "inst_overlay"
+    )
+    assert (
+        client.world_publish(
+            "inst_123",
+            transport_ref="file:///tmp/releases/current",
+            world_id="case-law",
+            release_id="v1.0.0",
+            compatibility="data_only",
+        ).manifest.release_id
+        == "v1.0.0"
+    )
     upstream = client.world_status("inst_123").upstream
     assert upstream is not None
     assert upstream.requested_source_ref == "case-law@v1.0.0"
     assert upstream.requested_transport_ref == "file:///tmp/releases/v1.0.0"
     assert client.world_pull_preview("inst_123").apply_digest == "sha256:apply"
-    assert client.world_pull_apply(
-        "inst_123",
-        expected_apply_digest="sha256:apply",
-    ).pre_pull_snapshot_id == "snap_pre"
+    assert (
+        client.world_pull_apply(
+            "inst_123",
+            expected_apply_digest="sha256:apply",
+        ).pre_pull_snapshot_id
+        == "snap_pre"
+    )
 
     assert captured[0][0].endswith("/api/v1/worlds/overlays")
     assert captured[1][0].endswith("/api/v1/inst_123/world/publish")

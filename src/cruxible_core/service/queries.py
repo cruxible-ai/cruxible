@@ -282,10 +282,10 @@ def _evaluate_query_result(
         query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
     total = query_result.total_results or len(query_result.results)
     return QueryServiceResult(
-        results=query_result.results,
+        items=query_result.results,
         receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
         receipt=query_result.receipt,
-        total_results=total,
+        total=total,
         limit=query_result.limit,
         truncated=query_result.truncated,
         steps_executed=query_result.steps_executed,
@@ -326,10 +326,10 @@ def _evaluate_inline_query_result(
         query_result.receipt.head_snapshot_id = instance.get_head_snapshot_id()
     total = query_result.total_results or len(query_result.results)
     return QueryServiceResult(
-        results=query_result.results,
+        items=query_result.results,
         receipt_id=query_result.receipt.receipt_id if query_result.receipt else None,
         receipt=query_result.receipt,
-        total_results=total,
+        total=total,
         limit=query_result.limit,
         truncated=query_result.truncated,
         steps_executed=query_result.steps_executed,
@@ -349,11 +349,7 @@ def _evaluate_inline_query_result(
 
 
 def _inline_query_schema(definition: Mapping[str, Any]) -> tuple[str, NamedQuerySchema]:
-    payload = {
-        key: value
-        for key, value in dict(definition).items()
-        if value is not None
-    }
+    payload = {key: value for key, value in dict(definition).items() if value is not None}
     raw_name = payload.pop("name", None)
     if not isinstance(raw_name, str) or not raw_name.strip():
         raise ConfigError("inline query definition requires non-empty name")
@@ -379,10 +375,10 @@ def _inline_query_schema(definition: Mapping[str, Any]) -> tuple[str, NamedQuery
         _INLINE_MAX_PATHS_PER_RESULT,
     )
 
-    supports_path_budgets = (
-        query_schema.mode == "traversal"
-        and query_schema.result_shape in {"path", "relationship"}
-    )
+    supports_path_budgets = query_schema.mode == "traversal" and query_schema.result_shape in {
+        "path",
+        "relationship",
+    }
     if not supports_path_budgets:
         return inline_name, query_schema
 
@@ -422,11 +418,8 @@ def _inline_query_definition_payload(
 
 def _query_output_payload(result: QueryServiceResult) -> dict[str, Any]:
     return {
-        "results": [
-            dump_query_row(row, mode="json")
-            for row in result.results
-        ],
-        "total_results": result.total_results,
+        "items": [dump_query_row(row, mode="json") for row in result.items],
+        "total": result.total,
         "limit": result.limit,
         "truncated": result.truncated,
         "limit_truncated": result.limit_truncated,
@@ -707,7 +700,7 @@ def service_list_traces(
         )
     finally:
         store.close()
-    return TraceListResult(traces=traces, count=len(traces))
+    return TraceListResult(items=traces, total=len(traces))
 
 
 # ---------------------------------------------------------------------------
@@ -849,9 +842,7 @@ def _infer_query_required_params(
             params.update(_input_params_from_value(include.where.root))
         for related in [*include.where_related, *include.where_not_related]:
             params.update(
-                _input_params_from_value(
-                    related.model_dump(mode="python", exclude_none=True)
-                )
+                _input_params_from_value(related.model_dump(mode="python", exclude_none=True))
             )
         for order in include.order_by:
             params.update(_input_params_from_value(order.by))
@@ -860,9 +851,7 @@ def _infer_query_required_params(
             params.update(_input_params_from_value(step.where.root))
         for related in [*step.where_related, *step.where_not_related]:
             params.update(
-                _input_params_from_value(
-                    related.model_dump(mode="python", exclude_none=True)
-                )
+                _input_params_from_value(related.model_dump(mode="python", exclude_none=True))
             )
         if step.constraint:
             params.update(_input_params_from_constraint(step.constraint))
@@ -916,8 +905,7 @@ def _query_definition(
         allow_relationship_state_override=query_schema.allow_relationship_state_override,
         select=query_schema.select,
         order_by=[
-            order.model_dump(mode="json", exclude_none=True)
-            for order in query_schema.order_by
+            order.model_dump(mode="json", exclude_none=True) for order in query_schema.order_by
         ],
         include={
             alias: include.model_dump(
@@ -940,10 +928,10 @@ def _apply_response_limit(
     *,
     surface_limit: int | None,
 ) -> tuple[list[Any], int | None, bool, bool]:
-    visible = result.results
+    visible = result.items
     response_truncated = False
-    if surface_limit is not None and len(result.results) > surface_limit:
-        visible = result.results[:surface_limit]
+    if surface_limit is not None and len(result.items) > surface_limit:
+        visible = result.items[:surface_limit]
         response_truncated = True
     query_limit = result.limit
     limits = [value for value in (query_limit, surface_limit) if value is not None]
@@ -962,7 +950,7 @@ def _query_result_with_response_limit(
     )
     return replace(
         result,
-        results=visible,
+        items=visible,
         limit=effective_limit,
         truncated=truncated,
         limit_truncated=result.limit_truncated or response_truncated,

@@ -150,10 +150,10 @@ def test_handle_query_inline_preserves_definition(
             captured["relationship_state"] = relationship_state
             captured["decision_record_id"] = decision_record_id
             return contracts.QueryToolResult(
-                results=[],
+                items=[],
                 receipt_id="RCP-inline",
                 receipt=None,
-                total_results=0,
+                total=0,
                 limit=50,
                 truncated=False,
                 steps_executed=0,
@@ -313,7 +313,9 @@ def test_mutating_tools_require_server(server, tool_name: str, args: dict[str, A
 
 def test_validate_valid_config(server, tmp_project: Path) -> None:
     result = call_tool(
-        server, "cruxible_validate", {"config_path": str(tmp_project / "config.yaml")},
+        server,
+        "cruxible_validate",
+        {"config_path": str(tmp_project / "config.yaml")},
     )
     assert result["valid"] is True
     assert result["name"] == "car_parts_compatibility"
@@ -343,7 +345,7 @@ def test_query_and_receipt_work_locally_for_seeded_dev_instance(
             "params": {"vehicle_id": "V-2024-CIVIC-EX"},
         },
     )
-    assert query["total_results"] == 2
+    assert query["total"] == 2
     assert query["receipt_id"].startswith("RCP-")
     assert query["receipt"] is not None
 
@@ -396,7 +398,7 @@ def test_trace_tools_work_locally_for_dev_instance(
     )
 
     assert fetched["output_payload"]["rows"] == 4
-    assert listed["traces"][0]["trace_id"] == trace.trace_id
+    assert listed["items"][0]["trace_id"] == trace.trace_id
 
     large_payload = {"body": "x" * 40000}
     large_trace = ExecutionTrace(
@@ -448,7 +450,7 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
         "cruxible_sample",
         {"instance_id": dev_graph_instance_id, "entity_type": "Part"},
     )
-    assert sample["count"] == 2
+    assert sample["total"] == 2
 
     entity = call_tool(
         server,

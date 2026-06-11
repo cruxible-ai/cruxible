@@ -141,9 +141,7 @@ def _agent_signature_facts(
 ) -> dict[str, Any]:
     rel_schema = instance.load_config().get_relationship("fits")
     assert rel_schema is not None
-    signal_sources = [
-        signal.signal_source for member in members for signal in member.signals
-    ]
+    signal_sources = [signal.signal_source for member in members for signal in member.signals]
     return build_agent_proposal_signature_facts(
         rel_schema=rel_schema,
         relationship_type="fits",
@@ -268,7 +266,7 @@ class TestListGroups:
         service_propose_group(instance, "fits", [_member("BP-2", "V-2")], thesis_facts={"a": 2})
         result = service_list_groups(instance)
         assert result.total == 2
-        assert len(result.groups) == 2
+        assert len(result.items) == 2
 
     def test_filter_by_status(self, instance: CruxibleInstance) -> None:
         pr = service_propose_group(
@@ -313,8 +311,8 @@ class TestListGroups:
         service_propose_group(instance, "fits", members2, thesis_facts=facts2_scope)
 
         result = service_list_groups(instance)
-        assert result.groups[0].review_priority == "critical"
-        assert result.groups[1].review_priority == "review"
+        assert result.items[0].review_priority == "critical"
+        assert result.items[1].review_priority == "review"
 
     def test_limit(self, instance: CruxibleInstance) -> None:
         for i in range(5):
@@ -325,7 +323,7 @@ class TestListGroups:
                 thesis_facts={"i": i},
             )
         result = service_list_groups(instance, limit=2)
-        assert len(result.groups) == 2
+        assert len(result.items) == 2
         assert result.total == 5
 
 
@@ -353,7 +351,7 @@ class TestListResolutions:
         )
         result = service_list_resolutions(instance)
         assert result.total == 1
-        r = result.resolutions[0]
+        r = result.items[0]
         assert r.analysis_state == {"centroid": [0.1, 0.2]}
         assert r.thesis_facts["origin"] == {
             "kind": "agent",
@@ -397,7 +395,7 @@ class TestListResolutions:
             )
             service_resolve_group(instance, pr.group_id, "reject", expected_pending_version=1)
         result = service_list_resolutions(instance, limit=2)
-        assert len(result.resolutions) == 2
+        assert len(result.items) == 2
 
 
 class TestGroupStatus:

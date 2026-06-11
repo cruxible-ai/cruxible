@@ -25,7 +25,7 @@ def service_create_snapshot(
 
 def service_list_snapshots(instance: InstanceProtocol) -> SnapshotListResult:
     """List snapshots for the current instance."""
-    return SnapshotListResult(snapshots=instance.list_snapshots())
+    return SnapshotListResult(items=instance.list_snapshots())
 
 
 def service_clone_snapshot(

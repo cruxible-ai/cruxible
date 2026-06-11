@@ -385,18 +385,20 @@ def run_cmd(
             apply_previews=result.apply_previews,
         )
     if output_json:
-        _emit_json({
-            "workflow": result.workflow,
-            "mode": result.mode,
-            "workflow_type": result.workflow_type,
-            "canonical": result.canonical,
-            "apply_digest": result.apply_digest,
-            "head_snapshot_id": result.head_snapshot_id,
-            "receipt_id": result.receipt_id,
-            "trace_ids": result.trace_ids or [],
-            "read_metadata": result.read_metadata,
-            "output": result.output,
-        })
+        _emit_json(
+            {
+                "workflow": result.workflow,
+                "mode": result.mode,
+                "workflow_type": result.workflow_type,
+                "canonical": result.canonical,
+                "apply_digest": result.apply_digest,
+                "head_snapshot_id": result.head_snapshot_id,
+                "receipt_id": result.receipt_id,
+                "trace_ids": result.trace_ids or [],
+                "read_metadata": result.read_metadata,
+                "output": result.output,
+            }
+        )
         return
     click.echo(f"Workflow {result.workflow} completed.")
     if result.mode != "run":
@@ -484,8 +486,7 @@ def apply_cmd(
             raise click.UsageError("--workflow is required unless --preview-file is used")
         if from_last_preview:
             if any(
-                value is not None
-                for value in (input_text, input_file, apply_digest, head_snapshot)
+                value is not None for value in (input_text, input_file, apply_digest, head_snapshot)
             ):
                 raise click.UsageError(
                     "--from-last-preview cannot be combined with --input, --input-file, "
@@ -493,8 +494,7 @@ def apply_cmd(
                 )
         elif any(value is not None for value in (input_text, input_file, head_snapshot)):
             raise click.UsageError(
-                "--apply-digest is required when passing --input, --input-file, or "
-                "--head-snapshot"
+                "--apply-digest is required when passing --input, --input-file, or --head-snapshot"
             )
         if not from_last_preview and (output_json or not _is_interactive_apply()):
             raise click.UsageError(
@@ -559,19 +559,21 @@ def apply_cmd(
             command_name="apply",
         )
     if output_json:
-        _emit_json({
-            "workflow": result.workflow,
-            "mode": result.mode,
-            "workflow_type": result.workflow_type,
-            "canonical": result.canonical,
-            "apply_digest": result.apply_digest,
-            "head_snapshot_id": result.head_snapshot_id,
-            "committed_snapshot_id": result.committed_snapshot_id,
-            "receipt_id": result.receipt_id,
-            "trace_ids": result.trace_ids or [],
-            "read_metadata": result.read_metadata,
-            "output": result.output,
-        })
+        _emit_json(
+            {
+                "workflow": result.workflow,
+                "mode": result.mode,
+                "workflow_type": result.workflow_type,
+                "canonical": result.canonical,
+                "apply_digest": result.apply_digest,
+                "head_snapshot_id": result.head_snapshot_id,
+                "committed_snapshot_id": result.committed_snapshot_id,
+                "receipt_id": result.receipt_id,
+                "trace_ids": result.trace_ids or [],
+                "read_metadata": result.read_metadata,
+                "output": result.output,
+            }
+        )
         return
     click.echo(f"Workflow {result.workflow} applied.")
     if result.committed_snapshot_id:
@@ -647,34 +649,36 @@ def propose_cmd(
     )
 
     if output_json:
-        _emit_json({
-            "workflow": result.workflow,
-            "mode": result.mode,
-            "workflow_type": result.workflow_type,
-            "canonical": result.canonical,
-            "group_id": result.group_id,
-            "status": result.group_status,
-            "suppressed": result.suppressed,
-            "suppressed_members": [
-                {
-                    "relationship_type": item.relationship_type,
-                    "from_type": item.from_type,
-                    "from_id": item.from_id,
-                    "to_type": item.to_type,
-                    "to_id": item.to_id,
-                    "reason": item.reason,
-                    "existing_group_id": item.existing_group_id,
-                    "existing_group_status": item.existing_group_status,
-                    "existing_signature": item.existing_signature,
-                    "source_workflow_name": item.source_workflow_name,
-                }
-                for item in result.suppressed_members
-            ],
-            "receipt_id": result.receipt_id,
-            "trace_ids": result.trace_ids or [],
-            "read_metadata": result.read_metadata,
-            "output": result.output,
-        })
+        _emit_json(
+            {
+                "workflow": result.workflow,
+                "mode": result.mode,
+                "workflow_type": result.workflow_type,
+                "canonical": result.canonical,
+                "group_id": result.group_id,
+                "status": result.group_status,
+                "suppressed": result.suppressed,
+                "suppressed_members": [
+                    {
+                        "relationship_type": item.relationship_type,
+                        "from_type": item.from_type,
+                        "from_id": item.from_id,
+                        "to_type": item.to_type,
+                        "to_id": item.to_id,
+                        "reason": item.reason,
+                        "existing_group_id": item.existing_group_id,
+                        "existing_group_status": item.existing_group_status,
+                        "existing_signature": item.existing_signature,
+                        "source_workflow_name": item.source_workflow_name,
+                    }
+                    for item in result.suppressed_members
+                ],
+                "receipt_id": result.receipt_id,
+                "trace_ids": result.trace_ids or [],
+                "read_metadata": result.read_metadata,
+                "output": result.output,
+            }
+        )
         return
 
     if result.group_status == "no_candidates":
@@ -754,11 +758,11 @@ def snapshot_list_cmd() -> None:
         service_list_snapshots,
     )
 
-    if not result.snapshots:
+    if not result.items:
         click.echo("No snapshots found.")
         return
 
-    for snapshot in result.snapshots:
+    for snapshot in result.items:
         label = f" label={snapshot.label}" if snapshot.label else ""
         click.echo(f"{snapshot.snapshot_id} {snapshot.created_at}{label}")
 

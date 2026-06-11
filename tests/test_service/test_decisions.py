@@ -77,7 +77,7 @@ def test_query_decision_record_context_records_audit_event(
     events = service_list_decision_events(
         populated_instance,
         decision_record_id=record.decision_record_id,
-    ).events
+    ).items
 
     assert len(events) == 1
     assert events[0].command == "query:parts_for_vehicle"
@@ -108,7 +108,7 @@ def test_query_without_decision_record_context_does_not_record_event(
     events = service_list_decision_events(
         populated_instance,
         decision_record_id=record.decision_record_id,
-    ).events
+    ).items
 
     assert query.receipt_id is not None
     assert events == []
@@ -226,7 +226,7 @@ def test_closed_record_auto_log_race_is_best_effort(
     events = service_list_decision_events(
         populated_instance,
         decision_record_id=record.decision_record_id,
-    ).events
+    ).items
     assert query.receipt_id is not None
     assert events == []
 

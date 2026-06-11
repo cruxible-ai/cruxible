@@ -1140,8 +1140,8 @@ class TestList:
         )
         assert result.exit_code == 0
         payload = json.loads(result.output)
-        assert payload["traces"][0]["trace_id"] == trace_id
-        assert payload["count"] == 1
+        assert payload["items"][0]["trace_id"] == trace_id
+        assert payload["total"] == 1
 
     def test_list_feedback(
         self,
@@ -1815,10 +1815,7 @@ class TestExportEdges:
                 metadata = json.loads(row["metadata_json"])
                 if metadata.get("provenance"):
                     assert metadata["provenance"]["source"] == "ingest"
-                    assert (
-                        metadata["provenance"]["created_at"]
-                        == "2026-01-01T00:00:00+00:00"
-                    )
+                    assert metadata["provenance"]["created_at"] == "2026-01-01T00:00:00+00:00"
                     return
         pytest.fail("No edge with provenance metadata found in exported CSV")
 

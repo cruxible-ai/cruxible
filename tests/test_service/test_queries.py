@@ -55,7 +55,7 @@ def test_inline_collection_query_persists_receipt_and_not_config(
         {},
     )
 
-    assert result.total_results == 2
+    assert result.total == 2
     assert result.limit == 50
     assert result.receipt_id is not None
     assert result.receipt is not None
@@ -79,7 +79,7 @@ def test_inline_traversal_query_uses_path_budget_defaults(
         {"vehicle_id": "V-2024-CIVIC-EX"},
     )
 
-    assert result.total_results == 2
+    assert result.total == 2
     assert result.limit == 50
     assert result.max_paths == 1000
     assert result.max_paths_per_result == 25
@@ -98,9 +98,7 @@ def test_inline_relationship_state_override_uses_existing_policy(
         "V-2024-CIVIC-EX",
         "fits",
         metadata=RelationshipMetadata(
-            assertion=RelationshipAssertion(
-                review=RelationshipReviewState(status="approved")
-            )
+            assertion=RelationshipAssertion(review=RelationshipReviewState(status="approved"))
         ),
     )
     populated_instance.save_graph(graph)
@@ -119,9 +117,7 @@ def test_inline_relationship_state_override_uses_existing_policy(
     )
 
     assert result.relationship_state == "accepted"
-    assert [(row.from_id, row.to_id) for row in result.results] == [
-        ("BP-1001", "V-2024-CIVIC-EX")
-    ]
+    assert [(row.from_id, row.to_id) for row in result.items] == [("BP-1001", "V-2024-CIVIC-EX")]
 
 
 def test_inline_query_records_decision_event(
@@ -146,7 +142,7 @@ def test_inline_query_records_decision_event(
     events = service_list_decision_events(
         populated_instance,
         decision_record_id=record.decision_record_id,
-    ).events
+    ).items
     assert len(events) == 1
     assert events[0].command == "query_inline:decision_brake_parts"
     assert events[0].receipt_id == result.receipt_id

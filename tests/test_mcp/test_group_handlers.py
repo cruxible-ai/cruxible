@@ -507,7 +507,7 @@ class TestListGroups:
             {"instance_id": instance_id},
         )
         assert result["total"] == 2
-        assert len(result["groups"]) == 2
+        assert len(result["items"]) == 2
 
     def test_filter_by_status(self, server, instance_id):
         pr = call_tool(
@@ -574,7 +574,7 @@ class TestListResolutions:
             {"instance_id": instance_id},
         )
         assert result["total"] == 1
-        r = result["resolutions"][0]
+        r = result["items"][0]
         assert r["analysis_state"] == {"centroid": [0.1]}
         assert r["thesis_facts"]["origin"] == {
             "kind": "agent",
@@ -756,10 +756,7 @@ class TestReadPermissions:
         assert result["group"]["group_id"] == proposed["group_id"]
         assert result["provenance"]["source_ref"] == f"group:{proposed['group_id']}"
         assert "assertion" not in result
-        assert (
-            result["relationship"]["metadata"]["assertion"]["review"]["status"]
-            == "approved"
-        )
+        assert result["relationship"]["metadata"]["assertion"]["review"]["status"] == "approved"
 
 
 class TestFeedbackGroupOverride:

@@ -185,7 +185,7 @@ def list_groups_read_model(
         )
         priority_order = {"critical": 0, "review": 1, "normal": 2}
         groups.sort(key=lambda group: priority_order.get(group.review_priority, 9))
-        return ListGroupsResult(groups=groups, total=total)
+        return ListGroupsResult(items=groups, total=total)
     finally:
         group_store.close()
 
@@ -204,7 +204,7 @@ def list_resolutions_read_model(
             action=action,
             limit=limit,
         )
-        return ListResolutionsResult(resolutions=resolutions, total=len(resolutions))
+        return ListResolutionsResult(items=resolutions, total=len(resolutions))
     finally:
         group_store.close()
 
@@ -252,10 +252,7 @@ def _member_review_state(
         raw_edge_key = current.get("edge_key")
         current_edge_key = raw_edge_key if isinstance(raw_edge_key, int) else None
         current_review_status = (
-            current.get("metadata", {})
-            .get("assertion", {})
-            .get("review", {})
-            .get("status")
+            current.get("metadata", {}).get("assertion", {}).get("review", {}).get("status")
         )
         property_delta = _property_delta(proposed_properties, current_properties)
     elif not current_edges:

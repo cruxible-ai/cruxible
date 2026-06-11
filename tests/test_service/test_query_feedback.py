@@ -50,7 +50,7 @@ class TestQuery:
             "parts_for_vehicle",
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
-        assert result.total_results >= 1
+        assert result.total >= 1
         assert result.receipt_id is not None
         assert result.steps_executed >= 1
         assert result.result_shape == "path"
@@ -86,8 +86,8 @@ class TestQuery:
 
         assert result.result_shape == "path"
         assert result.dedupe == "path"
-        assert result.results
-        row = result.results[0]
+        assert result.items
+        row = result.items[0]
         assert isinstance(row, QueryPathRow)
         assert row.entry.entity_type == "Vehicle"
         assert row.result.entity_type == "Part"
@@ -122,8 +122,8 @@ class TestQuery:
         )
 
         assert result.result_shape == "relationship"
-        assert result.results
-        row = result.results[0]
+        assert result.items
+        row = result.items[0]
         assert isinstance(row, QueryRelationshipRow)
         assert row.relationship_type == "fits"
         assert row.edge_key is not None
@@ -153,7 +153,7 @@ class TestQuery:
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
 
-        assert result.total_results >= 1
+        assert result.total >= 1
         assert result.receipt_id is not None
         store = populated_instance.get_receipt_store()
         try:
@@ -172,12 +172,12 @@ class TestQuery:
             limit=1,
         )
 
-        assert len(result.results) == 1
-        assert result.total_results >= 1
+        assert len(result.items) == 1
+        assert result.total >= 1
         assert result.limit == 1
-        assert result.truncated is (result.total_results > 1)
-        assert result.limit_truncated is (result.total_results > 1)
-        if result.total_results > 1:
+        assert result.truncated is (result.total > 1)
+        assert result.limit_truncated is (result.total > 1)
+        if result.total > 1:
             assert "response_limit" in result.truncation_reasons
         assert result.receipt_id is not None
         store = populated_instance.get_receipt_store()
@@ -238,7 +238,7 @@ class TestQuery:
             "parts_for_vehicle",
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
-        assert result.total_results == 0
+        assert result.total == 0
         assert result.policy_summary == {"suppress_brake_parts": 2}
 
     def test_expired_query_policy_is_ignored(self, populated_instance: CruxibleInstance) -> None:
@@ -261,7 +261,7 @@ class TestQuery:
             "parts_for_vehicle",
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
-        assert result.total_results >= 1
+        assert result.total >= 1
         assert result.policy_summary == {}
 
     def test_surface_query_applies_limit_and_truncation(
@@ -275,12 +275,12 @@ class TestQuery:
             limit=1,
         )
 
-        assert len(result.results) == 1
-        assert result.total_results >= 1
+        assert len(result.items) == 1
+        assert result.total >= 1
         assert result.limit == 1
-        assert result.truncated is (result.total_results > 1)
-        assert result.limit_truncated is (result.total_results > 1)
-        if result.total_results > 1:
+        assert result.truncated is (result.total > 1)
+        assert result.limit_truncated is (result.total > 1)
+        if result.total > 1:
             assert "response_limit" in result.truncation_reasons
         assert result.receipt_id is not None
 
@@ -627,7 +627,7 @@ class TestFeedbackFromQuery:
         )
 
         assert result.applied is True
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, QueryRelationshipRow)
         rel = populated_instance.load_graph().get_relationship(
             "Part",
@@ -685,7 +685,7 @@ class TestFeedbackFromQuery:
         )
 
         assert result.applied is True
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, QueryRelationshipRow)
         rel = populated_instance.load_graph().get_relationship(
             row.from_type,
@@ -734,7 +734,7 @@ class TestFeedbackFromQuery:
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
         assert query.receipt_id is not None
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, ProjectedQueryRow)
         assert isinstance(row.source, QueryRelationshipRow)
 
@@ -787,7 +787,7 @@ class TestFeedbackFromQuery:
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
         assert query.receipt_id is not None
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, ProjectedQueryRow)
         assert isinstance(row.source, QueryPathRow)
 
@@ -831,7 +831,7 @@ class TestFeedbackFromQuery:
         )
 
         assert result.applied is True
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, QueryPathRow)
         rel = populated_instance.load_graph().get_relationship(
             "Part",
@@ -1075,7 +1075,7 @@ class TestFeedbackFromQuery:
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
         assert query.receipt_id is not None
-        row = query.results[0]
+        row = query.items[0]
         assert isinstance(row, QueryRelationshipRow)
         graph = populated_instance.load_graph()
         assert graph.remove_relationship(
@@ -1118,7 +1118,7 @@ class TestFeedbackFromQuery:
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
         assert query.receipt_id is not None
-        assert query.results
+        assert query.items
 
         result = service_feedback_from_query_result(
             populated_instance,
@@ -1149,8 +1149,8 @@ class TestFeedbackFromQuery:
             "pending_fit_edges_for_vehicle",
             {"vehicle_id": "V-2024-CIVIC-EX"},
         )
-        assert accepted.results
-        assert pending.results == []
+        assert accepted.items
+        assert pending.items == []
 
 
 # ---------------------------------------------------------------------------

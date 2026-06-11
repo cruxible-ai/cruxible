@@ -89,7 +89,7 @@ def service_list_decision_records(
         )
     finally:
         store.close()
-    return DecisionRecordListResult(records=records)
+    return DecisionRecordListResult(items=records)
 
 
 def service_list_decision_events(
@@ -114,7 +114,7 @@ def service_list_decision_events(
             )
     finally:
         store.close()
-    return DecisionEventListResult(events=events)
+    return DecisionEventListResult(items=events)
 
 
 def service_finalize_decision_record(

@@ -124,9 +124,7 @@ class TestInputSchema:
         payload_ref = schema["properties"]["payload"]["$ref"]
         payload_name = payload_ref.split("/")[-1]
         payload_def = schema["$defs"][payload_name]
-        assert {"entities", "relationships", "shared_evidence"} <= set(
-            payload_def["properties"]
-        )
+        assert {"entities", "relationships", "shared_evidence"} <= set(payload_def["properties"])
 
     def test_add_constraint_severity_enum(self, server):
         schemas = _get_tool_schemas(server)
@@ -215,11 +213,12 @@ class TestOutputSchema:
             (
                 "cruxible_query",
                 {
-                    "results",
+                    "items",
                     "receipt_id",
                     "receipt",
-                    "total_results",
+                    "total",
                     "limit",
+                    "offset",
                     "truncated",
                     "limit_truncated",
                     "path_truncated",
@@ -240,7 +239,7 @@ class TestOutputSchema:
             ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
             ("cruxible_outcome", {"outcome_id"}),
             ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
-            ("cruxible_list", {"items", "total"}),
+            ("cruxible_list", {"items", "total", "limit", "offset", "truncated"}),
             (
                 "cruxible_stats",
                 {
@@ -275,7 +274,10 @@ class TestOutputSchema:
                     "has_issues",
                 },
             ),
-            ("cruxible_sample", {"entities", "entity_type", "count"}),
+            (
+                "cruxible_sample",
+                {"items", "entity_type", "total", "limit", "offset", "truncated"},
+            ),
             (
                 "cruxible_inspect_entity",
                 {
@@ -407,7 +409,10 @@ class TestOutputSchema:
                 },
             ),
             ("cruxible_create_snapshot", {"snapshot"}),
-            ("cruxible_list_snapshots", {"snapshots"}),
+            (
+                "cruxible_list_snapshots",
+                {"items", "total", "limit", "offset", "truncated"},
+            ),
             ("cruxible_clone_snapshot", {"instance_id", "snapshot"}),
             (
                 "cruxible_get_entity",

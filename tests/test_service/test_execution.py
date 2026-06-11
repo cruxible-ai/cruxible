@@ -1735,8 +1735,8 @@ class TestWorkflowExecutionServices:
         listed = service_list_snapshots(proposal_workflow_instance)
 
         assert created.snapshot.snapshot_id.startswith("snap_")
-        assert listed.snapshots[0].snapshot_id == created.snapshot.snapshot_id
-        assert listed.snapshots[0].label == "baseline"
+        assert listed.items[0].snapshot_id == created.snapshot.snapshot_id
+        assert listed.items[0].label == "baseline"
 
         overlay_root = tmp_path / "cloned"
         overlay_result = service_clone_snapshot(

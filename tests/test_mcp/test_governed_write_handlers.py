@@ -75,7 +75,9 @@ def server(governed_client):
 def instance_id(server, tmp_path):
     (tmp_path / "config.yaml").write_text(CONFIG_YAML)
     result = call_tool(
-        server, "cruxible_init", {"root_dir": str(tmp_path), "config_path": "config.yaml"},
+        server,
+        "cruxible_init",
+        {"root_dir": str(tmp_path), "config_path": "config.yaml"},
     )
     iid = result["instance_id"]
     call_tool(
@@ -242,9 +244,7 @@ def test_decision_record_tools_and_workflow_context_round_trip(
         "cruxible_list_decision_records",
         {"instance_id": instance_id, "status": "open"},
     )
-    assert [record["decision_record_id"] for record in listed["records"]] == [
-        decision_record_id
-    ]
+    assert [record["decision_record_id"] for record in listed["items"]] == [decision_record_id]
 
     run = call_tool(
         server,
@@ -267,10 +267,10 @@ def test_decision_record_tools_and_workflow_context_round_trip(
         "cruxible_list_decision_events",
         {"instance_id": instance_id, "decision_record_id": decision_record_id},
     )
-    assert len(events["events"]) == 1
-    assert events["events"][0]["command"] == "workflow_run:evaluate_promo"
-    assert events["events"][0]["receipt_id"] == run["receipt_id"]
-    assert events["events"][0]["surface"] == "mcp"
+    assert len(events["items"]) == 1
+    assert events["items"][0]["command"] == "workflow_run:evaluate_promo"
+    assert events["items"][0]["receipt_id"] == run["receipt_id"]
+    assert events["items"][0]["surface"] == "mcp"
 
     finalized = call_tool(
         server,

@@ -7,7 +7,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, and proposal groups. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, and source artifact registration. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation and group resolution/trust updates. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, world publication/pull, ingest, constraints, policies. |
 
@@ -177,7 +177,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -203,7 +203,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `trace_ids`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -251,7 +251,33 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `results`, `receipt_id`, `receipt`, `total_results`, `limit`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
+**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_query_inline
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Run a bounded inline graph query for read-only agent exploration. Inline query definitions use the same JSON shape as configured named queries plus a required `name`, but they are not persisted to config. Use this for one-off filtering and candidate discovery. Promote repeated or workflow-critical queries into config as named queries.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `definition` | yes | InlineQueryDefinition | Inline query definition object: same JSON shape as a configured named query (`mode`, `returns`, `traversal`, `where`, `select`, `order_by`, `include`, `limit`, `max_paths`, `max_paths_per_result`, ...) plus a required `name`. |
+| `params` | no | object | null |  |
+| `limit` | no | integer | null |  |
+| `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
+| `decision_record_id` | no | string | null |  |
+
+**Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
 
 **Side Effects:** Read-only.
 
@@ -272,7 +298,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 
-**Returns:** Top-level fields: `queries`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -294,7 +320,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `instance_id` | yes | string |  |
 | `query_name` | yes | string |  |
 
-**Returns:** Top-level fields: `name`, `entry_point`, `required_params`, `returns`, `result_shape`, `dedupe`, `relationship_state`, `allow_relationship_state_override`, `select`, `order_by`, `limit`, `max_paths`, `max_paths_per_result`, `description`, `example_ids`
+**Returns:** Top-level fields: `name`, `mode`, `entry_point`, `required_params`, `returns`, `result_shape`, `dedupe`, `relationship_state`, `allow_relationship_state_override`, `select`, `order_by`, `include`, `limit`, `max_paths`, `max_paths_per_result`, `description`, `example_ids`
 
 **Side Effects:** Read-only.
 
@@ -363,7 +389,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `limit` | no | integer | Maximum trace summaries to return. |
 | `offset` | no | integer | Number of summaries to skip. |
 
-**Returns:** Top-level fields: `traces`, `count`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -513,7 +539,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `property_filter` | no | object | null |  |
 | `operation_type` | no | string | null |  |
 
-**Returns:** Top-level fields: `items`, `total`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -730,7 +756,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `entity_type` | yes | string |  |
 | `limit` | no | integer |  |
 
-**Returns:** Top-level fields: `entities`, `entity_type`, `count`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `entity_type`
 
 **Side Effects:** Read-only.
 
@@ -756,7 +782,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `relationship_type` | no | string | null |  |
 | `limit` | no | integer | null |  |
 
-**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `neighbors`, `total_neighbors`
+**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`
 
 **Side Effects:** Read-only.
 
@@ -942,6 +968,29 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_batch_direct_write
+
+**Permission:** `GRAPH_WRITE`
+
+**Purpose:** Validate or apply a direct batch graph write payload. Use this for coherent hard-state slices that contain entities and relationships. The payload may define top-level shared_evidence entries and reference them from relationships with shared_evidence_keys. Direct writes are live/unreviewed state; group approval remains the path for accepted review state. Set `dry_run=true` to validate entity properties, relationship endpoints, relationship properties, evidence locators, duplicate IDs, and missing shared evidence keys without mutating graph state.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs/source evidence). |
+| `dry_run` | no | boolean | Validate the payload without mutating graph state. |
+
+**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `evidence_sources_used`, `receipt_id`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
 ## cruxible_add_constraint
 
 **Permission:** `ADMIN`
@@ -1036,7 +1085,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `input_payload` | no | object | null |  |
 | `decision_record_id` | no | string | null |  |
 
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
+**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1110,7 +1159,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `decision_class` | no | string | null |  |
 | `limit` | no | integer |  |
 
-**Returns:** Top-level fields: `records`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -1136,7 +1185,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `status` | no | string | null |  |
 | `limit` | no | integer |  |
 
-**Returns:** Top-level fields: `events`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -1263,7 +1312,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `trust_status` | yes | enum: trusted, watch, invalidated |  |
 | `reason` | no | string |  |
 
-**Returns:** Top-level fields: `resolution_id`, `trust_status`
+**Returns:** Top-level fields: `resolution_id`, `trust_status`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1309,7 +1358,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `status` | no | enum: pending_review, auto_resolved, applying, resolved, suppressed | null |  |
 | `limit` | no | integer |  |
 
-**Returns:** Top-level fields: `groups`, `total`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -1333,7 +1382,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `action` | no | enum: approve, reject | null |  |
 | `limit` | no | integer |  |
 
-**Returns:** Top-level fields: `resolutions`, `total`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
 
@@ -1424,7 +1473,59 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 
-**Returns:** Top-level fields: `snapshots`
+**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_register_source_artifact
+
+**Permission:** `GOVERNED_WRITE`
+
+**Purpose:** Register a local source document for source-backed proposal evidence. The document is parsed into addressable chunks whose locators (`chunk_id`, `heading_path`, `block_selector`) and content hashes can be cited as source evidence on relationships and proposal members, then dereferenced later via `cruxible_dereference_source_evidence`.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `source_path` | yes | string | Path to the local source document. |
+| `source_kind` | no | enum: markdown | Only `markdown` is currently supported. |
+| `source_retention` | no | enum: manifest_only, archive | `manifest_only` stores chunk hashes only; `archive` also stores the document content. |
+| `original_uri` | no | string | null | Original document location for provenance. |
+| `label` | no | string | null | Human-readable label for the artifact. |
+
+**Returns:** Top-level fields: `source_artifact_id`, `source_kind`, `source_retention`, `original_uri`, `label`, `content_hash`, `byte_count`, `parser_version`, `archived`, `archive_content_hash`, `chunks`
+
+**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_dereference_source_evidence
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Return source text for a registered source-evidence locator. Select the chunk by `chunk_id`, or by `heading_path` plus `block_selector`. Pass `expected_content_hash` to detect drift between the cited evidence and the current document content.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `source_artifact_id` | yes | string | Artifact ID returned by `cruxible_register_source_artifact`. |
+| `chunk_id` | no | string | null | Chunk ID locator. |
+| `heading_path` | no | array | null | Heading-path locator (used with `block_selector`). |
+| `block_selector` | no | string | null | Block selector within the heading path. |
+| `expected_content_hash` | no | string | null | Expected chunk content hash for drift detection. |
+
+**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`
 
 **Side Effects:** Read-only.
 
@@ -1534,7 +1635,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `entity_type` | yes | string |  |
 | `entity_id` | yes | string |  |
 
-**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`
+**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`
 
 **Side Effects:** Read-only.
 
@@ -1561,7 +1662,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `to_id` | yes | string |  |
 | `edge_key` | no | integer | null |  |
 
-**Returns:** Top-level fields: `found`, `from_type`, `from_id`, `relationship_type`, `to_type`, `to_id`, `edge_key`, `properties`
+**Returns:** Top-level fields: `found`, `from_type`, `from_id`, `relationship_type`, `to_type`, `to_id`, `edge_key`, `properties`, `metadata`
 
 **Side Effects:** Read-only.
 
@@ -1588,7 +1689,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `to_id` | yes | string | Target entity ID. |
 | `edge_key` | no | integer | null | Edge key for multi-edge disambiguation. |
 
-**Returns:** Top-level fields: `found`, `relationship`, `_provenance`, `group`, `resolution`, `source_workflow_receipt_id`, `source_trace_ids`, `warnings`
+**Returns:** Top-level fields: `found`, `relationship`, `provenance`, `group`, `resolution`, `source_workflow_receipt_id`, `source_trace_ids`, `warnings`
 
 **Side Effects:** Read-only.
 

@@ -278,14 +278,16 @@ def group_resolve(
     )
 
     if output_json:
-        _emit_json({
-            "group_id": result.group_id,
-            "action": result.action,
-            "edges_created": result.edges_created,
-            "edges_skipped": result.edges_skipped,
-            "resolution_id": result.resolution_id,
-            "receipt_id": result.receipt_id,
-        })
+        _emit_json(
+            {
+                "group_id": result.group_id,
+                "action": result.action,
+                "edges_created": result.edges_created,
+                "edges_skipped": result.edges_skipped,
+                "resolution_id": result.resolution_id,
+                "receipt_id": result.receipt_id,
+            }
+        )
         return
 
     click.echo(f"Group {result.group_id} {result.action}d.")
@@ -419,16 +421,18 @@ def group_list(relationship: str | None, status: str | None, limit: int, output_
         ),
     )
     if isinstance(result, contracts.ListGroupsToolResult):
-        groups = _groups_from_payload(result.groups)
+        groups = _groups_from_payload(result.items)
         total = result.total
     else:
-        groups = result.groups
+        groups = result.items
         total = result.total
     if output_json:
-        _emit_json({
-            "groups": [g.model_dump(mode="python") for g in groups],
-            "total": total,
-        })
+        _emit_json(
+            {
+                "items": [g.model_dump(mode="python") for g in groups],
+                "total": total,
+            }
+        )
         return
     console.print(groups_table(groups))
     click.echo(f"{len(groups)} of {total} group(s) shown.")
@@ -467,16 +471,18 @@ def group_resolutions(
         ),
     )
     if isinstance(result, contracts.ListResolutionsToolResult):
-        resolutions = [GroupResolution.model_validate(r) for r in result.resolutions]
+        resolutions = [GroupResolution.model_validate(r) for r in result.items]
         total = result.total
     else:
-        resolutions = result.resolutions
+        resolutions = result.items
         total = result.total
     if output_json:
-        _emit_json({
-            "resolutions": [r.model_dump(mode="python") for r in resolutions],
-            "total": total,
-        })
+        _emit_json(
+            {
+                "items": [r.model_dump(mode="python") for r in resolutions],
+                "total": total,
+            }
+        )
         return
     console.print(resolutions_table(resolutions))
     click.echo(f"{len(resolutions)} of {total} resolution(s) shown.")

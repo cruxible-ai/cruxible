@@ -24,10 +24,10 @@ def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
             assert params == {"vehicle_id": "V-1"}
             assert limit == 5
             return contracts.QueryToolResult(
-                results=[],
+                items=[],
                 receipt_id="RCPT-1",
                 receipt=None,
-                total_results=0,
+                total=0,
                 truncated=False,
                 steps_executed=1,
             )
@@ -85,7 +85,7 @@ def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyP
         def list_queries(self, instance_id):
             assert instance_id == "inst_123"
             return contracts.QueryListResult(
-                queries=[
+                items=[
                     contracts.NamedQueryInfoResult(
                         name="parts_for_vehicle",
                         mode="traversal",
@@ -95,7 +95,8 @@ def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyP
                         description="Find compatible parts.",
                         example_ids=["V-1"],
                     )
-                ]
+                ],
+                total=1,
             )
 
         def describe_query(self, instance_id, query_name):
@@ -113,7 +114,7 @@ def test_query_discovery_handlers_delegate_to_client(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     listed = handlers.handle_list_queries("inst_123")
-    assert listed.queries[0].name == "parts_for_vehicle"
+    assert listed.items[0].name == "parts_for_vehicle"
     described = handlers.handle_describe_query("inst_123", "parts_for_vehicle")
     assert described.returns == "Part"
 
@@ -208,7 +209,7 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
 
         def list_snapshots(self, instance_id):
             assert instance_id == "inst_123"
-            return contracts.SnapshotListResult(snapshots=[snapshot])
+            return contracts.SnapshotListResult(items=[snapshot], total=1)
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
@@ -229,14 +230,17 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
         limit=3,
     ).found
     assert handlers.handle_inspect_view("inst_123", "governance", limit=7).view == "governance"
-    assert handlers.handle_render_wiki(
-        "inst_123",
-        focus=["Asset:A1"],
-        include_types=["Asset"],
-        scope="local",
-        max_per_type=25,
-    ).page_count == 1
-    assert handlers.handle_list_snapshots("inst_123").snapshots[0].snapshot_id == "snap_1"
+    assert (
+        handlers.handle_render_wiki(
+            "inst_123",
+            focus=["Asset:A1"],
+            include_types=["Asset"],
+            scope="local",
+            max_per_type=25,
+        ).page_count
+        == 1
+    )
+    assert handlers.handle_list_snapshots("inst_123").items[0].snapshot_id == "snap_1"
 
 
 def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):

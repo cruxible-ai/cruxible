@@ -32,6 +32,105 @@ def test_cli_fails_when_server_required_without_endpoint(monkeypatch, runner: Cl
     assert "Server mode is required" in result.output
 
 
+def test_server_mode_sample_json_emits_envelope(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def sample(self, _instance_id, entity_type, *, limit):
+            return contracts.SampleResult(
+                items=[
+                    {
+                        "entity_type": entity_type,
+                        "entity_id": "V-1",
+                        "properties": {"vehicle_id": "V-1"},
+                    }
+                ],
+                entity_type=entity_type,
+                total=1,
+                limit=limit,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "sample",
+            "--type",
+            "Vehicle",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["items"][0]["entity_id"] == "V-1"
+    assert payload["total"] == 1
+    assert payload["entity_type"] == "Vehicle"
+
+
+def test_server_mode_query_error_prints_param_hints(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # Remote query failures raise client-package errors; the hint branch must
+    # catch them and the hint lookup must read the new sample envelope.
+    import yaml as _yaml
+
+    from cruxible_client.errors import QueryNotFoundError as ClientQueryNotFoundError
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def query(self, *_args, **_kwargs):
+            raise ClientQueryNotFoundError("parts_for_vehicle")
+
+        def schema(self, _instance_id):
+            return _yaml.safe_load(CAR_PARTS_YAML)
+
+        def sample(self, _instance_id, entity_type, *, limit):
+            return contracts.SampleResult(
+                items=[
+                    {
+                        "entity_type": entity_type,
+                        "entity_id": "V-2024-CIVIC-EX",
+                        "properties": {"vehicle_id": "V-2024-CIVIC-EX"},
+                    }
+                ],
+                entity_type=entity_type,
+                total=1,
+                limit=limit,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "query",
+            "--query",
+            "parts_for_vehicle",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Param hints:" in result.output
+    assert "entry_point=Vehicle" in result.output
+    assert "Error:" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_server_mode_client_errors_render_friendly_not_traceback(
     monkeypatch,
     runner: CliRunner,
@@ -355,7 +454,7 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
         def list_queries(self, instance_id):
             assert instance_id == "inst_123"
             return contracts.QueryListResult(
-                queries=[
+                items=[
                     contracts.NamedQueryInfoResult(
                         name="parts_for_vehicle",
                         mode="traversal",
@@ -365,7 +464,8 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
                         description="Find compatible parts.",
                         example_ids=["V-2024-CIVIC-EX"],
                     )
-                ]
+                ],
+                total=1,
             )
 
         def describe_query(self, instance_id, query_name):
@@ -397,8 +497,8 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     listed = runner.invoke(cli, ["query", "list", "--json"])
     assert listed.exit_code == 0
     list_payload = json.loads(listed.output)
-    assert list_payload["queries"][0]["name"] == "parts_for_vehicle"
-    assert list_payload["queries"][0]["required_params"] == ["vehicle_id"]
+    assert list_payload["items"][0]["name"] == "parts_for_vehicle"
+    assert list_payload["items"][0]["required_params"] == ["vehicle_id"]
 
     described = runner.invoke(
         cli,
@@ -425,10 +525,10 @@ def test_query_decision_record_requires_explicit_flag(
             captured["limit"] = limit
             captured["decision_record_id"] = decision_record_id
             return contracts.QueryToolResult(
-                results=[],
+                items=[],
                 receipt_id="RCP-1",
                 receipt=None,
-                total_results=0,
+                total=0,
                 truncated=False,
                 steps_executed=1,
             )
@@ -470,10 +570,10 @@ def test_query_uses_explicit_decision_record_flag(
         def query(self, instance_id, query_name, params, limit=None, decision_record_id=None):
             captured["decision_record_id"] = decision_record_id
             return contracts.QueryToolResult(
-                results=[],
+                items=[],
                 receipt_id="RCP-1",
                 receipt=None,
-                total_results=0,
+                total=0,
                 truncated=False,
                 steps_executed=1,
             )
@@ -522,10 +622,10 @@ def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
             captured["relationship_state"] = relationship_state
             captured["decision_record_id"] = decision_record_id
             return contracts.QueryToolResult(
-                results=[],
+                items=[],
                 receipt_id="RCP-inline",
                 receipt=None,
-                total_results=0,
+                total=0,
                 limit=50,
                 truncated=False,
                 steps_executed=0,
@@ -542,10 +642,7 @@ def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
             "query",
             "inline",
             "--definition-json",
-            (
-                '{"name":"brake_parts","mode":"collection","returns":"Part",'
-                '"result_shape":"entity"}'
-            ),
+            ('{"name":"brake_parts","mode":"collection","returns":"Part","result_shape":"entity"}'),
             "--param",
             "category=brakes",
             "--limit",
@@ -656,13 +753,14 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
                 limit,
             )
             return contracts.DecisionRecordListResult(
-                records=[
+                items=[
                     {
                         "decision_record_id": "DR-1",
                         "question": "Should we act?",
                         "status": "open",
                     }
-                ]
+                ],
+                total=1,
             )
 
         def finalize_decision_record(
@@ -762,7 +860,7 @@ def test_decision_record_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert listed.exit_code == 0
-    assert json.loads(listed.output)["records"][0]["decision_record_id"] == "DR-1"
+    assert json.loads(listed.output)["items"][0]["decision_record_id"] == "DR-1"
 
     finalized = runner.invoke(
         cli,
@@ -1554,9 +1652,7 @@ def test_workflow_commands_delegate_to_client_in_server_mode(
         ],
     )
     assert run_json.exit_code == 0
-    assert json.loads(run_json.output)["read_metadata"] == {
-        "any_read_truncated": True
-    }
+    assert json.loads(run_json.output)["read_metadata"] == {"any_read_truncated": True}
 
     test = runner.invoke(
         cli,
@@ -2117,7 +2213,7 @@ def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(
         def list_snapshots(self, instance_id):
             assert instance_id == "inst_123"
             return contracts.SnapshotListResult(
-                snapshots=[
+                items=[
                     contracts.SnapshotMetadata(
                         snapshot_id="snap_1",
                         created_at="2026-03-21T00:00:00Z",
@@ -2128,7 +2224,8 @@ def test_propose_snapshot_and_clone_delegate_to_client_in_server_mode(
                         parent_snapshot_id=None,
                         origin_snapshot_id=None,
                     )
-                ]
+                ],
+                total=1,
             )
 
         def clone_snapshot(self, instance_id, *, snapshot_id, root_dir):

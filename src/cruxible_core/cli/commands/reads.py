@@ -13,6 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.canonical_views import (
     GovernanceRelationshipView,
     GovernanceView,
@@ -156,9 +157,7 @@ def _ontology_view_from_payload(payload: dict[str, Any]) -> OntologyView:
         entity_count=payload["entity_count"],
         relationship_count=payload["relationship_count"],
         governed_relationship_count=payload["governed_relationship_count"],
-        entity_types=[
-            OntologyEntityView(**entity) for entity in payload.get("entity_types", [])
-        ],
+        entity_types=[OntologyEntityView(**entity) for entity in payload.get("entity_types", [])],
         relationships=[
             OntologyRelationshipView(**relationship)
             for relationship in payload.get("relationships", [])
@@ -178,16 +177,14 @@ def _workflow_view_from_payload(payload: dict[str, Any]) -> WorkflowView:
                         for provider in workflow.get("provider_details", [])
                     ],
                     "steps": [
-                        WorkflowStepSummaryView(**step)
-                        for step in workflow.get("steps", [])
+                        WorkflowStepSummaryView(**step) for step in workflow.get("steps", [])
                     ],
                 }
             )
             for workflow in payload.get("workflows", [])
         ],
         dependencies=[
-            WorkflowDependencyView(**dependency)
-            for dependency in payload.get("dependencies", [])
+            WorkflowDependencyView(**dependency) for dependency in payload.get("dependencies", [])
         ],
     )
 
@@ -244,9 +241,7 @@ def _load_inline_query_definition(
     definition_file: Path | None,
 ) -> contracts.InlineQueryDefinition:
     if (definition_json is None) == (definition_file is None):
-        raise click.UsageError(
-            "Provide exactly one of --definition-json or --definition-file"
-    )
+        raise click.UsageError("Provide exactly one of --definition-json or --definition-file")
     try:
         if definition_json is not None:
             payload = json.loads(definition_json)
@@ -273,7 +268,7 @@ def _emit_query_command_result(
     count_only: bool,
     output_json: bool,
 ) -> None:
-    results = list(result.results)
+    results = list(result.items)
     rows_are_payloads = all(isinstance(row, dict) for row in results)
     if rows_are_payloads:
         payload_rows = cast(list[dict[str, Any]], results)
@@ -284,20 +279,16 @@ def _emit_query_command_result(
             else []
         )
         structured_results = (
-            payload_rows
-            if result.result_shape != "entity" or projected_results
-            else []
+            payload_rows if result.result_shape != "entity" or projected_results else []
         )
     else:
         projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
         entity_results = [
-            row
-            for row in results
-            if isinstance(row, EntityInstance) and not projected_results
+            row for row in results if isinstance(row, EntityInstance) and not projected_results
         ]
         structured_results = _query_rows_payload(results)
 
-    total = result.total_results
+    total = result.total
     if output_json:
         items = (
             []
@@ -311,34 +302,34 @@ def _emit_query_command_result(
         if limit is not None and not count_only:
             items = items[:limit]
         param_hints = result.param_hints
-        _emit_json({
-            "results": items,
-            "total_results": total,
-            "limit": result.limit,
-            "truncated": result.truncated,
-            "limit_truncated": getattr(result, "limit_truncated", False),
-            "path_truncated": getattr(result, "path_truncated", False),
-            "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
-            "max_paths": getattr(result, "max_paths", None),
-            "max_paths_per_result": getattr(result, "max_paths_per_result", None),
-            "total_path_count": getattr(result, "total_path_count", None),
-            "retained_path_count": getattr(result, "retained_path_count", None),
-            "steps_executed": result.steps_executed,
-            "result_shape": result.result_shape,
-            "dedupe": result.dedupe,
-            "relationship_state": result.relationship_state,
-            "receipt_id": result.receipt_id,
-            "param_hints": (
-                param_hints.model_dump(mode="python")
-                if hasattr(param_hints, "model_dump")
-                else asdict(param_hints)
-                if param_hints is not None
-                else None
-            ),
-            "policy_summary": _policy_summary_payload(
-                getattr(result, "policy_summary", None)
-            ),
-        })
+        _emit_json(
+            {
+                "items": items,
+                "total": total,
+                "limit": result.limit,
+                "truncated": result.truncated,
+                "limit_truncated": getattr(result, "limit_truncated", False),
+                "path_truncated": getattr(result, "path_truncated", False),
+                "truncation_reasons": list(getattr(result, "truncation_reasons", [])),
+                "max_paths": getattr(result, "max_paths", None),
+                "max_paths_per_result": getattr(result, "max_paths_per_result", None),
+                "total_path_count": getattr(result, "total_path_count", None),
+                "retained_path_count": getattr(result, "retained_path_count", None),
+                "steps_executed": result.steps_executed,
+                "result_shape": result.result_shape,
+                "dedupe": result.dedupe,
+                "relationship_state": result.relationship_state,
+                "receipt_id": result.receipt_id,
+                "param_hints": (
+                    param_hints.model_dump(mode="python")
+                    if hasattr(param_hints, "model_dump")
+                    else asdict(param_hints)
+                    if param_hints is not None
+                    else None
+                ),
+                "policy_summary": _policy_summary_payload(getattr(result, "policy_summary", None)),
+            }
+        )
         return
 
     click.echo(f"{total} result(s), {result.steps_executed} step(s) executed.")
@@ -350,9 +341,7 @@ def _emit_query_command_result(
         else:
             _print_structured_query_rows(structured_results)
         visible_count = (
-            len(entity_results)
-            if result.result_shape == "entity"
-            else len(structured_results)
+            len(entity_results) if result.result_shape == "entity" else len(structured_results)
         )
         click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
     elif result.result_shape == "entity" and not projected_results:
@@ -403,7 +392,7 @@ def _run_query_command(
                     relationship_state=effective_relationship_state,
                     decision_record_id=resolved_decision_record_id,
                 )
-        except CoreError:
+        except (CoreError, ClientCoreError):
             hints = _lookup_query_param_hints_server(
                 client,
                 instance_id,
@@ -411,18 +400,18 @@ def _run_query_command(
             )
             _print_query_param_hints(hints)
             raise
-        projected_results = any("values" in item for item in remote_result.results)
+        projected_results = any("values" in item for item in remote_result.items)
         entity_results = (
-            _entities_from_payload(remote_result.results)
+            _entities_from_payload(remote_result.items)
             if remote_result.result_shape == "entity" and not projected_results
             else []
         )
         structured_results = (
-            list(remote_result.results)
+            list(remote_result.items)
             if remote_result.result_shape != "entity" or projected_results
             else []
         )
-        total = remote_result.total_results
+        total = remote_result.total
         if output_json:
             items = (
                 []
@@ -435,32 +424,34 @@ def _run_query_command(
             )
             if limit is not None and not count_only:
                 items = items[:limit]
-            _emit_json({
-                "results": items,
-                "total_results": total,
-                "limit": remote_result.limit,
-                "truncated": remote_result.truncated,
-                "limit_truncated": getattr(remote_result, "limit_truncated", False),
-                "path_truncated": getattr(remote_result, "path_truncated", False),
-                "truncation_reasons": list(getattr(remote_result, "truncation_reasons", [])),
-                "max_paths": getattr(remote_result, "max_paths", None),
-                "max_paths_per_result": getattr(remote_result, "max_paths_per_result", None),
-                "total_path_count": getattr(remote_result, "total_path_count", None),
-                "retained_path_count": getattr(remote_result, "retained_path_count", None),
-                "steps_executed": remote_result.steps_executed,
-                "result_shape": remote_result.result_shape,
-                "dedupe": remote_result.dedupe,
-                "relationship_state": remote_result.relationship_state,
-                "receipt_id": remote_result.receipt_id,
-                "param_hints": (
-                    remote_result.param_hints.model_dump(mode="python")
-                    if remote_result.param_hints
-                    else None
-                ),
-                "policy_summary": _policy_summary_payload(
-                    getattr(remote_result, "policy_summary", None)
-                ),
-            })
+            _emit_json(
+                {
+                    "items": items,
+                    "total": total,
+                    "limit": remote_result.limit,
+                    "truncated": remote_result.truncated,
+                    "limit_truncated": getattr(remote_result, "limit_truncated", False),
+                    "path_truncated": getattr(remote_result, "path_truncated", False),
+                    "truncation_reasons": list(getattr(remote_result, "truncation_reasons", [])),
+                    "max_paths": getattr(remote_result, "max_paths", None),
+                    "max_paths_per_result": getattr(remote_result, "max_paths_per_result", None),
+                    "total_path_count": getattr(remote_result, "total_path_count", None),
+                    "retained_path_count": getattr(remote_result, "retained_path_count", None),
+                    "steps_executed": remote_result.steps_executed,
+                    "result_shape": remote_result.result_shape,
+                    "dedupe": remote_result.dedupe,
+                    "relationship_state": remote_result.relationship_state,
+                    "receipt_id": remote_result.receipt_id,
+                    "param_hints": (
+                        remote_result.param_hints.model_dump(mode="python")
+                        if remote_result.param_hints
+                        else None
+                    ),
+                    "policy_summary": _policy_summary_payload(
+                        getattr(remote_result, "policy_summary", None)
+                    ),
+                }
+            )
             return
         click.echo(f"{total} result(s), {remote_result.steps_executed} step(s) executed.")
         if count_only:
@@ -501,15 +492,13 @@ def _run_query_command(
         _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
         raise
 
-    results = local_result.results
+    results = local_result.items
     projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
     entity_results = [
-        row
-        for row in results
-        if isinstance(row, EntityInstance) and not projected_results
+        row for row in results if isinstance(row, EntityInstance) and not projected_results
     ]
     structured_results = _query_rows_payload(results)
-    total = local_result.total_results
+    total = local_result.total
     if output_json:
         items = (
             []
@@ -527,30 +516,34 @@ def _run_query_command(
                 else structured_results
             )
         )
-        _emit_json({
-            "results": items,
-            "total_results": total,
-            "limit": local_result.limit,
-            "truncated": local_result.truncated,
-            "limit_truncated": getattr(local_result, "limit_truncated", False),
-            "path_truncated": getattr(local_result, "path_truncated", False),
-            "truncation_reasons": list(getattr(local_result, "truncation_reasons", [])),
-            "max_paths": getattr(local_result, "max_paths", None),
-            "max_paths_per_result": getattr(local_result, "max_paths_per_result", None),
-            "total_path_count": getattr(local_result, "total_path_count", None),
-            "retained_path_count": getattr(local_result, "retained_path_count", None),
-            "steps_executed": local_result.steps_executed,
-            "result_shape": local_result.result_shape,
-            "dedupe": local_result.dedupe,
-            "relationship_state": local_result.relationship_state,
-            "receipt_id": local_result.receipt_id,
-            "param_hints": (
-                asdict(local_result.param_hints)
-                if local_result.param_hints is not None
-                else None
-            ),
-            "policy_summary": local_result.policy_summary if local_result.policy_summary else None,
-        })
+        _emit_json(
+            {
+                "items": items,
+                "total": total,
+                "limit": local_result.limit,
+                "truncated": local_result.truncated,
+                "limit_truncated": getattr(local_result, "limit_truncated", False),
+                "path_truncated": getattr(local_result, "path_truncated", False),
+                "truncation_reasons": list(getattr(local_result, "truncation_reasons", [])),
+                "max_paths": getattr(local_result, "max_paths", None),
+                "max_paths_per_result": getattr(local_result, "max_paths_per_result", None),
+                "total_path_count": getattr(local_result, "total_path_count", None),
+                "retained_path_count": getattr(local_result, "retained_path_count", None),
+                "steps_executed": local_result.steps_executed,
+                "result_shape": local_result.result_shape,
+                "dedupe": local_result.dedupe,
+                "relationship_state": local_result.relationship_state,
+                "receipt_id": local_result.receipt_id,
+                "param_hints": (
+                    asdict(local_result.param_hints)
+                    if local_result.param_hints is not None
+                    else None
+                ),
+                "policy_summary": local_result.policy_summary
+                if local_result.policy_summary
+                else None,
+            }
+        )
         return
     click.echo(f"{total} result(s), {local_result.steps_executed} step(s) executed.")
     if count_only:
@@ -714,13 +707,11 @@ def query_list_cmd(output_json: bool) -> None:
         service_list_queries,
     )
     queries = (
-        result.queries
-        if isinstance(result, contracts.QueryListResult)
-        else cast(list[Any], result)
+        result.items if isinstance(result, contracts.QueryListResult) else cast(list[Any], result)
     )
     payload = [_query_definition_payload(query) for query in queries]
     if output_json:
-        _emit_json({"queries": payload})
+        _emit_json({"items": payload, "total": len(payload)})
         return
     console.print(query_definitions_table(payload))
 
@@ -798,13 +789,15 @@ def stats_cmd(output_json: bool) -> None:
     relationship_counts = result.relationship_counts
     head_snapshot_id = result.head_snapshot_id
     if output_json:
-        _emit_json({
-            "entity_count": entity_count,
-            "edge_count": edge_count,
-            "entity_counts": entity_counts,
-            "relationship_counts": relationship_counts,
-            "head_snapshot_id": head_snapshot_id,
-        })
+        _emit_json(
+            {
+                "entity_count": entity_count,
+                "edge_count": edge_count,
+                "entity_counts": entity_counts,
+                "relationship_counts": relationship_counts,
+                "head_snapshot_id": head_snapshot_id,
+            }
+        )
         return
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
     if head_snapshot_id:
@@ -824,15 +817,18 @@ def sample(entity_type: str, limit: int, output_json: bool) -> None:
         lambda instance: service_sample(instance, entity_type, limit=limit),
     )
     entities = (
-        _entities_from_payload(result.entities)
+        _entities_from_payload(result.items)
         if isinstance(result, contracts.SampleResult)
         else result
     )
     if output_json:
-        _emit_json({
-            "entities": [e.model_dump(mode="python") for e in entities],
-            "entity_type": entity_type,
-        })
+        _emit_json(
+            {
+                "items": [e.model_dump(mode="python") for e in entities],
+                "total": len(entities),
+                "entity_type": entity_type,
+            }
+        )
         return
     console.print(entities_table(entities, entity_type))
 
@@ -865,14 +861,16 @@ def evaluate(limit: int, output_json: bool) -> None:
     constraint_summary = getattr(report, "constraint_summary", {})
 
     if output_json:
-        _emit_json({
-            "findings": findings,
-            "entity_count": entity_count,
-            "edge_count": edge_count,
-            "summary": summary,
-            "quality_summary": quality_summary,
-            "constraint_summary": constraint_summary,
-        })
+        _emit_json(
+            {
+                "findings": findings,
+                "entity_count": entity_count,
+                "edge_count": edge_count,
+                "summary": summary,
+                "quality_summary": quality_summary,
+                "constraint_summary": constraint_summary,
+            }
+        )
         return
 
     click.echo(f"Graph: {entity_count} entities, {edge_count} edges")
@@ -1092,9 +1090,7 @@ def inspect_ontology_cmd(fmt: str) -> None:
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(
-        ["json", "markdown", "mermaid", "mermaid-dependencies", "mermaid-steps"]
-    ),
+    type=click.Choice(["json", "markdown", "mermaid", "mermaid-dependencies", "mermaid-steps"]),
     default="markdown",
     show_default=True,
     help="Output format.",
@@ -1207,8 +1203,10 @@ def inspect_overview_cmd(fmt: str, limit: int) -> None:
     help="Neighbor traversal direction.",
 )
 @click.option(
-    "--relationship", "relationship_type",
-    default=None, help="Optional relationship filter.",
+    "--relationship",
+    "relationship_type",
+    default=None,
+    help="Optional relationship filter.",
 )
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max neighbors to show.")
 @json_option
@@ -1222,6 +1220,7 @@ def inspect_entity_cmd(
     output_json: bool,
 ) -> None:
     """Inspect an entity and its immediate neighbors."""
+
     def _remote_fetch(
         client: CruxibleClient,
         instance_id: str,
@@ -1285,15 +1284,17 @@ def inspect_entity_cmd(
         _local_fetch,
     )
     if output_json:
-        _emit_json({
-            "found": inspect_result.found,
-            "entity_type": inspect_result.entity_type,
-            "entity_id": inspect_result.entity_id,
-            "properties": inspect_result.properties,
-            "metadata": inspect_result.metadata,
-            "neighbors": neighbor_rows,
-            "total_neighbors": inspect_result.total_neighbors,
-        })
+        _emit_json(
+            {
+                "found": inspect_result.found,
+                "entity_type": inspect_result.entity_type,
+                "entity_id": inspect_result.entity_id,
+                "properties": inspect_result.properties,
+                "metadata": inspect_result.metadata,
+                "neighbors": neighbor_rows,
+                "total_neighbors": inspect_result.total_neighbors,
+            }
+        )
         return
     if not inspect_result.found:
         click.echo("Not found.")
@@ -1431,12 +1432,14 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
             return
         entity = result
     if output_json:
-        _emit_json({
-            "entity_type": entity.entity_type,
-            "entity_id": entity.entity_id,
-            "properties": dict(entity.properties),
-            "metadata": dict(entity.metadata),
-        })
+        _emit_json(
+            {
+                "entity_type": entity.entity_type,
+                "entity_id": entity.entity_id,
+                "properties": dict(entity.properties),
+                "metadata": dict(entity.metadata),
+            }
+        )
         return
     console.print(entities_table([entity], entity_type))
 
@@ -1613,15 +1616,11 @@ def analyze_feedback_cmd(
     if payload["quality_check_candidates"]:
         click.echo("Quality check candidates:")
         for candidate in payload["quality_check_candidates"]:
-            click.echo(
-                f"  {candidate['reason_code']}: support={candidate['support_count']}"
-            )
+            click.echo(f"  {candidate['reason_code']}: support={candidate['support_count']}")
     if payload["provider_fix_candidates"]:
         click.echo("Provider fix candidates:")
         for candidate in payload["provider_fix_candidates"]:
-            click.echo(
-                f"  {candidate['reason_code']}: support={candidate['support_count']}"
-            )
+            click.echo(f"  {candidate['reason_code']}: support={candidate['support_count']}")
     if payload["uncoded_feedback_count"]:
         click.echo(f"Uncoded feedback: {payload['uncoded_feedback_count']}")
         for example in payload["uncoded_examples"]:
