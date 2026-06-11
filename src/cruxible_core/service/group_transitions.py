@@ -451,6 +451,8 @@ def _apply_resolved_relationships(
     group_id: str,
     relationships: list[ValidatedRelationship],
     uow: UnitOfWorkProtocol,
+    receipt_id: str | None = None,
+    resolution_id: str | None = None,
 ) -> int:
     if not relationships:
         return 0
@@ -458,7 +460,14 @@ def _apply_resolved_relationships(
     touched_relationships: list[RelationshipInstance] = []
     for validated in relationships:
         relationship = validated.relationship
-        apply_relationship(graph, validated, "group_resolve", f"group:{group_id}")
+        apply_relationship(
+            graph,
+            validated,
+            "group_resolve",
+            f"group:{group_id}",
+            receipt_id=receipt_id,
+            resolution_id=resolution_id,
+        )
         persisted = graph.get_relationship(
             relationship.from_type,
             relationship.from_id,
@@ -553,6 +562,8 @@ def _approve_group(
         group_id=group.group_id,
         relationships=validation.valid_inputs,
         uow=uow,
+        receipt_id=builder.receipt_id,
+        resolution_id=resolution_id,
     )
     _confirm_approval_resolution(
         group_store=uow.groups,

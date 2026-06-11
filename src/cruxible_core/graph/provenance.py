@@ -13,6 +13,7 @@ from pydantic import (
     field_validator,
 )
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
 
@@ -26,6 +27,12 @@ class RelationshipProvenance(BaseModel):
     created_at: datetime | None = None
     last_modified_at: datetime | None = None
     last_modified_by: str | None = None
+    # Write-time correlation, stamped at creation and never rewritten:
+    # edges created before these fields existed keep them null.
+    receipt_id: str | None = None
+    resolution_id: str | None = None
+    created_actor_context: GovernedActorContext | None = None
+    last_modified_actor_context: GovernedActorContext | None = None
 
     @field_validator("created_at", "last_modified_at")
     @classmethod
@@ -44,12 +51,22 @@ SOURCE_REF_BATCH_DIRECT_WRITE = "batch_direct_write"
 CANONICAL_SOURCE_REFS = frozenset({SOURCE_REF_ADD_RELATIONSHIP, SOURCE_REF_BATCH_DIRECT_WRITE})
 
 
-def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
+def make_provenance(
+    source: str,
+    source_ref: str,
+    *,
+    receipt_id: str | None = None,
+    resolution_id: str | None = None,
+    actor_context: GovernedActorContext | None = None,
+) -> RelationshipProvenance:
     """Create complete provenance for a newly written relationship."""
     return RelationshipProvenance(
         source=source,
         source_ref=source_ref,
         created_at=utc_now(),
+        receipt_id=receipt_id,
+        resolution_id=resolution_id,
+        created_actor_context=actor_context,
     )
 
 
@@ -73,12 +90,15 @@ def dump_provenance(provenance: RelationshipProvenance) -> dict[str, Any]:
 def stamp_provenance_modified(
     provenance: RelationshipProvenance,
     actor: str,
+    *,
+    actor_context: GovernedActorContext | None = None,
 ) -> RelationshipProvenance:
     """Return provenance with modification actor and timestamp updated."""
     return provenance.model_copy(
         update={
             "last_modified_at": utc_now(),
             "last_modified_by": actor,
+            "last_modified_actor_context": actor_context,
         }
     )
 

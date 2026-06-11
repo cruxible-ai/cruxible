@@ -2411,7 +2411,18 @@ class TestWorkflowExecutor:
         assert applied.receipt.committed is True
         assert applied.receipt.workflow_mode == "apply"
         assert applied.receipt.head_snapshot_id == applied.head_snapshot_id
-        assert canonical_workflow_instance.load_graph().has_entity("Vendor", "vendor-acme")
+        graph = canonical_workflow_instance.load_graph()
+        assert graph.has_entity("Vendor", "vendor-acme")
+        rel = graph.get_relationship(
+            "Product",
+            "product-acme-widget",
+            "Vendor",
+            "vendor-acme",
+            "product_from_vendor",
+        )
+        assert rel is not None
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.receipt_id == applied.receipt.receipt_id
 
     def test_canonical_apply_does_not_full_save_live_graph(
         self, canonical_workflow_instance: CruxibleInstance

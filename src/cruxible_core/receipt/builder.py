@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from cruxible_core.primitives import new_id
 from cruxible_core.receipt.types import (
     EdgeType,
     EvidenceEdge,
@@ -32,6 +33,10 @@ class ReceiptBuilder:
         execution_options: dict[str, Any] | None = None,
         root_detail: dict[str, Any] | None = None,
     ) -> None:
+        # Pre-allocated so write paths can stamp the creating receipt id into
+        # relationship provenance within the same transaction that persists
+        # the receipt.
+        self._receipt_id = new_id("RCP")
         self._query_name = query_name
         self._parameters = parameters or {}
         self._execution_options = execution_options or {}
@@ -83,6 +88,11 @@ class ReceiptBuilder:
     @property
     def root_id(self) -> str:
         return self._root_id
+
+    @property
+    def receipt_id(self) -> str:
+        """The id the built receipt will carry, available before build()."""
+        return self._receipt_id
 
     def record_entity_lookup(
         self,
@@ -274,6 +284,7 @@ class ReceiptBuilder:
         """Finalize and return the receipt."""
         elapsed_ms = (time.monotonic_ns() - self._start_ns) / 1_000_000
         return Receipt(
+            receipt_id=self._receipt_id,
             query_name=self._query_name,
             parameters=self._parameters,
             execution_options=self._execution_options,

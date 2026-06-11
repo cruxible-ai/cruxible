@@ -892,6 +892,9 @@ class TestBatchDirectWrite:
             "Batch payload establishes the fitment."
         )
         assert relationship.metadata.evidence.evidence_refs[0].source == "roadmap_doc"
+        assert relationship.metadata.provenance is not None
+        assert relationship.metadata.provenance.receipt_id == result.receipt_id
+        assert relationship.metadata.provenance.resolution_id is None
 
         store = initialized_instance.get_receipt_store()
         try:

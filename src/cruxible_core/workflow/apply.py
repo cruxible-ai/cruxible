@@ -428,7 +428,13 @@ def apply_relationship_set(
         )
         if existing is None:
             create_count += 1
-            apply_relationship(graph, validated, "workflow_apply", source_ref)
+            apply_relationship(
+                graph,
+                validated,
+                "workflow_apply",
+                source_ref,
+                receipt_id=receipt_builder.receipt_id if persist_writes else None,
+            )
             if persist_writes:
                 receipt_builder.record_relationship_write(
                     rel.from_type,

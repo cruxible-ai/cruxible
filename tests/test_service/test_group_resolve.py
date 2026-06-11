@@ -259,7 +259,7 @@ class TestApproveBasic:
 
     def test_created_edges_have_provenance(self, instance: CruxibleInstance) -> None:
         group_id = _propose(instance, [_member("BP-1", "V-1")])
-        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
         graph = instance.load_graph()
         rel = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
         assert rel is not None
@@ -267,6 +267,10 @@ class TestApproveBasic:
         assert rel.metadata.provenance is not None
         assert rel.metadata.provenance.source == "group_resolve"
         assert rel.metadata.provenance.source_ref == f"group:{group_id}"
+        assert rel.metadata.provenance.receipt_id == result.receipt_id
+        assert rel.metadata.provenance.receipt_id is not None
+        assert rel.metadata.provenance.resolution_id == result.resolution_id
+        assert rel.metadata.provenance.resolution_id is not None
         assert rel.metadata.assertion.review.status == "approved"
         assert rel.metadata.assertion.review.source == "group"
         assert rel.metadata.assertion.lifecycle.status == "active"

@@ -525,9 +525,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -639,9 +643,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -753,9 +761,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -867,9 +879,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -981,9 +997,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -1095,9 +1115,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -1209,9 +1233,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -1323,9 +1351,13 @@
                 "source_trace_ids_count": 2
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_10>",
+                "resolution_id": "<RESOLUTION_1>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_1>"
               }
@@ -1478,9 +1510,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -1620,9 +1656,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -1759,9 +1799,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -1911,9 +1955,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -2059,9 +2107,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -2203,9 +2255,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -2341,9 +2397,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -2480,9 +2540,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_11>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
               }
@@ -2623,9 +2687,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -2750,9 +2818,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -2877,9 +2949,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -3004,9 +3080,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -3130,9 +3210,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -3257,9 +3341,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -3383,9 +3471,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -3520,9 +3612,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -3649,9 +3745,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -3776,9 +3876,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -3904,9 +4008,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -4055,9 +4163,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -4190,9 +4302,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -4343,9 +4459,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -4478,9 +4598,13 @@
                   "source_trace_ids_count": 2
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_10>",
+                  "resolution_id": "<RESOLUTION_1>",
                   "source": "group_resolve",
                   "source_ref": "group:<GROUP_1>"
                 }
@@ -4639,9 +4763,13 @@
                   "source_trace_ids_count": 0
                 },
                 "provenance": {
+                  "created_actor_context": null,
                   "created_at": "<TIMESTAMP>",
+                  "last_modified_actor_context": null,
                   "last_modified_at": null,
                   "last_modified_by": null,
+                  "receipt_id": "<RECEIPT_11>",
+                  "resolution_id": null,
                   "source": "workflow_apply",
                   "source_ref": "workflow:build_public_kev_reference:apply_reference_state"
                 }
@@ -5340,9 +5468,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5416,9 +5548,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5492,9 +5628,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5568,9 +5708,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5644,9 +5788,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5720,9 +5868,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5796,9 +5948,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5872,9 +6028,13 @@
               },
               "evidence": null,
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -5997,7 +6157,7 @@
                 "rationale": null,
                 "source_group_id": "<GROUP_2>",
                 "source_receipt_ids": [
-                  "<RECEIPT_10>"
+                  "<RECEIPT_13>"
                 ],
                 "source_receipt_ids_count": 1,
                 "source_step_ids": [
@@ -6009,9 +6169,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_14>",
+                "resolution_id": "<RESOLUTION_2>",
                 "source": "group_resolve",
                 "source_ref": "group:<GROUP_2>"
               }
@@ -6132,9 +6296,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6230,9 +6398,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6328,9 +6500,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6426,9 +6602,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6524,9 +6704,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6622,9 +6806,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6720,9 +6908,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }
@@ -6818,9 +7010,13 @@
                 "source_trace_ids_count": 0
               },
               "provenance": {
+                "created_actor_context": null,
                 "created_at": "<TIMESTAMP>",
+                "last_modified_actor_context": null,
                 "last_modified_at": null,
                 "last_modified_by": null,
+                "receipt_id": "<RECEIPT_12>",
+                "resolution_id": null,
                 "source": "workflow_apply",
                 "source_ref": "workflow:build_local_state:apply_local_state"
               }

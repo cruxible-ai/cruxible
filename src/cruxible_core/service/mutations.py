@@ -414,7 +414,13 @@ def service_batch_direct_write(
         touched_relationships = []
         for relationship_item in prepared.relationships:
             edge = relationship_item.relationship
-            apply_relationship(prepared.graph, relationship_item.validated, source, source_ref)
+            apply_relationship(
+                prepared.graph,
+                relationship_item.validated,
+                source,
+                source_ref,
+                receipt_id=builder.receipt_id if builder else None,
+            )
             persisted_relationship = prepared.graph.get_relationship(
                 edge.from_type,
                 edge.from_id,
@@ -724,7 +730,13 @@ def service_add_relationships(
         updated = 0
         touched_relationships = []
         for validated, edge in pending:
-            apply_relationship(graph, validated, source, source_ref)
+            apply_relationship(
+                graph,
+                validated,
+                source,
+                source_ref,
+                receipt_id=builder.receipt_id if builder else None,
+            )
             persisted = graph.get_relationship(
                 edge.from_type,
                 edge.from_id,

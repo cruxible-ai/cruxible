@@ -497,6 +497,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -522,6 +523,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -547,6 +549,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -572,6 +575,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -597,6 +601,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -622,6 +627,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -647,6 +653,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -672,6 +679,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -697,6 +705,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -722,6 +731,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -747,6 +757,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -772,6 +783,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -797,6 +809,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -822,6 +835,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -847,6 +861,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -872,6 +887,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -897,6 +913,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -922,6 +939,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -947,6 +965,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -972,6 +991,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -997,6 +1017,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1022,6 +1043,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1047,6 +1069,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1072,6 +1095,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1097,6 +1121,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1122,6 +1147,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1147,6 +1173,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1172,6 +1199,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1197,6 +1225,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1222,6 +1251,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1247,6 +1277,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1272,6 +1303,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1297,6 +1329,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1322,6 +1355,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1347,6 +1381,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1372,6 +1407,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1397,6 +1433,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1422,6 +1459,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1447,6 +1485,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1472,6 +1511,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1497,6 +1537,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1522,6 +1563,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1547,6 +1589,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1572,6 +1615,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1597,6 +1641,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1622,6 +1667,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1647,6 +1693,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1672,6 +1719,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1697,6 +1745,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1722,6 +1771,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1747,6 +1797,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1772,6 +1823,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1797,6 +1849,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1822,6 +1875,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1847,6 +1901,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1872,6 +1927,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1897,6 +1953,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1922,6 +1979,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1947,6 +2005,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1972,6 +2031,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -1997,6 +2057,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2022,6 +2083,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2047,6 +2109,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2072,6 +2135,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2097,6 +2161,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2122,6 +2187,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2147,6 +2213,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2172,6 +2239,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2197,6 +2265,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2239,6 +2308,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2286,6 +2356,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2333,6 +2404,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2380,6 +2452,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2427,6 +2500,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2474,6 +2548,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2521,6 +2596,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2568,6 +2644,7 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_1>",
             "source": "workflow_apply",
             "source_ref": "workflow:build_local_state:apply_local_state"
           }
@@ -2609,8 +2686,8 @@
             "rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2623,6 +2700,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2666,8 +2745,8 @@
             "rationale": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2680,6 +2759,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2723,8 +2804,8 @@
             "rationale": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2737,6 +2818,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2780,8 +2863,8 @@
             "rationale": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2794,6 +2877,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2837,8 +2922,8 @@
             "rationale": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2851,6 +2936,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2894,8 +2981,8 @@
             "rationale": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2908,6 +2995,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -2951,8 +3040,8 @@
             "rationale": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -2965,6 +3054,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3008,8 +3099,8 @@
             "rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3022,6 +3113,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3065,8 +3158,8 @@
             "rationale": "PHP from PHP matched reference product Php from Php based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3079,6 +3172,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3122,8 +3217,8 @@
             "rationale": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3136,6 +3231,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3179,8 +3276,8 @@
             "rationale": "Mozilla Firefox from Mozilla matched reference product Firefox from Mozilla based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3193,6 +3290,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3236,8 +3335,8 @@
             "rationale": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3250,6 +3349,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3293,8 +3394,8 @@
             "rationale": "Microsoft Office from Microsoft matched reference product Office from Microsoft based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3307,6 +3408,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3350,8 +3453,8 @@
             "rationale": "Windows 10 from Microsoft matched reference product Windows 10 from Microsoft based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3364,6 +3467,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3407,8 +3512,8 @@
             "rationale": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3421,6 +3526,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3464,8 +3571,8 @@
             "rationale": "Java Development Kit from Oracle matched reference product Application Development Framework from Oracle based on vendor and product-name similarity.",
             "source_group_id": "<GROUP_1>",
             "source_receipt_ids": [
-              "<RECEIPT_1>",
-              "<RECEIPT_2>"
+              "<RECEIPT_2>",
+              "<RECEIPT_3>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3478,6 +3585,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_4>",
+            "resolution_id": "<RESOLUTION_1>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_1>"
           }
@@ -3536,14 +3645,14 @@
             "rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3558,6 +3667,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -3618,14 +3729,14 @@
             "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3640,6 +3751,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -3692,14 +3805,14 @@
             "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3714,6 +3827,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -3790,14 +3905,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3812,6 +3927,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -3880,14 +3997,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -3902,6 +4019,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -3986,14 +4105,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4008,6 +4127,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4092,14 +4213,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4114,6 +4235,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4198,14 +4321,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4220,6 +4343,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4288,14 +4413,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4310,6 +4435,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4378,14 +4505,14 @@
             "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4400,6 +4527,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4476,14 +4605,14 @@
             "rationale": "analytics-worker-01 is production asset with unsure exploitability and has no active compensating controls",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4498,6 +4627,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -4926,14 +5057,14 @@
             "rationale": "analytics-worker-01 is production asset with unsure exploitability and has no active compensating controls",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -4948,6 +5079,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -5016,14 +5149,14 @@
             "rationale": "admin-jump-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -5038,6 +5171,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -5090,14 +5225,14 @@
             "rationale": "admin-jump-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -5112,6 +5247,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -5420,14 +5557,14 @@
             "rationale": "legacy-app-01 is production asset with unsure exploitability and has no active compensating controls",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -5442,6 +5579,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -5502,14 +5641,14 @@
             "rationale": "legacy-app-01 is production asset with unsure exploitability and has no active compensating controls",
             "source_group_id": "<GROUP_2>",
             "source_receipt_ids": [
-              "<RECEIPT_3>",
-              "<RECEIPT_4>",
               "<RECEIPT_5>",
               "<RECEIPT_6>",
               "<RECEIPT_7>",
               "<RECEIPT_8>",
               "<RECEIPT_9>",
-              "<RECEIPT_10>"
+              "<RECEIPT_10>",
+              "<RECEIPT_11>",
+              "<RECEIPT_12>"
             ],
             "source_step_ids": [
               "proposal",
@@ -5524,6 +5663,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_13>",
+            "resolution_id": "<RESOLUTION_2>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_2>"
           }
@@ -5559,7 +5700,7 @@
             "evidence_refs": [],
             "source_group_id": "<GROUP_3>",
             "source_receipt_ids": [
-              "<RECEIPT_11>"
+              "<RECEIPT_14>"
             ],
             "source_step_ids": [
               "proposal",
@@ -5569,6 +5710,8 @@
           },
           "provenance": {
             "created_at": "<TIMESTAMP>",
+            "receipt_id": "<RECEIPT_15>",
+            "resolution_id": "<RESOLUTION_3>",
             "source": "group_resolve",
             "source_ref": "group:<GROUP_3>"
           }
@@ -5749,13 +5892,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -5834,13 +5977,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -5919,13 +6062,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6004,13 +6147,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6089,13 +6232,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6174,13 +6317,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6259,13 +6402,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6344,13 +6487,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6429,13 +6572,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6514,13 +6657,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6599,13 +6742,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6684,13 +6827,13 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             },
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_2>",
+              "query_receipt_id": "<RECEIPT_3>",
               "row_shape": "unknown",
               "source_step": "matches"
             }
@@ -6768,7 +6911,7 @@
       ],
       "signature": "sigv1:144816f7a44e8eff038b27a8fdd15f4fe8843cbb81cbb2d0c6084e74580f8280",
       "source_query_receipt_ids": [
-        "<RECEIPT_2>"
+        "<RECEIPT_3>"
       ],
       "source_step_ids": [
         "proposal",
@@ -6779,7 +6922,7 @@
         "<TRACE_2>"
       ],
       "source_workflow_name": "propose_asset_products",
-      "source_workflow_receipt_id": "<RECEIPT_1>",
+      "source_workflow_receipt_id": "<RECEIPT_2>",
       "status": "resolved",
       "suggested_priority": null,
       "thesis_facts": {
@@ -7012,19 +7155,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -7208,19 +7351,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -7372,19 +7515,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -7632,19 +7775,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -7860,19 +8003,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -8152,19 +8295,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -8444,19 +8587,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -8736,19 +8879,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -8964,19 +9107,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -9192,19 +9335,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -9452,19 +9595,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -11120,19 +11263,19 @@
           "source_query_evidence": [
             {
               "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_4>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
-              "query_receipt_id": "<RECEIPT_5>",
-              "row_shape": "unknown",
-              "source_step": "assessments"
-            },
-            {
-              "feedback_addressable": false,
               "query_receipt_id": "<RECEIPT_6>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_7>",
+              "row_shape": "unknown",
+              "source_step": "assessments"
+            },
+            {
+              "feedback_addressable": false,
+              "query_receipt_id": "<RECEIPT_8>",
               "row_shape": "unknown",
               "source_step": "assessments"
             }
@@ -11220,13 +11363,13 @@
       ],
       "signature": "sigv1:01f1ddb3a920c77fbb2199613c018b5f5184d0ff9d230c52f966edbb20efc3bc",
       "source_query_receipt_ids": [
-        "<RECEIPT_4>",
-        "<RECEIPT_5>",
         "<RECEIPT_6>",
         "<RECEIPT_7>",
         "<RECEIPT_8>",
         "<RECEIPT_9>",
-        "<RECEIPT_10>"
+        "<RECEIPT_10>",
+        "<RECEIPT_11>",
+        "<RECEIPT_12>"
       ],
       "source_step_ids": [
         "proposal",
@@ -11239,7 +11382,7 @@
         "<TRACE_4>"
       ],
       "source_workflow_name": "propose_asset_exposure",
-      "source_workflow_receipt_id": "<RECEIPT_3>",
+      "source_workflow_receipt_id": "<RECEIPT_5>",
       "status": "resolved",
       "suggested_priority": null,
       "thesis_facts": {
@@ -11416,7 +11559,7 @@
       ],
       "source_trace_ids": [],
       "source_workflow_name": "propose_vulnerability_classification",
-      "source_workflow_receipt_id": "<RECEIPT_11>",
+      "source_workflow_receipt_id": "<RECEIPT_14>",
       "status": "resolved",
       "suggested_priority": null,
       "thesis_facts": {
@@ -11886,7 +12029,7 @@
         "signature": "sigv1:01f1ddb3a920c77fbb2199613c018b5f5184d0ff9d230c52f966edbb20efc3bc"
       },
       "query_name": "",
-      "receipt_id": "<RECEIPT_12>"
+      "receipt_id": "<RECEIPT_16>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11906,7 +12049,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_asset_exposure/control_mitigations",
-      "receipt_id": "<RECEIPT_10>"
+      "receipt_id": "<RECEIPT_12>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11914,7 +12057,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_asset_exposure/vulnerability_classifications",
-      "receipt_id": "<RECEIPT_9>"
+      "receipt_id": "<RECEIPT_11>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11922,7 +12065,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_exposure_reconciliation/accepted_exposures",
-      "receipt_id": "<RECEIPT_14>"
+      "receipt_id": "<RECEIPT_17>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11930,7 +12073,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_exposure_reconciliation/asset_products",
-      "receipt_id": "<RECEIPT_15>"
+      "receipt_id": "<RECEIPT_18>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11938,7 +12081,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_exposure_reconciliation/remediated_edges",
-      "receipt_id": "<RECEIPT_16>"
+      "receipt_id": "<RECEIPT_19>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11946,7 +12089,7 @@
       "operation_type": "query",
       "parameters": {},
       "query_name": "workflow:propose_exposure_reconciliation/vulnerability_products",
-      "receipt_id": "<RECEIPT_17>"
+      "receipt_id": "<RECEIPT_20>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11954,7 +12097,7 @@
       "operation_type": "workflow",
       "parameters": {},
       "query_name": "propose_asset_exposure",
-      "receipt_id": "<RECEIPT_3>"
+      "receipt_id": "<RECEIPT_5>"
     },
     {
       "created_at": "<TIMESTAMP>",
@@ -11962,7 +12105,7 @@
       "operation_type": "workflow",
       "parameters": {},
       "query_name": "propose_exposure_reconciliation",
-      "receipt_id": "<RECEIPT_18>"
+      "receipt_id": "<RECEIPT_21>"
     }
   ],
   "state": {

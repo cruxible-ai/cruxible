@@ -193,6 +193,13 @@ class TestReceiptBuilder:
         receipt = builder.build(results=[])
         assert receipt.receipt_id.startswith("RCP-")
 
+    def test_receipt_id_preallocated_and_stable_across_build(self):
+        builder = ReceiptBuilder(query_name="q", parameters={})
+        preallocated = builder.receipt_id
+        assert preallocated.startswith("RCP-")
+        receipt = builder.build(results=[])
+        assert receipt.receipt_id == preallocated
+
     def test_duration_tracked(self):
         builder = ReceiptBuilder(query_name="q", parameters={})
         receipt = builder.build(results=[])

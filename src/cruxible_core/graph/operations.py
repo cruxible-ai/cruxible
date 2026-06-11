@@ -17,6 +17,7 @@ from typing import Any
 from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipReviewState,
@@ -194,12 +195,18 @@ def apply_relationship(
     validated: ValidatedRelationship,
     source: str,
     source_ref: str,
+    *,
+    receipt_id: str | None = None,
+    resolution_id: str | None = None,
+    actor_context: GovernedActorContext | None = None,
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
     New edges get metadata provenance stamped via make_provenance(source, source_ref)
-    and a default assertion. Updated edges preserve existing metadata while stamping
-    provenance modification fields when provenance exists.
+    and a default assertion, including the creating receipt_id / resolution_id /
+    actor_context when supplied. Updated edges preserve existing metadata while
+    stamping provenance modification fields when provenance exists; creation-time
+    correlation fields are never rewritten.
     """
     rel = validated.relationship
     if validated.is_update:
@@ -218,7 +225,11 @@ def apply_relationship(
             if provenance is not None:
                 metadata = metadata.model_copy(
                     update={
-                        "provenance": stamp_provenance_modified(provenance, source),
+                        "provenance": stamp_provenance_modified(
+                            provenance,
+                            source,
+                            actor_context=actor_context,
+                        ),
                     }
                 )
             if incoming_evidence is not None:
@@ -236,7 +247,13 @@ def apply_relationship(
     else:
         incoming_evidence = rel.metadata.evidence
         rel.metadata = RelationshipMetadata(
-            provenance=make_provenance(source, source_ref),
+            provenance=make_provenance(
+                source,
+                source_ref,
+                receipt_id=receipt_id,
+                resolution_id=resolution_id,
+                actor_context=actor_context,
+            ),
             assertion=_initial_assertion(source),
             evidence=incoming_evidence,
         )
