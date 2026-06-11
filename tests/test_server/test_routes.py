@@ -1280,7 +1280,7 @@ def test_add_relationship_stamps_http_api_provenance(
     assert lookup.status_code == 200
     metadata = lookup.json()["metadata"]
     assert metadata["provenance"]["source"] == "http_api"
-    assert metadata["provenance"]["source_ref"] == "cruxible_add_relationship"
+    assert metadata["provenance"]["source_ref"] == "add_relationship"
     assert metadata["evidence"]["rationale"] == "Accepted direct source-backed assertion."
     assert metadata["evidence"]["evidence_refs"] == [
         {
@@ -1393,7 +1393,7 @@ def test_batch_direct_write_route_dry_run_and_apply(
     )
     assert lookup.status_code == 200
     metadata = lookup.json()["metadata"]
-    assert metadata["provenance"]["source_ref"] == "cruxible_batch_direct_write"
+    assert metadata["provenance"]["source_ref"] == "batch_direct_write"
     assert metadata["evidence"]["evidence_refs"][0]["source"] == "roadmap_doc"
 
 

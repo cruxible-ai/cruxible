@@ -22,6 +22,10 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.graph.provenance import (
+    SOURCE_REF_ADD_RELATIONSHIP,
+    SOURCE_REF_BATCH_DIRECT_WRITE,
+)
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -276,7 +280,7 @@ def add_relationship_cmd(
                 )
             ],
             source="cli_add",
-            source_ref="add-relationship",
+            source_ref=SOURCE_REF_ADD_RELATIONSHIP,
             dry_run=dry_run,
         ),
         allow_local=False,
@@ -323,7 +327,7 @@ def batch_direct_write_cmd(
             _contract_batch_payload_to_service(payload),
             dry_run=dry_run,
             source="cli_batch_direct_write",
-            source_ref="batch-direct-write",
+            source_ref=SOURCE_REF_BATCH_DIRECT_WRITE,
         ),
         allow_local=False,
         command_name="batch-direct-write",

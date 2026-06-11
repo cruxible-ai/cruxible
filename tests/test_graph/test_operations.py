@@ -165,9 +165,7 @@ class TestValidateRelationship:
                 {"confidence": "high"},
             )
 
-    def test_relationship_metadata_keys_are_rejected_as_domain_properties(
-        self, config, graph
-    ):
+    def test_relationship_metadata_keys_are_rejected_as_domain_properties(self, config, graph):
         with pytest.raises(DataValidationError, match="unexpected property '_assertion'"):
             validate_relationship(
                 config,
@@ -288,7 +286,7 @@ relationships:
             "confidence": 0.5,
             "note": "verified manually",
         }
-        apply_relationship(graph, validated, "cli_add", "add-relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship")
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel is not None
         assert rel.properties["confidence"] == 0.5
@@ -385,14 +383,14 @@ class TestApplyRelationship:
             "V1",
             {"confidence": 0.9},
         )
-        apply_relationship(graph, validated, "mcp_add", "cruxible_add_relationship")
+        apply_relationship(graph, validated, "mcp_add", "add_relationship")
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel is not None
         assert rel.properties == {"confidence": 0.9}
         prov = rel.metadata.provenance
         assert prov is not None
         assert prov.source == "mcp_add"
-        assert prov.source_ref == "cruxible_add_relationship"
+        assert prov.source_ref == "add_relationship"
         assert prov.created_at is not None
         assert rel.metadata.assertion.review.status == "unreviewed"
         assert rel.metadata.assertion.lifecycle.status == "active"
@@ -408,9 +406,7 @@ class TestApplyRelationship:
                 to_type="Vehicle",
                 to_id="V1",
                 properties={"confidence": 0.5},
-                metadata=RelationshipMetadata(
-                    provenance=make_provenance("ingest", "fitments")
-                ),
+                metadata=RelationshipMetadata(provenance=make_provenance("ingest", "fitments")),
             )
         )
         original_prov = graph.get_relationship(
@@ -430,7 +426,7 @@ class TestApplyRelationship:
             {"confidence": 0.9},
         )
         assert validated.is_update is True
-        apply_relationship(graph, validated, "cli_add", "add-relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship")
 
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel.properties["confidence"] == 0.9
@@ -455,9 +451,9 @@ class TestApplyRelationship:
             "V1",
             {"confidence": 0.9},
         )
-        apply_relationship(graph, validated, "cli_add", "add-relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship")
         rel = graph.get_relationship("Part", "P2", "Vehicle", "V1", "fits")
         prov = rel.metadata.provenance
         assert prov is not None
         assert prov.source == "cli_add"
-        assert prov.source_ref == "add-relationship"
+        assert prov.source_ref == "add_relationship"

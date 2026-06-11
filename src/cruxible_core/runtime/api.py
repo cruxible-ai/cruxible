@@ -11,6 +11,10 @@ from pydantic import BaseModel
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.provenance import (
+    SOURCE_REF_ADD_RELATIONSHIP,
+    SOURCE_REF_BATCH_DIRECT_WRITE,
+)
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -1642,7 +1646,7 @@ def add_relationships(
         relationships,
         dry_run=dry_run,
         provenance_source="mcp_add",
-        provenance_source_ref="cruxible_add_relationship",
+        provenance_source_ref=SOURCE_REF_ADD_RELATIONSHIP,
     )
 
 
@@ -1715,7 +1719,7 @@ def batch_direct_write(
     *,
     dry_run: bool = False,
     provenance_source: str = "mcp_add",
-    provenance_source_ref: str = "cruxible_batch_direct_write",
+    provenance_source_ref: str = SOURCE_REF_BATCH_DIRECT_WRITE,
 ) -> contracts.BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
     check_permission("cruxible_add_relationship", instance_id=instance_id)

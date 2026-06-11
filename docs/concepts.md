@@ -172,6 +172,14 @@ metadata stores assertion review/lifecycle state and provenance separately from
 domain properties; feedback and group resolution update that metadata rather
 than writing domain fields.
 
+Provenance uses a two-part vocabulary: `source` names the channel that wrote
+the edge (`cli_add`, `http_api`, `mcp_add`, `group_resolve`, workflow apply
+sources), and `source_ref` names the operation in snake_case operation
+vocabulary (`add_relationship`, `batch_direct_write`) — never a surface
+spelling, so command or tool renames cannot leak into stored provenance.
+Provenance is historical record: values written by earlier versions are never
+rewritten.
+
 ## Named Queries
 
 Named queries are deterministic read surfaces over the graph. Each query has an

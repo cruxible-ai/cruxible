@@ -37,6 +37,13 @@ class RelationshipProvenance(BaseModel):
         return format_datetime(value)
 
 
+# Canonical source_ref operation vocabulary: snake_case operation names,
+# never surface spellings (source carries the channel). Frozen at 0.2.
+SOURCE_REF_ADD_RELATIONSHIP = "add_relationship"
+SOURCE_REF_BATCH_DIRECT_WRITE = "batch_direct_write"
+CANONICAL_SOURCE_REFS = frozenset({SOURCE_REF_ADD_RELATIONSHIP, SOURCE_REF_BATCH_DIRECT_WRITE})
+
+
 def make_provenance(source: str, source_ref: str) -> RelationshipProvenance:
     """Create complete provenance for a newly written relationship."""
     return RelationshipProvenance(
@@ -85,6 +92,9 @@ def provenance_group_id(provenance: RelationshipProvenance) -> str | None:
 
 
 __all__ = [
+    "CANONICAL_SOURCE_REFS",
+    "SOURCE_REF_ADD_RELATIONSHIP",
+    "SOURCE_REF_BATCH_DIRECT_WRITE",
     "RelationshipProvenance",
     "dump_provenance",
     "load_provenance",

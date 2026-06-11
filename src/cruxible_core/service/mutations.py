@@ -19,6 +19,7 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
+from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
@@ -350,7 +351,7 @@ def service_batch_direct_write(
     *,
     dry_run: bool = False,
     source: str = "batch_direct_write",
-    source_ref: str = "batch-direct-write",
+    source_ref: str = SOURCE_REF_BATCH_DIRECT_WRITE,
 ) -> BatchDirectWriteResult:
     """Validate or apply one direct entity/relationship write payload."""
     check_upstream_type_ownership(

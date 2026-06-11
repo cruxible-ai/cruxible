@@ -1,0 +1,142 @@
+"""Contract-freeze guardrails: pin the 0.2 public surface so drift fails CI.
+
+The client model shapes are pinned by tests/test_client/test_contract_snapshot.py;
+these tests pin everything around them — the HTTP surface, the envelope
+conventions, the provenance vocabulary, and the deliberately exempt receipt
+shape — per docs/dev/api-consistency-pass-0.2.md.
+"""
+
+from __future__ import annotations
+
+import inspect
+import re
+from pathlib import Path
+
+import pytest
+from pydantic import BaseModel
+from tests.support.http_surface import (
+    generate_http_surface_manifest,
+    load_http_surface_snapshot,
+)
+
+from cruxible_client import contracts
+from cruxible_core.graph.provenance import (
+    CANONICAL_SOURCE_REFS,
+    SOURCE_REF_ADD_RELATIONSHIP,
+    SOURCE_REF_BATCH_DIRECT_WRITE,
+)
+from cruxible_core.receipt.types import Receipt
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SURFACE_SNAPSHOT_PATH = REPO_ROOT / "tests/goldens/http_surface/http_surface_snapshot.json"
+
+ENVELOPE_FIELDS = {"total", "limit", "offset", "truncated"}
+
+# Composite documents and inputs that legitimately carry list fields without
+# being list endpoints (convention 1 exemption + write-side inputs).
+ENVELOPE_EXEMPT_MODELS = {
+    "BatchDirectWritePayload",  # write-side input payload
+}
+
+
+def test_http_surface_snapshot_is_current() -> None:
+    snapshot = load_http_surface_snapshot(SURFACE_SNAPSHOT_PATH)
+    current = generate_http_surface_manifest()
+
+    if current == snapshot:
+        return
+
+    added = sorted(set(current) - set(snapshot))
+    removed = sorted(set(snapshot) - set(current))
+    changed = sorted(
+        path for path in set(snapshot) & set(current) if snapshot[path] != current[path]
+    )
+    pytest.fail(
+        "HTTP surface drifted from the frozen snapshot. Run "
+        "`uv run python scripts/update_http_surface_snapshot.py` and review the diff.\n"
+        f"Added paths: {added}\nRemoved paths: {removed}\nChanged paths: {changed}"
+    )
+
+
+def test_every_list_contract_carries_the_envelope() -> None:
+    """Any contract model exposing a list `items` field must speak the envelope."""
+    offenders: list[str] = []
+    for name, model in inspect.getmembers(contracts, inspect.isclass):
+        if not (isinstance(model, type) and issubclass(model, BaseModel)):
+            continue
+        if name in ENVELOPE_EXEMPT_MODELS:
+            continue
+        fields = model.model_fields
+        if "items" not in fields:
+            continue
+        missing = ENVELOPE_FIELDS - set(fields)
+        if missing:
+            offenders.append(f"{name} missing {sorted(missing)}")
+    assert offenders == [], (
+        "List-shaped contract models must carry the standard envelope "
+        f"(items/total/limit/offset/truncated): {offenders}"
+    )
+
+
+def test_provenance_source_refs_are_operation_vocabulary() -> None:
+    """source_ref values are snake_case operation names, never surface spellings."""
+    assert SOURCE_REF_ADD_RELATIONSHIP == "add_relationship"
+    assert SOURCE_REF_BATCH_DIRECT_WRITE == "batch_direct_write"
+    for ref in CANONICAL_SOURCE_REFS:
+        assert ref == ref.lower()
+        assert "-" not in ref and " " not in ref and not ref.startswith("cruxible_")
+
+
+def test_receipt_shape_is_pinned_as_exempt() -> None:
+    """Receipts are audit documents, deliberately exempt from the envelope rename.
+
+    `results` (not `items`) is the receipt's own stable vocabulary; see the
+    Deferred section of docs/dev/api-consistency-pass-0.2.md. Changing this set
+    is a breaking change to persisted artifacts and requires its own decision.
+    """
+    assert sorted(Receipt.model_fields.keys()) == [
+        "committed",
+        "created_at",
+        "duration_ms",
+        "edges",
+        "execution_options",
+        "head_snapshot_id",
+        "nodes",
+        "operation_type",
+        "parameters",
+        "query_name",
+        "receipt_id",
+        "results",
+        "workflow_mode",
+    ]
+
+
+def test_runtime_write_defaults_use_canonical_source_refs() -> None:
+    """Every default provenance ref in the runtime API is a canonical constant."""
+    from cruxible_core.runtime import api
+
+    for fn_name in ("batch_direct_write",):
+        params = inspect.signature(getattr(api, fn_name)).parameters
+        default = params["provenance_source_ref"].default
+        assert default in CANONICAL_SOURCE_REFS, (
+            f"api.{fn_name} defaults provenance_source_ref={default!r}, "
+            "which is not in the canonical vocabulary"
+        )
+
+
+def test_no_retired_source_ref_spellings_in_source() -> None:
+    """Retired surface-spelled refs must not reappear in provenance contexts.
+
+    The cruxible_-prefixed tool names stay legitimate as permission/tool
+    identifiers; only source_ref assignments are scanned.
+    """
+    pattern = re.compile(
+        r"source_ref[^\n=]*=\s*"
+        r"\"(cruxible_add_relationship|cruxible_batch_direct_write"
+        r"|add-relationship|batch-direct-write)\""
+    )
+    offenders: list[str] = []
+    for path in (REPO_ROOT / "src").rglob("*.py"):
+        for match in pattern.finditer(path.read_text()):
+            offenders.append(f"{path.relative_to(REPO_ROOT)}: {match.group(0)}")
+    assert offenders == [], f"Retired provenance spellings found: {offenders}"

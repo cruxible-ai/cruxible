@@ -5,6 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_core.graph.provenance import (
+    SOURCE_REF_ADD_RELATIONSHIP,
+    SOURCE_REF_BATCH_DIRECT_WRITE,
+)
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     AddConstraintRequest,
@@ -42,7 +46,7 @@ async def add_relationships(
         relationships=req.relationships,
         dry_run=req.dry_run,
         provenance_source="http_api",
-        provenance_source_ref="cruxible_add_relationship",
+        provenance_source_ref=SOURCE_REF_ADD_RELATIONSHIP,
     )
 
 
@@ -60,7 +64,7 @@ async def batch_direct_write(
         payload=req.payload,
         dry_run=req.dry_run,
         provenance_source="http_api",
-        provenance_source_ref="cruxible_batch_direct_write",
+        provenance_source_ref=SOURCE_REF_BATCH_DIRECT_WRITE,
     )
 
 
