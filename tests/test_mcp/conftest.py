@@ -179,6 +179,7 @@ class GovernedLocalClient:
         query_name: str,
         params: dict,
         limit: int | None = None,
+        offset: int = 0,
         decision_record_id: str | None = None,
     ):
         return api.query(
@@ -186,6 +187,7 @@ class GovernedLocalClient:
             query_name,
             params,
             limit=limit,
+            offset=offset,
             decision_record_id=decision_record_id,
             surface="mcp",
         )

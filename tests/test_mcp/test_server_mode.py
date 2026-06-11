@@ -18,7 +18,7 @@ def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: 
 
 def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
-        def query(self, instance_id, query_name, params, limit=None):
+        def query(self, instance_id, query_name, params, limit=None, offset=0):
             assert instance_id == "inst_123"
             assert query_name == "parts_for_vehicle"
             assert params == {"vehicle_id": "V-1"}

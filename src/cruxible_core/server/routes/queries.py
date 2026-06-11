@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
@@ -20,6 +20,10 @@ from cruxible_core.server.request_models import (
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["queries"])
+
+# Query-string keys owned by the view surface itself; everything else is
+# forwarded to the named query as a string-valued parameter.
+VIEW_RESERVED_QUERY_KEYS = frozenset({"limit", "offset", "relationship_state"})
 
 
 def _parse_property_filter(property_filter: str | None) -> dict[str, Any] | None:
@@ -42,8 +46,41 @@ async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResul
         query_name=req.query_name,
         params=req.params,
         limit=req.limit,
+        offset=req.offset,
         relationship_state=req.relationship_state,
         decision_record_id=req.decision_record_id,
+        surface="http",
+    )
+
+
+@router.get("/{instance_id}/views/{query_name}", response_model=contracts.QueryToolResult)
+async def view(
+    instance_id: str,
+    query_name: str,
+    request: Request,
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
+    relationship_state: contracts.QueryRelationshipState | None = None,
+) -> contracts.QueryToolResult:
+    """GET shim over named-query execution for read-model consumers.
+
+    Non-reserved query-string keys are forwarded to the named query as
+    string-valued parameters; results use the standard list envelope with
+    deterministic ordering, so ``offset`` windows are stable per snapshot.
+    """
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    params = {
+        key: value
+        for key, value in request.query_params.items()
+        if key not in VIEW_RESERVED_QUERY_KEYS
+    }
+    return api.query(
+        instance_id=resolved_instance_id,
+        query_name=query_name,
+        params=params,
+        limit=limit,
+        offset=offset,
+        relationship_state=relationship_state,
         surface="http",
     )
 

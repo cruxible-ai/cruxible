@@ -163,6 +163,7 @@ def register_tools(server: FastMCP) -> list[str]:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        offset: int = 0,
         relationship_state: contracts.QueryRelationshipState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
@@ -179,12 +180,15 @@ def register_tools(server: FastMCP) -> list[str]:
 
         Use `limit` to cap the number of returned results and omit
         the inline receipt (fetch it later via `cruxible_receipt`).
+        Use `offset` with `limit` to request later pages; ordering is
+        deterministic per snapshot.
         """
         return handlers.handle_query(
             instance_id,
             query_name,
             params,
             limit=limit,
+            offset=offset,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
         )

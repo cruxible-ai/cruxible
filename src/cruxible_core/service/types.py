@@ -198,6 +198,7 @@ class QueryServiceResult:
     limit: int | None
     truncated: bool
     steps_executed: int
+    offset: int = 0
     limit_truncated: bool = False
     path_truncated: bool = False
     truncation_reasons: list[str] = field(default_factory=list)

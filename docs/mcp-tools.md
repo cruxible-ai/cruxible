@@ -238,7 +238,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Run a named query and return results plus a receipt. `params` must include the primary-key field of the query's entry_point entity type (e.g. if entry_point is Vehicle and its primary key is vehicle_id, pass {"vehicle_id": "V-123"}). Use `cruxible_schema` to find primary key fields. `receipt_id` is also promoted to top-level for follow-up tools. After querying, use `cruxible_receipt` to inspect the traversal proof showing exactly how results were derived. Use `limit` to cap the number of returned results and omit the inline receipt (fetch it later via `cruxible_receipt`).
+**Purpose:** Run a named query and return results plus a receipt. `params` must include the primary-key field of the query's entry_point entity type (e.g. if entry_point is Vehicle and its primary key is vehicle_id, pass {"vehicle_id": "V-123"}). Use `cruxible_schema` to find primary key fields. `receipt_id` is also promoted to top-level for follow-up tools. After querying, use `cruxible_receipt` to inspect the traversal proof showing exactly how results were derived. Use `limit` to cap the number of returned results and omit the inline receipt (fetch it later via `cruxible_receipt`). Use `offset` with `limit` to request later pages; ordering is deterministic per snapshot.
 
 **Arguments:**
 
@@ -248,6 +248,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | `query_name` | yes | string |  |
 | `params` | no | object | null |  |
 | `limit` | no | integer | null |  |
+| `offset` | no | integer | Number of results to skip before the returned window. |
 | `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
 | `decision_record_id` | no | string | null |  |
 

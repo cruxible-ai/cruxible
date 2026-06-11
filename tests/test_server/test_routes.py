@@ -340,6 +340,132 @@ def test_init_then_seed_then_query_round_trip(
     assert "evaluation" in lint_payload
 
 
+def test_view_route_runs_named_query_with_string_params(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    run = app_client.post(
+        f"/api/v1/{instance_id}/queries/run",
+        json={
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+        },
+    )
+    view = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX"},
+    )
+
+    assert view.status_code == 200
+    payload = view.json()
+    assert payload["total"] == 2
+    assert payload["offset"] == 0
+    assert payload["items"] == run.json()["items"]
+    assert payload["receipt_id"]
+
+    receipt = app_client.get(f"/api/v1/{instance_id}/receipts/{payload['receipt_id']}")
+    assert receipt.status_code == 200
+
+
+def test_view_route_windows_results_deterministically(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    full = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX"},
+    ).json()
+    first = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX", "limit": 1, "offset": 0},
+    ).json()
+    second = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX", "limit": 1, "offset": 1},
+    ).json()
+
+    assert full["total"] == 2
+    assert [first["items"][0], second["items"][0]] == full["items"]
+    assert first["offset"] == 0
+    assert first["truncated"] is True
+    assert second["offset"] == 1
+    assert second["truncated"] is False
+    assert first["total"] == second["total"] == 2
+
+    beyond = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX", "limit": 1, "offset": 10},
+    ).json()
+    assert beyond["items"] == []
+    assert beyond["truncated"] is False
+    assert beyond["total"] == 2
+
+
+def test_view_route_rejects_unknown_query_with_error_envelope(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.get(f"/api/v1/{instance_id}/views/no_such_query")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["error_type"] == "QueryNotFoundError"
+    assert "no_such_query" in body["message"]
+
+
+def test_view_route_validates_reserved_pagination_params(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    bad_offset = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX", "offset": -1},
+    )
+    assert bad_offset.status_code == 422
+    assert bad_offset.json()["error_type"] == "RequestValidationError"
+
+    bad_limit = app_client.get(
+        f"/api/v1/{instance_id}/views/parts_for_vehicle",
+        params={"vehicle_id": "V-2024-CIVIC-EX", "limit": 0},
+    )
+    assert bad_limit.status_code == 422
+    assert bad_limit.json()["error_type"] == "RequestValidationError"
+
+
+def test_query_run_route_accepts_offset(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    second_page = app_client.post(
+        f"/api/v1/{instance_id}/queries/run",
+        json={
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+    assert second_page.status_code == 200
+    payload = second_page.json()
+    assert payload["offset"] == 1
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 1
+    assert payload["truncated"] is False
+
+
 def test_inline_query_route_executes_without_persisting_config(
     app_client: TestClient,
     server_project: Path,

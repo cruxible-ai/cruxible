@@ -136,6 +136,7 @@ class CruxibleClient:
         query_name: str,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
+        offset: int = 0,
         relationship_state: contracts.QueryRelationshipState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
@@ -145,9 +146,41 @@ class CruxibleClient:
                 "query_name": query_name,
                 "params": params,
                 "limit": limit,
+                "offset": offset,
                 "relationship_state": relationship_state,
                 "decision_record_id": decision_record_id,
             },
+        )
+        return self._parse_model(response, contracts.QueryToolResult)
+
+    def view(
+        self,
+        instance_id: str,
+        query_name: str,
+        params: dict[str, str] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        relationship_state: contracts.QueryRelationshipState | None = None,
+    ) -> contracts.QueryToolResult:
+        """Run a named query through the GET /views read-model shim.
+
+        View query parameters are string-valued; ``limit``, ``offset``, and
+        ``relationship_state`` are reserved view keys and must not appear in
+        ``params``.
+        """
+        reserved = {"limit", "offset", "relationship_state"} & set(params or {})
+        if reserved:
+            raise ValueError(f"params may not use reserved view keys: {sorted(reserved)}")
+        query_params: dict[str, Any] = dict(params or {})
+        if limit is not None:
+            query_params["limit"] = limit
+        if offset:
+            query_params["offset"] = offset
+        if relationship_state is not None:
+            query_params["relationship_state"] = relationship_state
+        response = self._client.get(
+            f"/api/v1/{instance_id}/views/{query_name}",
+            params=query_params,
         )
         return self._parse_model(response, contracts.QueryToolResult)
 

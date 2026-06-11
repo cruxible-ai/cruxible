@@ -160,13 +160,16 @@ def service_query_surface(
     params: dict[str, Any],
     *,
     limit: int | None = None,
+    offset: int = 0,
     relationship_state: QueryRelationshipState | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
-    """Execute a named query and apply caller-facing result truncation."""
+    """Execute a named query and apply caller-facing result windowing."""
     surface_limit = limit
     if surface_limit is not None and surface_limit < 1:
         raise ConfigError("limit must be a positive integer")
+    if offset < 0:
+        raise ConfigError("offset must be a non-negative integer")
 
     result = service_query(
         instance,
@@ -175,7 +178,7 @@ def service_query_surface(
         relationship_state=relationship_state,
         context=context,
     )
-    return _query_result_with_response_limit(result, surface_limit=surface_limit)
+    return _query_result_with_response_limit(result, surface_limit=surface_limit, offset=offset)
 
 
 def service_query_inline_surface(
@@ -945,11 +948,13 @@ def _apply_response_limit(
     result: QueryServiceResult,
     *,
     surface_limit: int | None,
+    offset: int = 0,
 ) -> tuple[list[Any], int | None, bool, bool]:
-    visible = result.items
+    windowed = result.items[offset:] if offset else result.items
+    visible = windowed
     response_truncated = False
-    if surface_limit is not None and len(result.items) > surface_limit:
-        visible = result.items[:surface_limit]
+    if surface_limit is not None and len(windowed) > surface_limit:
+        visible = windowed[:surface_limit]
         response_truncated = True
     query_limit = result.limit
     limits = [value for value in (query_limit, surface_limit) if value is not None]
@@ -961,15 +966,18 @@ def _query_result_with_response_limit(
     result: QueryServiceResult,
     *,
     surface_limit: int | None,
+    offset: int = 0,
 ) -> QueryServiceResult:
     visible, effective_limit, truncated, response_truncated = _apply_response_limit(
         result,
         surface_limit=surface_limit,
+        offset=offset,
     )
     return replace(
         result,
         items=visible,
         limit=effective_limit,
+        offset=offset,
         truncated=truncated,
         limit_truncated=result.limit_truncated or response_truncated,
         truncation_reasons=_merge_truncation_reasons(

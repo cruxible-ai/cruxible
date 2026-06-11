@@ -157,6 +157,82 @@ def test_query_inline_uses_expected_route_and_payload():
     }
 
 
+def test_view_uses_expected_route_and_query_string():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "items": [],
+                "receipt_id": "RCP-view",
+                "receipt": None,
+                "total": 0,
+                "limit": 25,
+                "offset": 25,
+                "truncated": False,
+                "steps_executed": 0,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.view(
+        "inst_123",
+        "review_queue",
+        params={"work_item_id": "wi-1"},
+        limit=25,
+        offset=25,
+        relationship_state="reviewable",
+    )
+
+    assert result.receipt_id == "RCP-view"
+    assert result.offset == 25
+    assert captured == {
+        "path": "/api/v1/inst_123/views/review_queue",
+        "params": {
+            "work_item_id": "wi-1",
+            "limit": "25",
+            "offset": "25",
+            "relationship_state": "reviewable",
+        },
+    }
+
+
+def test_view_rejects_reserved_param_keys():
+    client = _build_client(lambda request: httpx.Response(500))
+
+    with pytest.raises(ValueError, match="reserved view keys"):
+        client.view("inst_123", "review_queue", params={"limit": "10"})
+
+
+def test_query_sends_offset_in_payload():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "items": [],
+                "receipt_id": None,
+                "receipt": None,
+                "total": 0,
+                "limit": 10,
+                "offset": 10,
+                "truncated": False,
+                "steps_executed": 0,
+            },
+        )
+
+    client = _build_client(handler)
+    client.query("inst_123", "parts_for_vehicle", {"vehicle_id": "V-1"}, limit=10, offset=10)
+
+    assert captured["payload"]["offset"] == 10
+    assert captured["payload"]["limit"] == 10
+
+
 def test_batch_direct_write_uses_expected_route_and_payload():
     captured: dict[str, Any] = {}
 

@@ -296,6 +296,63 @@ class TestQuery:
                 limit=0,
             )
 
+    def test_surface_query_offset_windows_are_disjoint_and_ordered(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        full = service_query_surface(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+        )
+        assert full.total >= 2
+
+        pages = [
+            service_query_surface(
+                populated_instance,
+                "parts_for_vehicle",
+                {"vehicle_id": "V-2024-CIVIC-EX"},
+                limit=1,
+                offset=index,
+            )
+            for index in range(full.total)
+        ]
+
+        assert [page.items[0] for page in pages] == full.items
+        for index, page in enumerate(pages):
+            assert page.offset == index
+            assert page.total == full.total
+            assert page.truncated is (index + 1 < full.total)
+
+    def test_surface_query_offset_beyond_total_returns_empty_window(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = service_query_surface(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-2024-CIVIC-EX"},
+            limit=5,
+            offset=50,
+        )
+
+        assert result.items == []
+        assert result.total >= 1
+        assert result.offset == 50
+        assert result.truncated is False
+
+    def test_surface_query_rejects_negative_offset(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(ConfigError, match="offset must be a non-negative integer"):
+            service_query_surface(
+                populated_instance,
+                "parts_for_vehicle",
+                {"vehicle_id": "V-2024-CIVIC-EX"},
+                offset=-1,
+            )
+
 
 # ---------------------------------------------------------------------------
 # service_feedback

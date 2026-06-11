@@ -664,6 +664,7 @@ def query(
     params: dict[str, Any] | None = None,
     limit: int | None = None,
     *,
+    offset: int = 0,
     relationship_state: contracts.QueryRelationshipState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
@@ -676,11 +677,12 @@ def query(
         query_name,
         params or {},
         limit=limit,
+        offset=offset,
         relationship_state=relationship_state,
         context=_operation_context(decision_record_id, surface=surface),
     )
 
-    include_receipt = limit is None
+    include_receipt = limit is None and offset == 0
 
     return _query_tool_result(result, include_receipt=include_receipt)
 
@@ -729,6 +731,7 @@ def _query_tool_result(
         ),
         total=result.total,
         limit=result.limit,
+        offset=result.offset,
         truncated=result.truncated,
         limit_truncated=result.limit_truncated,
         path_truncated=result.path_truncated,

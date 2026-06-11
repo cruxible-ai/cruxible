@@ -323,6 +323,7 @@ def handle_query(
     query_name: str,
     params: dict[str, Any] | None = None,
     limit: int | None = None,
+    offset: int = 0,
     relationship_state: contracts.QueryRelationshipState | None = None,
     decision_record_id: str | None = None,
 ) -> contracts.QueryToolResult:
@@ -334,6 +335,7 @@ def handle_query(
             query_name=query_name,
             params=params,
             limit=limit,
+            offset=offset,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
         ),
@@ -342,6 +344,7 @@ def handle_query(
             query_name,
             params,
             limit=limit,
+            offset=offset,
             relationship_state=relationship_state,
             decision_record_id=decision_record_id,
             surface="mcp",
@@ -386,17 +389,19 @@ def _client_query(
     query_name: str,
     params: dict[str, Any] | None,
     limit: int | None,
+    offset: int,
     relationship_state: contracts.QueryRelationshipState | None,
     decision_record_id: str | None,
 ) -> contracts.QueryToolResult:
     if relationship_state is None and decision_record_id is None:
-        return client.query(instance_id, query_name, params, limit=limit)
+        return client.query(instance_id, query_name, params, limit=limit, offset=offset)
     if relationship_state is None:
         return client.query(
             instance_id,
             query_name,
             params,
             limit=limit,
+            offset=offset,
             decision_record_id=decision_record_id,
         )
     if decision_record_id is None:
@@ -405,6 +410,7 @@ def _client_query(
             query_name,
             params,
             limit=limit,
+            offset=offset,
             relationship_state=relationship_state,
         )
     return client.query(
@@ -412,6 +418,7 @@ def _client_query(
         query_name,
         params,
         limit=limit,
+        offset=offset,
         relationship_state=relationship_state,
         decision_record_id=decision_record_id,
     )

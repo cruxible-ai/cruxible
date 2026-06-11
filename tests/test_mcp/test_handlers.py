@@ -558,3 +558,47 @@ def test_list_tool_pages_with_offset(
     assert page2["truncated"] is False
     ids = {page1["items"][0]["entity_id"], page2["items"][0]["entity_id"]}
     assert ids == {"V-2024-CIVIC-EX", "V-2024-ACCORD-SPORT"}
+
+
+def test_query_tool_pages_with_offset(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    full = call_tool(
+        server,
+        "cruxible_query",
+        {
+            "instance_id": dev_graph_instance_id,
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+        },
+    )
+    page1 = call_tool(
+        server,
+        "cruxible_query",
+        {
+            "instance_id": dev_graph_instance_id,
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+            "limit": 1,
+            "offset": 0,
+        },
+    )
+    page2 = call_tool(
+        server,
+        "cruxible_query",
+        {
+            "instance_id": dev_graph_instance_id,
+            "query_name": "parts_for_vehicle",
+            "params": {"vehicle_id": "V-2024-CIVIC-EX"},
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+
+    assert full["total"] == 2
+    assert page1["offset"] == 0
+    assert page1["truncated"] is True
+    assert page2["offset"] == 1
+    assert page2["truncated"] is False
+    assert [page1["items"][0], page2["items"][0]] == full["items"]

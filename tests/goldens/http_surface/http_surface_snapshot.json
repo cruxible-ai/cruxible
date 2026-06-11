@@ -172,6 +172,9 @@
   "/api/v1/{instance_id}/traces/{trace_id}": {
     "GET": null
   },
+  "/api/v1/{instance_id}/views/{query_name}": {
+    "GET": "QueryToolResult"
+  },
   "/api/v1/{instance_id}/wiki/render": {
     "POST": "WikiRenderResult"
   },
