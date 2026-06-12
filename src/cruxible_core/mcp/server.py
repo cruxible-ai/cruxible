@@ -161,6 +161,11 @@ def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
         return [tool for tool in tools if tool.name in advertised]
 
     server.list_tools = list_curated_tools  # type: ignore[method-assign]
+    # FastMCP registers the low-level ListToolsRequest handler during __init__.
+    # Re-register it so protocol clients see the same curated catalog as
+    # in-process server.list_tools() callers.
+    lowlevel_server = getattr(server, "_mcp_server")
+    lowlevel_server.list_tools()(list_curated_tools)
 
 
 def create_server() -> FastMCP:

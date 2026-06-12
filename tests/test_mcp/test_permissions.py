@@ -8,6 +8,7 @@ import sys
 
 import pytest
 import structlog
+from mcp import types as mcp_types
 
 from cruxible_core.errors import ConfigError, PermissionDeniedError
 from cruxible_core.mcp.permissions import (
@@ -333,6 +334,24 @@ class TestValidation:
         actual = {tool.name for tool in asyncio.run(server.list_tools())}
 
         assert actual == {"cruxible_query", "cruxible_get_entity"}
+        validate_runtime_tools(server)
+
+    def test_protocol_tools_list_filters_by_mode_profile_and_allowlist(self, monkeypatch):
+        """Low-level MCP tools/list handler applies the advertised catalog filter."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+        monkeypatch.setenv(
+            "CRUXIBLE_MCP_TOOLS",
+            "cruxible_query,cruxible_batch_direct_write,cruxible_lock_workflow,cruxible_feedback",
+        )
+        reset_permissions()
+
+        server = create_server()
+        handler = server._mcp_server.request_handlers[mcp_types.ListToolsRequest]
+        result = asyncio.run(handler(mcp_types.ListToolsRequest(method="tools/list")))
+        actual = {tool.name for tool in result.root.tools}
+
+        assert actual == {"cruxible_query", "cruxible_batch_direct_write"}
         validate_runtime_tools(server)
 
     def test_validate_runtime_tools_succeeds(self):
