@@ -35,3 +35,25 @@ jobs:
 
       - name: Test
         run: uv run pytest --tb=short
+
+  docker-image-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras
+
+      - name: Verify Docker daemon
+        run: docker info
+
+      - name: Test Docker image
+        env:
+          CRUXIBLE_RUN_DOCKER_TESTS: "1"
+        run: uv run pytest tests/test_image -m docker --tb=short

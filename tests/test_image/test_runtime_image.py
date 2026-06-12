@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DOCKERFILE = REPO_ROOT / "deploy" / "runtime" / "Dockerfile"
 RUNTIME_STATE_DIR = "/var/lib/cruxible/server"
 BOOTSTRAP_ENV = "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret"
+pytestmark = pytest.mark.docker
 
 
 @pytest.fixture(scope="module")

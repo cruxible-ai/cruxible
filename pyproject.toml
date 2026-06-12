@@ -76,6 +76,9 @@ cruxible-client = { workspace = true }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "packages/cruxible-client/src"]
+markers = [
+    "docker: requires a working Docker daemon and may build or run container images",
+]
 
 [tool.ruff]
 src = ["src", "packages/cruxible-client/src", "tests"]

@@ -2,11 +2,40 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
+
+_DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep Docker image tests out of the default local/agent suite."""
+    if _docker_tests_enabled(config):
+        return
+
+    skip_docker = pytest.mark.skip(
+        reason=(
+            "Docker image tests are opt-in; set CRUXIBLE_RUN_DOCKER_TESTS=1 or run with -m docker"
+        )
+    )
+    for item in items:
+        if item.get_closest_marker("docker") is not None:
+            item.add_marker(skip_docker)
+
+
+def _docker_tests_enabled(config: pytest.Config) -> bool:
+    env_value = os.environ.get(_DOCKER_TEST_ENV, "").strip().lower()
+    if env_value in _TRUE_ENV_VALUES:
+        return True
+
+    marker_expression = (getattr(config.option, "markexpr", "") or "").strip()
+    return "docker" in marker_expression and "not docker" not in marker_expression
+
 
 WORKFLOW_CONFIG_YAML = """\
 version: "1.0"

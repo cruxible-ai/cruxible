@@ -19,6 +19,9 @@ uv sync --all-extras
 # Run tests
 uv run pytest
 
+# Run Docker image tests (requires Docker)
+CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
+
 # Run single test file
 uv run pytest tests/test_config/test_schema.py -v
 
