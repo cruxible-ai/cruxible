@@ -6,9 +6,24 @@ import asyncio
 import re
 from pathlib import Path
 
+import pytest
+
 from cruxible_core.cli.main import cli
+from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+
+@pytest.fixture(autouse=True)
+def reset_mcp_surface_env(monkeypatch):
+    """Keep ambient MCP curation env from changing reference-doc assertions."""
+    monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_TOOLS", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_TOOL_ALLOWLIST", raising=False)
+    reset_permissions()
+    yield
+    reset_permissions()
 
 
 def _walk_cli_commands(command, prefix: tuple[str, ...] = ()) -> list[str]:
@@ -45,9 +60,7 @@ def test_cli_reference_lists_every_click_command() -> None:
 
     missing = sorted(expected - actual)
     stale = sorted(
-        heading
-        for heading in actual
-        if heading.startswith("cruxible ") and heading not in expected
+        heading for heading in actual if heading.startswith("cruxible ") and heading not in expected
     )
     assert missing == []
     assert stale == []

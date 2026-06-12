@@ -304,6 +304,23 @@ class TestValidation:
         assert "cruxible_state_publish" not in actual
         validate_runtime_tools(server)
 
+    def test_tools_list_filters_by_state_authoring_profile(self, monkeypatch):
+        """State authoring profile exposes graph/workflow tools but not review tools."""
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+        reset_permissions()
+
+        server = create_server()
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
+
+        assert "cruxible_query" in actual
+        assert "cruxible_batch_direct_write" in actual
+        assert "cruxible_add_relationship" in actual
+        assert "cruxible_apply_workflow" in actual
+        assert "cruxible_feedback" not in actual
+        assert "cruxible_propose_group" not in actual
+        assert "cruxible_state_publish" not in actual
+        validate_runtime_tools(server)
+
     def test_tools_list_filters_by_explicit_allowlist(self, monkeypatch):
         """Explicit allowlists produce the smallest intended catalog."""
         monkeypatch.setenv(
@@ -313,9 +330,9 @@ class TestValidation:
         reset_permissions()
 
         server = create_server()
-        actual = [tool.name for tool in asyncio.run(server.list_tools())]
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
 
-        assert actual == ["cruxible_query", "cruxible_get_entity"]
+        assert actual == {"cruxible_query", "cruxible_get_entity"}
         validate_runtime_tools(server)
 
     def test_validate_runtime_tools_succeeds(self):

@@ -38,6 +38,9 @@ def reset_permission_mode(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_TOOLS", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MCP_TOOL_ALLOWLIST", raising=False)
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / ".server-state"))
     reset_permissions()
     yield
