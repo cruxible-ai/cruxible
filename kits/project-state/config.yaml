@@ -663,18 +663,33 @@ named_queries:
 
   work_item_change_context:
     mode: traversal
-    description: Starting from a work item, inspect roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions.
+    description: Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions.
     entry_point: WorkItem
-    returns: RoadmapItem
+    returns: AnyEntity
     relationship_state: reviewable
     allow_relationship_state_override: true
     max_paths: 500
     max_paths_per_result: 25
     traversal:
-      - relationship: work_item_implements_roadmap_item
-        direction: outgoing
-        as: roadmap_item
+      - relationship:
+          - work_item_implements_roadmap_item
+          - work_item_targets_area
+          - work_item_in_release
+          - work_item_in_milestone
+          - work_item_depends_on_work_item
+          - work_item_mitigates_risk
+          - work_item_answers_open_question
+          - decision_constrains_work_item
+          - risk_blocks_work_item
+          - open_question_blocks_work_item
+        direction: both
+        as: context
     include:
+      roadmap_items:
+        from: $entry
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
       release_lines:
         from: $entry
         relationship: work_item_in_release
@@ -725,6 +740,17 @@ named_queries:
         relationship: work_item_targets_area
         direction: outgoing
         many: true
+
+  work_items_for_area:
+    mode: traversal
+    description: Flat work items attached to a product area for agents that need a scannable area work queue.
+    entry_point: ProductArea
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_targets_area
+        direction: incoming
+        as: work_item
 
   area_change_context:
     mode: traversal

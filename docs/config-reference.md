@@ -377,6 +377,7 @@ Validation rules:
 - `mode: collection` queries omit `entry_point`, `traversal`, `include`, `max_paths`, and `max_paths_per_result`.
 - Collection queries support `result_shape: entity` with `returns` set to an entity type, or `result_shape: relationship` with `returns` set to a canonical relationship name. Reverse aliases are rejected so direction is unambiguous.
 - `mode: traversal` queries require `entry_point` and at least one traversal step. Put filters on traversal steps, include blocks, or related predicates; top-level `where` is reserved for collection queries.
+- Traversal queries that intentionally return mixed entity types can set `returns: AnyEntity`; this skips homogeneous entity-type validation for entity/path rows.
 - `result_shape: entity` requires `dedupe: entity`.
 - `result_shape: relationship` requires `dedupe: path` or `none`.
 - `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.

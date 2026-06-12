@@ -318,9 +318,7 @@ def execute_query_definition(
     )
     total_results = len(result_contexts)
     limited_contexts = (
-        result_contexts[: query_schema.limit]
-        if query_schema.limit is not None
-        else result_contexts
+        result_contexts[: query_schema.limit] if query_schema.limit is not None else result_contexts
     )
     limit_truncated = query_schema.limit is not None and total_results > query_schema.limit
     truncation_reasons = list(budget_result.truncation_reasons)
@@ -335,10 +333,7 @@ def execute_query_definition(
         )
         for context in limited_contexts
     ]
-    result_dicts = [
-        dump_query_row(row, include_source=True)
-        for row in result_rows
-    ]
+    result_dicts = [dump_query_row(row, include_source=True) for row in result_rows]
     parent_ids = [
         context.parent_id for context in limited_contexts if context.parent_id is not None
     ]
@@ -441,9 +436,7 @@ def _execute_collection_query(
             f"Collection query '{query_name}' does not support result_shape 'path'"
         )
     if query_schema.traversal:
-        raise QueryExecutionError(
-            f"Collection query '{query_name}' must not define traversal"
-        )
+        raise QueryExecutionError(f"Collection query '{query_name}' must not define traversal")
     if query_schema.result_shape == "entity":
         contexts = _collection_entity_contexts(
             config,
@@ -663,11 +656,7 @@ def _entity_primary_key_properties(config: CoreConfig, entity_type: str) -> set[
     entity_schema = config.entity_types.get(entity_type)
     if entity_schema is None:
         return set()
-    return {
-        name
-        for name, prop in entity_schema.properties.items()
-        if prop.primary_key
-    }
+    return {name for name, prop in entity_schema.properties.items() if prop.primary_key}
 
 
 def _resolve_collection_pushdown_expected(value: Any, params: dict[str, Any]) -> Any:
@@ -717,9 +706,7 @@ def _collection_relationship_contexts(
             continue
         source = entity_with_identity_properties(config, from_entity)
         target = entity_with_identity_properties(config, to_entity)
-        segment = QueryPathSegment.model_validate(
-            relationship.model_dump(mode="python")
-        )
+        segment = QueryPathSegment.model_validate(relationship.model_dump(mode="python"))
         base_predicate_context = build_predicate_context(
             entry=source,
             current=source,
@@ -819,6 +806,8 @@ def _resolve_declared_entity_return_type(
     if result_shape == "relationship":
         return None
     declared = _normalize_entity_returns(query_schema.returns)
+    if declared == "AnyEntity":
+        return None
     if declared not in config.entity_types:
         raise QueryExecutionError(
             f"Named query '{query_name}' declares unknown result entity type "
@@ -894,17 +883,14 @@ def _validate_effective_query_options(
         relationship_state_override is not None
         and not query_schema.allow_relationship_state_override
     ):
-        raise QueryExecutionError(
-            "relationship_state override is not allowed for this named query"
-        )
+        raise QueryExecutionError("relationship_state override is not allowed for this named query")
     if effective_relationship_state not in {"live", "accepted", "pending", "reviewable"}:
         raise QueryExecutionError(
             f"Unsupported relationship_state '{effective_relationship_state}'"
         )
     if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
         raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'entity' requires "
-            "dedupe 'entity'"
+            f"Named query '{query_name}' with result_shape 'entity' requires dedupe 'entity'"
         )
     has_non_required_step = any(not step.required for step in query_schema.traversal)
     if query_schema.result_shape == "entity" and has_non_required_step:
@@ -1381,9 +1367,11 @@ def _execute_step(
                         queue.append((root_index, next_state, depth + 1))
 
     if not step.required:
-        fallback_states = indexed_states if (
-            requires_path_retention and traversal_budget.max_paths is not None
-        ) else list(enumerate(current_states))
+        fallback_states = (
+            indexed_states
+            if (requires_path_retention and traversal_budget.max_paths is not None)
+            else list(enumerate(current_states))
+        )
         for root_index, state in fallback_states:
             if root_index in produced_roots:
                 continue
@@ -1496,9 +1484,7 @@ def _record_max_paths_truncation(
             "truncation_reason": "max_paths",
             "max_paths": traversal_budget.max_paths,
             "retained_path_count": retained_path_count,
-            "evaluated_path_candidate_count": (
-                traversal_budget.evaluated_path_candidate_count
-            ),
+            "evaluated_path_candidate_count": (traversal_budget.evaluated_path_candidate_count),
             "step": step_index,
             "relationship": step.relationship,
             "direction": step.direction,
@@ -1552,8 +1538,7 @@ def _build_result_contexts(
         entry = entity_with_identity_properties(config, state.entry)
         result = entity_with_identity_properties(config, state.current)
         entities = tuple(
-            entity_with_identity_properties(config, entity)
-            for entity in state.entities
+            entity_with_identity_properties(config, entity) for entity in state.entities
         )
         row: BaseQueryRow | None
         if result_shape == "path":
@@ -1745,11 +1730,7 @@ def _evaluate_include(
             f"Include '{alias}' matched {count} relationships; set many: true "
             "or narrow the include predicates"
         )
-    returned_items = (
-        ordered_items[: spec.limit]
-        if spec.limit is not None
-        else ordered_items
-    )
+    returned_items = ordered_items[: spec.limit] if spec.limit is not None else ordered_items
     return QueryIncludeResult(
         alias=alias,
         many=spec.many,
@@ -2081,9 +2062,7 @@ def _policy_should_suppress(
     return False
 
 
-_CONSTRAINT_RE = re.compile(
-    rf"^(target|source)\.([\w-]+)\s*{COMPARISON_SYMBOL_PATTERN}\s*(.+)$"
-)
+_CONSTRAINT_RE = re.compile(rf"^(target|source)\.([\w-]+)\s*{COMPARISON_SYMBOL_PATTERN}\s*(.+)$")
 
 
 def _evaluate_constraint(
@@ -2118,8 +2097,7 @@ def _evaluate_constraint(
         ).get(prop)
     else:
         raise QueryExecutionError(
-            "source-side traversal constraints are not supported; "
-            "use target.<property> constraints"
+            "source-side traversal constraints are not supported; use target.<property> constraints"
         )
 
     if rhs.startswith("$"):

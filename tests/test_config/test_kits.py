@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.kits import (
     KitManifest,
     compute_kit_provider_sha256,
@@ -25,6 +29,12 @@ from cruxible_core.kits import (
     write_materialized_kit_metadata,
 )
 from cruxible_core.provider.registry import resolve_provider
+from cruxible_core.query.types import QueryPathRow
+from cruxible_core.service import service_inspect_entity, service_query
+
+PROJECT_STATE_CONFIG = (
+    Path(__file__).resolve().parents[2] / "kits" / "project-state" / "config.yaml"
+)
 
 
 def test_kit_manifest_validates_roles() -> None:
@@ -60,9 +70,7 @@ def test_kit_provider_ref_loads_relative_imports(tmp_path: Path) -> None:
     providers.mkdir()
     (providers / "common.py").write_text("VALUE = 42\n")
     (providers / "main.py").write_text(
-        "from .common import VALUE\n\n"
-        "def run(_input, _context):\n"
-        "    return {'value': VALUE}\n"
+        "from .common import VALUE\n\ndef run(_input, _context):\n    return {'value': VALUE}\n"
     )
     write_materialized_kit_metadata(tmp_path)
 
@@ -233,13 +241,7 @@ def test_config_yaml_kit_ref_detection_is_provider_ref_only() -> None:
 
 
 def test_project_state_kit_config_is_dev_project_scoped() -> None:
-    config_path = (
-        Path(__file__).resolve().parents[2]
-        / "kits"
-        / "project-state"
-        / "config.yaml"
-    )
-    config = load_config(config_path)
+    config = load_config(PROJECT_STATE_CONFIG)
 
     validate_config(config)
 
@@ -298,21 +300,18 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
     assert relationships["work_item_answers_open_question"].to_entity == "OpenQuestion"
     assert relationships["decision_answers_open_question"].to_entity == "OpenQuestion"
     assert (
-        relationships["decision_affects_roadmap_item"]
-        .properties["impact_type"]
-        .enum_ref
+        relationships["decision_affects_roadmap_item"].properties["impact_type"].enum_ref
         == "decision_impact_type"
     )
     assert (
-        relationships["decision_constrains_work_item"]
-        .properties["impact_type"]
-        .enum_ref
+        relationships["decision_constrains_work_item"].properties["impact_type"].enum_ref
         == "decision_impact_type"
     )
 
     required_queries = {
         "roadmap_item_context",
         "work_item_change_context",
+        "work_items_for_area",
         "area_change_context",
         "release_readiness_context",
         "deferred_release_gating_work_items",
@@ -351,6 +350,109 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
     } <= quality_checks
     assert config.workflows == {}
     assert config.artifacts == {}
+
+
+def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) -> None:
+    shutil.copy(PROJECT_STATE_CONFIG, tmp_path / "config.yaml")
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="ProductArea",
+            entity_id="area-core",
+            properties={"area_id": "area-core", "name": "Core"},
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-context",
+            properties={
+                "work_item_id": "wi-context",
+                "title": "Context read models",
+                "type": "feature",
+                "status": "active",
+                "priority": "high",
+            },
+        )
+    )
+    graph.add_entity(
+        EntityInstance(
+            entity_type="DesignDecision",
+            entity_id="dec-context",
+            properties={
+                "decision_id": "dec-context",
+                "title": "Use product-area anchored context",
+                "status": "accepted",
+            },
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="work_item_targets_area",
+            from_type="WorkItem",
+            from_id="wi-context",
+            to_type="ProductArea",
+            to_id="area-core",
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="decision_constrains_work_item",
+            from_type="DesignDecision",
+            from_id="dec-context",
+            to_type="WorkItem",
+            to_id="wi-context",
+            properties={"impact_type": "constrains"},
+        )
+    )
+    instance.save_graph(graph)
+
+    area_result = service_query(instance, "work_items_for_area", {"area_id": "area-core"})
+
+    assert area_result.total == 1
+    [work_item] = area_result.items
+    assert isinstance(work_item, EntityInstance)
+    assert work_item.entity_type == "WorkItem"
+    assert work_item.entity_id == "wi-context"
+    assert {
+        "work_item_id": "wi-context",
+        "title": "Context read models",
+        "status": "active",
+        "priority": "high",
+    }.items() <= work_item.properties.items()
+
+    context_result = service_query(
+        instance,
+        "work_item_change_context",
+        {"work_item_id": "wi-context"},
+    )
+
+    assert context_result.total == 2
+    assert {
+        (row.result.entity_type, row.result.entity_id, row.path[0].relationship_type)
+        for row in context_result.items
+        if isinstance(row, QueryPathRow) and row.path
+    } == {
+        ("ProductArea", "area-core", "work_item_targets_area"),
+        ("DesignDecision", "dec-context", "decision_constrains_work_item"),
+    }
+    for row in context_result.items:
+        assert isinstance(row, QueryPathRow)
+        assert row.includes["constraining_decisions"].count == 1
+        assert row.includes["constraining_decisions"].items[0].source.entity_id == "dec-context"
+
+    inspected = service_inspect_entity(instance, "WorkItem", "wi-context")
+
+    assert inspected.total_neighbors == 2
+    assert {
+        (neighbor.direction, neighbor.relationship_type, neighbor.entity.entity_id)
+        for neighbor in inspected.neighbors
+        if neighbor.entity is not None
+    } == {
+        ("outgoing", "work_item_targets_area", "area-core"),
+        ("incoming", "decision_constrains_work_item", "dec-context"),
+    }
 
 
 def test_materialized_metadata_records_bundle_and_runtime_digest(tmp_path: Path) -> None:
