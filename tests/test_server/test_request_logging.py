@@ -150,6 +150,7 @@ def test_successful_runtime_request_logs_principal_and_instance(
     assert event["route"] == "/api/v1/{instance_id}/schema"
     assert event["status"] == 200
     assert event["principal_id"] == credential_id
+    assert event["principal_label"] == "read_only credential"
     assert event["credential_type"] == "runtime_credential"
     assert event["role"] == "read_only"
     assert event["instance_scope"] == instance_id
@@ -185,8 +186,81 @@ def test_denied_runtime_request_logs_status_and_error_type(
     assert event["status"] == 403
     assert event["error_type"] == "PermissionDeniedError"
     assert event["principal_id"] == credential_id
+    assert event["principal_label"] == "read_only credential"
     assert event["credential_type"] == "runtime_credential"
     assert event["instance_id"] == instance_id
+
+
+def test_derived_actor_context_logs_same_principal_and_operation_as_provenance(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request_log_buffer: io.StringIO,
+) -> None:
+    instance_id = _init_instance(app_client, tmp_path / "project")
+    headers, credential_id = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+    )
+    payload = {
+        "entities": [
+            {
+                "entity_type": "Vehicle",
+                "entity_id": "V-LOG-ACTOR",
+                "properties": {
+                    "vehicle_id": "V-LOG-ACTOR",
+                    "year": 2026,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            },
+            {
+                "entity_type": "Part",
+                "entity_id": "BP-LOG-ACTOR",
+                "properties": {
+                    "part_number": "BP-LOG-ACTOR",
+                    "name": "Log Actor Pads",
+                    "category": "brakes",
+                },
+            },
+        ],
+        "relationships": [
+            {
+                "from_type": "Part",
+                "from_id": "BP-LOG-ACTOR",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-LOG-ACTOR",
+            }
+        ],
+    }
+    _clear_buffer(request_log_buffer)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": payload},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-LOG-ACTOR",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-LOG-ACTOR",
+        },
+        headers=headers,
+    )
+    assert lookup.status_code == 200
+    actor_context = lookup.json()["metadata"]["provenance"]["created_actor_context"]
+    event = _runtime_request_events(request_log_buffer)[0]
+    assert event["principal_id"] == credential_id
+    assert event["principal_label"] == actor_context["actor_id"]
+    assert event["operation_id"] == actor_context["operation_id"]
 
 
 def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
@@ -224,4 +298,5 @@ def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
     assert event["route"] == "/api/v1/runtime/instances"
     assert event["status"] == 200
     assert event["principal_id"] == "runtime_bootstrap"
+    assert event["principal_label"] == "runtime_bootstrap"
     assert event["credential_type"] == "runtime_bootstrap"

@@ -38,6 +38,14 @@ _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvar
     "cruxible_auth_context",
     default=None,
 )
+_REQUEST_OPERATION_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cruxible_request_operation_id",
+    default=None,
+)
+_REQUEST_CONTEXT: contextvars.ContextVar[Request | None] = contextvars.ContextVar(
+    "cruxible_request",
+    default=None,
+)
 
 EFFECTIVE_PERMISSION_MODE_HEADER = "X-Cruxible-Effective-Permission-Mode"
 
@@ -56,6 +64,14 @@ class ResolvedAuthContext:
 def get_current_auth_context() -> ResolvedAuthContext | None:
     """Return the current request-scoped auth context, if any."""
     return _AUTH_CONTEXT.get()
+
+
+def set_current_operation_id(operation_id: str) -> None:
+    """Record the effective governed operation id for request logging."""
+    _REQUEST_OPERATION_ID.set(operation_id)
+    request = _REQUEST_CONTEXT.get()
+    if request is not None:
+        request.state.operation_id = operation_id
 
 
 def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
@@ -100,12 +116,17 @@ def _is_hosted_instance_init_request(request: Request) -> bool:
 @contextmanager
 def _auth_context_scope(
     context: ResolvedAuthContext | None,
+    request: Request,
 ) -> Any:
-    token = _AUTH_CONTEXT.set(context)
+    auth_token = _AUTH_CONTEXT.set(context)
+    operation_token = _REQUEST_OPERATION_ID.set(None)
+    request_token = _REQUEST_CONTEXT.set(request)
     try:
         yield
     finally:
-        _AUTH_CONTEXT.reset(token)
+        _REQUEST_CONTEXT.reset(request_token)
+        _REQUEST_OPERATION_ID.reset(operation_token)
+        _AUTH_CONTEXT.reset(auth_token)
 
 
 async def token_auth_middleware(
@@ -182,7 +203,7 @@ async def token_auth_middleware(
     ):
         return _unauthorized_request_response(request)
 
-    with _auth_context_scope(resolved_context):
+    with _auth_context_scope(resolved_context, request):
         if resolved_context is not None and resolved_context.effective_permission_mode is not None:
             relayed_mode = _relayed_effective_permission_mode(request, resolved_context)
             if relayed_mode is None:
@@ -235,6 +256,7 @@ async def _call_next_with_request_log(
             request,
             status=500,
             auth_context=auth_context,
+            operation_id=_REQUEST_OPERATION_ID.get(),
             error_type=exc.__class__.__name__,
         )
         raise
@@ -242,6 +264,7 @@ async def _call_next_with_request_log(
         request,
         status=response.status_code,
         auth_context=auth_context,
+        operation_id=_REQUEST_OPERATION_ID.get(),
         error_type=getattr(request.state, "error_type", None),
     )
     return response

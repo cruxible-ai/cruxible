@@ -32,6 +32,7 @@ def log_runtime_request(
     *,
     status: int,
     auth_context: Any,
+    operation_id: str | None = None,
     error_type: str | None = None,
 ) -> None:
     """Emit one safe structured log event for a runtime HTTP request."""
@@ -40,14 +41,15 @@ def log_runtime_request(
         "route": _request_route(request),
         "status": status,
         "principal_id": _context_field(auth_context, "principal_id", "anonymous"),
+        "principal_label": _context_field(auth_context, "principal_label", "anonymous"),
         "credential_type": _context_field(auth_context, "credential_type", "anonymous"),
         "role": _context_field(auth_context, "role", None),
         "instance_scope": _context_field(auth_context, "instance_scope", None),
         "instance_id": _request_instance_id(request),
     }
-    operation_id = getattr(request.state, "operation_id", None)
-    if operation_id is not None:
-        fields["operation_id"] = str(operation_id)
+    resolved_operation_id = operation_id or getattr(request.state, "operation_id", None)
+    if resolved_operation_id is not None:
+        fields["operation_id"] = str(resolved_operation_id)
     if error_type is not None:
         fields["error_type"] = error_type
     _log.info("runtime_request", **fields)

@@ -275,10 +275,11 @@ def _runtime_credential_headers(
     *,
     instance_id: str,
     permission_mode: PermissionMode,
+    label: str | None = None,
 ) -> dict[str, str]:
     created = get_runtime_credential_store().create_credential(
         instance_id=instance_id,
-        label=f"{permission_mode.name.lower()} credential",
+        label=label or f"{permission_mode.name.lower()} credential",
         permission_mode=permission_mode,
         created_by="test",
     )
@@ -298,6 +299,55 @@ def _valid_vehicle_entity(entity_id: str) -> dict[str, object]:
             "model": "Civic",
         },
     }
+
+
+def _direct_write_payload(suffix: str) -> dict[str, object]:
+    return {
+        "entities": [
+            _valid_vehicle_entity(f"V-{suffix}"),
+            {
+                "entity_type": "Part",
+                "entity_id": f"BP-{suffix}",
+                "properties": {
+                    "part_number": f"BP-{suffix}",
+                    "name": f"Batch Pads {suffix}",
+                    "category": "brakes",
+                },
+            },
+        ],
+        "relationships": [
+            {
+                "from_type": "Part",
+                "from_id": f"BP-{suffix}",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": f"V-{suffix}",
+                "properties": {"verified": True, "source": "batch"},
+            }
+        ],
+    }
+
+
+def _lookup_fitment(
+    client: TestClient,
+    instance_id: str,
+    suffix: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    response = client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": f"BP-{suffix}",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": f"V-{suffix}",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 def _actor_context(*, actor_id: str = "usr_1", operation_id: str = "op_1") -> dict[str, str]:
@@ -637,7 +687,62 @@ def test_effective_permission_header_is_rejected_without_runtime_credential(
     assert response.json()["error_type"] == "AuthenticationError"
 
 
-def test_runtime_credential_governed_write_requires_actor_context(
+def test_runtime_credential_governed_write_derives_actor_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    credential_label = "snapshot-agent"
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+        label=credential_label,
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/snapshots",
+        json={"label": "derived-actor"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshot"]["snapshot_id"]
+
+
+def test_runtime_credential_direct_write_derives_actor_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    credential_label = "codex-core"
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label=credential_label,
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": _direct_write_payload("DERIVED-ACTOR")},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    lookup = _lookup_fitment(client, instance_id, "DERIVED-ACTOR", headers=headers)
+    actor_context = lookup["metadata"]["provenance"]["created_actor_context"]
+    assert actor_context["actor_type"] == "service_account"
+    assert actor_context["actor_id"] == credential_label
+    assert actor_context["org_id"] == instance_id
+    assert actor_context["operation_id"].startswith("op_")
+
+
+def test_runtime_credential_explicit_actor_context_overrides_derived_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
@@ -647,95 +752,57 @@ def test_runtime_credential_governed_write_requires_actor_context(
     headers = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
-        permission_mode=PermissionMode.GOVERNED_WRITE,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="codex-core",
     )
+    explicit_actor = _actor_context(actor_id="usr_control_plane", operation_id="op_control")
 
-    missing = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "missing-actor"},
+    response = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": _direct_write_payload("EXPLICIT-ACTOR"),
+            "actor_context": explicit_actor,
+        },
         headers=headers,
     )
-    assert missing.status_code == 400
-    assert missing.json()["error_type"] == "ConfigError"
-    assert missing.json()["message"] == "hosted governed actor context is required"
 
-    supplied = client.post(
-        f"/api/v1/{instance_id}/snapshots",
-        json={"label": "with-actor", "actor_context": _actor_context()},
-        headers=headers,
-    )
-    assert supplied.status_code == 200
-    assert supplied.json()["snapshot"]["snapshot_id"]
+    assert response.status_code == 200
+    lookup = _lookup_fitment(client, instance_id, "EXPLICIT-ACTOR", headers=headers)
+    actor_context = lookup["metadata"]["provenance"]["created_actor_context"]
+    assert actor_context["actor_type"] == explicit_actor["actor_type"]
+    assert actor_context["actor_id"] == explicit_actor["actor_id"]
+    assert actor_context["org_id"] == explicit_actor["org_id"]
+    assert actor_context["operation_id"] == explicit_actor["operation_id"]
+    assert actor_context["request_id"] == explicit_actor["request_id"]
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "payload"),
-    [
-        ("post", "/api/v1/{instance_id}/decision-records", {"question": "Decide?"}),
-        (
-            "post",
-            "/api/v1/{instance_id}/decision-records/DR-missing/finalize",
-            {
-                "final_decision": "Ship it",
-                "decision_class": "recommended",
-            },
-        ),
-        (
-            "post",
-            "/api/v1/{instance_id}/decision-records/DR-missing/abandon",
-            {"reason": "superseded"},
-        ),
-        ("post", "/api/v1/{instance_id}/workflows/test", {"name": None}),
-        (
-            "post",
-            "/api/v1/{instance_id}/constraints",
-            {
-                "name": "requires_year",
-                "rule": "entity.properties.year is not None",
-            },
-        ),
-        (
-            "post",
-            "/api/v1/{instance_id}/decision-policies",
-            {
-                "name": "review-fits",
-                "applies_to": "query",
-                "relationship_type": "fits",
-                "effect": "require_review",
-            },
-        ),
-        (
-            "post",
-            "/api/v1/{instance_id}/state/pull/apply",
-            {"expected_apply_digest": "sha256:test"},
-        ),
-    ],
-)
-def test_runtime_credential_governed_write_routes_require_actor_context(
+def test_non_runtime_auth_direct_write_does_not_derive_actor_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
-    method: str,
-    path: str,
-    payload: dict[str, object],
 ) -> None:
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, server_project)
-    headers = _runtime_credential_headers(
-        monkeypatch,
-        instance_id=instance_id,
-        permission_mode=PermissionMode.GOVERNED_WRITE,
-    )
 
-    response = getattr(client, method)(
-        path.format(instance_id=instance_id),
-        json=payload,
-        headers=headers,
+    unauthenticated = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": _direct_write_payload("NO-AUTH")},
     )
+    assert unauthenticated.status_code == 200
+    no_auth_lookup = _lookup_fitment(client, instance_id, "NO-AUTH")
+    assert "created_actor_context" not in no_auth_lookup["metadata"]["provenance"]
 
-    assert response.status_code == 400
-    assert response.json()["error_type"] == "ConfigError"
-    assert response.json()["message"] == "hosted governed actor context is required"
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "legacy-token")
+    legacy_headers = {"Authorization": "Bearer legacy-token"}
+    legacy = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={"payload": _direct_write_payload("LEGACY-AUTH")},
+        headers=legacy_headers,
+    )
+    assert legacy.status_code == 200
+    legacy_lookup = _lookup_fitment(client, instance_id, "LEGACY-AUTH", headers=legacy_headers)
+    assert "created_actor_context" not in legacy_lookup["metadata"]["provenance"]
 
 
 def test_decision_record_routes_persist_actor_context(

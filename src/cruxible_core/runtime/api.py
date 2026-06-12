@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
@@ -23,7 +23,7 @@ from cruxible_core.graph.provenance import (
     SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
-from cruxible_core.primitives import canonical_json
+from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
@@ -166,19 +166,39 @@ def _operation_context(
     )
 
 
-def _requires_hosted_actor_context() -> bool:
+def _runtime_credential_actor_context() -> GovernedActorContext | None:
     from cruxible_core.server.auth import get_current_auth_context
 
     auth_context = get_current_auth_context()
-    return auth_context is not None and auth_context.credential_type == "runtime_credential"
+    if auth_context is None or auth_context.credential_type != "runtime_credential":
+        return None
+    try:
+        return GovernedActorContext(
+            actor_type="service_account",
+            actor_id=auth_context.principal_label,
+            org_id=auth_context.instance_scope or "local",
+            operation_id=new_id("op", length=16, separator="_"),
+            timestamp=utc_now(),
+        )
+    except ValidationError as exc:
+        raise ConfigError("hosted governed actor context is required") from exc
+
+
+def _record_actor_operation(actor: GovernedActorContext) -> None:
+    from cruxible_core.server.auth import set_current_operation_id
+
+    set_current_operation_id(actor.operation_id)
 
 
 def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
     if value is None:
-        if _requires_hosted_actor_context():
-            raise ConfigError("hosted governed actor context is required")
-        return None
-    return require_hosted_actor_context(value)
+        actor = _runtime_credential_actor_context()
+        if actor is not None:
+            _record_actor_operation(actor)
+        return actor
+    actor = require_hosted_actor_context(value)
+    _record_actor_operation(actor)
+    return actor
 
 
 def _has_init_config(
