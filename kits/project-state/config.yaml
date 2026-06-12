@@ -243,6 +243,15 @@ entity_types:
       review_notes:
         type: string
         optional: true
+      change_repo:
+        type: string
+        optional: true
+      change_base:
+        type: string
+        optional: true
+      change_head:
+        type: string
+        optional: true
       requested_by:
         type: string
         optional: true

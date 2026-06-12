@@ -68,6 +68,13 @@ verification, known failures, and review context. Reviewers should leave that
 summary intact and write requested changes, approval notes, or reviewer-facing
 follow-up context in `ReviewRequest.review_notes`.
 
+New code-change ReviewRequests should also set structured change references:
+`change_repo` is the repository being reviewed, `change_base` is the base
+commit for the reviewed diff, and `change_head` is the exact reviewed head
+commit. These fields are optional so historical ReviewRequests and non-code
+reviews remain valid, but new implementation RRs should not rely on prose-only
+commit references.
+
 ## Entity Groups
 
 Dev/project state:

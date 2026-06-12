@@ -30,7 +30,12 @@ from cruxible_core.kits import (
 )
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.query.types import QueryPathRow
-from cruxible_core.service import service_inspect_entity, service_query
+from cruxible_core.service import (
+    EntityWriteInput,
+    service_add_entity_inputs,
+    service_inspect_entity,
+    service_query,
+)
 
 PROJECT_STATE_CONFIG = (
     Path(__file__).resolve().parents[2] / "kits" / "project-state" / "config.yaml"
@@ -270,9 +275,16 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "Outcome",
     }
     assert set(config.entity_types) == expected_entity_types
-    review_notes = config.entity_types["ReviewRequest"].properties["review_notes"]
-    assert review_notes.type == "string"
-    assert review_notes.optional is True
+    review_request_properties = config.entity_types["ReviewRequest"].properties
+    for property_name in {
+        "review_notes",
+        "change_repo",
+        "change_base",
+        "change_head",
+    }:
+        prop = review_request_properties[property_name]
+        assert prop.type == "string"
+        assert prop.optional is True
 
     relationships = {relationship.name: relationship for relationship in config.relationships}
     assert not any(
@@ -456,6 +468,67 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
         ("outgoing", "work_item_targets_area", "area-core"),
         ("incoming", "decision_constrains_work_item", "dec-context"),
     }
+
+
+def test_project_state_review_queue_surfaces_change_refs_and_allows_legacy_requests(
+    tmp_path: Path,
+) -> None:
+    shutil.copy(PROJECT_STATE_CONFIG, tmp_path / "config.yaml")
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="ReviewRequest",
+                entity_id="rr-with-change-ref",
+                properties={
+                    "review_request_id": "rr-with-change-ref",
+                    "title": "Review exact diff",
+                    "status": "requested",
+                    "change_repo": "cruxible-ai/cruxible-core",
+                    "change_base": "0d57f6f",
+                    "change_head": "b4458b5",
+                },
+            ),
+            EntityWriteInput(
+                entity_type="ReviewRequest",
+                entity_id="rr-legacy",
+                properties={
+                    "review_request_id": "rr-legacy",
+                    "title": "Historical review",
+                    "status": "requested",
+                },
+            ),
+            EntityWriteInput(
+                entity_type="ReviewRequest",
+                entity_id="rr-changes-requested",
+                properties={
+                    "review_request_id": "rr-changes-requested",
+                    "title": "Needs changes",
+                    "status": "changes_requested",
+                    "change_head": "aaaaaaa",
+                },
+            ),
+        ],
+    )
+
+    result = service_query(instance, "review_queue", {})
+
+    assert result.total == 2
+    rows_by_id = {}
+    for row in result.items:
+        assert isinstance(row, EntityInstance)
+        rows_by_id[row.entity_id] = row
+    assert set(rows_by_id) == {"rr-with-change-ref", "rr-legacy"}
+    assert rows_by_id["rr-with-change-ref"].properties["change_repo"] == (
+        "cruxible-ai/cruxible-core"
+    )
+    assert rows_by_id["rr-with-change-ref"].properties["change_base"] == "0d57f6f"
+    assert rows_by_id["rr-with-change-ref"].properties["change_head"] == "b4458b5"
+    assert "change_repo" not in rows_by_id["rr-legacy"].properties
+    assert "change_base" not in rows_by_id["rr-legacy"].properties
+    assert "change_head" not in rows_by_id["rr-legacy"].properties
 
 
 def test_materialized_metadata_records_bundle_and_runtime_digest(tmp_path: Path) -> None:

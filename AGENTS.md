@@ -40,6 +40,16 @@ uv run mypy src
 - Do NOT include `Co-Authored-By` lines in commit messages.
 - When implementing multi-fix plans, commit each logical fix as it's completed (source + tests together). Don't defer all commits to the end — partial staging across shared files is error-prone. After all commits, prepare a review guide covering the full set.
 
+## Review Request Conventions
+
+- For code-change ReviewRequests in the project-state kit, include structured
+  `change_repo`, `change_base`, and `change_head` fields. `change_head` is the
+  exact reviewed commit SHA; reviewers and merge tooling should not infer it
+  from the branch tip.
+- Keep `ReviewRequest.summary` implementer-owned: scope, verification evidence,
+  known failures, and review context. Reviewers should put requested changes and
+  approval notes in `ReviewRequest.review_notes`.
+
 ## Versioning
 
 Version lives in two places — keep them in sync:
