@@ -12,8 +12,14 @@ from cruxible_core.config.property_validation import (
     entity_properties_with_identity,
     normalize_value,
 )
-from cruxible_core.config.schema import CoreConfig, MutationGuardSchema
+from cruxible_core.config.schema import (
+    ActorIdentityGuardCondition,
+    CoreConfig,
+    MutationGuardSchema,
+    NamedQueryResultCountGuardCondition,
+)
 from cruxible_core.errors import DataValidationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import ValidatedEntity
 from cruxible_core.graph.types import EntityInstance
@@ -36,6 +42,7 @@ def mutation_guard_errors(
     current_graph: EntityGraph,
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
+    actor_context: GovernedActorContext | None = None,
 ) -> list[str]:
     """Return mutation guard errors for proposed entity writes (creates and updates)."""
     if not config.mutation_guards:
@@ -57,7 +64,13 @@ def mutation_guard_errors(
             context = _matching_guard_context(config, guard, entity, current, proposed)
             if context is None:
                 continue
-            if not _guard_condition_passes(config, guard, proposed_graph, context):
+            if not _guard_condition_passes(
+                config,
+                guard,
+                proposed_graph,
+                context,
+                actor_context=actor_context,
+            ):
                 errors.append(_guard_error_message(guard, entity.entity, context))
     return errors
 
@@ -68,6 +81,7 @@ def validate_mutation_guards(
     current_graph: EntityGraph,
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
+    actor_context: GovernedActorContext | None = None,
 ) -> None:
     """Raise DataValidationError when any proposed entity write violates a guard."""
     errors = mutation_guard_errors(
@@ -75,6 +89,7 @@ def validate_mutation_guards(
         current_graph=current_graph,
         proposed_graph=proposed_graph,
         entities=entities,
+        actor_context=actor_context,
     )
     if errors:
         raise DataValidationError(
@@ -117,16 +132,21 @@ def _guard_condition_passes(
     guard: MutationGuardSchema,
     graph: EntityGraph,
     context: _GuardEntityContext,
+    actor_context: GovernedActorContext | None = None,
 ) -> bool:
     condition = guard.condition
-    params = _resolve_guard_params(config, condition.params, context)
-    result = execute_query(config, graph, condition.query_name, params)
-    count = result.total_results if result.total_results is not None else len(result.results)
-    if condition.min_count is not None and count < condition.min_count:
-        return False
-    if condition.max_count is not None and count > condition.max_count:
-        return False
-    return True
+    if isinstance(condition, NamedQueryResultCountGuardCondition):
+        params = _resolve_guard_params(config, condition.params, context)
+        result = execute_query(config, graph, condition.query_name, params)
+        count = result.total_results if result.total_results is not None else len(result.results)
+        if condition.min_count is not None and count < condition.min_count:
+            return False
+        if condition.max_count is not None and count > condition.max_count:
+            return False
+        return True
+    if isinstance(condition, ActorIdentityGuardCondition):
+        return actor_context is not None and actor_context.actor_id in condition.allowed_actor_ids
+    return False
 
 
 def _resolve_guard_params(

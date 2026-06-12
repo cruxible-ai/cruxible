@@ -29,6 +29,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_STATE_CONFIG = REPO_ROOT / "kits" / "project-state" / "config.yaml"
 KEV_REFERENCE_KIT_DIR = REPO_ROOT / "kits" / "kev-reference"
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
 KEV_PUBLIC_DATA_FILES = (
@@ -774,6 +775,117 @@ def test_runtime_credential_explicit_actor_context_overrides_derived_context(
     assert actor_context["org_id"] == explicit_actor["org_id"]
     assert actor_context["operation_id"] == explicit_actor["operation_id"]
     assert actor_context["request_id"] == explicit_actor["request_id"]
+
+
+def test_runtime_credential_approval_guard_uses_derived_actor_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project-state"
+    project_root.mkdir()
+    (project_root / "config.yaml").write_text(PROJECT_STATE_CONFIG.read_text())
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, project_root)
+    codex_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="codex-core",
+    )
+    robert_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="robert",
+    )
+
+    seed = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "WorkItem",
+                        "entity_id": "wi-approval-guard",
+                        "properties": {
+                            "work_item_id": "wi-approval-guard",
+                            "title": "Approval guard",
+                            "type": "feature",
+                            "status": "active",
+                            "priority": "high",
+                        },
+                    },
+                    {
+                        "entity_type": "ReviewRequest",
+                        "entity_id": "rr-approval-guard",
+                        "properties": {
+                            "review_request_id": "rr-approval-guard",
+                            "title": "Approval guard review",
+                            "status": "requested",
+                        },
+                    },
+                ],
+                "relationships": [
+                    {
+                        "from_type": "ReviewRequest",
+                        "from_id": "rr-approval-guard",
+                        "relationship_type": "review_request_for_work_item",
+                        "to_type": "WorkItem",
+                        "to_id": "wi-approval-guard",
+                    }
+                ],
+            }
+        },
+        headers=codex_headers,
+    )
+    assert seed.status_code == 200
+
+    denied = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "ReviewRequest",
+                    "entity_id": "rr-approval-guard",
+                    "properties": {"status": "approved"},
+                }
+            ]
+        },
+        headers=codex_headers,
+    )
+    assert denied.status_code == 400
+    assert denied.json()["error_type"] == "DataValidationError"
+    assert "review_request_approval_requires_authorized_actor" in denied.text
+
+    approved = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "ReviewRequest",
+                    "entity_id": "rr-approval-guard",
+                    "properties": {"status": "approved"},
+                }
+            ]
+        },
+        headers=robert_headers,
+    )
+    assert approved.status_code == 200
+
+    closed = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "WorkItem",
+                    "entity_id": "wi-approval-guard",
+                    "properties": {"status": "closed"},
+                }
+            ]
+        },
+        headers=robert_headers,
+    )
+    assert closed.status_code == 200
 
 
 def test_non_runtime_auth_direct_write_does_not_derive_actor_context(

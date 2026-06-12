@@ -1044,6 +1044,15 @@ mutation_guards:
       work. Create a ReviewRequest with status approved linked via
       review_request_for_work_item (same-batch is fine), or get an existing
       request approved.
+  - name: review_request_approval_requires_authorized_actor
+    entity_type: ReviewRequest
+    property: status
+    new_value: approved
+    condition:
+      allowed_actor_ids:
+        - robert
+    message: >-
+      ReviewRequest approvals must be written by an authorized approver actor.
 
 quality_checks:
   - name: review_requests_review_a_work_item

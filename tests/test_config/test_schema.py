@@ -9,6 +9,7 @@ from cruxible_core.config.loader import load_config_from_string, save_config
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.config.schema import (
     BUILTIN_CONTRACTS,
+    ActorIdentityGuardCondition,
     AssertCountSpec,
     AssertExistsSpec,
     AssertNotTruncatedSpec,
@@ -1628,6 +1629,31 @@ class TestMutationGuardSchema:
 
         assert guard.new_value == "closed"
         assert guard.condition.query_name == "approved_review"
+
+    def test_guard_parses_actor_identity_condition(self):
+        guard = MutationGuardSchema(
+            name="approval_requires_authorized_actor",
+            entity_type="ReviewRequest",
+            property="status",
+            new_value="approved",
+            condition=ActorIdentityGuardCondition(allowed_actor_ids=[" robert "]),
+            message="Authorized approver required.",
+        )
+
+        assert isinstance(guard.condition, ActorIdentityGuardCondition)
+        assert guard.condition.allowed_actor_ids == ["robert"]
+
+    def test_guard_actor_identity_condition_requires_allowed_actor_ids(self):
+        with pytest.raises(ValidationError, match="List should have at least 1 item"):
+            ActorIdentityGuardCondition(allowed_actor_ids=[])
+
+    def test_guard_actor_identity_condition_rejects_blank_actor_id(self):
+        with pytest.raises(ValidationError, match="non-empty"):
+            ActorIdentityGuardCondition(allowed_actor_ids=[" "])
+
+    def test_guard_actor_identity_condition_rejects_duplicate_actor_id(self):
+        with pytest.raises(ValidationError, match="duplicate allowed_actor_ids"):
+            ActorIdentityGuardCondition(allowed_actor_ids=["robert", " robert "])
 
     def test_guard_condition_requires_a_limit(self):
         with pytest.raises(ValidationError, match="min_count, max_count, or both"):

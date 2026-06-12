@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import (
+    ActorIdentityGuardCondition,
     ConstraintSchema,
     ContractSchema,
     CoreConfig,
@@ -326,6 +327,15 @@ class TestValidateMutationGuards:
         config = _minimal_config(
             named_queries={"find_a": self._query()},
             mutation_guards=[self._guard()],
+        )
+
+        validate_config(config)
+
+    def test_mutation_guard_accepts_actor_identity_condition(self):
+        config = _minimal_config(
+            mutation_guards=[
+                self._guard(condition=ActorIdentityGuardCondition(allowed_actor_ids=["robert"]))
+            ],
         )
 
         validate_config(config)

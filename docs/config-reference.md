@@ -975,8 +975,7 @@ value — creating an entity with the value and changing an existing entity to
 the value are both covered. Updates that re-assert the value an entity already
 holds are not transitions and do not fire. Every guard field is load-bearing;
 discriminator fields (`operation`, `effect`, condition `kind`) deliberately do
-not exist yet and will be introduced as optional fields if and when a second
-variant ships.
+not exist.
 
 ```yaml
 mutation_guards:
@@ -990,6 +989,14 @@ mutation_guards:
         work_item_id: "$entity.entity_id"
       min_count: 1
     message: "Work item cannot be closed until approved review exists."
+
+  - name: review_request_approval_requires_authorized_actor
+    entity_type: ReviewRequest
+    property: status
+    new_value: approved
+    condition:
+      allowed_actor_ids: [robert]
+    message: "ReviewRequest approvals require an authorized actor."
 ```
 
 ### MutationGuardSchema
@@ -1000,7 +1007,7 @@ mutation_guards:
 | `entity_type` | string | **yes** | — | Entity type the write applies to |
 | `property` | string | **yes** | — | Property that must be present in the incoming write |
 | `new_value` | any | **yes** | — | Guarded resulting value after config property normalization |
-| `condition` | NamedQueryResultCountGuardCondition | **yes** | — | Query-count condition that must pass |
+| `condition` | NamedQueryResultCountGuardCondition or ActorIdentityGuardCondition | **yes** | — | Condition that must pass |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
 
 ### NamedQueryResultCountGuardCondition
@@ -1023,8 +1030,20 @@ Supported param references:
 
 On entity creation there is no prior state: `$old_value` resolves to `null`,
 and `$current.properties.<name>` cannot resolve, so a guard using `$current`
-refs rejects creates fail-closed with a missing-reference error. Prior-state
-refs therefore make a guard transition-only in practice.
+refs fails closed on creation. Prior-state refs therefore make a guard
+transition-only in practice.
+
+### ActorIdentityGuardCondition
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `allowed_actor_ids` | list[string] | **yes** | — | Actor ids allowed to perform the guarded transition |
+
+Actor identity conditions compare the current write's
+`GovernedActorContext.actor_id` to `allowed_actor_ids`. Missing actor context
+fails the guard. This condition is useful for guarded approval transitions where
+the authority comes from authenticated runtime credential identity or a Cloud
+control-plane supplied actor context.
 
 For batch direct writes, guards evaluate against the proposed batch graph, so
 valid same-batch entities and relationships can satisfy the named query before

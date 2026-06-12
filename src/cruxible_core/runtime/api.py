@@ -2144,7 +2144,12 @@ def add_entities(
         )
         for entity in entities
     ]
-    result = service_add_entity_inputs(instance, inputs, dry_run=dry_run)
+    result = service_add_entity_inputs(
+        instance,
+        inputs,
+        dry_run=dry_run,
+        actor_context=actor,
+    )
     return contracts.AddEntityResult(
         entities_added=result.added,
         entities_updated=result.updated,

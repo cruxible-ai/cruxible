@@ -10,6 +10,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.service import (
     BatchDirectWriteInput,
@@ -25,6 +26,7 @@ from cruxible_core.service import (
     service_register_source_artifact,
 )
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
+from cruxible_core.temporal import utc_now
 
 
 def _vehicle(
@@ -178,6 +180,35 @@ def _guarded_instance(tmp_path: Path) -> CruxibleInstance:
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "config.yaml").write_text(dedent(GUARDED_STATE_YAML))
     return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _actor_guarded_instance(tmp_path: Path) -> CruxibleInstance:
+    actor_guard = """\
+  - name: review_approval_requires_authorized_actor
+    entity_type: Review
+    property: status
+    new_value: approved
+    condition:
+      allowed_actor_ids: [robert]
+    message: "Review approvals require an authorized actor."
+"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config_yaml = GUARDED_STATE_YAML.replace(
+        "mutation_guards:\n",
+        f"mutation_guards:\n{actor_guard}",
+    )
+    (tmp_path / "config.yaml").write_text(dedent(config_yaml))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _actor_context(actor_id: str) -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id=actor_id,
+        org_id="org_1",
+        operation_id=f"op_{actor_id}",
+        timestamp=utc_now(),
+    )
 
 
 def _seed_work_item(instance: CruxibleInstance, status: str = "planned") -> None:
@@ -438,6 +469,113 @@ class TestEntityMutationGuards:
         entity = instance.load_graph().get_entity("WorkItem", "wi-guarded")
         assert entity is not None
         assert entity.properties["status"] == "closed"
+
+    def test_actor_identity_guard_rejects_approval_without_actor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _actor_guarded_instance(tmp_path)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="Review",
+                    entity_id="rev-pending",
+                    properties={"review_id": "rev-pending", "status": "pending"},
+                )
+            ],
+        )
+
+        with pytest.raises(
+            DataValidationError,
+            match="review_approval_requires_authorized_actor",
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-pending",
+                        properties={"status": "approved"},
+                    )
+                ],
+            )
+
+        entity = instance.load_graph().get_entity("Review", "rev-pending")
+        assert entity is not None
+        assert entity.properties["status"] == "pending"
+
+    def test_actor_identity_guard_rejects_unauthorized_actor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _actor_guarded_instance(tmp_path)
+
+        with pytest.raises(
+            DataValidationError,
+            match="review_approval_requires_authorized_actor",
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-approved",
+                        properties={"review_id": "rev-approved", "status": "approved"},
+                    )
+                ],
+                actor_context=_actor_context("codex-core"),
+            )
+
+        assert instance.load_graph().get_entity("Review", "rev-approved") is None
+
+    def test_actor_identity_guard_allows_authorized_actor(self, tmp_path: Path) -> None:
+        instance = _actor_guarded_instance(tmp_path)
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="Review",
+                    entity_id="rev-approved",
+                    properties={"review_id": "rev-approved", "status": "approved"},
+                )
+            ],
+            actor_context=_actor_context("robert"),
+        )
+
+        assert result.added == 1
+        entity = instance.load_graph().get_entity("Review", "rev-approved")
+        assert entity is not None
+        assert entity.properties["status"] == "approved"
+
+    def test_actor_identity_guard_dry_run_reports_unauthorized_actor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _actor_guarded_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Review",
+                        entity_id="rev-approved",
+                        properties={"review_id": "rev-approved", "status": "approved"},
+                    )
+                ]
+            ),
+            dry_run=True,
+            actor_context=_actor_context("codex-core"),
+        )
+
+        assert result.valid is False
+        assert any(
+            "review_approval_requires_authorized_actor" in error
+            for error in result.validation_errors
+        )
+        assert instance.load_graph().get_entity("Review", "rev-approved") is None
 
     def test_batch_dry_run_reports_guard_failure_without_mutating(self, tmp_path: Path) -> None:
         instance = _guarded_instance(tmp_path)

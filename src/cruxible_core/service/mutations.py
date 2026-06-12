@@ -167,6 +167,7 @@ def _prepare_batch_direct_write(
     *,
     source: str,
     source_ref: str,
+    actor_context: GovernedActorContext | None = None,
     builder: Any | None = None,
 ) -> _PreparedBatchDirectWrite:
     config = instance.load_config()
@@ -303,6 +304,7 @@ def _prepare_batch_direct_write(
             current_graph=current_graph,
             proposed_graph=proposed_guard_graph,
             entities=validated_entities,
+            actor_context=actor_context,
         )
     except DataValidationError as exc:
         guard_errors = [str(exc), *exc.errors]
@@ -370,6 +372,7 @@ def service_batch_direct_write(
             payload,
             source=source,
             source_ref=source_ref,
+            actor_context=actor_context,
         )
         return _batch_direct_write_result(prepared, dry_run=True)
 
@@ -389,6 +392,7 @@ def service_batch_direct_write(
             payload,
             source=source,
             source_ref=source_ref,
+            actor_context=actor_context,
             builder=builder,
         )
         if prepared.validation_errors:
@@ -472,6 +476,7 @@ def service_add_entity_inputs(
     entities: Sequence[EntityWriteInput],
     *,
     dry_run: bool = False,
+    actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
 ) -> AddEntityResult:
     """Normalize entity write inputs, then add or update graph entities."""
@@ -479,6 +484,7 @@ def service_add_entity_inputs(
         instance,
         [_entity_from_input(entity) for entity in entities],
         dry_run=dry_run,
+        actor_context=actor_context,
         _create_receipt=_create_receipt,
     )
 
@@ -488,6 +494,7 @@ def service_add_entities(
     entities: Sequence[EntityInstance],
     *,
     dry_run: bool = False,
+    actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
 ) -> AddEntityResult:
     """Add or update entities in the graph (batch upsert).
@@ -562,6 +569,7 @@ def service_add_entities(
                 current_graph=current_graph,
                 proposed_graph=graph,
                 entities=pending,
+                actor_context=actor_context,
             )
         except DataValidationError as exc:
             guard_errors = [str(exc), *exc.errors]

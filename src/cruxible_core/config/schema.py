@@ -1176,7 +1176,30 @@ class NamedQueryResultCountGuardCondition(BaseModel):
         return self
 
 
-MutationGuardConditionSchema = NamedQueryResultCountGuardCondition
+class ActorIdentityGuardCondition(BaseModel):
+    """Actor identity allow-list condition for config-defined mutation guards."""
+
+    allowed_actor_ids: list[str] = Field(min_length=1)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("allowed_actor_ids")
+    @classmethod
+    def _validate_allowed_actor_ids(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            actor_id = value.strip()
+            if not actor_id:
+                raise ValueError("allowed_actor_ids entries must be non-empty strings")
+            if actor_id in seen:
+                raise ValueError(f"duplicate allowed_actor_ids entry: '{actor_id}'")
+            seen.add(actor_id)
+            normalized.append(actor_id)
+        return normalized
+
+
+MutationGuardConditionSchema = NamedQueryResultCountGuardCondition | ActorIdentityGuardCondition
 
 
 class MutationGuardSchema(BaseModel):
