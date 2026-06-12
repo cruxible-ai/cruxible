@@ -22,6 +22,7 @@ from cruxible_core.mcp.permissions import (
     validate_tool_permissions,
 )
 from cruxible_core.mcp.server import create_server, validate_runtime_tools
+from cruxible_core.mcp.tool_prompts import TOOL_DESCRIPTIONS
 
 # ── PermissionMode ────────────────────────────────────────────────────
 
@@ -273,10 +274,66 @@ class TestValidation:
         actual = {t.name for t in tools}
         assert actual == set(TOOL_PERMISSIONS.keys())
 
+    def test_tools_list_filters_by_read_only_mode(self, monkeypatch):
+        """READ_ONLY sessions only advertise callable read tools."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+        actual = {tool.name for tool in tools}
+
+        assert actual
+        assert all(TOOL_PERMISSIONS[name] <= PermissionMode.READ_ONLY for name in actual)
+        assert "cruxible_query" in actual
+        assert "cruxible_batch_direct_write" not in actual
+        assert "cruxible_lock_workflow" not in actual
+        validate_runtime_tools(server)
+
+    def test_tools_list_filters_by_profile(self, monkeypatch):
+        """MCP profiles advertise a focused subset without changing registrations."""
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "review")
+        reset_permissions()
+
+        server = create_server()
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
+
+        assert "cruxible_query" in actual
+        assert "cruxible_feedback" in actual
+        assert "cruxible_batch_direct_write" not in actual
+        assert "cruxible_state_publish" not in actual
+        validate_runtime_tools(server)
+
+    def test_tools_list_filters_by_explicit_allowlist(self, monkeypatch):
+        """Explicit allowlists produce the smallest intended catalog."""
+        monkeypatch.setenv(
+            "CRUXIBLE_MCP_TOOLS",
+            "cruxible_query,cruxible_get_entity",
+        )
+        reset_permissions()
+
+        server = create_server()
+        actual = [tool.name for tool in asyncio.run(server.list_tools())]
+
+        assert actual == ["cruxible_query", "cruxible_get_entity"]
+        validate_runtime_tools(server)
+
     def test_validate_runtime_tools_succeeds(self):
         """validate_runtime_tools runs without error from sync context."""
         server = create_server()
         validate_runtime_tools(server)
+
+    def test_tool_prompt_descriptions_cover_every_registered_tool(self):
+        """Every MCP tool has a non-coding-client prompt description."""
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+        actual = {tool.name for tool in tools}
+
+        assert set(TOOL_DESCRIPTIONS) == set(TOOL_PERMISSIONS)
+        assert actual == set(TOOL_PERMISSIONS)
+        for tool in tools:
+            assert tool.description is not None
+            assert tool.description.startswith("Use when ")
 
 
 # ── Allowed roots ─────────────────────────────────────────────────────

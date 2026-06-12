@@ -11,11 +11,29 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation and group resolution/trust updates. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, state publication/pull, ingest, constraints, policies. |
 
+`tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
+
+## Tool Catalog Curation
+
+Set `CRUXIBLE_MCP_PROFILE` to shrink the advertised catalog for focused clients:
+
+| Profile | Meaning |
+| --- | --- |
+| `full` | Default. Advertise every tool allowed by the active permission mode. |
+| `state_authoring` | Tools for creating, inspecting, querying, and directly loading state. |
+| `review` | Tools for queries, receipts, feedback, outcomes, and proposal-group review. |
+
+Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated list of exact tool names for an explicit allowlist. Profile and allowlist curation are both intersected with `CRUXIBLE_MODE`.
+
+## Tool Prompt Style
+
+Tool descriptions are written for non-coding MCP clients. Each description starts with when to use the tool, uses kit-user vocabulary, and avoids implementation details that do not help with tool choice.
+
 ## cruxible_version
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the cruxible-core version. Use this to confirm which build is running.
+**Purpose:** Use when you need to confirm which cruxible-core build this MCP server is running.
 
 **Arguments:** none.
 
@@ -32,7 +50,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return live daemon metadata such as server-required status, state dir, and instance count.
+**Purpose:** Use when you need live daemon details such as state directory, version, and how many instances are loaded.
 
 **Arguments:** none.
 
@@ -49,7 +67,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Create or reload a governed daemon-backed instance. Provide `config_path` or `config_yaml` when creating a new instance. In server mode, `config_path` is read locally and uploaded as config content; the daemon stores its own active copy. To reload after a restart, omit both.
+**Purpose:** Use when you need to create a governed instance from a config or reconnect to an existing instance after a daemon restart.
 
 **Arguments:**
 
@@ -74,7 +92,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Validate a config file or inline YAML without creating an instance. Provide exactly one of `config_path` (path to a YAML file) or `config_yaml` (raw YAML string).
+**Purpose:** Use when you need to check whether a Cruxible config is valid before creating or reloading an instance.
 
 **Arguments:**
 
@@ -96,7 +114,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `ADMIN`
 
-**Purpose:** Create a new governed overlay from a published state release.
+**Purpose:** Use when you need a local overlay instance based on a published upstream state release.
 
 **Arguments:**
 
@@ -121,7 +139,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `ADMIN`
 
-**Purpose:** Generate the workflow lock file for the current instance config. Run this after changing providers, artifacts, or workflow config and before planning or executing workflows.
+**Purpose:** Use when workflow inputs, providers, or artifacts changed and you need to refresh the workflow lock before running it.
 
 **Arguments:**
 
@@ -143,7 +161,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Compile a configured workflow into a concrete execution plan.
+**Purpose:** Use when you need to preview the concrete steps a configured workflow would run without executing those steps.
 
 **Arguments:**
 
@@ -166,7 +184,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Execute a configured workflow and return receipts, traces, and output. Canonical workflows run in preview mode and return an `apply_digest` plus the current `head_snapshot_id`. To commit a canonical workflow, call `cruxible_apply_workflow` with those values.
+**Purpose:** Use when you need to execute a configured workflow and receive its output, receipts, traces, and apply instructions if it is a preview.
 
 **Arguments:**
 
@@ -188,9 +206,9 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 ## cruxible_apply_workflow
 
-**Permission:** `ADMIN`
+**Permission:** `GRAPH_WRITE`
 
-**Purpose:** Apply a canonical workflow after verifying the preview identity.
+**Purpose:** Use when a workflow preview returned an apply digest and you are ready to commit that exact workflow result.
 
 **Arguments:**
 
@@ -216,7 +234,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Run configured workflow tests for an instance.
+**Purpose:** Use when you need to run workflow tests declared by the active config.
 
 **Arguments:**
 
@@ -238,7 +256,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Run a named query and return results plus a receipt. `params` must include the primary-key field of the query's entry_point entity type (e.g. if entry_point is Vehicle and its primary key is vehicle_id, pass {"vehicle_id": "V-123"}). Use `cruxible_schema` to find primary key fields. `receipt_id` is also promoted to top-level for follow-up tools. After querying, use `cruxible_receipt` to inspect the traversal proof showing exactly how results were derived. Use `limit` to cap the number of returned results and omit the inline receipt (fetch it later via `cruxible_receipt`). Use `offset` with `limit` to request later pages; ordering is deterministic per snapshot.
+**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt.
 
 **Arguments:**
 
@@ -265,7 +283,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Run a bounded inline graph query for read-only agent exploration. Inline query definitions use the same JSON shape as configured named queries plus a required `name`, but they are not persisted to config. Use this for one-off filtering and candidate discovery. Promote repeated or workflow-critical queries into config as named queries.
+**Purpose:** Use when you need a one-off bounded graph query without adding it to the config.
 
 **Arguments:**
 
@@ -291,7 +309,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List named queries with their entry points, required params, and example IDs.
+**Purpose:** Use when you need to discover the named queries available in the active config.
 
 **Arguments:**
 
@@ -312,7 +330,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Describe one named query with the details needed to invoke it correctly.
+**Purpose:** Use when you need the purpose, parameters, and result shape for one named query.
 
 **Arguments:**
 
@@ -334,7 +352,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Fetch a stored receipt by `receipt_id` from a previous query.
+**Purpose:** Use when you need to inspect the proof record for a previous query, write, workflow, feedback, or outcome.
 
 **Arguments:**
 
@@ -356,7 +374,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Fetch a provider execution trace by `trace_id`.
+**Purpose:** Use when you need the execution trace for one provider or workflow step.
 
 **Arguments:**
 
@@ -378,7 +396,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List provider execution trace summaries with optional workflow/provider filters.
+**Purpose:** Use when you need to browse execution traces by workflow, provider, or page.
 
 **Arguments:**
 
@@ -403,7 +421,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Record edge-level feedback tied to a receipt. ``source`` identifies who produced this feedback: ``"human"`` for human review, ``"agent"`` for AI agent review. Rejected edges are excluded from future query results. Approved edges are trusted in traversals. Use `corrections` with `action="correct"` and set `edge_key` only when disambiguation is needed. `applied=False` means the record was saved but the graph edge was not updated. Set `group_override=True` to mark relationship assertion metadata as a group override, making it pre-approved for group resolve. The edge must already exist in the graph.
+**Purpose:** Use when a person reviewed a specific relationship from a receipt and you need to record support, rejection, or a correction.
 
 **Arguments:**
 
@@ -438,7 +456,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Record edge-level feedback by selecting one relationship row or path segment from a query receipt. This adjudicates one existing relationship assertion and does not resolve candidate groups; use group get/resolve for group thesis and member-set decisions.
+**Purpose:** Use when a query result path identifies the relationship that needs feedback.
 
 **Arguments:**
 
@@ -471,7 +489,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Record batch edge feedback under one top-level mutation receipt.
+**Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
 
 **Arguments:**
 
@@ -494,7 +512,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Record a structured outcome for a receipt or proposal resolution.
+**Purpose:** Use when you need to record what happened after a decision, query, workflow, or reviewed relationship.
 
 **Arguments:**
 
@@ -524,7 +542,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List `entities|edges|receipts|feedback|outcomes` with optional filters. `entity_type` is required for `resource_type="entities"`. `relationship_type` filters edges by type for `resource_type="edges"`. `property_filter` filters by exact property matches (AND semantics). Applies to `resource_type="entities"` and `resource_type="edges"`. `operation_type` filters receipts (e.g. "query", "add_entity", "ingest"). Edge items include `edge_key` for use with `cruxible_feedback` when multiple edges exist between the same endpoints.
+**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters.
 
 **Arguments:**
 
@@ -553,7 +571,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Run graph quality checks (orphans, gaps, violations, co-members). Checks: orphan entities, coverage gaps, constraint violations, candidate opportunities, governed support state, and unreviewed co-members (entities sharing an intermediary with a cross-referenced entity but lacking a cross-reference edge themselves). Use `exclude_orphan_types` to skip reference/taxonomy entity types (e.g. ``["PCDBPartType"]``) that are expected to be unconnected.
+**Purpose:** Use when you need graph quality findings such as orphaned entities, coverage gaps, constraint issues, or candidate opportunities.
 
 **Arguments:**
 
@@ -576,7 +594,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return graph counts, relationship counts, and head snapshot metadata.
+**Purpose:** Use when you need quick counts of entity and relationship types in an instance.
 
 **Arguments:**
 
@@ -597,7 +615,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Run aggregate read-only config, graph, feedback, and outcome checks.
+**Purpose:** Use when you need a combined quality report for config, graph state, feedback, and outcome coverage.
 
 **Arguments:**
 
@@ -622,7 +640,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the configured feedback profile for one relationship type.
+**Purpose:** Use when you need the allowed feedback codes and guidance for a relationship type.
 
 **Arguments:**
 
@@ -644,7 +662,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Analyze structured feedback into deterministic remediation suggestions.
+**Purpose:** Use when you need patterns from recorded feedback, such as common corrections or recurring review issues.
 
 **Arguments:**
 
@@ -671,7 +689,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the configured outcome profile for one anchor context.
+**Purpose:** Use when you need the allowed outcome codes and guidance for a decision surface.
 
 **Arguments:**
 
@@ -697,7 +715,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Analyze structured outcomes into trust and debugging suggestions.
+**Purpose:** Use when you need patterns from recorded outcomes for a query, workflow, relationship, or decision surface.
 
 **Arguments:**
 
@@ -726,7 +744,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the active config schema for an instance.
+**Purpose:** Use when you need the active entity types, relationships, queries, workflows, and governance settings.
 
 **Arguments:**
 
@@ -747,7 +765,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return up to `limit` entities for quick data inspection.
+**Purpose:** Use when you need example entities of one type before writing a query or review.
 
 **Arguments:**
 
@@ -770,7 +788,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Inspect one entity and its immediate incoming/outgoing neighbors.
+**Purpose:** Use when you need one entity plus nearby relationships and related entities.
 
 **Arguments:**
 
@@ -796,7 +814,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the structured canonical ontology view for an instance.
+**Purpose:** Use when you need a compact overview of entity types, relationships, and rules.
 
 **Arguments:**
 
@@ -817,7 +835,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the structured canonical workflow view for an instance.
+**Purpose:** Use when you need to understand the workflows declared by the active config.
 
 **Arguments:**
 
@@ -838,7 +856,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the structured canonical query view for an instance.
+**Purpose:** Use when you need to understand configured queries and their parameters.
 
 **Arguments:**
 
@@ -859,7 +877,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the structured canonical governance view for an instance.
+**Purpose:** Use when you need to review feedback, outcome, group, and policy settings.
 
 **Arguments:**
 
@@ -881,7 +899,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return the structured canonical overview view for an instance.
+**Purpose:** Use when you need a single high-level summary of the instance.
 
 **Arguments:**
 
@@ -903,7 +921,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Render local wiki pages and return path/content payloads.
+**Purpose:** Use when you need Markdown documentation generated from the current graph and config.
 
 **Arguments:**
 
@@ -929,7 +947,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Add or update relationships in the graph (upsert). Each relationship needs: from_type, from_id, relationship_type, to_type, to_id. Optional properties must be declared by the relationship schema. Entities must already exist. Re-submitting an existing edge merges declared domain properties while preserving system review metadata. For governed judgment relationships, prefer proposal workflows or candidate group proposal flows so Cruxible can preserve tri-state signal-source evidence (support, unsure, contradict) and review history. For bulk state loading, use workflows with tabular providers, dataflow steps, and apply_relationships.
+**Purpose:** Use when you need to add or update a small number of explicit relationships and the endpoint entities already exist.
 
 **Arguments:**
 
@@ -952,7 +970,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Add or update entities in the graph (upsert). Each entity needs: entity_type, entity_id. Optional properties dict. Re-submitting an existing entity replaces all its properties (full overwrite, not merge). Use for small explicit writes; use workflows for repeatable source-artifact state loading.
+**Purpose:** Use when you need to add or update a small number of explicit entities.
 
 **Arguments:**
 
@@ -975,7 +993,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Validate or apply a direct batch graph write payload. Use this for coherent hard-state slices that contain entities and relationships. The payload may define top-level shared_evidence entries and reference them from relationships with shared_evidence_keys. Direct writes are live/unreviewed state; group approval remains the path for accepted review state. Set `dry_run=true` to validate entity properties, relationship endpoints, relationship properties, evidence locators, duplicate IDs, and missing shared evidence keys without mutating graph state.
+**Purpose:** Use when you need to validate or apply one coherent batch of explicit entities and relationships; set dry_run first.
 
 **Arguments:**
 
@@ -996,9 +1014,9 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 ## cruxible_add_constraint
 
-**Permission:** `ADMIN`
+**Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Add a constraint rule to the config. Writes the updated config to YAML. Constraints are evaluated by cruxible_evaluate to flag edges that violate them. Rule format: RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property Supported operators: ==, !=, >, >=, <, <= Identifiers may contain letters, digits, underscores, and hyphens. Example: classified_as.FROM.Category == classified_as.TO.CategoryName
+**Purpose:** Use when you need to add a graph quality rule that future evaluations should check.
 
 **Arguments:**
 
@@ -1021,9 +1039,9 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 ## cruxible_add_decision_policy
 
-**Permission:** `ADMIN`
+**Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Add a decision policy to the config for query/workflow execution.
+**Purpose:** Use when you need to record a policy that affects how a decision surface should be handled.
 
 **Arguments:**
 
@@ -1054,7 +1072,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `ADMIN`
 
-**Purpose:** Reload or replace an instance config after validation.
+**Purpose:** Use when you need to replace or reload the active config for an instance.
 
 **Arguments:**
 
@@ -1077,7 +1095,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Execute a configured workflow and bridge its output into a governed relationship group. Use this when a repeated decision procedure should propose relationship state through Cruxible's proposal/review/trust boundary instead of writing edges directly. The workflow must be `type: proposal` and return a relationship proposal artifact from a `propose_relationship_group` step.
+**Purpose:** Use when a workflow proposes reviewable relationship changes instead of writing them directly.
 
 **Arguments:**
 
@@ -1101,7 +1119,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Open a decision record that can collect query and workflow receipts.
+**Purpose:** Use when you need to open a tracked decision before gathering evidence, running workflows, or recording outcomes.
 
 **Arguments:**
 
@@ -1126,7 +1144,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Fetch one decision record, optionally including its logged events.
+**Purpose:** Use when you need the current state and optional event history for one decision.
 
 **Arguments:**
 
@@ -1149,7 +1167,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List decision records with lifecycle and subject filters.
+**Purpose:** Use when you need to find decision records by status, subject, class, or page.
 
 **Arguments:**
 
@@ -1175,7 +1193,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List decision-record events by record, receipt, trace, or status.
+**Purpose:** Use when you need the event timeline for decisions, optionally filtered by receipt.
 
 **Arguments:**
 
@@ -1201,7 +1219,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Finalize a decision record with an indexed decision class and rationale.
+**Purpose:** Use when a tracked decision has a final answer and rationale.
 
 **Arguments:**
 
@@ -1226,7 +1244,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Abandon an open decision record without finalizing a recommendation.
+**Purpose:** Use when a tracked decision should be closed without a final decision.
 
 **Arguments:**
 
@@ -1249,7 +1267,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Propose a candidate group of edges for batch review. Each member carries tri-state signals (support/contradict/unsure) from declared relationship signal sources. For direct proposals, optional thesis_facts are caller-supplied signature scope stored under agent_scope in Cruxible-generated thesis_facts. Signal sources are derived from attached member signals. Optional analysis_state remains opaque agent data and is not hashed. If a prior trusted resolution exists for the same thesis signature and all signals meet the auto-resolve policy, the group is auto-resolved. Otherwise it enters pending_review with a Cruxible-derived review_priority.
+**Purpose:** Use when you need to create a review group for candidate relationship changes.
 
 **Arguments:**
 
@@ -1278,7 +1296,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Resolve a candidate group by approving or rejecting it. Approve creates edges in the graph for valid members (skipping members whose edges already exist). Reject records the resolution without graph mutation. Both persist the resolution for audit and future auto-resolve precedent.
+**Purpose:** Use when a reviewer approves, rejects, or otherwise resolves a pending group.
 
 **Arguments:**
 
@@ -1304,7 +1322,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Update the trust status on a confirmed approved resolution. Trust is thesis-scoped: the latest confirmed approval for a signature governs auto-resolve eligibility. Promote ``watch`` to ``trusted`` to enable auto-resolve. Set ``invalidated`` to block auto-resolve and escalate future proposals to critical priority.
+**Purpose:** Use when you need to mark a prior group resolution as trusted, invalidated, or otherwise updated.
 
 **Arguments:**
 
@@ -1328,7 +1346,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Get a candidate group by ID, including its members, optional resolution, bucket lifecycle status, and per-member review state. The member review payload includes proposed tuples/properties, current edge count, current edge details when exactly one matching edge exists, and deterministic property deltas.
+**Purpose:** Use when you need the details and members for one candidate relationship group.
 
 **Arguments:**
 
@@ -1350,7 +1368,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List candidate groups with optional filters. Results are sorted by review_priority descending (critical first). Use ``status`` to filter by lifecycle state (pending_review, auto_resolved, applying, resolved). Use ``relationship_type`` to filter by edge type.
+**Purpose:** Use when you need to find candidate relationship groups by type, status, or page.
 
 **Arguments:**
 
@@ -1374,7 +1392,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List group resolutions with optional filters. Returns stored resolutions including analysis_state (for agent reuse), thesis_facts, trust_status, and trust_reason. Use ``action`` to filter by approve/reject. Use ``relationship_type`` to scope to a specific edge type.
+**Purpose:** Use when you need to review past group decisions by relationship type or action.
 
 **Arguments:**
 
@@ -1398,7 +1416,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Show lifecycle status for a signature bucket or concrete group.
+**Purpose:** Use when you need the latest status for a group or for a known group signature.
 
 **Arguments:**
 
@@ -1421,7 +1439,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `ADMIN`
 
-**Purpose:** Publish a root state-model instance as an immutable release bundle.
+**Purpose:** Use when you need to publish the current instance state as an immutable release.
 
 **Arguments:**
 
@@ -1444,9 +1462,9 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 ## cruxible_create_snapshot
 
-**Permission:** `ADMIN`
+**Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Create an immutable snapshot for the current instance.
+**Purpose:** Use when you need to mark the current state with a named snapshot.
 
 **Arguments:**
 
@@ -1468,7 +1486,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** List immutable snapshots for the current instance.
+**Purpose:** Use when you need to browse available snapshots for an instance.
 
 **Arguments:**
 
@@ -1489,7 +1507,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Register a local source document for source-backed proposal evidence. The document is parsed into addressable chunks whose locators (`chunk_id`, `heading_path`, `block_selector`) and content hashes can be cited as source evidence on relationships and proposal members, then dereferenced later via `cruxible_dereference_source_evidence`.
+**Purpose:** Use when you need to register a source document so relationship evidence can cite stable chunks from it.
 
 **Arguments:**
 
@@ -1515,7 +1533,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return source text for a registered source-evidence locator. Select the chunk by `chunk_id`, or by `heading_path` plus `block_selector`. Pass `expected_content_hash` to detect drift between the cited evidence and the current document content.
+**Purpose:** Use when you need to read back a registered source evidence chunk and verify its expected content hash.
 
 **Arguments:**
 
@@ -1541,7 +1559,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `ADMIN`
 
-**Purpose:** Create a point-in-time clone from an immutable snapshot.
+**Purpose:** Use when you need a new local instance created from an existing snapshot.
 
 **Arguments:**
 
@@ -1564,7 +1582,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Return upstream tracking metadata for a release-backed overlay.
+**Purpose:** Use when you need to see whether an overlay is connected to an upstream state and whether pulls are available.
 
 **Arguments:**
 
@@ -1585,7 +1603,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Preview pulling a newer upstream release into a release-backed overlay.
+**Purpose:** Use when you need to preview upstream state changes before applying them.
 
 **Arguments:**
 
@@ -1604,9 +1622,9 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 ## cruxible_state_pull_apply
 
-**Permission:** `ADMIN`
+**Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Apply a previewed upstream release into a release-backed overlay.
+**Purpose:** Use when a pull preview returned an apply digest and you are ready to apply it.
 
 **Arguments:**
 
@@ -1628,7 +1646,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Look up a specific entity by type and ID. Returns its properties.
+**Purpose:** Use when you need to fetch one entity by type and ID.
 
 **Arguments:**
 
@@ -1651,7 +1669,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Look up a specific relationship by its endpoints and type. Returns its properties. If multiple same-type edges exist between the same endpoints, pass edge_key to select a specific one. Without edge_key, raises an error if ambiguous.
+**Purpose:** Use when you need to fetch one relationship by endpoints and relationship type.
 
 **Arguments:**
 
@@ -1678,7 +1696,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Look up a relationship and follow group provenance when available.
+**Purpose:** Use when you need the provenance, review state, feedback, and receipts for one relationship.
 
 **Arguments:**
 

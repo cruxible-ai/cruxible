@@ -8,6 +8,7 @@ from pathlib import Path
 
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.server import create_server
+from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
 
 def _walk_cli_commands(command, prefix: tuple[str, ...] = ()) -> list[str]:
@@ -64,5 +65,11 @@ def test_mcp_reference_lists_every_registered_tool_and_input_property() -> None:
 
     for tool in tools:
         body = _section(text, tool.name)
+        assert f"**Permission:** `{TOOL_PERMISSIONS[tool.name].name}`" in body, (
+            f"{tool.name} has stale permission documentation"
+        )
+        assert f"**Purpose:** {tool.description}" in body, (
+            f"{tool.name} has stale purpose documentation"
+        )
         for prop in tool.inputSchema.get("properties", {}):
             assert f"`{prop}`" in body, f"{tool.name} omits input property {prop}"

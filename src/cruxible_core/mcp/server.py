@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
+from typing import Any
 
 import structlog
 from mcp.server.fastmcp import FastMCP
 
 from cruxible_core import __version__
+from cruxible_core.mcp.curation import (
+    ToolCuration,
+    advertised_tool_names,
+    resolve_tool_curation,
+)
 from cruxible_core.mcp.permissions import (
     TOOL_PERMISSIONS,
     PermissionMode,
@@ -118,17 +123,44 @@ with an error flag. Check tool call success before processing results.
 """
 
 
-def _build_instructions(mode: PermissionMode) -> str:
+def _build_instructions(
+    mode: PermissionMode,
+    *,
+    curation: ToolCuration,
+    advertised: set[str],
+) -> str:
     """Build server instructions with a dynamic permission mode section."""
-    available = sorted(name for name, tier in TOOL_PERMISSIONS.items() if mode >= tier)
     denied = sorted(name for name, tier in TOOL_PERMISSIONS.items() if mode < tier)
+    hidden = sorted(set(TOOL_PERMISSIONS) - advertised - set(denied))
 
-    tool_list = ", ".join(available)
+    tool_list = ", ".join(sorted(advertised))
     section = f"\n\n## Current Permission Mode: {mode.name}\n\nAvailable tools: {tool_list}"
+    if curation.active:
+        section += f"\nActive MCP tool profile: {curation.profile}"
+        if curation.allowlist is not None:
+            section += f"\nExplicit tool allowlist: {', '.join(sorted(curation.allowlist))}"
+    if hidden:
+        section += f"\nHidden by MCP curation: {', '.join(hidden)}"
     if denied:
         section += f"\nDenied tools (insufficient mode): {', '.join(denied)}"
 
     return BASE_INSTRUCTIONS + section
+
+
+def _registered_tool_names(server: FastMCP) -> set[str]:
+    manager = getattr(server, "_tool_manager")
+    return {tool.name for tool in manager.list_tools()}
+
+
+def _install_list_tools_filter(server: FastMCP, advertised: set[str]) -> None:
+    """Filter MCP tools/list without removing registered tool handlers."""
+    original_list_tools = server.list_tools
+
+    async def list_curated_tools() -> list[Any]:
+        tools = await original_list_tools()
+        return [tool for tool in tools if tool.name in advertised]
+
+    server.list_tools = list_curated_tools  # type: ignore[method-assign]
 
 
 def create_server() -> FastMCP:
@@ -137,10 +169,22 @@ def create_server() -> FastMCP:
     mode = init_permissions()
     server = FastMCP(
         name=f"cruxible-core v{__version__}",
-        instructions=_build_instructions(mode),
+        instructions="",
     )
     registered = register_tools(server)
     validate_tool_permissions(registered)
+    curation = resolve_tool_curation()
+    advertised = advertised_tool_names(
+        mode=mode,
+        registered_tools=set(registered),
+        curation=curation,
+    )
+    server._mcp_server.instructions = _build_instructions(
+        mode,
+        curation=curation,
+        advertised=advertised,
+    )
+    _install_list_tools_filter(server, advertised)
     # NOTE: Runtime FastMCP parity check is in main(), not here.
     # create_server() must remain safe for async embedders.
     return server
@@ -151,7 +195,7 @@ def validate_runtime_tools(server: FastMCP) -> None:
 
     Must be called from a sync context (no running event loop).
     """
-    actual_tools = {t.name for t in asyncio.run(server.list_tools())}
+    actual_tools = _registered_tool_names(server)
     validate_tool_permissions(list(actual_tools))
 
 

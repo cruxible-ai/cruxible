@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp.tool_prompts import tool_description
 
 
 def register_tools(server: FastMCP) -> list[str]:
@@ -25,6 +26,7 @@ def register_tools(server: FastMCP) -> list[str]:
 
     def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
         """Register a tool on the server and track its name."""
+        fn.__doc__ = tool_description(fn.__name__)
         server.tool()(fn)
         registered.append(fn.__name__)
         return fn
