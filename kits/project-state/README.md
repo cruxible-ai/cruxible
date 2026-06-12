@@ -61,6 +61,13 @@ roadmap items, or work items until a decision or work item answers it.
 Markdown docs, plans, chats, review reports, source sections, and issue threads
 are source evidence for claims. They are not entities in this kit.
 
+## Review Loop Convention
+
+`ReviewRequest.summary` is implementer-owned evidence: scope, commit IDs,
+verification, known failures, and review context. Reviewers should leave that
+summary intact and write requested changes, approval notes, or reviewer-facing
+follow-up context in `ReviewRequest.review_notes`.
+
 ## Entity Groups
 
 Dev/project state:

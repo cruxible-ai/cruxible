@@ -270,6 +270,9 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "Outcome",
     }
     assert set(config.entity_types) == expected_entity_types
+    review_notes = config.entity_types["ReviewRequest"].properties["review_notes"]
+    assert review_notes.type == "string"
+    assert review_notes.optional is True
 
     relationships = {relationship.name: relationship for relationship in config.relationships}
     assert not any(

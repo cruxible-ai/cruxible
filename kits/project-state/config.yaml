@@ -240,6 +240,9 @@ entity_types:
       summary:
         type: string
         optional: true
+      review_notes:
+        type: string
+        optional: true
       requested_by:
         type: string
         optional: true
