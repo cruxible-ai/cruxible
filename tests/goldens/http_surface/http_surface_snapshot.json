@@ -118,7 +118,7 @@
     "GET": "NamedQueryInfoResult"
   },
   "/api/v1/{instance_id}/receipts/{receipt_id}": {
-    "GET": null
+    "GET": "Receipt"
   },
   "/api/v1/{instance_id}/relationships": {
     "POST": "AddRelationshipResult"

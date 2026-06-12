@@ -11736,6 +11736,524 @@
         "support_count"
       ]
     },
+    "QueryEntityItem": {
+      "fields": {
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "metadata",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "properties",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Entity-shaped row returned by entity result queries.",
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "required": [
+          "entity_type",
+          "entity_id",
+          "properties",
+          "metadata"
+        ],
+        "title": "QueryEntityItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "entity_id",
+        "entity_type",
+        "metadata",
+        "properties"
+      ]
+    },
+    "QueryIncludeItem": {
+      "fields": {
+        "edge": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "edge",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryPathSegmentItem"
+          }
+        },
+        "source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          }
+        },
+        "description": "One included one-hop side-context relationship.",
+        "properties": {
+          "edge": {
+            "$ref": "#/$defs/QueryPathSegmentItem"
+          },
+          "source": {
+            "$ref": "#/$defs/QueryEntityItem"
+          },
+          "target": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        },
+        "required": [
+          "edge",
+          "source",
+          "target"
+        ],
+        "title": "QueryIncludeItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "edge",
+        "source",
+        "target"
+      ]
+    },
+    "QueryIncludeResult": {
+      "fields": {
+        "alias": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "alias",
+          "required": true,
+          "schema": {
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "exists": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "exists",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Exists",
+            "type": "boolean"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryIncludeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "limit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          }
+        },
+        "many": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "many",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Many",
+            "type": "boolean"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryIncludeItem": {
+            "description": "One included one-hop side-context relationship.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/QueryPathSegmentItem"
+              },
+              "source": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "target": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryIncludeItem",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          }
+        },
+        "description": "Side-context attached to a primary query row.",
+        "properties": {
+          "alias": {
+            "title": "Alias",
+            "type": "string"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "exists": {
+            "default": false,
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/QueryIncludeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "many": {
+            "default": false,
+            "title": "Many",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alias"
+        ],
+        "title": "QueryIncludeResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "alias"
+      ]
+    },
     "QueryListResult": {
       "fields": {
         "items": {
@@ -12138,6 +12656,479 @@
         "entry_point"
       ]
     },
+    "QueryPathItem": {
+      "fields": {
+        "entities": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entities",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryEntityItem"
+            },
+            "title": "Entities",
+            "type": "array"
+          }
+        },
+        "entry": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entry",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        },
+        "includes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "includes",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/QueryPathSegmentItem"
+            },
+            "title": "Path",
+            "type": "array"
+          }
+        },
+        "result": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryIncludeItem": {
+            "description": "One included one-hop side-context relationship.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/QueryPathSegmentItem"
+              },
+              "source": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "target": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryIncludeItem",
+            "type": "object"
+          },
+          "QueryIncludeResult": {
+            "description": "Side-context attached to a primary query row.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeItem"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryIncludeResult",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          }
+        },
+        "description": "Path-shaped row returned by traversal queries.",
+        "properties": {
+          "entities": {
+            "items": {
+              "$ref": "#/$defs/QueryEntityItem"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "entry": {
+            "$ref": "#/$defs/QueryEntityItem"
+          },
+          "includes": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/$defs/QueryPathSegmentItem"
+            },
+            "title": "Path",
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        },
+        "required": [
+          "entry",
+          "result",
+          "entities",
+          "path"
+        ],
+        "title": "QueryPathItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "entities",
+        "entry",
+        "path",
+        "result"
+      ]
+    },
+    "QueryPathSegmentItem": {
+      "fields": {
+        "alias": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "alias",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          }
+        },
+        "edge_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "edge_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          }
+        },
+        "from_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_id",
+          "required": true,
+          "schema": {
+            "title": "From Id",
+            "type": "string"
+          }
+        },
+        "from_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_type",
+          "required": true,
+          "schema": {
+            "title": "From Type",
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "relationship_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relationship_type",
+          "required": true,
+          "schema": {
+            "title": "Relationship Type",
+            "type": "string"
+          }
+        },
+        "to_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_id",
+          "required": true,
+          "schema": {
+            "title": "To Id",
+            "type": "string"
+          }
+        },
+        "to_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_type",
+          "required": true,
+          "schema": {
+            "title": "To Type",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "One relationship segment in a path-shaped query row.",
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          },
+          "edge_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          },
+          "from_id": {
+            "title": "From Id",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "relationship_type": {
+            "title": "Relationship Type",
+            "type": "string"
+          },
+          "to_id": {
+            "title": "To Id",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "from_type",
+          "from_id",
+          "to_type",
+          "to_id"
+        ],
+        "title": "QueryPathSegmentItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "from_id",
+        "from_type",
+        "relationship_type",
+        "to_id",
+        "to_type"
+      ]
+    },
     "QueryPolicySuggestion": {
       "fields": {
         "description": {
@@ -12236,6 +13227,815 @@
         "surface_name"
       ]
     },
+    "QueryProjectedItem": {
+      "fields": {
+        "source": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "$ref": "#/$defs/QueryPathItem"
+              },
+              {
+                "$ref": "#/$defs/QueryRelationshipItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          }
+        },
+        "values": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "values",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryIncludeItem": {
+            "description": "One included one-hop side-context relationship.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/QueryPathSegmentItem"
+              },
+              "source": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "target": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryIncludeItem",
+            "type": "object"
+          },
+          "QueryIncludeResult": {
+            "description": "Side-context attached to a primary query row.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeItem"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryIncludeResult",
+            "type": "object"
+          },
+          "QueryPathItem": {
+            "description": "Path-shaped row returned by traversal queries.",
+            "properties": {
+              "entities": {
+                "items": {
+                  "$ref": "#/$defs/QueryEntityItem"
+                },
+                "title": "Entities",
+                "type": "array"
+              },
+              "entry": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "path": {
+                "items": {
+                  "$ref": "#/$defs/QueryPathSegmentItem"
+                },
+                "title": "Path",
+                "type": "array"
+              },
+              "result": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "entry",
+              "result",
+              "entities",
+              "path"
+            ],
+            "title": "QueryPathItem",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          },
+          "QueryRelationshipItem": {
+            "description": "Relationship-shaped row returned by relationship result queries.",
+            "properties": {
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "entry": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "from_entity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntityItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_entity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntityItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id",
+              "entry"
+            ],
+            "title": "QueryRelationshipItem",
+            "type": "object"
+          }
+        },
+        "description": "Projected query row with selected values and optional source evidence.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "$ref": "#/$defs/QueryPathItem"
+              },
+              {
+                "$ref": "#/$defs/QueryRelationshipItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "title": "QueryProjectedItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "values"
+      ]
+    },
+    "QueryRelationshipItem": {
+      "fields": {
+        "edge_key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "edge_key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          }
+        },
+        "entry": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entry",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/QueryEntityItem"
+          }
+        },
+        "from_entity": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "from_entity",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "from_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_id",
+          "required": true,
+          "schema": {
+            "title": "From Id",
+            "type": "string"
+          }
+        },
+        "from_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_type",
+          "required": true,
+          "schema": {
+            "title": "From Type",
+            "type": "string"
+          }
+        },
+        "includes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "includes",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          }
+        },
+        "metadata": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "metadata",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "properties",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          }
+        },
+        "relationship_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "relationship_type",
+          "required": true,
+          "schema": {
+            "title": "Relationship Type",
+            "type": "string"
+          }
+        },
+        "to_entity": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "to_entity",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "to_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_id",
+          "required": true,
+          "schema": {
+            "title": "To Id",
+            "type": "string"
+          }
+        },
+        "to_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_type",
+          "required": true,
+          "schema": {
+            "title": "To Type",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryIncludeItem": {
+            "description": "One included one-hop side-context relationship.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/QueryPathSegmentItem"
+              },
+              "source": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "target": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryIncludeItem",
+            "type": "object"
+          },
+          "QueryIncludeResult": {
+            "description": "Side-context attached to a primary query row.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeItem"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryIncludeResult",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          }
+        },
+        "description": "Relationship-shaped row returned by relationship result queries.",
+        "properties": {
+          "edge_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edge Key"
+          },
+          "entry": {
+            "$ref": "#/$defs/QueryEntityItem"
+          },
+          "from_entity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "from_id": {
+            "title": "From Id",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "includes": {
+            "additionalProperties": {
+              "$ref": "#/$defs/QueryIncludeResult"
+            },
+            "title": "Includes",
+            "type": "object"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "title": "Properties",
+            "type": "object"
+          },
+          "relationship_type": {
+            "title": "Relationship Type",
+            "type": "string"
+          },
+          "to_entity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "to_id": {
+            "title": "To Id",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "from_type",
+          "from_id",
+          "to_type",
+          "to_id",
+          "entry"
+        ],
+        "title": "QueryRelationshipItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "entry",
+        "from_id",
+        "from_type",
+        "relationship_type",
+        "to_id",
+        "to_type"
+      ]
+    },
     "QueryToolResult": {
       "fields": {
         "dedupe": {
@@ -12263,8 +14063,20 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/QueryEntityItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryPathItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryRelationshipItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryProjectedItem"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"
@@ -12562,6 +14374,111 @@
       },
       "json_schema": {
         "$defs": {
+          "QueryEntityItem": {
+            "description": "Entity-shaped row returned by entity result queries.",
+            "properties": {
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "properties",
+              "metadata"
+            ],
+            "title": "QueryEntityItem",
+            "type": "object"
+          },
+          "QueryIncludeItem": {
+            "description": "One included one-hop side-context relationship.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/QueryPathSegmentItem"
+              },
+              "source": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "target": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "edge",
+              "source",
+              "target"
+            ],
+            "title": "QueryIncludeItem",
+            "type": "object"
+          },
+          "QueryIncludeResult": {
+            "description": "Side-context attached to a primary query row.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "count": {
+                "default": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "exists": {
+                "default": false,
+                "title": "Exists",
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeItem"
+                },
+                "title": "Items",
+                "type": "array"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "truncated": {
+                "default": false,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "QueryIncludeResult",
+            "type": "object"
+          },
           "QueryParamHints": {
             "properties": {
               "entry_point": {
@@ -12607,6 +14524,236 @@
             ],
             "title": "QueryParamHints",
             "type": "object"
+          },
+          "QueryPathItem": {
+            "description": "Path-shaped row returned by traversal queries.",
+            "properties": {
+              "entities": {
+                "items": {
+                  "$ref": "#/$defs/QueryEntityItem"
+                },
+                "title": "Entities",
+                "type": "array"
+              },
+              "entry": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "path": {
+                "items": {
+                  "$ref": "#/$defs/QueryPathSegmentItem"
+                },
+                "title": "Path",
+                "type": "array"
+              },
+              "result": {
+                "$ref": "#/$defs/QueryEntityItem"
+              }
+            },
+            "required": [
+              "entry",
+              "result",
+              "entities",
+              "path"
+            ],
+            "title": "QueryPathItem",
+            "type": "object"
+          },
+          "QueryPathSegmentItem": {
+            "description": "One relationship segment in a path-shaped query row.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id"
+            ],
+            "title": "QueryPathSegmentItem",
+            "type": "object"
+          },
+          "QueryProjectedItem": {
+            "description": "Projected query row with selected values and optional source evidence.",
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntityItem"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryPathItem"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryRelationshipItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source"
+              },
+              "values": {
+                "additionalProperties": true,
+                "title": "Values",
+                "type": "object"
+              }
+            },
+            "required": [
+              "values"
+            ],
+            "title": "QueryProjectedItem",
+            "type": "object"
+          },
+          "QueryRelationshipItem": {
+            "description": "Relationship-shaped row returned by relationship result queries.",
+            "properties": {
+              "edge_key": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Edge Key"
+              },
+              "entry": {
+                "$ref": "#/$defs/QueryEntityItem"
+              },
+              "from_entity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntityItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "from_id": {
+                "title": "From Id",
+                "type": "string"
+              },
+              "from_type": {
+                "title": "From Type",
+                "type": "string"
+              },
+              "includes": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/QueryIncludeResult"
+                },
+                "title": "Includes",
+                "type": "object"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "title": "Metadata",
+                "type": "object"
+              },
+              "properties": {
+                "additionalProperties": true,
+                "title": "Properties",
+                "type": "object"
+              },
+              "relationship_type": {
+                "title": "Relationship Type",
+                "type": "string"
+              },
+              "to_entity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntityItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "to_id": {
+                "title": "To Id",
+                "type": "string"
+              },
+              "to_type": {
+                "title": "To Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relationship_type",
+              "from_type",
+              "from_id",
+              "to_type",
+              "to_id",
+              "entry"
+            ],
+            "title": "QueryRelationshipItem",
+            "type": "object"
           }
         },
         "properties": {
@@ -12622,8 +14769,20 @@
           },
           "items": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/QueryEntityItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryPathItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryRelationshipItem"
+                },
+                {
+                  "$ref": "#/$defs/QueryProjectedItem"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"

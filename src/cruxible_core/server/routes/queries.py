@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 
 from cruxible_client import contracts
 from cruxible_core.errors import ConfigError
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.runtime import api
 from cruxible_core.server.request_models import (
     EvaluateRequest,
@@ -67,6 +68,9 @@ async def view(
     Non-reserved query-string keys are forwarded to the named query as
     string-valued parameters; results use the standard list envelope with
     deterministic ordering, so ``offset`` windows are stable per snapshot.
+    Use GET ``/api/v1/{instance_id}/queries/{query_name}`` (describe_query)
+    to inspect per-query parameter metadata such as required parameters,
+    primary key hints, and example IDs.
     """
     resolved_instance_id = resolve_server_instance_id(instance_id)
     params = {
@@ -118,7 +122,7 @@ async def render_wiki(
     )
 
 
-@router.get("/{instance_id}/receipts/{receipt_id}")
+@router.get("/{instance_id}/receipts/{receipt_id}", response_model=Receipt)
 async def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     return api.receipt(
         instance_id=resolve_server_instance_id(instance_id),

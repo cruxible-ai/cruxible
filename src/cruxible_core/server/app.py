@@ -20,7 +20,11 @@ from cruxible_core.server.config import (
     validate_server_startup_settings,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
-from cruxible_core.server.errors import ErrorResponse, error_to_response
+from cruxible_core.server.errors import (
+    STANDARD_ERROR_RESPONSES,
+    ErrorResponse,
+    error_to_response,
+)
 from cruxible_core.server.registry import get_registry
 from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.routes.decision_records import router as decision_records_router
@@ -42,7 +46,7 @@ from cruxible_core.server.routes.workflows import router as workflows_router
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
-    app = FastAPI(title="cruxible-core")
+    app = FastAPI(title="cruxible-core", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)

@@ -9,12 +9,17 @@ from pathlib import Path
 from typing import Any
 
 
-def generate_http_surface_manifest() -> dict[str, Any]:
-    """Build {path: {METHOD: response_model_title|None}} from the live app."""
+def generate_openapi_spec() -> dict[str, Any]:
+    """Build the live FastAPI OpenAPI document for HTTP surface checks."""
     os.environ.setdefault("CRUXIBLE_SERVER_STATE_DIR", tempfile.mkdtemp(prefix="crx-surface-"))
     from cruxible_core.server.app import create_app
 
-    spec = create_app().openapi()
+    return create_app().openapi()
+
+
+def generate_http_surface_manifest() -> dict[str, Any]:
+    """Build {path: {METHOD: response_model_title|None}} from the live app."""
+    spec = generate_openapi_spec()
     manifest: dict[str, Any] = {}
     for path, methods in sorted(spec["paths"].items()):
         entry: dict[str, Any] = {}

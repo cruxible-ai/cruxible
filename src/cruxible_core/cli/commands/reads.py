@@ -131,6 +131,10 @@ def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
     return payload
 
 
+def _query_item_payloads(items: list[contracts.QueryItem]) -> list[dict[str, Any]]:
+    return [item.model_dump(mode="python") for item in items]
+
+
 def _print_structured_query_rows(rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -400,14 +404,15 @@ def _run_query_command(
             )
             _print_query_param_hints(hints)
             raise
-        projected_results = any("values" in item for item in remote_result.items)
+        remote_items = _query_item_payloads(remote_result.items)
+        projected_results = any("values" in item for item in remote_items)
         entity_results = (
-            _entities_from_payload(remote_result.items)
+            _entities_from_payload(remote_items)
             if remote_result.result_shape == "entity" and not projected_results
             else []
         )
         structured_results = (
-            list(remote_result.items)
+            list(remote_items)
             if remote_result.result_shape != "entity" or projected_results
             else []
         )
@@ -1581,9 +1586,9 @@ def analyze_feedback_cmd(
             property_pairs=[(pair.from_property, pair.to_property) for pair in property_pairs]
             or None,
         )
-        payload = contracts.AnalyzeFeedbackResult.model_validate(
-            asdict(local_result)
-        ).model_dump(mode="json")
+        payload = contracts.AnalyzeFeedbackResult.model_validate(asdict(local_result)).model_dump(
+            mode="json"
+        )
 
     click.echo(f"Feedback analyzed: {payload['feedback_count']} row(s)")
     if payload["action_counts"]:
@@ -1693,8 +1698,8 @@ def analyze_outcomes_cmd(
             limit=limit,
             min_support=min_support,
         )
-        payload = contracts.AnalyzeOutcomesResult.model_validate(
-            asdict(local_result)
-        ).model_dump(mode="json")
+        payload = contracts.AnalyzeOutcomesResult.model_validate(asdict(local_result)).model_dump(
+            mode="json"
+        )
 
     click.echo(yaml.safe_dump(payload, sort_keys=False))

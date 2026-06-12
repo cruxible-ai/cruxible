@@ -30,7 +30,22 @@ from cruxible_core.errors import (
     TraceNotFoundError,
 )
 
-__all__ = ["ErrorResponse", "error_to_response", "response_to_error"]
+STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {"model": ErrorResponse, "description": "Bad request error envelope"},
+    401: {"model": ErrorResponse, "description": "Authentication error envelope"},
+    403: {"model": ErrorResponse, "description": "Permission error envelope"},
+    404: {"model": ErrorResponse, "description": "Not found error envelope"},
+    409: {"model": ErrorResponse, "description": "Conflict error envelope"},
+    422: {"model": ErrorResponse, "description": "Validation error envelope"},
+    500: {"model": ErrorResponse, "description": "Internal server error envelope"},
+}
+
+__all__ = [
+    "ErrorResponse",
+    "STANDARD_ERROR_RESPONSES",
+    "error_to_response",
+    "response_to_error",
+]
 
 
 def _message_for_error(exc: CoreError) -> str:

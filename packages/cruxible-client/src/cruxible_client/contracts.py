@@ -8,7 +8,7 @@ FastMCP auto-generates outputSchema from the BaseModel return annotations.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -362,8 +362,91 @@ class ListEnvelopeFields(BaseModel):
     truncated: bool = False
 
 
+class QueryEntityItem(BaseModel):
+    """Entity-shaped row returned by entity result queries."""
+
+    entity_type: str
+    entity_id: str
+    properties: dict[str, Any]
+    metadata: dict[str, Any]
+
+
+class QueryPathSegmentItem(BaseModel):
+    """One relationship segment in a path-shaped query row."""
+
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    alias: str | None = None
+
+
+class QueryIncludeItem(BaseModel):
+    """One included one-hop side-context relationship."""
+
+    edge: QueryPathSegmentItem
+    source: QueryEntityItem
+    target: QueryEntityItem
+
+
+class QueryIncludeResult(BaseModel):
+    """Side-context attached to a primary query row."""
+
+    alias: str
+    many: bool = False
+    exists: bool = False
+    count: int = 0
+    limit: int | None = None
+    truncated: bool = False
+    items: list[QueryIncludeItem] = Field(default_factory=list)
+
+
+class QueryPathItem(BaseModel):
+    """Path-shaped row returned by traversal queries."""
+
+    entry: QueryEntityItem
+    result: QueryEntityItem
+    entities: list[QueryEntityItem]
+    path: list[QueryPathSegmentItem]
+    includes: dict[str, QueryIncludeResult] = Field(default_factory=dict)
+
+
+class QueryRelationshipItem(BaseModel):
+    """Relationship-shaped row returned by relationship result queries."""
+
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    edge_key: int | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    entry: QueryEntityItem
+    from_entity: QueryEntityItem | None = None
+    to_entity: QueryEntityItem | None = None
+    includes: dict[str, QueryIncludeResult] = Field(default_factory=dict)
+
+
+QueryBaseItem: TypeAlias = QueryEntityItem | QueryPathItem | QueryRelationshipItem
+
+
+class QueryProjectedItem(BaseModel):
+    """Projected query row with selected values and optional source evidence."""
+
+    values: dict[str, Any]
+    source: QueryBaseItem | None = None
+
+
+QueryItem: TypeAlias = QueryBaseItem | QueryProjectedItem
+
+
 class QueryToolResult(BaseModel):
-    items: list[dict[str, Any]]
+    items: list[QueryItem]
     receipt_id: str | None
     receipt: dict[str, Any] | None
     total: int

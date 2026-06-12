@@ -1077,7 +1077,10 @@ def _query_tool_result(
     include_receipt: bool,
 ) -> contracts.QueryToolResult:
     return contracts.QueryToolResult(
-        items=[dump_query_row(row, mode="json") for row in result.items],
+        items=cast(
+            list[contracts.QueryItem],
+            [dump_query_row(row, mode="json") for row in result.items],
+        ),
         receipt_id=result.receipt_id,
         receipt=(
             result.receipt.model_dump(mode="json") if result.receipt and include_receipt else None

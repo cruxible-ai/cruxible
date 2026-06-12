@@ -11,11 +11,13 @@ from __future__ import annotations
 import inspect
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 from tests.support.http_surface import (
     generate_http_surface_manifest,
+    generate_openapi_spec,
     load_http_surface_snapshot,
 )
 
@@ -31,11 +33,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SURFACE_SNAPSHOT_PATH = REPO_ROOT / "tests/goldens/http_surface/http_surface_snapshot.json"
 
 ENVELOPE_FIELDS = {"total", "limit", "offset", "truncated"}
+ERROR_ENVELOPE_FIELDS = {
+    "error_type",
+    "message",
+    "errors",
+    "context",
+    "mutation_receipt_id",
+}
+STANDARD_ERROR_STATUSES = {"400", "401", "403", "404", "409", "422", "500"}
+HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
 # Composite documents and inputs that legitimately carry list fields without
 # being list endpoints (convention 1 exemption + write-side inputs).
 ENVELOPE_EXEMPT_MODELS = {
     "BatchDirectWritePayload",  # write-side input payload
+    "QueryIncludeResult",  # nested side-context list inside a query row
 }
 
 
@@ -58,6 +70,67 @@ def test_http_surface_snapshot_is_current() -> None:
     )
 
 
+def test_openapi_query_tool_result_items_are_typed() -> None:
+    spec = generate_openapi_spec()
+    items_schema = spec["components"]["schemas"]["QueryToolResult"]["properties"]["items"]
+    item_variants = items_schema["items"].get("anyOf") or items_schema["items"].get("oneOf")
+    assert item_variants is not None
+
+    item_refs = {_component_ref_name(variant) for variant in item_variants}
+    assert {"QueryEntityItem", "QueryPathItem"}.issubset(item_refs)
+    assert "QueryRelationshipItem" in item_refs
+    assert "QueryProjectedItem" in item_refs
+
+
+def test_openapi_routes_declare_standard_error_envelope() -> None:
+    spec = generate_openapi_spec()
+    error_schema = spec["components"]["schemas"]["ErrorResponse"]
+    assert set(error_schema["properties"]) == ERROR_ENVELOPE_FIELDS
+    assert "HTTPValidationError" not in spec["components"]["schemas"]
+
+    offenders: list[str] = []
+    for path, operations in spec["paths"].items():
+        if not path.startswith("/api/v1/"):
+            continue
+        for method, operation in operations.items():
+            if method not in HTTP_METHODS:
+                continue
+            responses = operation.get("responses", {})
+            for status in STANDARD_ERROR_STATUSES:
+                schema = (
+                    responses.get(status, {})
+                    .get("content", {})
+                    .get("application/json", {})
+                    .get("schema", {})
+                )
+                if _component_ref_name(schema) != "ErrorResponse":
+                    offenders.append(f"{method.upper()} {path} missing {status}=ErrorResponse")
+
+    assert offenders == []
+
+
+def test_openapi_receipt_route_declares_stable_receipt_shape() -> None:
+    spec = generate_openapi_spec()
+    schema = spec["paths"]["/api/v1/{instance_id}/receipts/{receipt_id}"]["get"]["responses"][
+        "200"
+    ]["content"]["application/json"]["schema"]
+    assert _component_ref_name(schema) == "Receipt"
+
+    receipt_schema = spec["components"]["schemas"]["Receipt"]
+    assert {"receipt_id", "nodes", "edges", "results"}.issubset(receipt_schema["properties"])
+    assert _component_ref_name(receipt_schema["properties"]["nodes"]["items"]) == "ReceiptNode"
+    assert _component_ref_name(receipt_schema["properties"]["edges"]["items"]) == "EvidenceEdge"
+
+
+def test_openapi_view_description_documents_forwarded_params() -> None:
+    spec = generate_openapi_spec()
+    description = spec["paths"]["/api/v1/{instance_id}/views/{query_name}"]["get"]["description"]
+
+    assert "Non-reserved query-string keys are forwarded" in description
+    assert "describe_query" in description
+    assert "/api/v1/{instance_id}/queries/{query_name}" in description
+
+
 def test_every_list_contract_carries_the_envelope() -> None:
     """Any contract model exposing a list `items` field must speak the envelope."""
     offenders: list[str] = []
@@ -76,6 +149,13 @@ def test_every_list_contract_carries_the_envelope() -> None:
         "List-shaped contract models must carry the standard envelope "
         f"(items/total/limit/offset/truncated): {offenders}"
     )
+
+
+def _component_ref_name(schema: dict[str, Any]) -> str | None:
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref:
+        return None
+    return ref.rsplit("/", 1)[-1]
 
 
 def test_provenance_source_refs_are_operation_vocabulary() -> None:
