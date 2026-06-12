@@ -886,7 +886,7 @@ artifacts:
   local_seed_bundle:
     kind: directory
     uri: ./data/seed
-    digest: sha256:f8671b9da8f68c2eae1941a59a2b96195af912c2f14cfdd41098a8dd4d0f193b
+    digest: sha256:eb5675109ea4b2fc44f1a59419aa4e294aa605df95f9a0fc941d9f0d4af3a073
     metadata:
       description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
 
