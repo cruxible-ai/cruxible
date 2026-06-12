@@ -69,7 +69,8 @@ def _parse_source_evidence(raw: str) -> contracts.SourceEvidenceInput:
 
 def _load_batch_direct_write_payload(path: Path) -> contracts.BatchDirectWritePayload:
     try:
-        payload = yaml.safe_load(path.read_text())
+        raw = click.get_text_stream("stdin").read() if str(path) == "-" else path.read_text()
+        payload = yaml.safe_load(raw)
     except OSError as exc:
         raise click.BadParameter(f"Could not read --payload-file: {exc}") from exc
     except yaml.YAMLError as exc:
@@ -302,9 +303,12 @@ def add_relationship_cmd(
 @click.command("batch-direct-write")
 @click.option(
     "--payload-file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
     required=True,
-    help="JSON or YAML payload containing entities, relationships, and shared_evidence.",
+    help=(
+        "JSON or YAML payload containing entities, relationships, and shared_evidence. "
+        "Use '-' to read stdin."
+    ),
 )
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option

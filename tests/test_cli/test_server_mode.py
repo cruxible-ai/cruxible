@@ -2703,6 +2703,63 @@ shared_evidence: {}
     assert "Batch direct write validated." in result.output
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_batch_direct_write_reads_payload_from_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    dry_run: bool,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["instance_id"] = instance_id
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+                receipt_id="RCP-stdin" if not dry_run else None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    args = [
+        "--server-url",
+        "http://server",
+        "--instance-id",
+        "inst_123",
+        "batch-direct-write",
+        "--payload-file",
+        "-",
+    ]
+    if dry_run:
+        args.append("--dry-run")
+
+    result = runner.invoke(
+        cli,
+        args,
+        input="""\
+entities:
+  - entity_type: Vehicle
+    entity_id: V-STDIN
+    properties:
+      vehicle_id: V-STDIN
+relationships: []
+shared_evidence: {}
+""",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    assert captured["dry_run"] is dry_run
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.entities[0].entity_id == "V-STDIN"
+    expected = "validated" if dry_run else "applied"
+    assert f"Batch direct write {expected}." in result.output
+
+
 @pytest.mark.parametrize(
     ("raw_ref", "expected_message"),
     [
