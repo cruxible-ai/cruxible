@@ -19009,6 +19009,22 @@
             "title": "Relationship Counts",
             "type": "object"
           }
+        },
+        "status_counts": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "status_counts",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          }
         }
       },
       "json_schema": {
@@ -19045,6 +19061,16 @@
               "type": "integer"
             },
             "title": "Relationship Counts",
+            "type": "object"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Status Counts",
             "type": "object"
           }
         },

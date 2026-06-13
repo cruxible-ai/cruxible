@@ -791,6 +791,7 @@ def stats_cmd(output_json: bool) -> None:
     edge_count = result.edge_count
     entity_counts = result.entity_counts
     relationship_counts = result.relationship_counts
+    status_counts = result.status_counts
     head_snapshot_id = result.head_snapshot_id
     if output_json:
         _emit_json(
@@ -799,6 +800,7 @@ def stats_cmd(output_json: bool) -> None:
                 "edge_count": edge_count,
                 "entity_counts": entity_counts,
                 "relationship_counts": relationship_counts,
+                "status_counts": status_counts,
                 "head_snapshot_id": head_snapshot_id,
             }
         )

@@ -1873,6 +1873,7 @@ def stats(instance_id: str) -> contracts.StatsResult:
         edge_count=result.edge_count,
         entity_counts=result.entity_counts,
         relationship_counts=result.relationship_counts,
+        status_counts=result.status_counts,
         head_snapshot_id=result.head_snapshot_id,
     )
 
