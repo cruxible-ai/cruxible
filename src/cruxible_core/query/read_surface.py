@@ -11,7 +11,11 @@ from cruxible_core.config.property_validation import (
     entity_with_identity_properties,
 )
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import RelationshipAmbiguityError
+from cruxible_core.errors import (
+    EntityTypeNotFoundError,
+    RelationshipAmbiguityError,
+    RelationshipNotFoundError,
+)
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import execute_query
@@ -83,6 +87,8 @@ def list_entities(
     offset: int = 0,
 ) -> ReadListResult:
     """List entities of a type with shared limit/offset/filter semantics."""
+    if config is not None:
+        _require_entity_type(config, entity_type)
     if config is None:
         entities = graph.list_entities(entity_type, property_filter=property_filter)
     else:
@@ -106,12 +112,15 @@ def list_entities(
 def list_relationships(
     graph: EntityGraph,
     *,
+    config: CoreConfig | None = None,
     relationship_type: str | None = None,
     property_filter: dict[str, Any] | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> ReadListResult:
     """List relationships with shared limit/offset/filter semantics."""
+    if config is not None and relationship_type is not None:
+        _require_relationship_type(config, relationship_type)
     relationships = graph.list_edges(relationship_type=relationship_type)
     if property_filter:
         relationships = [
@@ -141,6 +150,23 @@ def _relationship_sort_key(edge: dict[str, Any]) -> tuple[str, str, str, str, st
     )
 
 
+def _known_entity_types(config: CoreConfig) -> list[str]:
+    return sorted(config.entity_types)
+
+
+def _require_entity_type(config: CoreConfig, entity_type: str) -> None:
+    if entity_type not in config.entity_types:
+        raise EntityTypeNotFoundError(
+            entity_type,
+            known_entity_types=_known_entity_types(config),
+        )
+
+
+def _require_relationship_type(config: CoreConfig, relationship_type: str) -> None:
+    if config.get_relationship(relationship_type) is None:
+        raise RelationshipNotFoundError(relationship_type)
+
+
 def get_entity(
     graph: EntityGraph,
     entity_type: str,
@@ -149,6 +175,8 @@ def get_entity(
     config: CoreConfig | None = None,
 ) -> EntityInstance | None:
     """Look up a specific entity by type and ID."""
+    if config is not None:
+        _require_entity_type(config, entity_type)
     entity = graph.get_entity(entity_type, entity_id)
     if entity is None or config is None:
         return entity
@@ -158,6 +186,7 @@ def get_entity(
 def get_relationship(
     graph: EntityGraph,
     *,
+    config: CoreConfig | None = None,
     from_type: str,
     from_id: str,
     relationship_type: str,
@@ -166,6 +195,10 @@ def get_relationship(
     edge_key: int | None = None,
 ) -> RelationshipInstance | None:
     """Look up a specific relationship by endpoints and type."""
+    if config is not None:
+        _require_entity_type(config, from_type)
+        _require_entity_type(config, to_type)
+        _require_relationship_type(config, relationship_type)
     if edge_key is None:
         count = graph.relationship_count_between(
             from_type, from_id, to_type, to_id, relationship_type
@@ -200,6 +233,10 @@ def inspect_entity(
     limit: int | None = None,
 ) -> ReadInspectEntity:
     """Look up an entity and its immediate neighbors."""
+    if config is not None:
+        _require_entity_type(config, entity_type)
+        if relationship_type is not None:
+            _require_relationship_type(config, relationship_type)
     entity = graph.get_entity(entity_type, entity_id)
     if entity is None:
         return ReadInspectEntity(found=False, entity_type=entity_type, entity_id=entity_id)

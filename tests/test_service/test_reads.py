@@ -10,8 +10,10 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
+    EntityTypeNotFoundError,
     ReceiptNotFoundError,
     RelationshipAmbiguityError,
+    RelationshipNotFoundError,
     TraceNotFoundError,
 )
 from cruxible_core.graph.provenance import RelationshipProvenance
@@ -595,8 +597,11 @@ class TestSample:
         assert all(e.entity_type == "Vehicle" for e in entities)
 
     def test_bad_type(self, populated_instance: CruxibleInstance) -> None:
-        entities = service_sample(populated_instance, "NonexistentType")
-        assert entities == []
+        with pytest.raises(EntityTypeNotFoundError) as exc_info:
+            service_sample(populated_instance, "NonexistentType")
+
+        assert exc_info.value.entity_type == "NonexistentType"
+        assert exc_info.value.known_entity_types == ["Part", "Vehicle"]
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +669,16 @@ class TestGetEntity:
         entity = service_get_entity(populated_instance, "Vehicle", "NONEXISTENT")
         assert entity is None
 
+    def test_unknown_entity_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(EntityTypeNotFoundError) as exc_info:
+            service_get_entity(populated_instance, "NonexistentType", "ANY")
+
+        assert exc_info.value.entity_type == "NonexistentType"
+        assert exc_info.value.known_entity_types == ["Part", "Vehicle"]
+
     def test_inspect_entity_returns_neighbors(self, populated_instance: CruxibleInstance) -> None:
         graph = populated_instance.load_graph()
         graph.update_entity_metadata("Vehicle", "V-2024-CIVIC-EX", {"source": "fixture"})
@@ -699,6 +714,30 @@ class TestGetEntity:
         result = service_inspect_entity(populated_instance, "Vehicle", "MISSING")
         assert result.found is False
         assert result.neighbors == []
+
+    def test_inspect_unknown_entity_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(EntityTypeNotFoundError) as exc_info:
+            service_inspect_entity(populated_instance, "NonexistentType", "ANY")
+
+        assert exc_info.value.entity_type == "NonexistentType"
+        assert exc_info.value.known_entity_types == ["Part", "Vehicle"]
+
+    def test_inspect_unknown_relationship_filter_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(RelationshipNotFoundError) as exc_info:
+            service_inspect_entity(
+                populated_instance,
+                "Vehicle",
+                "V-2024-CIVIC-EX",
+                relationship_type="missing_relationship",
+            )
+
+        assert exc_info.value.relationship_name == "missing_relationship"
 
 
 # ---------------------------------------------------------------------------
@@ -746,6 +785,39 @@ class TestGetRelationship:
                 to_id="V-2024-CIVIC-EX",
             )
 
+    def test_unknown_endpoint_entity_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(EntityTypeNotFoundError) as exc_info:
+            service_get_relationship(
+                populated_instance,
+                from_type="NonexistentType",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
+            )
+
+        assert exc_info.value.entity_type == "NonexistentType"
+        assert exc_info.value.known_entity_types == ["Part", "Vehicle"]
+
+    def test_unknown_relationship_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(RelationshipNotFoundError) as exc_info:
+            service_get_relationship(
+                populated_instance,
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="missing_relationship",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
+            )
+
+        assert exc_info.value.relationship_name == "missing_relationship"
+
     def test_lineage_warns_on_missing_provenance(
         self,
         populated_instance: CruxibleInstance,
@@ -782,6 +854,20 @@ class TestGetRelationship:
         assert lineage.found is False
         assert lineage.relationship is None
         assert lineage.warnings == ["relationship_not_found"]
+
+    def test_lineage_unknown_endpoint_entity_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(EntityTypeNotFoundError):
+            service_get_relationship_lineage(
+                populated_instance,
+                from_type="Part",
+                from_id="BP-1001",
+                relationship_type="fits",
+                to_type="NonexistentType",
+                to_id="V-NOT-FOUND",
+            )
 
     def test_lineage_warns_on_non_group_provenance(
         self,
@@ -985,6 +1071,16 @@ class TestList:
         assert result.total == 2
         assert len(result.items) == 2
 
+    def test_entities_unknown_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(EntityTypeNotFoundError) as exc_info:
+            service_list(populated_instance, "entities", entity_type="NonexistentType")
+
+        assert exc_info.value.entity_type == "NonexistentType"
+        assert exc_info.value.known_entity_types == ["Part", "Vehicle"]
+
     def test_entities_property_filter(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(
             populated_instance,
@@ -1028,6 +1124,19 @@ class TestList:
     def test_edges(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(populated_instance, "edges")
         assert result.total >= 3  # 3 fits + 1 replaces in populated graph
+
+    def test_edges_unknown_relationship_type_raises_typed_error(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with pytest.raises(RelationshipNotFoundError) as exc_info:
+            service_list(
+                populated_instance,
+                "edges",
+                relationship_type="missing_relationship",
+            )
+
+        assert exc_info.value.relationship_name == "missing_relationship"
 
     def test_edges_property_filter(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(

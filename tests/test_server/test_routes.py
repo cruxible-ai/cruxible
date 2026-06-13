@@ -421,6 +421,57 @@ def test_view_route_rejects_unknown_query_with_error_envelope(
     assert "no_such_query" in body["message"]
 
 
+def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+
+    list_response = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={"entity_type": "TypoType"},
+    )
+    assert list_response.status_code == 404
+    list_body = list_response.json()
+    assert list_body["error_type"] == "EntityTypeNotFoundError"
+    assert list_body["context"]["entity_type"] == "TypoType"
+    assert list_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
+
+    get_response = app_client.get(f"/api/v1/{instance_id}/entities/TypoType/ANY")
+    assert get_response.status_code == 404
+    assert get_response.json()["error_type"] == "EntityTypeNotFoundError"
+
+    inspect_response = app_client.get(f"/api/v1/{instance_id}/inspect/entity/TypoType/ANY")
+    assert inspect_response.status_code == 404
+    assert inspect_response.json()["error_type"] == "EntityTypeNotFoundError"
+
+    relationship_response = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-1001",
+            "relationship_type": "missing_relationship",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-CIVIC-EX",
+        },
+    )
+    assert relationship_response.status_code == 404
+    assert relationship_response.json()["error_type"] == "RelationshipNotFoundError"
+
+    relationship_entity_type_response = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "TypoType",
+            "from_id": "BP-1001",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-CIVIC-EX",
+        },
+    )
+    assert relationship_entity_type_response.status_code == 404
+    assert relationship_entity_type_response.json()["error_type"] == "EntityTypeNotFoundError"
+
+
 def test_view_route_validates_reserved_pagination_params(
     app_client: TestClient,
     server_project: Path,

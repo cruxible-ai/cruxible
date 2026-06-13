@@ -60,9 +60,9 @@ from cruxible_core.server.errors import (
             },
         ),
         (
-            EntityTypeNotFoundError("Vehicle"),
+            EntityTypeNotFoundError("Vehicle", known_entity_types=["Part", "Vehicle"]),
             client_errors.EntityTypeNotFoundError,
-            {"entity_type": "Vehicle"},
+            {"entity_type": "Vehicle", "known_entity_types": ["Part", "Vehicle"]},
         ),
         (
             RelationshipNotFoundError("fits"),

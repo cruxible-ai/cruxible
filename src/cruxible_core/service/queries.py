@@ -561,9 +561,11 @@ def service_get_relationship(
 
     Raises RelationshipAmbiguityError if multiple edges match and no edge_key given.
     """
+    config = instance.load_config()
     graph = instance.load_graph()
     return read_get_relationship(
         graph,
+        config=config,
         from_type=from_type,
         from_id=from_id,
         relationship_type=relationship_type,
@@ -752,9 +754,11 @@ def service_list(
         return ListResult(items=result.items, total=result.total)
 
     if resource == "edges":
+        config = instance.load_config()
         graph = instance.load_graph()
         result = read_list_relationships(
             graph,
+            config=config,
             relationship_type=relationship_type,
             property_filter=property_filter,
             limit=limit,

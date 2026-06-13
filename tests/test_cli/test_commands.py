@@ -1107,6 +1107,21 @@ class TestList:
         assert result.exit_code == 0
         assert "2 entity" in result.output
 
+    def test_list_entities_unknown_type_errors(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "TypoType"],
+        )
+
+        assert result.exit_code == 1
+        assert "Entity type 'TypoType' not found in schema" in result.output
+        assert "Known entity types: Part, Vehicle" in result.output
+
     def test_list_receipts(
         self,
         runner: CliRunner,

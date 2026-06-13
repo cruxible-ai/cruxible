@@ -446,6 +446,18 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
     )
     assert listed["total"] == 2
 
+    list_error = call_tool_expect_error(
+        server,
+        "cruxible_list",
+        {
+            "instance_id": dev_graph_instance_id,
+            "resource_type": "entities",
+            "entity_type": "TypoType",
+        },
+    )
+    assert "Entity type 'TypoType' not found in schema" in list_error
+    assert "Known entity types: Part, Vehicle" in list_error
+
     sample = call_tool(
         server,
         "cruxible_sample",
