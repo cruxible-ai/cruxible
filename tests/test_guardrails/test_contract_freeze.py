@@ -34,6 +34,7 @@ SURFACE_SNAPSHOT_PATH = REPO_ROOT / "tests/goldens/http_surface/http_surface_sna
 
 ENVELOPE_FIELDS = {"total", "limit", "offset", "truncated"}
 ERROR_ENVELOPE_FIELDS = {
+    "error_code",
     "error_type",
     "message",
     "errors",

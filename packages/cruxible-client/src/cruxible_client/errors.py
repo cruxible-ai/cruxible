@@ -166,6 +166,15 @@ class QueryExecutionError(ExecutionError):
     pass
 
 
+class CustomerCodeExecutionUnsupportedError(ExecutionError):
+    error_code = "customer_code_execution_unsupported"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Customer code execution is not supported in this hosted runtime profile."
+        )
+
+
 class OwnershipError(CoreError):
     def __init__(self, message: str, *, blocked_types: list[str] | None = None) -> None:
         self.blocked_types = blocked_types or []
@@ -238,6 +247,7 @@ class ErrorResponse(BaseModel):
 
     error_type: str
     message: str
+    error_code: str | None = None
     errors: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     mutation_receipt_id: str | None = None
@@ -308,6 +318,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         )
     elif body.error_type == "QueryExecutionError":
         exc = QueryExecutionError(body.message)
+    elif body.error_type == "CustomerCodeExecutionUnsupportedError":
+        exc = CustomerCodeExecutionUnsupportedError()
     elif body.error_type == "IngestionError":
         exc = IngestionError(body.message)
     elif body.error_type == "MutationError":

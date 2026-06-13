@@ -9,6 +9,7 @@ from cruxible_core.errors import (
     ConfigError,
     ConstraintViolationError,
     CoreError,
+    CustomerCodeExecutionUnsupportedError,
     DataValidationError,
     EntityNotFoundError,
     EntityTypeNotFoundError,
@@ -107,6 +108,11 @@ from cruxible_core.server.errors import (
         ),
         (GroupNotFoundError("GRP-1"), client_errors.GroupNotFoundError, {"group_id": "GRP-1"}),
         (QueryExecutionError("query failed"), client_errors.QueryExecutionError, {}),
+        (
+            CustomerCodeExecutionUnsupportedError(),
+            client_errors.CustomerCodeExecutionUnsupportedError,
+            {},
+        ),
         (IngestionError("ingest failed"), client_errors.IngestionError, {}),
         (MutationError("mutation failed"), client_errors.MutationError, {}),
     ],
@@ -123,6 +129,9 @@ def test_error_round_trip_preserves_subclass_and_context(
 
     assert type(restored) is expected_type
     assert restored.mutation_receipt_id == "RCPT-xyz"
+    if isinstance(error, CustomerCodeExecutionUnsupportedError):
+        assert status == 403
+        assert body.error_code == "customer_code_execution_unsupported"
     for key, value in attrs.items():
         assert getattr(restored, key) == value
 
