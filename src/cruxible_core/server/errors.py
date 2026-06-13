@@ -10,6 +10,7 @@ from cruxible_core.errors import (
     ConfigError,
     ConstraintViolationError,
     CoreError,
+    CustomerCodeExecutionUnsupportedError,
     DataValidationError,
     EntityNotFoundError,
     EntityTypeNotFoundError,
@@ -57,6 +58,8 @@ def _message_for_error(exc: CoreError) -> str:
 def _status_for_error(exc: CoreError) -> int:
     if isinstance(exc, AuthenticationError):
         return 401
+    if isinstance(exc, CustomerCodeExecutionUnsupportedError):
+        return 403
     if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
         return 400
     if isinstance(exc, (PermissionDeniedError, OwnershipError, InstanceScopeError)):
@@ -90,6 +93,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
     errors: list[str] = []
+    error_code = getattr(exc, "error_code", None)
 
     if isinstance(exc, ConfigError | DataValidationError):
         errors = list(exc.errors)
@@ -133,6 +137,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     body = ErrorResponse(
         error_type=exc.__class__.__name__,
         message=_message_for_error(exc),
+        error_code=error_code if isinstance(error_code, str) else None,
         errors=errors,
         context=context,
         mutation_receipt_id=exc.mutation_receipt_id,

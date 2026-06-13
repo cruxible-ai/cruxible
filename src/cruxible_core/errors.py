@@ -19,6 +19,7 @@ errors (runtime data), making it easy to catch by category.
     │   ├── IngestionError
     │   ├── MutationError
     │   ├── QueryExecutionError
+    │   ├── CustomerCodeExecutionUnsupportedError
     │   └── TransportError
     ├── OwnershipError (overlay type-level ownership)
     ├── ReceiptNotFoundError (receipt store lookup)
@@ -244,6 +245,17 @@ class QueryExecutionError(ExecutionError):
 
     def __init__(self, message: str):
         super().__init__(message)
+
+
+class CustomerCodeExecutionUnsupportedError(ExecutionError):
+    """Customer code execution is unavailable in the current hosted runtime."""
+
+    error_code = "customer_code_execution_unsupported"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Customer code execution is not supported in this hosted runtime profile."
+        )
 
 
 class TransportError(ExecutionError):

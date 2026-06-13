@@ -51,6 +51,17 @@ Do not bake bootstrap secrets, runtime credentials, or server tokens into the
 image. Provide them at container runtime through environment variables or the
 future deployment secret layer.
 
+## Shared Profile Customer Code Policy
+
+Set `CRUXIBLE_HOSTED_SERVER_PROFILE=shared` for runtimes that may host
+untrusted or multi-tenant material. In this profile, provider execution and
+Python provider loading are denied unless
+`CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` is set to a supported isolated
+backend. The current supported backend name is `docker`.
+
+Unsupported or missing isolated backends fail with the public-safe error code
+`customer_code_execution_unsupported`.
+
 ## Private Runtime Network
 
 Hosted runtimes should not publish port `8100` on the public host interface.

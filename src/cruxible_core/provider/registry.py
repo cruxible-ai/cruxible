@@ -21,6 +21,7 @@ from cruxible_core.kits import (
     resolve_kit_provider_ref,
 )
 from cruxible_core.provider.types import ProviderCallable, ProviderContext
+from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
 
 
 def resolve_provider(
@@ -30,6 +31,7 @@ def resolve_provider(
     config_base_path: Path | None = None,
 ) -> ProviderCallable:
     """Resolve a provider into an executable callable for its declared runtime."""
+    enforce_customer_code_execution_supported()
     if provider.runtime == "python":
         return _resolve_python_provider(provider_name, provider, config_base_path=config_base_path)
     if provider.runtime == "http_json":
@@ -50,6 +52,7 @@ def get_provider_entrypoint_path(
     config_base_path: Path | None = None,
 ) -> Path | None:
     """Resolve the provider entrypoint file path when available."""
+    enforce_customer_code_execution_supported()
     if provider.runtime != "python":
         return None
 

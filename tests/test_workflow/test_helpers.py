@@ -17,9 +17,14 @@ from cruxible_core.config.schema import (
     PropertySchema,
     ProviderSchema,
 )
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import (
+    ConfigError,
+    CustomerCodeExecutionUnsupportedError,
+    QueryExecutionError,
+)
 from cruxible_core.provider.registry import resolve_provider
 from cruxible_core.provider.types import ProviderContext
+from cruxible_core.runtime.execution_policy import CUSTOMER_CODE_EXECUTION_UNSUPPORTED
 from cruxible_core.workflow.contracts import validate_contract_payload
 from cruxible_core.workflow.refs import preview_value, resolve_value
 
@@ -171,6 +176,81 @@ class TestContractValidation:
 
 
 class TestProviderRegistry:
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "tests.support.workflow_test_providers.lift_predictor",
+            "kit://providers/main.py::run",
+        ],
+    )
+    def test_shared_hosted_profile_rejects_python_provider_loading(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        ref: str,
+    ) -> None:
+        monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "shared")
+        monkeypatch.delenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", raising=False)
+        provider = ProviderSchema(
+            kind="function",
+            contract_in="Input",
+            contract_out="Output",
+            ref=ref,
+            version="1.0.0",
+            runtime="python",
+        )
+
+        with pytest.raises(CustomerCodeExecutionUnsupportedError) as exc_info:
+            resolve_provider("provider", provider)
+
+        assert exc_info.value.error_code == CUSTOMER_CODE_EXECUTION_UNSUPPORTED
+        assert "hosted runtime profile" in str(exc_info.value)
+        assert "tests.support" not in str(exc_info.value)
+        assert "kit://" not in str(exc_info.value)
+
+    def test_shared_hosted_profile_rejects_unsupported_isolated_backend(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "shared")
+        monkeypatch.setenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", "unsupported-local")
+        provider = ProviderSchema(
+            kind="function",
+            contract_in="Input",
+            contract_out="Output",
+            ref="tests.support.workflow_test_providers.lift_predictor",
+            version="1.0.0",
+            runtime="python",
+        )
+
+        with pytest.raises(CustomerCodeExecutionUnsupportedError) as exc_info:
+            resolve_provider("provider", provider)
+
+        assert exc_info.value.error_code == CUSTOMER_CODE_EXECUTION_UNSUPPORTED
+        assert "unsupported-local" not in str(exc_info.value)
+
+    def test_shared_hosted_profile_allows_supported_isolated_backend(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "shared")
+        monkeypatch.setenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", "docker")
+        provider = ProviderSchema(
+            kind="function",
+            contract_in="Input",
+            contract_out="Output",
+            ref="tests.support.workflow_test_providers.lift_predictor",
+            version="1.0.0",
+            runtime="python",
+        )
+
+        result = resolve_provider("provider", provider)(
+            {"sku": "SKU-1", "category": "soda", "start_date": "2026-03-01"},
+            _provider_context(),
+        )
+
+        assert result["model_version"] == "1.0.0"
+        assert result["predicted_lift_pct"] > 0
+
     def test_rejects_unsupported_runtime(self) -> None:
         with pytest.raises(ValueError, match="runtime"):
             ProviderSchema(

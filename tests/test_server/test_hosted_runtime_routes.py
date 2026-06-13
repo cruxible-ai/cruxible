@@ -6,6 +6,7 @@ hardening extraction; uses the same app/server fixtures as test_routes.py.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -1171,6 +1172,50 @@ def test_runtime_bootstrap_claim_token_is_scoped_to_target_instance(
     denied = client.get(f"/api/v1/{instance_b}/schema", headers=headers)
     assert denied.status_code == 403
     assert denied.json()["error_type"] == "InstanceScopeError"
+
+
+def test_shared_hosted_profile_rejects_workflow_provider_execution_with_public_error_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_config_yaml: str,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    project = tmp_path / "workflow-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(workflow_config_yaml)
+    monkeypatch.setenv("CRUXIBLE_HOSTED_SERVER_PROFILE", "shared")
+    monkeypatch.setenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", "docker")
+    instance_id = _init_instance(client, project, config_yaml=workflow_config_yaml)
+
+    lock = client.post(f"/api/v1/{instance_id}/workflows/lock", json={})
+    assert lock.status_code == 200
+
+    monkeypatch.delenv("CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND", raising=False)
+    response = client.post(
+        f"/api/v1/{instance_id}/workflows/run",
+        json={
+            "workflow_name": "evaluate_promo",
+            "input": {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        },
+    )
+
+    assert response.status_code == 403
+    body = response.json()
+    assert body["error_type"] == "CustomerCodeExecutionUnsupportedError"
+    assert body["error_code"] == "customer_code_execution_unsupported"
+    assert body["message"] == (
+        "Customer code execution is not supported in this hosted runtime profile."
+    )
+    assert body["context"] == {}
+    assert body["errors"] == []
+    serialized = json.dumps(body)
+    assert "tests.support" not in serialized
+    assert str(project) not in serialized
+    assert "docker" not in serialized
 
 
 def test_hosted_instance_init_from_kit_is_idempotent_and_survives_restart(
