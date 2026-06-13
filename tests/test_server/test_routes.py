@@ -437,6 +437,13 @@ def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
     assert list_body["context"]["entity_type"] == "TypoType"
     assert list_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
 
+    sample_response = app_client.get(f"/api/v1/{instance_id}/sample/TypoType")
+    assert sample_response.status_code == 404
+    sample_body = sample_response.json()
+    assert sample_body["error_type"] == "EntityTypeNotFoundError"
+    assert sample_body["context"]["entity_type"] == "TypoType"
+    assert sample_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
+
     get_response = app_client.get(f"/api/v1/{instance_id}/entities/TypoType/ANY")
     assert get_response.status_code == 404
     assert get_response.json()["error_type"] == "EntityTypeNotFoundError"
@@ -470,6 +477,22 @@ def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
     )
     assert relationship_entity_type_response.status_code == 404
     assert relationship_entity_type_response.json()["error_type"] == "EntityTypeNotFoundError"
+
+    lineage_entity_type_response = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lineage",
+        params={
+            "from_type": "TypoType",
+            "from_id": "BP-1001",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-2024-CIVIC-EX",
+        },
+    )
+    assert lineage_entity_type_response.status_code == 404
+    lineage_body = lineage_entity_type_response.json()
+    assert lineage_body["error_type"] == "EntityTypeNotFoundError"
+    assert lineage_body["context"]["entity_type"] == "TypoType"
+    assert lineage_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
 
 
 def test_view_route_validates_reserved_pagination_params(
