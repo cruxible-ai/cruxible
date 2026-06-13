@@ -247,6 +247,7 @@ class TestOutputSchema:
                     "edge_count",
                     "entity_counts",
                     "relationship_counts",
+                    "status_counts",
                     "head_snapshot_id",
                 },
             ),

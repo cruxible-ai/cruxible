@@ -1447,6 +1447,7 @@ def test_stats_inspect_and_reload_use_expected_routes():
                     "edge_count": 3,
                     "entity_counts": {"Vehicle": 2},
                     "relationship_counts": {"fits": 3},
+                    "status_counts": {"WorkItem": {"planned": 1, "closed": 0}},
                     "head_snapshot_id": "snap_1",
                 },
             )
@@ -1476,6 +1477,7 @@ def test_stats_inspect_and_reload_use_expected_routes():
 
     stats_result = client.stats("inst_123")
     assert stats_result.entity_count == 4
+    assert stats_result.status_counts == {"WorkItem": {"planned": 1, "closed": 0}}
     assert captured["path"].endswith("/api/v1/inst_123/stats")
 
     inspect_result = client.inspect_entity("inst_123", "Vehicle", "V-1", direction="both")

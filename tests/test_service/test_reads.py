@@ -1185,6 +1185,78 @@ class TestStats:
         assert result.relationship_counts["fits"] == 3
         assert result.relationship_counts["replaces"] == 1
 
+    def test_returns_status_counts_for_enum_backed_status_properties(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            'version: "1.0"\n'
+            "name: status_counts\n"
+            "enums:\n"
+            "  work_status:\n"
+            "    values: [planned, active, closed]\n"
+            "entity_types:\n"
+            "  WorkItem:\n"
+            "    properties:\n"
+            "      work_item_id: {type: string, primary_key: true}\n"
+            "      status: {type: string, enum_ref: work_status}\n"
+            "  Risk:\n"
+            "    properties:\n"
+            "      risk_id: {type: string, primary_key: true}\n"
+            "      status: {type: string, enum: [open, mitigated]}\n"
+            "  Note:\n"
+            "    properties:\n"
+            "      note_id: {type: string, primary_key: true}\n"
+            "      status: {type: string}\n"
+            "relationships: []\n"
+        )
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+        graph = instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="WorkItem",
+                entity_id="WI-1",
+                properties={"work_item_id": "WI-1", "status": "planned"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="WorkItem",
+                entity_id="WI-2",
+                properties={"work_item_id": "WI-2", "status": "active"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="WorkItem",
+                entity_id="WI-3",
+                properties={"work_item_id": "WI-3", "status": "planned"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Risk",
+                entity_id="R-1",
+                properties={"risk_id": "R-1", "status": "open"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Note",
+                entity_id="N-1",
+                properties={"note_id": "N-1", "status": "draft"},
+            )
+        )
+        instance.save_graph(graph)
+
+        result = service_stats(instance)
+
+        assert result.status_counts == {
+            "WorkItem": {"planned": 2, "active": 1, "closed": 0},
+            "Risk": {"open": 1, "mitigated": 0},
+        }
+
     def test_invalid_resource(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="Unknown resource"):
             service_list(populated_instance, "bogus")  # type: ignore[arg-type]

@@ -224,6 +224,7 @@ class StatsServiceResult:
     edge_count: int
     entity_counts: dict[str, int] = field(default_factory=dict)
     relationship_counts: dict[str, int] = field(default_factory=dict)
+    status_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     head_snapshot_id: str | None = None
 
 

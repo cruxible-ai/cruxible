@@ -484,6 +484,7 @@ def service_sample(
 
 def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
     """Return graph counts grouped by entity and relationship type."""
+    config = instance.load_config()
     graph = instance.load_graph()
     result = read_graph_stats(graph, head_snapshot_id=instance.get_head_snapshot_id())
     return StatsServiceResult(
@@ -491,8 +492,46 @@ def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
         edge_count=result.edge_count,
         entity_counts=result.entity_counts,
         relationship_counts=result.relationship_counts,
+        status_counts=_status_counts(config, graph),
         head_snapshot_id=result.head_snapshot_id,
     )
+
+
+def _status_counts(
+    config: CoreConfig,
+    graph: Any,
+) -> dict[str, dict[str, int]]:
+    """Return per-entity status counts for schemas with enum-backed status."""
+    counts: dict[str, dict[str, int]] = {}
+    for entity_type, entity_schema in config.entity_types.items():
+        status_property = entity_schema.properties.get("status")
+        if status_property is None:
+            continue
+        values = _status_enum_values(config, status_property.enum, status_property.enum_ref)
+        if values is None:
+            continue
+        entity_status_counts = dict.fromkeys(values, 0)
+        for entity in graph.list_entities(entity_type):
+            status = entity.properties.get("status")
+            if isinstance(status, str) and status in entity_status_counts:
+                entity_status_counts[status] += 1
+        counts[entity_type] = entity_status_counts
+    return counts
+
+
+def _status_enum_values(
+    config: CoreConfig,
+    inline_enum: list[Any] | None,
+    enum_ref: str | None,
+) -> list[str] | None:
+    if enum_ref is not None:
+        enum_schema = config.enums.get(enum_ref)
+        if enum_schema is None:
+            return None
+        return list(enum_schema.values)
+    if inline_enum is None:
+        return None
+    return [value for value in inline_enum if isinstance(value, str)]
 
 
 def service_get_entity(
