@@ -446,6 +446,18 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
     )
     assert listed["total"] == 2
 
+    list_error = call_tool_expect_error(
+        server,
+        "cruxible_list",
+        {
+            "instance_id": dev_graph_instance_id,
+            "resource_type": "entities",
+            "entity_type": "TypoType",
+        },
+    )
+    assert "Entity type 'TypoType' not found in schema" in list_error
+    assert "Known entity types: Part, Vehicle" in list_error
+
     sample = call_tool(
         server,
         "cruxible_sample",
@@ -480,6 +492,35 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
 
     schema = call_tool(server, "cruxible_schema", {"instance_id": dev_graph_instance_id})
     assert schema["name"] == "car_parts_compatibility"
+
+
+def test_list_and_sample_raise_tool_error_for_unknown_entity_type(
+    server,
+    dev_graph_instance_id: str,
+) -> None:
+    for tool_name, args in [
+        (
+            "cruxible_list",
+            {
+                "instance_id": dev_graph_instance_id,
+                "resource_type": "entities",
+                "entity_type": "TypoType",
+            },
+        ),
+        (
+            "cruxible_sample",
+            {
+                "instance_id": dev_graph_instance_id,
+                "entity_type": "TypoType",
+            },
+        ),
+    ]:
+        with pytest.raises(ToolError) as exc_info:
+            asyncio.run(server.call_tool(tool_name, args))
+
+        error = str(exc_info.value)
+        assert "Entity type 'TypoType' not found in schema" in error
+        assert "Known entity types: Part, Vehicle" in error
 
 
 def test_evaluate_works_locally_for_dev_instance(

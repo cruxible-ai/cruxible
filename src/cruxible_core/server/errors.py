@@ -103,6 +103,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["required_mode"] = exc.required_mode
     if isinstance(exc, EntityTypeNotFoundError):
         context["entity_type"] = exc.entity_type
+        context["known_entity_types"] = exc.known_entity_types
     if isinstance(exc, RelationshipNotFoundError):
         context["relationship_name"] = exc.relationship_name
     if isinstance(exc, QueryNotFoundError):

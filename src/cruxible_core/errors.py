@@ -94,9 +94,13 @@ class ConfigError(SchemaError):
 class EntityTypeNotFoundError(SchemaError):
     """Entity type not defined in config schema."""
 
-    def __init__(self, entity_type: str):
+    def __init__(self, entity_type: str, *, known_entity_types: list[str] | None = None):
         self.entity_type = entity_type
-        super().__init__(f"Entity type '{entity_type}' not found in schema")
+        self.known_entity_types = sorted(known_entity_types or [])
+        message = f"Entity type '{entity_type}' not found in schema"
+        if self.known_entity_types:
+            message += f". Known entity types: {', '.join(self.known_entity_types)}"
+        super().__init__(message)
 
 
 class RelationshipNotFoundError(SchemaError):
