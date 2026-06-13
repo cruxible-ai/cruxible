@@ -783,10 +783,10 @@ named_queries:
         many: true
         limit: 1
         order_by:
-          - by: $source.properties.resolved_at
+          - by: $source.properties.requested_at
             direction: desc
             value_type: date
-          - by: $source.properties.requested_at
+          - by: $source.properties.resolved_at
             direction: desc
             value_type: date
       upstream_work_dependencies:
@@ -1134,7 +1134,7 @@ named_queries:
         eq: active
     limit: 100
 
-  decisions_waiting_on_owner:
+  open_questions_for_owner:
     mode: collection
     description: Planned or active open questions owned by a person, with the decisions and work items they block.
     result_shape: entity

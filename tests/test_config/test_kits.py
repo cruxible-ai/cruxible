@@ -340,7 +340,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "approved_reviews_for_work_item",
         "review_queue",
         "changes_requested_reviews",
-        "decisions_waiting_on_owner",
+        "open_questions_for_owner",
     }
     assert set(config.named_queries) == required_queries
     for name in {
@@ -549,6 +549,17 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
         ),
         EntityInstance(
             entity_type="OpenQuestion",
+            entity_id="oq-platform",
+            properties={
+                "question_id": "oq-platform",
+                "title": "Platform owner question",
+                "status": "active",
+                "owner": "platform",
+                "due_date": "2026-06-18",
+            },
+        ),
+        EntityInstance(
+            entity_type="OpenQuestion",
             entity_id="oq-closed",
             properties={
                 "question_id": "oq-closed",
@@ -582,8 +593,9 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
             properties={
                 "review_request_id": "rr-older",
                 "title": "Older review",
-                "status": "requested",
+                "status": "approved",
                 "requested_at": "2026-06-10",
+                "resolved_at": "2026-06-12",
                 "change_head": "oldsha",
             },
         ),
@@ -593,9 +605,8 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
             properties={
                 "review_request_id": "rr-latest",
                 "title": "Latest review",
-                "status": "changes_requested",
+                "status": "requested",
                 "requested_at": "2026-06-11",
-                "resolved_at": "2026-06-12",
                 "change_head": "newsha",
             },
         ),
@@ -675,7 +686,7 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
     assert isinstance(work_row, ProjectedQueryRow)
     assert work_row.values["work_item_id"] == "wi-owner-active"
     assert work_row.values["latest_review_request_id"] == "rr-latest"
-    assert work_row.values["latest_review_status"] == "changes_requested"
+    assert work_row.values["latest_review_status"] == "requested"
     assert work_row.values["latest_review_change_head"] == "newsha"
     assert work_row.values["review_request_count"] == 2
     assert work_row.values["upstream_dependency_count"] == 1
@@ -689,7 +700,18 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
     assert work_row.values["constraining_decision_count"] == 1
     assert work_row.values["constraining_decisions"][0].source.entity_id == "dec-blocked"
 
-    waiting = service_query(instance, "decisions_waiting_on_owner", {"owner": "robert"})
+    platform_queue = service_query(instance, "work_items_for_owner", {"owner": "platform"})
+
+    assert platform_queue.total == 1
+    [platform_work_row] = platform_queue.items
+    assert isinstance(platform_work_row, ProjectedQueryRow)
+    assert platform_work_row.values["work_item_id"] == "wi-dependency"
+
+    empty_queue = service_query(instance, "work_items_for_owner", {"owner": "nobody"})
+
+    assert empty_queue.total == 0
+
+    waiting = service_query(instance, "open_questions_for_owner", {"owner": "robert"})
 
     assert waiting.total == 2
     rows_by_id = {}
@@ -703,6 +725,17 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
     assert rows_by_id["oq-blocker"]["blocked_decisions"][0].target.entity_id == ("dec-blocked")
     assert rows_by_id["oq-planned"]["blocked_work_item_count"] == 0
     assert rows_by_id["oq-planned"]["blocked_decision_count"] == 0
+
+    platform_waiting = service_query(instance, "open_questions_for_owner", {"owner": "platform"})
+
+    assert platform_waiting.total == 1
+    [platform_question_row] = platform_waiting.items
+    assert isinstance(platform_question_row, ProjectedQueryRow)
+    assert platform_question_row.values["question_id"] == "oq-platform"
+
+    empty_waiting = service_query(instance, "open_questions_for_owner", {"owner": "nobody"})
+
+    assert empty_waiting.total == 0
 
 
 def test_project_state_review_queue_surfaces_change_refs_and_allows_legacy_requests(
