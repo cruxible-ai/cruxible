@@ -3335,6 +3335,50 @@ class TestQueryIncludes:
         assert row.values["count"] == 2
         assert len(row.values["items"]) == 2
 
+    def test_collection_include_supports_indexed_projection(self, config, graph):
+        config.named_queries["part_replacement_dashboard"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.entity_id": {"eq": "BP-1234"}},
+            include={
+                "latest_replacement": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                    "limit": 1,
+                    "order_by": [
+                        {"by": "$edge.properties.confidence", "direction": "desc"},
+                    ],
+                }
+            },
+            select={
+                "part_id": "$result.entity_id",
+                "replacement_count": "$include.latest_replacement.count",
+                "latest_replacement_id": "$include.latest_replacement.items.0.source.entity_id",
+                "latest_replacement_confidence": (
+                    "$include.latest_replacement.items.0.edge.properties.confidence"
+                ),
+                "missing_second_replacement": (
+                    "$include.latest_replacement.items.1.source.entity_id"
+                ),
+            },
+        )
+
+        result = execute_query(config, graph, "part_replacement_dashboard", {})
+
+        assert result.total_results == 1
+        [row] = result.results
+        assert isinstance(row, ProjectedQueryRow)
+        assert row.values == {
+            "part_id": "BP-1234",
+            "replacement_count": 2,
+            "latest_replacement_id": "BP-5678",
+            "latest_replacement_confidence": 0.85,
+            "missing_second_replacement": None,
+        }
+
     def test_include_related_predicates_match_from_candidate_anchor(self, config, graph):
         graph.add_relationship(
             RelationshipInstance(

@@ -554,8 +554,8 @@ class NamedQuerySchema(BaseModel):
             if self.traversal:
                 msg = "mode 'collection' queries must not define traversal"
                 raise ValueError(msg)
-            if self.include:
-                msg = "mode 'collection' queries do not support include"
+            if self.include and self.result_shape == "entity" and self.select is None:
+                msg = "mode 'collection' entity queries with include must define select"
                 raise ValueError(msg)
             if self.max_paths is not None or self.max_paths_per_result is not None:
                 msg = "mode 'collection' queries do not support path budgets"
@@ -598,7 +598,7 @@ class NamedQuerySchema(BaseModel):
         ):
             msg = "path budgets require result_shape 'path' or 'relationship'"
             raise ValueError(msg)
-        if self.result_shape == "entity" and self.include:
+        if self.result_shape == "entity" and self.include and not is_collection:
             msg = "include requires result_shape 'path' or 'relationship'"
             raise ValueError(msg)
         if self.result_shape == "relationship":
@@ -615,19 +615,22 @@ class NamedQuerySchema(BaseModel):
                 )
                 raise ValueError(msg)
         if self.relationship_state == "pending":
-            if self.result_shape not in {"path", "relationship"}:
+            if self.result_shape not in {"path", "relationship"} and not (
+                is_collection and self.include
+            ):
                 msg = "relationship_state 'pending' requires result_shape 'path' or 'relationship'"
                 raise ValueError(msg)
-            if self.dedupe == "entity":
+            if self.dedupe == "entity" and not (is_collection and self.include):
                 msg = "relationship_state 'pending' requires dedupe 'path' or 'none'"
                 raise ValueError(msg)
         if self.relationship_state == "reviewable":
             if self.result_shape != "path" and not (
-                is_collection and self.result_shape == "relationship"
+                (is_collection and self.result_shape == "relationship")
+                or (is_collection and self.include)
             ):
                 msg = "relationship_state 'reviewable' requires result_shape 'path'"
                 raise ValueError(msg)
-            if self.dedupe == "entity":
+            if self.dedupe == "entity" and not (is_collection and self.include):
                 msg = "relationship_state 'reviewable' requires dedupe 'path' or 'none'"
                 raise ValueError(msg)
         return self
@@ -717,11 +720,14 @@ class NamedQuerySchema(BaseModel):
                     )
             if self.result_shape == "entity" and scope in {
                 "path",
-                "include",
                 "relationship",
                 "from_entity",
                 "to_entity",
             }:
+                raise ValueError(
+                    f"query reference '{ref}' is not available for result_shape 'entity'"
+                )
+            if self.result_shape == "entity" and scope == "include" and self.mode != "collection":
                 raise ValueError(
                     f"query reference '{ref}' is not available for result_shape 'entity'"
                 )

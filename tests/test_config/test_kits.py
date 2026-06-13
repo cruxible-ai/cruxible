@@ -29,7 +29,7 @@ from cruxible_core.kits import (
     write_materialized_kit_metadata,
 )
 from cruxible_core.provider.registry import resolve_provider
-from cruxible_core.query.types import QueryPathRow
+from cruxible_core.query.types import ProjectedQueryRow, QueryPathRow
 from cruxible_core.service import (
     EntityWriteInput,
     service_add_entity_inputs,
@@ -327,6 +327,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "roadmap_item_context",
         "work_item_change_context",
         "work_items_for_area",
+        "work_items_for_owner",
         "area_change_context",
         "release_readiness_context",
         "deferred_release_gating_work_items",
@@ -339,6 +340,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "approved_reviews_for_work_item",
         "review_queue",
         "changes_requested_reviews",
+        "decisions_waiting_on_owner",
     }
     assert set(config.named_queries) == required_queries
     for name in {
@@ -468,6 +470,239 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
         ("outgoing", "work_item_targets_area", "area-core"),
         ("incoming", "decision_constrains_work_item", "dec-context"),
     }
+
+
+def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path) -> None:
+    shutil.copy(PROJECT_STATE_CONFIG, tmp_path / "config.yaml")
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    for entity in [
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-owner-active",
+            properties={
+                "work_item_id": "wi-owner-active",
+                "title": "Owner active work",
+                "type": "feature",
+                "status": "active",
+                "priority": "high",
+                "owner": "codex-core",
+            },
+        ),
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-owner-closed",
+            properties={
+                "work_item_id": "wi-owner-closed",
+                "title": "Owner closed work",
+                "type": "feature",
+                "status": "closed",
+                "priority": "critical",
+                "owner": "codex-core",
+            },
+        ),
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-dependency",
+            properties={
+                "work_item_id": "wi-dependency",
+                "title": "Dependency work",
+                "type": "infrastructure",
+                "status": "active",
+                "priority": "medium",
+                "owner": "platform",
+            },
+        ),
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-dependent",
+            properties={
+                "work_item_id": "wi-dependent",
+                "title": "Dependent work",
+                "type": "test",
+                "status": "planned",
+                "priority": "low",
+                "owner": "qa",
+            },
+        ),
+        EntityInstance(
+            entity_type="OpenQuestion",
+            entity_id="oq-blocker",
+            properties={
+                "question_id": "oq-blocker",
+                "title": "Choose blocking behavior",
+                "status": "active",
+                "owner": "robert",
+                "due_date": "2026-06-15",
+            },
+        ),
+        EntityInstance(
+            entity_type="OpenQuestion",
+            entity_id="oq-planned",
+            properties={
+                "question_id": "oq-planned",
+                "title": "Plan later decision",
+                "status": "planned",
+                "owner": "robert",
+                "due_date": "2026-06-20",
+            },
+        ),
+        EntityInstance(
+            entity_type="OpenQuestion",
+            entity_id="oq-closed",
+            properties={
+                "question_id": "oq-closed",
+                "title": "Closed question",
+                "status": "closed",
+                "owner": "robert",
+            },
+        ),
+        EntityInstance(
+            entity_type="Risk",
+            entity_id="risk-blocker",
+            properties={
+                "risk_id": "risk-blocker",
+                "title": "Blocking risk",
+                "status": "active",
+                "priority": "critical",
+            },
+        ),
+        EntityInstance(
+            entity_type="DesignDecision",
+            entity_id="dec-blocked",
+            properties={
+                "decision_id": "dec-blocked",
+                "title": "Blocked decision",
+                "status": "proposed",
+            },
+        ),
+        EntityInstance(
+            entity_type="ReviewRequest",
+            entity_id="rr-older",
+            properties={
+                "review_request_id": "rr-older",
+                "title": "Older review",
+                "status": "requested",
+                "requested_at": "2026-06-10",
+                "change_head": "oldsha",
+            },
+        ),
+        EntityInstance(
+            entity_type="ReviewRequest",
+            entity_id="rr-latest",
+            properties={
+                "review_request_id": "rr-latest",
+                "title": "Latest review",
+                "status": "changes_requested",
+                "requested_at": "2026-06-11",
+                "resolved_at": "2026-06-12",
+                "change_head": "newsha",
+            },
+        ),
+    ]:
+        graph.add_entity(entity)
+    for relationship in [
+        RelationshipInstance(
+            relationship_type="work_item_depends_on_work_item",
+            from_type="WorkItem",
+            from_id="wi-owner-active",
+            to_type="WorkItem",
+            to_id="wi-dependency",
+            properties={"dependency_basis": "Owner work needs dependency first."},
+        ),
+        RelationshipInstance(
+            relationship_type="work_item_depends_on_work_item",
+            from_type="WorkItem",
+            from_id="wi-dependent",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+            properties={"dependency_basis": "Dependent waits on owner work."},
+        ),
+        RelationshipInstance(
+            relationship_type="open_question_blocks_work_item",
+            from_type="OpenQuestion",
+            from_id="oq-blocker",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+            properties={"blocking_basis": "Work needs the answer."},
+        ),
+        RelationshipInstance(
+            relationship_type="open_question_blocks_decision",
+            from_type="OpenQuestion",
+            from_id="oq-blocker",
+            to_type="DesignDecision",
+            to_id="dec-blocked",
+            properties={"blocking_basis": "Decision needs the answer."},
+        ),
+        RelationshipInstance(
+            relationship_type="risk_blocks_work_item",
+            from_type="Risk",
+            from_id="risk-blocker",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+            properties={"blocking_basis": "Risk blocks safe rollout."},
+        ),
+        RelationshipInstance(
+            relationship_type="decision_constrains_work_item",
+            from_type="DesignDecision",
+            from_id="dec-blocked",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+            properties={"impact_type": "constrains"},
+        ),
+        RelationshipInstance(
+            relationship_type="review_request_for_work_item",
+            from_type="ReviewRequest",
+            from_id="rr-older",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+        ),
+        RelationshipInstance(
+            relationship_type="review_request_for_work_item",
+            from_type="ReviewRequest",
+            from_id="rr-latest",
+            to_type="WorkItem",
+            to_id="wi-owner-active",
+        ),
+    ]:
+        graph.add_relationship(relationship)
+    instance.save_graph(graph)
+
+    owner_queue = service_query(instance, "work_items_for_owner", {"owner": "codex-core"})
+
+    assert owner_queue.total == 1
+    [work_row] = owner_queue.items
+    assert isinstance(work_row, ProjectedQueryRow)
+    assert work_row.values["work_item_id"] == "wi-owner-active"
+    assert work_row.values["latest_review_request_id"] == "rr-latest"
+    assert work_row.values["latest_review_status"] == "changes_requested"
+    assert work_row.values["latest_review_change_head"] == "newsha"
+    assert work_row.values["review_request_count"] == 2
+    assert work_row.values["upstream_dependency_count"] == 1
+    assert work_row.values["upstream_work_dependencies"][0].target.entity_id == "wi-dependency"
+    assert work_row.values["downstream_dependent_count"] == 1
+    assert work_row.values["downstream_dependents"][0].source.entity_id == "wi-dependent"
+    assert work_row.values["blocking_open_question_count"] == 1
+    assert work_row.values["blocking_open_questions"][0].source.entity_id == "oq-blocker"
+    assert work_row.values["blocking_risk_count"] == 1
+    assert work_row.values["blocking_risks"][0].source.entity_id == "risk-blocker"
+    assert work_row.values["constraining_decision_count"] == 1
+    assert work_row.values["constraining_decisions"][0].source.entity_id == "dec-blocked"
+
+    waiting = service_query(instance, "decisions_waiting_on_owner", {"owner": "robert"})
+
+    assert waiting.total == 2
+    rows_by_id = {}
+    for row in waiting.items:
+        assert isinstance(row, ProjectedQueryRow)
+        rows_by_id[row.values["question_id"]] = row.values
+    assert set(rows_by_id) == {"oq-blocker", "oq-planned"}
+    assert rows_by_id["oq-blocker"]["blocked_work_item_count"] == 1
+    assert rows_by_id["oq-blocker"]["blocked_work_items"][0].target.entity_id == ("wi-owner-active")
+    assert rows_by_id["oq-blocker"]["blocked_decision_count"] == 1
+    assert rows_by_id["oq-blocker"]["blocked_decisions"][0].target.entity_id == ("dec-blocked")
+    assert rows_by_id["oq-planned"]["blocked_work_item_count"] == 0
+    assert rows_by_id["oq-planned"]["blocked_decision_count"] == 0
 
 
 def test_project_state_review_queue_surfaces_change_refs_and_allows_legacy_requests(

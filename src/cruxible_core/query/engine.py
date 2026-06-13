@@ -461,6 +461,15 @@ def _execute_collection_query(
             f"Unsupported collection query result_shape '{query_schema.result_shape}'"
         )
 
+    contexts = _apply_includes(
+        config,
+        graph,
+        query_schema,
+        contexts,
+        params,
+        relationship_state=effective_options.relationship_state,
+        builder=builder,
+    )
     contexts = sort_query_row_contexts(
         contexts,
         query_schema.order_by,
@@ -906,25 +915,28 @@ def _validate_effective_query_options(
             "result_shape 'path' or 'relationship'"
         )
     if effective_relationship_state == "pending":
-        if query_schema.result_shape not in {"path", "relationship"}:
+        if query_schema.result_shape not in {"path", "relationship"} and not (
+            is_collection and query_schema.include
+        ):
             raise QueryExecutionError(
                 f"Named query '{query_name}' with relationship_state 'pending' "
                 "requires result_shape 'path' or 'relationship'"
             )
-        if query_schema.dedupe == "entity":
+        if query_schema.dedupe == "entity" and not (is_collection and query_schema.include):
             raise QueryExecutionError(
                 f"Named query '{query_name}' with relationship_state 'pending' "
                 "requires dedupe 'path' or 'none'"
             )
     if effective_relationship_state == "reviewable":
         if query_schema.result_shape != "path" and not (
-            is_collection and query_schema.result_shape == "relationship"
+            (is_collection and query_schema.result_shape == "relationship")
+            or (is_collection and query_schema.include)
         ):
             raise QueryExecutionError(
                 f"Named query '{query_name}' with relationship_state 'reviewable' "
                 "requires result_shape 'path'"
             )
-        if query_schema.dedupe == "entity":
+        if query_schema.dedupe == "entity" and not (is_collection and query_schema.include):
             raise QueryExecutionError(
                 f"Named query '{query_name}' with relationship_state 'reviewable' "
                 "requires dedupe 'path' or 'none'"

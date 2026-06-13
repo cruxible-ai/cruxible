@@ -764,6 +764,84 @@ named_queries:
         direction: incoming
         as: work_item
 
+  work_items_for_owner:
+    mode: collection
+    description: Owner-scoped open work queue with dependency, blocker, and latest review status context.
+    returns: WorkItem
+    result_shape: entity
+    relationship_state: reviewable
+    where:
+      result.properties.owner:
+        eq: $input.owner
+      result.properties.status:
+        not_in: [closed, superseded]
+    include:
+      latest_review:
+        from: $result
+        relationship: review_request_for_work_item
+        direction: incoming
+        many: true
+        limit: 1
+        order_by:
+          - by: $source.properties.resolved_at
+            direction: desc
+            value_type: date
+          - by: $source.properties.requested_at
+            direction: desc
+            value_type: date
+      upstream_work_dependencies:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      blocking_open_questions:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      blocking_risks:
+        from: $result
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      constraining_decisions:
+        from: $result
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      latest_review_request_id: $include.latest_review.items.0.source.entity_id
+      latest_review_status: $include.latest_review.items.0.source.properties.status
+      latest_review_requested_at: $include.latest_review.items.0.source.properties.requested_at
+      latest_review_resolved_at: $include.latest_review.items.0.source.properties.resolved_at
+      latest_review_change_head: $include.latest_review.items.0.source.properties.change_head
+      review_request_count: $include.latest_review.count
+      upstream_dependency_count: $include.upstream_work_dependencies.count
+      upstream_work_dependencies: $include.upstream_work_dependencies.items
+      downstream_dependent_count: $include.downstream_dependents.count
+      downstream_dependents: $include.downstream_dependents.items
+      blocking_open_question_count: $include.blocking_open_questions.count
+      blocking_open_questions: $include.blocking_open_questions.items
+      blocking_risk_count: $include.blocking_risks.count
+      blocking_risks: $include.blocking_risks.items
+      constraining_decision_count: $include.constraining_decisions.count
+      constraining_decisions: $include.constraining_decisions.items
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+    limit: 100
+
   area_change_context:
     mode: traversal
     description: Starting from a product area, inspect roadmap items, work, decisions, risks, and open questions before editing the subsystem.
@@ -1054,6 +1132,44 @@ named_queries:
     where:
       result.properties.status:
         eq: active
+    limit: 100
+
+  decisions_waiting_on_owner:
+    mode: collection
+    description: Planned or active open questions owned by a person, with the decisions and work items they block.
+    result_shape: entity
+    returns: OpenQuestion
+    relationship_state: reviewable
+    where:
+      result.properties.owner:
+        eq: $input.owner
+      result.properties.status:
+        in: [planned, active]
+    include:
+      blocked_decisions:
+        from: $result
+        relationship: open_question_blocks_decision
+        direction: outgoing
+        many: true
+      blocked_work_items:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: outgoing
+        many: true
+    select:
+      question_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      owner: $result.properties.owner
+      due_date: $result.properties.due_date
+      blocked_decision_count: $include.blocked_decisions.count
+      blocked_decisions: $include.blocked_decisions.items
+      blocked_work_item_count: $include.blocked_work_items.count
+      blocked_work_items: $include.blocked_work_items.items
+    order_by:
+      - by: $result.properties.due_date
+        direction: asc
+        value_type: date
     limit: 100
 
   superseded_decisions:

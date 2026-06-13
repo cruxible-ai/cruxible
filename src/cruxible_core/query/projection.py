@@ -339,10 +339,24 @@ def _find_path_entity(
 def _optional_path(ref: str, value: Any, path: list[str]) -> Any:
     if value is None:
         return None
-    resolved = resolve_path(value, path)
-    if is_missing_path(resolved):
-        return None
-    return resolved
+    current = value
+    for part in path:
+        if current is None:
+            return None
+        if isinstance(current, list):
+            try:
+                index = int(part)
+            except ValueError:
+                return None
+            if index < 0 or index >= len(current):
+                return None
+            current = current[index]
+            continue
+        resolved = resolve_path(current, [part])
+        if is_missing_path(resolved):
+            return None
+        current = resolved
+    return current
 
 
 def _split_query_ref(ref: str) -> tuple[str, list[str]]:
