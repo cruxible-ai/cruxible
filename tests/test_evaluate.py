@@ -21,6 +21,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.store import GroupStore
@@ -408,7 +409,7 @@ def _store_with_member(
 
 
 class TestGovernedSupportRelationships:
-    def test_detects_missing_group_trail(self):
+    def test_detects_missing_support_evidence(self):
         config = _governed_replaces_config()
         graph = EntityGraph()
         graph.add_relationship(
@@ -427,7 +428,62 @@ class TestGovernedSupportRelationships:
             f for f in report.findings if f.category == "governed_support_relationship"
         ]
         assert len(findings) == 1
-        assert findings[0].detail["reason"] == "missing_group_trail"
+        assert findings[0].detail["reason"] == "missing_support_evidence"
+        assert findings[0].detail["support_state"] == "direct_without_evidence"
+
+    def test_direct_evidence_backed_edge_does_not_need_group_trail(self):
+        config = _governed_replaces_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
+                properties={},
+                metadata=RelationshipMetadata(
+                    evidence=RelationshipEvidence(
+                        evidence_refs=[
+                            EvidenceRef(
+                                source="roadmap_doc",
+                                source_record_id="section-direct-support",
+                            )
+                        ]
+                    )
+                ),
+            )
+        )
+        store = GroupStore(":memory:")
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert findings == []
+
+    def test_rationale_only_evidence_still_warns_without_group_trail(self):
+        config = _governed_replaces_config()
+        graph = EntityGraph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
+                properties={},
+                metadata=RelationshipMetadata(
+                    evidence=RelationshipEvidence(rationale="Free-text rationale only.")
+                ),
+            )
+        )
+        store = GroupStore(":memory:")
+        report = evaluate_graph(config, graph, group_store=store)
+        findings = [
+            f for f in report.findings if f.category == "governed_support_relationship"
+        ]
+        assert len(findings) == 1
+        assert findings[0].detail["reason"] == "missing_support_evidence"
 
     def test_detects_pending_review(self):
         config = _governed_replaces_config()

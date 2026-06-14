@@ -309,6 +309,8 @@ def _check_governed_support_relationships(
             provenance=metadata.provenance,
         )
         if member is None:
+            if _has_direct_evidence_support(metadata):
+                continue
             findings.append(
                 _governed_support_finding(
                     from_type,
@@ -316,8 +318,12 @@ def _check_governed_support_relationships(
                     relationship_type,
                     to_type,
                     to_id,
-                    "missing_group_trail",
-                    "Governed relationship has no resolvable group signal trail",
+                    "missing_support_evidence",
+                    (
+                        "Governed relationship has no resolvable group signal trail "
+                        "or direct evidence refs"
+                    ),
+                    support_state="direct_without_evidence",
                 )
             )
             continue
@@ -404,6 +410,11 @@ def resolve_edge_signal_history(
     return None
 
 
+def _has_direct_evidence_support(metadata: RelationshipMetadata) -> bool:
+    evidence = metadata.evidence
+    return evidence is not None and bool(evidence.evidence_refs)
+
+
 def _governed_support_finding(
     from_type: str,
     from_id: str,
@@ -414,6 +425,7 @@ def _governed_support_finding(
     message: str,
     *,
     signal_sources: list[str] | None = None,
+    support_state: str | None = None,
 ) -> EvaluationFinding:
     detail: dict[str, Any] = {
         "from_entity": f"{from_type}:{from_id}",
@@ -423,6 +435,8 @@ def _governed_support_finding(
     }
     if signal_sources:
         detail["signal_sources"] = signal_sources
+    if support_state is not None:
+        detail["support_state"] = support_state
     return EvaluationFinding(
         category="governed_support_relationship",
         severity="warning",

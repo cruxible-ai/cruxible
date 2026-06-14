@@ -236,6 +236,12 @@ Constraints encode validation rules over relationships. `evaluate` checks
 orphan entities, coverage gaps, constraint violations, governed support state,
 candidate opportunities, and weakly reviewed co-members.
 
+For governed relationships, `evaluate` distinguishes group-backed support from
+direct evidence-backed support. Direct governed relationships with stored
+evidence refs are not reported as missing group signal trails, while direct
+governed relationships with no evidence refs remain weak and are flagged.
+Free-text rationale alone is not evidence support.
+
 Use repeated feedback and outcome patterns to decide when a domain rule should
 become an explicit constraint or decision policy.
 

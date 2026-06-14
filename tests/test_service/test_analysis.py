@@ -13,12 +13,16 @@ from cruxible_core.config.schema import (
     FeedbackReasonCodeSchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
+    ProposalPolicySchema,
+    SignalPolicySchema,
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
+    RelationshipWriteInput,
+    service_add_relationship_inputs,
     service_analyze_feedback,
     service_analyze_outcomes,
     service_evaluate,
@@ -218,6 +222,53 @@ class TestEvaluate:
         service_evaluate(populated_instance)
 
         assert store.closed is True
+
+    def test_direct_evidence_backed_governed_edge_is_supported(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        config = populated_instance.load_config()
+        replaces = config.get_relationship("replaces")
+        assert replaces is not None
+        replaces.proposal_policy = ProposalPolicySchema(
+            signals={
+                "catalog": SignalPolicySchema(
+                    role="required",
+                    always_review_on_unsure=True,
+                )
+            }
+        )
+        populated_instance.save_config(config)
+
+        service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="replaces",
+                    to_type="Part",
+                    to_id="BP-1001",
+                    properties={"direction": "upgrade", "confidence": 0.95},
+                    evidence_refs=[
+                        {
+                            "source": "roadmap_doc",
+                            "source_record_id": "direct-evidence-section",
+                        }
+                    ],
+                )
+            ],
+            source="test",
+            source_ref="direct_evidence_regression",
+        )
+
+        report = service_evaluate(populated_instance)
+
+        governed_findings = [
+            finding
+            for finding in report.findings
+            if finding.category == "governed_support_relationship"
+        ]
+        assert governed_findings == []
 
 
 class TestAnalyzeFeedback:
