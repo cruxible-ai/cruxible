@@ -884,17 +884,19 @@ named_queries:
 
   release_readiness_context:
     mode: traversal
-    description: Starting from a release line, inspect active, planned, or blocked work plus roadmap items, dependency context, risks, and open questions.
+    description: Starting from a release line, inspect active, planned, or blocked work plus roadmap items, including roadmap items that have not yet been decomposed into work.
     entry_point: ReleaseLine
-    returns: WorkItem
+    returns: AnyEntity
     relationship_state: reviewable
     allow_relationship_state_override: true
     max_paths: 500
     max_paths_per_result: 25
     traversal:
-      - relationship: work_item_in_release
+      - relationship:
+          - work_item_in_release
+          - roadmap_item_in_release
         direction: incoming
-        as: release_work
+        as: release_context
         where:
           candidate.properties.status:
             in: [active, planned, blocked]
@@ -932,6 +934,41 @@ named_queries:
       open_questions:
         from: $result
         relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      implementing_work_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_milestones:
+        from: $result
+        relationship: roadmap_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_roadmap_dependencies:
+        from: $result
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: outgoing
+        many: true
+      downstream_roadmap_dependents:
+        from: $result
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_decisions:
+        from: $result
+        relationship: decision_affects_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_risks:
+        from: $result
+        relationship: risk_blocks_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_open_questions:
+        from: $result
+        relationship: open_question_blocks_roadmap_item
         direction: incoming
         many: true
 

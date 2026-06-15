@@ -472,6 +472,134 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
     }
 
 
+def test_project_state_release_context_surfaces_roadmap_items_without_work(
+    tmp_path: Path,
+) -> None:
+    shutil.copy(PROJECT_STATE_CONFIG, tmp_path / "config.yaml")
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    for entity in [
+        EntityInstance(
+            entity_type="ReleaseLine",
+            entity_id="release-test",
+            properties={
+                "release_line_id": "release-test",
+                "name": "Test release",
+                "status": "active",
+            },
+        ),
+        EntityInstance(
+            entity_type="Milestone",
+            entity_id="ms-test",
+            properties={
+                "milestone_id": "ms-test",
+                "title": "Test milestone",
+                "status": "active",
+            },
+        ),
+        EntityInstance(
+            entity_type="WorkItem",
+            entity_id="wi-release",
+            properties={
+                "work_item_id": "wi-release",
+                "title": "Release work",
+                "type": "feature",
+                "status": "active",
+                "priority": "high",
+            },
+        ),
+        EntityInstance(
+            entity_type="RoadmapItem",
+            entity_id="ri-worked",
+            properties={
+                "roadmap_item_id": "ri-worked",
+                "title": "Roadmap item with work",
+                "status": "active",
+                "priority": "high",
+            },
+        ),
+        EntityInstance(
+            entity_type="RoadmapItem",
+            entity_id="ri-unworked",
+            properties={
+                "roadmap_item_id": "ri-unworked",
+                "title": "Roadmap item without work",
+                "status": "planned",
+                "priority": "high",
+            },
+        ),
+    ]:
+        graph.add_entity(entity)
+    for relationship in [
+        RelationshipInstance(
+            relationship_type="work_item_in_release",
+            from_type="WorkItem",
+            from_id="wi-release",
+            to_type="ReleaseLine",
+            to_id="release-test",
+        ),
+        RelationshipInstance(
+            relationship_type="work_item_implements_roadmap_item",
+            from_type="WorkItem",
+            from_id="wi-release",
+            to_type="RoadmapItem",
+            to_id="ri-worked",
+        ),
+        RelationshipInstance(
+            relationship_type="roadmap_item_in_release",
+            from_type="RoadmapItem",
+            from_id="ri-worked",
+            to_type="ReleaseLine",
+            to_id="release-test",
+        ),
+        RelationshipInstance(
+            relationship_type="roadmap_item_in_release",
+            from_type="RoadmapItem",
+            from_id="ri-unworked",
+            to_type="ReleaseLine",
+            to_id="release-test",
+        ),
+        RelationshipInstance(
+            relationship_type="roadmap_item_in_milestone",
+            from_type="RoadmapItem",
+            from_id="ri-unworked",
+            to_type="Milestone",
+            to_id="ms-test",
+        ),
+    ]:
+        graph.add_relationship(relationship)
+    instance.save_graph(graph)
+
+    release_context = service_query(
+        instance,
+        "release_readiness_context",
+        {"release_line_id": "release-test"},
+    )
+
+    assert release_context.total == 3
+    rows_by_id = {}
+    for row in release_context.items:
+        assert isinstance(row, QueryPathRow)
+        rows_by_id[row.result.entity_id] = row
+
+    assert set(rows_by_id) == {"wi-release", "ri-worked", "ri-unworked"}
+    assert rows_by_id["wi-release"].result.entity_type == "WorkItem"
+    assert rows_by_id["wi-release"].includes["roadmap_items"].count == 1
+    assert (
+        rows_by_id["wi-release"].includes["roadmap_items"].items[0].target.entity_id
+        == "ri-worked"
+    )
+    assert rows_by_id["ri-worked"].result.entity_type == "RoadmapItem"
+    assert rows_by_id["ri-worked"].includes["implementing_work_items"].count == 1
+    assert rows_by_id["ri-unworked"].result.entity_type == "RoadmapItem"
+    assert rows_by_id["ri-unworked"].includes["implementing_work_items"].count == 0
+    assert rows_by_id["ri-unworked"].includes["roadmap_milestones"].count == 1
+    assert (
+        rows_by_id["ri-unworked"].includes["roadmap_milestones"].items[0].target.entity_id
+        == "ms-test"
+    )
+
+
 def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path) -> None:
     shutil.copy(PROJECT_STATE_CONFIG, tmp_path / "config.yaml")
     instance = CruxibleInstance.init(tmp_path, "config.yaml")

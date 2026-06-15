@@ -107,15 +107,19 @@ flowchart LR
   entity_OpenQuestion["Open Question"]
   entity_ProductArea["Product Area"]
   entity_ReleaseLine["Release Line"]
+  entity_ReviewRequest["Review Request"]
   entity_Risk["Risk"]
   entity_RoadmapItem["Roadmap Item"]
   entity_WorkItem["Work Item"]
-  class entity_Capability,entity_Milestone,entity_ProductArea,entity_ReleaseLine,entity_RoadmapItem,entity_WorkItem canonicalEntity
+  class entity_Capability,entity_Milestone,entity_ProductArea,entity_ReleaseLine,entity_ReviewRequest,entity_RoadmapItem,entity_WorkItem canonicalEntity
   class entity_DesignDecision,entity_OpenQuestion,entity_Risk governedEntity
 
   %% Deterministic canonical relationships
   entity_Capability -- "Capability In Area" --> entity_ProductArea
   entity_Milestone -- "Milestone In Release" --> entity_ReleaseLine
+  entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
+  entity_ReviewRequest -- "Review Request In Milestone" --> entity_Milestone
+  entity_ReviewRequest -- "Review Request In Release" --> entity_ReleaseLine
   entity_RoadmapItem -- "Roadmap Item In Milestone" --> entity_Milestone
   entity_RoadmapItem -- "Roadmap Item In Release" --> entity_ReleaseLine
   entity_RoadmapItem -- "Roadmap Item Targets Area" --> entity_ProductArea
@@ -142,8 +146,8 @@ flowchart LR
   entity_WorkItem -. "Work Item Answers Open Question" .-> entity_OpenQuestion
   entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
   entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
-  linkStyle 0,1,2,3,4,5,6,7,8,9 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -294,25 +298,31 @@ tools.
 flowchart LR
   classDef queryEntity fill:#ecfdf5,stroke:#047857,color:#064e3b
 
+  query_entity_AnyEntity["Any Entity"]
   query_entity_Collection_query["Collection Query"]
   query_entity_DesignDecision["Design Decision"]
   query_entity_OpenQuestion["Open Question"]
   query_entity_ProductArea["Product Area"]
   query_entity_ReleaseLine["Release Line"]
+  query_entity_ReviewRequest["Review Request"]
   query_entity_Risk["Risk"]
   query_entity_RoadmapItem["Roadmap Item"]
   query_entity_WorkItem["Work Item"]
-  class query_entity_Collection_query,query_entity_DesignDecision,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
+  class query_entity_AnyEntity,query_entity_Collection_query,query_entity_DesignDecision,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
   query_entity_Collection_query --> query_entity_DesignDecision
   query_entity_Collection_query --> query_entity_OpenQuestion
+  query_entity_Collection_query --> query_entity_ReviewRequest
   query_entity_Collection_query --> query_entity_Risk
   query_entity_Collection_query --> query_entity_WorkItem
   query_entity_DesignDecision --> query_entity_RoadmapItem
   query_entity_OpenQuestion --> query_entity_RoadmapItem
   query_entity_ProductArea --> query_entity_RoadmapItem
+  query_entity_ProductArea --> query_entity_WorkItem
+  query_entity_ReleaseLine --> query_entity_AnyEntity
   query_entity_ReleaseLine --> query_entity_WorkItem
   query_entity_RoadmapItem --> query_entity_RoadmapItem
-  query_entity_WorkItem --> query_entity_RoadmapItem
+  query_entity_WorkItem --> query_entity_AnyEntity
+  query_entity_WorkItem --> query_entity_ReviewRequest
 ```
 <!-- CRUXIBLE:END query-map -->
 
@@ -328,8 +338,12 @@ paths, and intended purpose.
 | --- | --- | --- | --- | --- | --- |
 | Active Risks | collection | Risk | live |  | Active project risks. |
 | Blocked Work Items | collection | Work Item | live |  | Work queue of blocked execution-level work items. |
+| Changes Requested Reviews | collection | Review Request | live |  | Review requests sent back with changes requested. |
+| Open Questions For Owner | collection | Open Question | reviewable |  | Planned or active open questions owned by a person, with the decisions and work items they block. |
 | Open Questions Needing Review | collection | Open Question | live |  | Active open questions that should be reviewed before dependent work proceeds. |
+| Review Queue | collection | Review Request | live |  | Open review requests awaiting review. |
 | Superseded Decisions | collection | Design Decision | live |  | Design decisions whose status indicates they have been superseded. |
+| Work Items For Owner | collection | Work Item | reviewable |  | Owner-scoped open work queue with dependency, blocker, and latest review status context. |
 
 ### Design Decision
 
@@ -348,13 +362,14 @@ paths, and intended purpose.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Area Change Context | traversal | Roadmap Item | reviewable | Roadmap Item Targets Area (Incoming) | Starting from a product area, inspect roadmap items, work, decisions, risks, and open questions before editing the subsystem. |
+| Work Items For Area | traversal | Work Item | live | Work Item Targets Area (Incoming) | Flat work items attached to a product area for agents that need a scannable area work queue. |
 
 ### Release Line
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Deferred Release Gating Work Items | traversal | Work Item | reviewable | Work Item In Release (Incoming) | Deferred work items that are still attached to a release line and an active, planned, or blocked milestone. |
-| Release Readiness Context | traversal | Work Item | reviewable | Work Item In Release (Incoming) | Starting from a release line, inspect active, planned, or blocked work plus roadmap items, dependency context, risks, and open questions. |
+| Release Readiness Context | traversal | Any Entity | reviewable | Work Item In Release \| Roadmap Item In Release (Incoming) | Starting from a release line, inspect active, planned, or blocked work plus roadmap items, including roadmap items that have not yet been decomposed into work. |
 
 ### Roadmap Item
 
@@ -366,7 +381,8 @@ paths, and intended purpose.
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Work Item Change Context | traversal | Roadmap Item | reviewable | Work Item Implements Roadmap Item (Outgoing) | Starting from a work item, inspect roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions. |
+| Approved Reviews For Work Item | traversal | Review Request | reviewable | Review Request For Work Item (Incoming) | Approved review requests reviewing a specific work item. Used by the work_item_closed_requires_approved_review mutation guard as the closed-transition condition. |
+| Work Item Change Context | traversal | Any Entity | reviewable | Work Item Implements Roadmap Item \| Work Item Targets Area \| Work Item In Release \| Work Item In Milestone \| Work Item Depends On Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item (Both) | Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -391,6 +407,7 @@ No configured constraints.
 | `decision_work_constraints_have_type` | Property | Decision Constrains Work Item.impact_type | Warning | Required |
 | `deferred_release_work_not_gating_0_2` | Named Query Result Count | Named query `deferred_release_gating_work_items` | Error | max `0` |
 | `open_question_work_blockers_have_basis` | Property | Open Question Blocks Work Item.blocking_basis | Warning | Non Empty |
+| `review_requests_review_a_work_item` | Cardinality | Review Request -> Review Request For Work Item (out) | Warning | min `1` |
 | `risk_work_blockers_have_basis` | Property | Risk Blocks Work Item.blocking_basis | Warning | Non Empty |
 | `roadmap_dependencies_have_basis` | Property | Roadmap Item Depends On Roadmap Item.dependency_basis | Warning | Non Empty |
 | `roadmap_items_target_area` | Cardinality | Roadmap Item -> Roadmap Item Targets Area (out) | Warning | min `1` |
