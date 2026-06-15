@@ -187,13 +187,13 @@ def stats_table(
 
 def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
     """Build a Rich table for named-query discovery surfaces."""
-    table = Table(title="Named Queries")
-    table.add_column("Name", style="cyan")
-    table.add_column("Entry")
-    table.add_column("Params")
-    table.add_column("Returns")
-    table.add_column("State")
-    table.add_column("Description")
+    table = Table(title="Named Queries", expand=True)
+    table.add_column("Name", style="cyan", overflow="fold", min_width=18)
+    table.add_column("Entry", overflow="fold")
+    table.add_column("Params", overflow="fold")
+    table.add_column("Returns", overflow="fold")
+    table.add_column("State", overflow="fold")
+    table.add_column("Description", overflow="fold", ratio=2)
 
     for query in queries:
         params = ", ".join(query.get("required_params", []))
@@ -210,24 +210,18 @@ def query_definitions_table(queries: list[dict[str, Any]]) -> Table:
 
 def groups_table(groups: list[CandidateGroup]) -> Table:
     """Build a Rich table for a list of candidate groups."""
-    table = Table(title="Candidate Groups")
-    table.add_column("Group ID", style="cyan", no_wrap=True)
-    table.add_column("Signature", no_wrap=True)
-    table.add_column("Relationship")
-    table.add_column("Status")
-    table.add_column("Priority")
-    table.add_column("Members", justify="right")
-    table.add_column("Thesis")
+    table = Table(title="Candidate Groups", expand=True)
+    table.add_column("Group ID", style="cyan", overflow="fold", min_width=12, max_width=14)
+    table.add_column("Relationship", overflow="fold", min_width=18, max_width=24)
+    table.add_column("Status", overflow="fold", min_width=12, max_width=14)
+    table.add_column("Thesis", overflow="fold", ratio=2, min_width=18)
 
     for g in groups:
         table.add_row(
             g.group_id,
-            g.signature[:16] + "...",
             g.relationship_type,
             g.status,
-            g.review_priority,
-            str(g.member_count),
-            g.thesis_text[:50] if g.thesis_text else "",
+            g.thesis_text or "",
         )
 
     return table

@@ -610,9 +610,32 @@ def _run_query_command(
         click.echo(f"Receipt: {local_result.receipt_id}")
 
 
-@click.group()
-def query() -> None:
+def _query_list_payload() -> list[dict[str, Any]]:
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.list_queries(instance_id),
+        service_list_queries,
+    )
+    queries = (
+        result.items if isinstance(result, contracts.QueryListResult) else cast(list[Any], result)
+    )
+    return [_query_definition_payload(query) for query in queries]
+
+
+def _emit_query_list(*, output_json: bool) -> None:
+    payload = _query_list_payload()
+    if output_json:
+        _emit_json({"items": payload, "total": len(payload)})
+        return
+    console.print(query_definitions_table(payload))
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+@handle_errors
+def query(ctx: click.Context) -> None:
     """Run, inspect, and discover named queries on this instance."""
+    if ctx.invoked_subcommand is None:
+        _emit_query_list(output_json=False)
 
 
 @query.command("run")
@@ -732,18 +755,7 @@ def query_inline_cmd(
 @handle_errors
 def query_list_cmd(output_json: bool) -> None:
     """List named queries with entry points and required params."""
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.list_queries(instance_id),
-        service_list_queries,
-    )
-    queries = (
-        result.items if isinstance(result, contracts.QueryListResult) else cast(list[Any], result)
-    )
-    payload = [_query_definition_payload(query) for query in queries]
-    if output_json:
-        _emit_json({"items": payload, "total": len(payload)})
-        return
-    console.print(query_definitions_table(payload))
+    _emit_query_list(output_json=output_json)
 
 
 @query.command("describe")

@@ -9,13 +9,15 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
+from cruxible_core.cli.formatting import groups_table, query_definitions_table
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
 from cruxible_core.config.schema import NamedQuerySchema
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.service import service_propose_group, service_resolve_group
 
@@ -33,6 +35,15 @@ def _chdir_run(runner: CliRunner, directory: Path, args: list[str]) -> object:
         return runner.invoke(cli, args)
     finally:
         os.chdir(original)
+
+
+def _compact_rendered_table(value: str) -> str:
+    return "".join(ch for ch in value if ch.isalnum() or ch in "_-")
+
+
+def _assert_chunks_present(output: str, chunks: list[str]) -> None:
+    for chunk in chunks:
+        assert chunk in output
 
 
 def _assert_local_mutation_disabled(
@@ -174,6 +185,17 @@ class TestValidate:
 
 
 class TestQuery:
+    def test_bare_query_lists_named_queries(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(runner, populated_instance.root, ["query"])
+
+        assert result.exit_code == 0
+        assert "Named Queries" in result.output
+        assert "parts_for_vehicle" in result.output
+
     def test_query_parts_for_vehicle(
         self,
         runner: CliRunner,
@@ -282,6 +304,37 @@ class TestQuery:
         assert "Param hints:" in result.output
         assert "entry_point=None" in result.output
         assert "primary_key=" not in result.output
+
+    def test_query_list_table_preserves_long_names(self) -> None:
+        long_name = "very_long_named_query_identifier_that_agents_must_copy_exactly"
+        console = Console(record=True, width=50)
+
+        console.print(
+            query_definitions_table(
+                [
+                    {
+                        "name": long_name,
+                        "entry_point": "Vehicle",
+                        "required_params": ["vehicle_id", "model_year"],
+                        "returns": "Part",
+                        "relationship_state": "reviewable",
+                        "description": "A long description may wrap without hiding the query name.",
+                    }
+                ]
+            )
+        )
+
+        output = console.export_text()
+        _assert_chunks_present(
+            output,
+            [
+                "very_long_named_qu",
+                "ery_identifier_tha",
+                "t_agents_must_copy",
+                "_exactly",
+            ],
+        )
+        assert f"{long_name[:20]}..." not in output
 
 
 class TestEvaluate:
@@ -2503,6 +2556,39 @@ class TestGroupListCLI:
         )
         assert result.exit_code == 0
         assert "1 of 1" in result.output
+
+    def test_group_list_table_preserves_relationship_status_and_thesis(self) -> None:
+        relationship = "very_long_relationship_type_agents_must_read"
+        thesis = (
+            "This thesis is intentionally longer than fifty characters so the "
+            "table must wrap it instead of applying the old hard truncation."
+        )
+        console = Console(record=True, width=80)
+
+        console.print(
+            groups_table(
+                [
+                    CandidateGroup(
+                        group_id="GRP-longtable",
+                        relationship_type=relationship,
+                        signature="abc1234567890defabc1234567890def",
+                        status="pending_review",
+                        review_priority="review",
+                        member_count=3,
+                        thesis_text=thesis,
+                    )
+                ]
+            )
+        )
+
+        output = console.export_text()
+        compact = _compact_rendered_table(output)
+        _assert_chunks_present(
+            output,
+            ["very_long_relationship_t", "ype_agents_must_read"],
+        )
+        assert "pending_review" in compact
+        assert "oldhardtruncation" in compact
 
 
 class TestGroupResolutionsCLI:

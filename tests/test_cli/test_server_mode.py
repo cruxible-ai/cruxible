@@ -546,6 +546,11 @@ def test_query_discovery_commands_delegate_to_client_in_server_mode(
     assert list_payload["items"][0]["name"] == "parts_for_vehicle"
     assert list_payload["items"][0]["required_params"] == ["vehicle_id"]
 
+    bare = runner.invoke(cli, ["query"])
+    assert bare.exit_code == 0
+    assert "Named Queries" in bare.output
+    assert "parts_for_vehicle" in bare.output
+
     described = runner.invoke(
         cli,
         ["query", "describe", "--query", "parts_for_vehicle", "--json"],
