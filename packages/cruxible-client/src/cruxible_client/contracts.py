@@ -732,22 +732,27 @@ class InspectEntityResult(BaseModel):
     total_neighbors: int = 0
 
 
-class StatusTransitionItem(BaseModel):
+class PropertyChangeItem(BaseModel):
+    property: str
+    from_value: Any | None = None
+    to_value: Any | None = None
+
+
+class EntityChangeHistoryItem(BaseModel):
     entity_type: str
     entity_id: str
-    from_status: str | None = None
-    to_status: str | None = None
-    transition_kind: Literal["created", "changed"]
+    change_kind: Literal["created", "updated"]
+    property_changes: list[PropertyChangeItem] = Field(default_factory=list)
     changed_at: datetime
     receipt_id: str
     operation_type: str
     actor_context: dict[str, Any] | None = None
 
 
-class EntityStatusHistoryResult(BaseModel):
+class EntityChangeHistoryResult(BaseModel):
     entity_type: str
     entity_id: str | None = None
-    items: list[StatusTransitionItem] = Field(default_factory=list)
+    items: list[EntityChangeHistoryItem] = Field(default_factory=list)
     total: int = 0
     legacy_entity_write_count: int = 0
     warnings: list[str] = Field(default_factory=list)

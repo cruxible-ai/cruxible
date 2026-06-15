@@ -1081,8 +1081,8 @@ def handle_inspect_entity_history(
     entity_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> contracts.EntityStatusHistoryResult:
-    """Inspect receipt-derived status history for one entity type or entity."""
+) -> contracts.EntityChangeHistoryResult:
+    """Inspect receipt-derived entity change history for one entity type or entity."""
     return _dispatch_remote_or_local(
         lambda client: client.inspect_entity_history(
             instance_id,

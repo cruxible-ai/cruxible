@@ -11,7 +11,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
-from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -81,43 +80,44 @@ class _DirectWriteGroupInteractions:
     updated_group_backed_edges: list[DirectWriteGroupInteraction]
 
 
-def _entity_status_transition_detail(
-    config: CoreConfig,
+def _entity_property_change_detail(
     graph: EntityGraph,
     validated: ValidatedEntity,
     *,
     actor_context: GovernedActorContext | None = None,
 ) -> dict[str, Any]:
     entity = validated.entity
-    schema = config.get_entity_type(entity.entity_type)
-    status_schema = schema.properties.get("status") if schema is not None else None
-    if status_schema is None or status_schema.type != "string":
-        return {}
     dumped_actor = dump_actor_context(actor_context)
-    no_transition: dict[str, Any] = {"status_transition": "none"}
-    if dumped_actor is not None:
-        no_transition["actor_context"] = dumped_actor
-
+    previous = graph.get_entity(entity.entity_type, entity.entity_id)
+    previous_properties = previous.properties if previous is not None else {}
+    property_changes: list[dict[str, Any]] = []
     if validated.is_update:
-        if "status" not in entity.properties:
-            return no_transition
-        previous = graph.get_entity(entity.entity_type, entity.entity_id)
-        from_status = previous.properties.get("status") if previous is not None else None
-        to_status = entity.properties.get("status")
-        if from_status == to_status:
-            return no_transition
-        transition_kind = "changed"
+        for property_name in sorted(entity.properties):
+            from_value = previous_properties.get(property_name)
+            to_value = entity.properties[property_name]
+            if from_value != to_value:
+                property_changes.append(
+                    {
+                        "property": property_name,
+                        "from_value": from_value,
+                        "to_value": to_value,
+                    }
+                )
+        change_kind = "updated"
     else:
-        if "status" not in entity.properties:
-            return no_transition
-        from_status = None
-        to_status = entity.properties.get("status")
-        transition_kind = "created"
+        for property_name in sorted(entity.properties):
+            property_changes.append(
+                {
+                    "property": property_name,
+                    "from_value": None,
+                    "to_value": entity.properties[property_name],
+                }
+            )
+        change_kind = "created"
 
     detail: dict[str, Any] = {
-        "from_status": from_status,
-        "to_status": to_status,
-        "transition_kind": transition_kind,
+        "change_kind": change_kind,
+        "property_changes": property_changes,
     }
     if dumped_actor is not None:
         detail["actor_context"] = dumped_actor
@@ -602,8 +602,7 @@ def _prepare_batch_direct_write(
             continue
         entity_seen.add(entity_key)
         validated_entities.append(validated_entity)
-        entity_write_details[entity_key] = _entity_status_transition_detail(
-            config,
+        entity_write_details[entity_key] = _entity_property_change_detail(
             current_graph,
             validated_entity,
             actor_context=actor_context,
@@ -1039,8 +1038,7 @@ def service_add_entities(
             if persisted is not None:
                 touched_entities.append(persisted)
             if builder:
-                detail = _entity_status_transition_detail(
-                    config,
+                detail = _entity_property_change_detail(
                     current_graph,
                     validated,
                     actor_context=actor_context,

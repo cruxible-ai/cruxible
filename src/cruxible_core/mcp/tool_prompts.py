@@ -132,7 +132,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need one entity plus nearby relationships and related entities."
     ),
     "cruxible_inspect_entity_history": (
-        "Use when you need receipt-derived status transitions for one entity type or entity."
+        "Use when you need receipt-derived property changes for one entity type or entity."
     ),
     "cruxible_inspect_ontology": (
         "Use when you need a compact overview of entity types, relationships, and rules."

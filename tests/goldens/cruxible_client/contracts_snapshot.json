@@ -4757,6 +4757,451 @@
         "to_type"
       ]
     },
+    "EntityChangeHistoryItem": {
+      "fields": {
+        "actor_context": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "actor_context",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          }
+        },
+        "change_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "change_kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "created",
+              "updated"
+            ],
+            "title": "Change Kind",
+            "type": "string"
+          }
+        },
+        "changed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "changed_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          }
+        },
+        "entity_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": true,
+          "schema": {
+            "title": "Entity Id",
+            "type": "string"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "operation_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation_type",
+          "required": true,
+          "schema": {
+            "title": "Operation Type",
+            "type": "string"
+          }
+        },
+        "property_changes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "property_changes",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PropertyChangeItem"
+            },
+            "title": "Property Changes",
+            "type": "array"
+          }
+        },
+        "receipt_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "receipt_id",
+          "required": true,
+          "schema": {
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PropertyChangeItem": {
+            "properties": {
+              "from_value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Value"
+              },
+              "property": {
+                "title": "Property",
+                "type": "string"
+              },
+              "to_value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To Value"
+              }
+            },
+            "required": [
+              "property"
+            ],
+            "title": "PropertyChangeItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "actor_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Context"
+          },
+          "change_kind": {
+            "enum": [
+              "created",
+              "updated"
+            ],
+            "title": "Change Kind",
+            "type": "string"
+          },
+          "changed_at": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "operation_type": {
+            "title": "Operation Type",
+            "type": "string"
+          },
+          "property_changes": {
+            "items": {
+              "$ref": "#/$defs/PropertyChangeItem"
+            },
+            "title": "Property Changes",
+            "type": "array"
+          },
+          "receipt_id": {
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_type",
+          "entity_id",
+          "change_kind",
+          "changed_at",
+          "receipt_id",
+          "operation_type"
+        ],
+        "title": "EntityChangeHistoryItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "change_kind",
+        "changed_at",
+        "entity_id",
+        "entity_type",
+        "operation_type",
+        "receipt_id"
+      ]
+    },
+    "EntityChangeHistoryResult": {
+      "fields": {
+        "entity_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "entity_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entity Id"
+          }
+        },
+        "entity_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entity_type",
+          "required": true,
+          "schema": {
+            "title": "Entity Type",
+            "type": "string"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/EntityChangeHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "legacy_entity_write_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "legacy_entity_write_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Legacy Entity Write Count",
+            "type": "integer"
+          }
+        },
+        "total": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "EntityChangeHistoryItem": {
+            "properties": {
+              "actor_context": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Actor Context"
+              },
+              "change_kind": {
+                "enum": [
+                  "created",
+                  "updated"
+                ],
+                "title": "Change Kind",
+                "type": "string"
+              },
+              "changed_at": {
+                "format": "date-time",
+                "title": "Changed At",
+                "type": "string"
+              },
+              "entity_id": {
+                "title": "Entity Id",
+                "type": "string"
+              },
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "operation_type": {
+                "title": "Operation Type",
+                "type": "string"
+              },
+              "property_changes": {
+                "items": {
+                  "$ref": "#/$defs/PropertyChangeItem"
+                },
+                "title": "Property Changes",
+                "type": "array"
+              },
+              "receipt_id": {
+                "title": "Receipt Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity_id",
+              "change_kind",
+              "changed_at",
+              "receipt_id",
+              "operation_type"
+            ],
+            "title": "EntityChangeHistoryItem",
+            "type": "object"
+          },
+          "PropertyChangeItem": {
+            "properties": {
+              "from_value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Value"
+              },
+              "property": {
+                "title": "Property",
+                "type": "string"
+              },
+              "to_value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To Value"
+              }
+            },
+            "required": [
+              "property"
+            ],
+            "title": "PropertyChangeItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entity Id"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/EntityChangeHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "legacy_entity_write_count": {
+            "default": 0,
+            "title": "Legacy Entity Write Count",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity_type"
+        ],
+        "title": "EntityChangeHistoryResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "entity_type"
+      ]
+    },
     "EntityInput": {
       "fields": {
         "entity_id": {
@@ -4832,226 +5277,6 @@
       },
       "required_fields": [
         "entity_id",
-        "entity_type"
-      ]
-    },
-    "EntityStatusHistoryResult": {
-      "fields": {
-        "entity_id": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "entity_id",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Entity Id"
-          }
-        },
-        "entity_type": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "entity_type",
-          "required": true,
-          "schema": {
-            "title": "Entity Type",
-            "type": "string"
-          }
-        },
-        "items": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "items",
-          "required": false,
-          "schema": {
-            "items": {
-              "$ref": "#/$defs/StatusTransitionItem"
-            },
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "legacy_entity_write_count": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "legacy_entity_write_count",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "title": "Legacy Entity Write Count",
-            "type": "integer"
-          }
-        },
-        "total": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "total",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "warnings": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "warnings",
-          "required": false,
-          "schema": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "StatusTransitionItem": {
-            "properties": {
-              "actor_context": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Actor Context"
-              },
-              "changed_at": {
-                "format": "date-time",
-                "title": "Changed At",
-                "type": "string"
-              },
-              "entity_id": {
-                "title": "Entity Id",
-                "type": "string"
-              },
-              "entity_type": {
-                "title": "Entity Type",
-                "type": "string"
-              },
-              "from_status": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "From Status"
-              },
-              "operation_type": {
-                "title": "Operation Type",
-                "type": "string"
-              },
-              "receipt_id": {
-                "title": "Receipt Id",
-                "type": "string"
-              },
-              "to_status": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "To Status"
-              },
-              "transition_kind": {
-                "enum": [
-                  "created",
-                  "changed"
-                ],
-                "title": "Transition Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "entity_type",
-              "entity_id",
-              "transition_kind",
-              "changed_at",
-              "receipt_id",
-              "operation_type"
-            ],
-            "title": "StatusTransitionItem",
-            "type": "object"
-          }
-        },
-        "properties": {
-          "entity_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Entity Id"
-          },
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/$defs/StatusTransitionItem"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "legacy_entity_write_count": {
-            "default": 0,
-            "title": "Legacy Entity Write Count",
-            "type": "integer"
-          },
-          "total": {
-            "default": 0,
-            "title": "Total",
-            "type": "integer"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        },
-        "required": [
-          "entity_type"
-        ],
-        "title": "EntityStatusHistoryResult",
-        "type": "object"
-      },
-      "required_fields": [
         "entity_type"
       ]
     },
@@ -11721,6 +11946,92 @@
       },
       "required_fields": [
         "outcome_id"
+      ]
+    },
+    "PropertyChangeItem": {
+      "fields": {
+        "from_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "from_value",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Value"
+          }
+        },
+        "property": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "property",
+          "required": true,
+          "schema": {
+            "title": "Property",
+            "type": "string"
+          }
+        },
+        "to_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "to_value",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To Value"
+          }
+        }
+      },
+      "json_schema": {
+        "properties": {
+          "from_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "From Value"
+          },
+          "property": {
+            "title": "Property",
+            "type": "string"
+          },
+          "to_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To Value"
+          }
+        },
+        "required": [
+          "property"
+        ],
+        "title": "PropertyChangeItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "property"
       ]
     },
     "PropertyPairInput": {
@@ -19815,224 +20126,6 @@
       "required_fields": [
         "edge_count",
         "entity_count"
-      ]
-    },
-    "StatusTransitionItem": {
-      "fields": {
-        "actor_context": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "actor_context",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Actor Context"
-          }
-        },
-        "changed_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "changed_at",
-          "required": true,
-          "schema": {
-            "format": "date-time",
-            "title": "Changed At",
-            "type": "string"
-          }
-        },
-        "entity_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "entity_id",
-          "required": true,
-          "schema": {
-            "title": "Entity Id",
-            "type": "string"
-          }
-        },
-        "entity_type": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "entity_type",
-          "required": true,
-          "schema": {
-            "title": "Entity Type",
-            "type": "string"
-          }
-        },
-        "from_status": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "from_status",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "From Status"
-          }
-        },
-        "operation_type": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "operation_type",
-          "required": true,
-          "schema": {
-            "title": "Operation Type",
-            "type": "string"
-          }
-        },
-        "receipt_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "receipt_id",
-          "required": true,
-          "schema": {
-            "title": "Receipt Id",
-            "type": "string"
-          }
-        },
-        "to_status": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "to_status",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "To Status"
-          }
-        },
-        "transition_kind": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "transition_kind",
-          "required": true,
-          "schema": {
-            "enum": [
-              "created",
-              "changed"
-            ],
-            "title": "Transition Kind",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "properties": {
-          "actor_context": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Actor Context"
-          },
-          "changed_at": {
-            "format": "date-time",
-            "title": "Changed At",
-            "type": "string"
-          },
-          "entity_id": {
-            "title": "Entity Id",
-            "type": "string"
-          },
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "from_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "From Status"
-          },
-          "operation_type": {
-            "title": "Operation Type",
-            "type": "string"
-          },
-          "receipt_id": {
-            "title": "Receipt Id",
-            "type": "string"
-          },
-          "to_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "To Status"
-          },
-          "transition_kind": {
-            "enum": [
-              "created",
-              "changed"
-            ],
-            "title": "Transition Kind",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entity_type",
-          "entity_id",
-          "transition_kind",
-          "changed_at",
-          "receipt_id",
-          "operation_type"
-        ],
-        "title": "StatusTransitionItem",
-        "type": "object"
-      },
-      "required_fields": [
-        "changed_at",
-        "entity_id",
-        "entity_type",
-        "operation_type",
-        "receipt_id",
-        "transition_kind"
       ]
     },
     "SuppressedProposalMember": {

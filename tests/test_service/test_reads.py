@@ -28,7 +28,7 @@ from cruxible_core.service import (
     service_add_entities,
     service_batch_direct_write,
     service_get_entity,
-    service_get_entity_status_history,
+    service_get_entity_change_history,
     service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
@@ -69,6 +69,19 @@ def _status_history_instance(tmp_path: Path) -> CruxibleInstance:
     result = service_init(tmp_path, config_yaml=STATUS_HISTORY_YAML)
     assert isinstance(result.instance, CruxibleInstance)
     return result.instance
+
+
+def _history_changes(result):
+    return [
+        (
+            item.change_kind,
+            [
+                (change.property, change.from_value, change.to_value)
+                for change in item.property_changes
+            ],
+        )
+        for item in result.items
+    ]
 
 
 def _kit_provider_config_yaml() -> str:
@@ -770,12 +783,12 @@ class TestGetEntity:
 
 
 # ---------------------------------------------------------------------------
-# service_get_entity_status_history
+# service_get_entity_change_history
 # ---------------------------------------------------------------------------
 
 
-class TestEntityStatusHistory:
-    def test_entity_specific_status_history_from_mutation_receipts(self, tmp_path: Path) -> None:
+class TestEntityChangeHistory:
+    def test_entity_specific_change_history_from_mutation_receipts(self, tmp_path: Path) -> None:
         instance = _status_history_instance(tmp_path)
         service_add_entities(
             instance,
@@ -818,21 +831,25 @@ class TestEntityStatusHistory:
             ],
         )
 
-        history = service_get_entity_status_history(instance, "Task", entity_id="T-1")
+        history = service_get_entity_change_history(instance, "Task", entity_id="T-1")
 
-        assert history.total == 2
+        assert history.total == 3
         assert history.legacy_entity_write_count == 0
-        transitions = [
-            (item.from_status, item.to_status, item.transition_kind) for item in history.items
-        ]
-        assert transitions == [
-            ("planned", "active", "changed"),
-            (None, "planned", "created"),
+        assert _history_changes(history) == [
+            ("updated", [("title", "First", "Renamed")]),
+            ("updated", [("status", "planned", "active")]),
+            (
+                "created",
+                [
+                    ("status", None, "planned"),
+                    ("title", None, "First"),
+                ],
+            ),
         ]
         assert {item.operation_type for item in history.items} == {"add_entity"}
         assert all(item.receipt_id.startswith("RCP-") for item in history.items)
 
-    def test_type_wide_status_history_and_pagination(self, tmp_path: Path) -> None:
+    def test_type_wide_change_history_and_pagination(self, tmp_path: Path) -> None:
         instance = _status_history_instance(tmp_path)
         service_add_entities(
             instance,
@@ -850,14 +867,14 @@ class TestEntityStatusHistory:
             ],
         )
 
-        history = service_get_entity_status_history(instance, "Task", limit=1, offset=1)
+        history = service_get_entity_change_history(instance, "Task", limit=1, offset=1)
 
         assert history.total == 2
         assert len(history.items) == 1
-        assert history.items[0].transition_kind == "created"
+        assert history.items[0].change_kind == "created"
         assert history.items[0].entity_id in {"T-1", "T-2"}
 
-    def test_batch_direct_write_records_status_history(self, tmp_path: Path) -> None:
+    def test_batch_direct_write_records_property_changes(self, tmp_path: Path) -> None:
         instance = _status_history_instance(tmp_path)
         service_batch_direct_write(
             instance,
@@ -884,14 +901,11 @@ class TestEntityStatusHistory:
             ),
         )
 
-        history = service_get_entity_status_history(instance, "Task", entity_id="T-1")
+        history = service_get_entity_change_history(instance, "Task", entity_id="T-1")
 
-        transitions = [
-            (item.from_status, item.to_status, item.transition_kind) for item in history.items
-        ]
-        assert transitions == [
-            ("planned", "closed", "changed"),
-            (None, "planned", "created"),
+        assert _history_changes(history) == [
+            ("updated", [("status", "planned", "closed")]),
+            ("created", [("status", None, "planned")]),
         ]
         assert {item.operation_type for item in history.items} == {"batch_direct_write"}
 
@@ -903,24 +917,48 @@ class TestEntityStatusHistory:
         with instance.write_transaction() as uow:
             uow.receipts.save_receipt(receipt)
 
-        history = service_get_entity_status_history(instance, "Task", entity_id="T-legacy")
+        history = service_get_entity_change_history(instance, "Task", entity_id="T-legacy")
 
         assert history.items == []
         assert history.total == 0
         assert history.legacy_entity_write_count == 1
-        assert history.warnings == ["1 legacy entity write(s) lacked status transition detail"]
+        assert history.warnings == ["1 legacy entity write(s) lacked property change detail"]
 
-    def test_requires_status_property(self, tmp_path: Path) -> None:
+    def test_entity_type_without_status_is_supported(self, tmp_path: Path) -> None:
         instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Note",
+                    entity_id="N-1",
+                    properties={"body": "Initial"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Note",
+                    entity_id="N-1",
+                    properties={"body": "Updated"},
+                )
+            ],
+        )
 
-        with pytest.raises(ConfigError, match="does not define a string status property"):
-            service_get_entity_status_history(instance, "Note")
+        history = service_get_entity_change_history(instance, "Note", entity_id="N-1")
+
+        assert _history_changes(history) == [
+            ("updated", [("body", "Initial", "Updated")]),
+            ("created", [("body", None, "Initial")]),
+        ]
 
     def test_unknown_entity_type_raises_typed_error(self, tmp_path: Path) -> None:
         instance = _status_history_instance(tmp_path)
 
         with pytest.raises(EntityTypeNotFoundError):
-            service_get_entity_status_history(instance, "Missing")
+            service_get_entity_change_history(instance, "Missing")
 
 
 # ---------------------------------------------------------------------------

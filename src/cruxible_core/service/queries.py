@@ -54,18 +54,19 @@ from cruxible_core.query.types import dump_query_row
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
-    EntityStatusHistoryResult,
+    EntityChangeHistoryItem,
+    EntityChangeHistoryResult,
     InspectEntityResult,
     InspectNeighborResult,
     ListResult,
     NeighborDirection,
     OperationContext,
+    PropertyChangeItem,
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
     RelationshipLineageResult,
     StatsServiceResult,
-    StatusTransitionItem,
     TraceListResult,
 )
 from cruxible_core.temporal import utc_now
@@ -79,7 +80,7 @@ _INLINE_DEFAULT_MAX_PATHS = 1000
 _INLINE_MAX_PATHS = 5000
 _INLINE_DEFAULT_MAX_PATHS_PER_RESULT = 25
 _INLINE_MAX_PATHS_PER_RESULT = 100
-_STATUS_HISTORY_RECEIPT_PAGE_SIZE = 500
+_ENTITY_HISTORY_RECEIPT_PAGE_SIZE = 500
 
 # ---------------------------------------------------------------------------
 # Query
@@ -591,25 +592,25 @@ def service_inspect_entity(
     )
 
 
-def service_get_entity_status_history(
+def service_get_entity_change_history(
     instance: InstanceProtocol,
     entity_type: str,
     *,
     entity_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> EntityStatusHistoryResult:
-    """Return receipt-derived status transitions for one entity type or entity."""
+) -> EntityChangeHistoryResult:
+    """Return receipt-derived property changes for one entity type or entity."""
     if limit < 1:
         raise ConfigError("limit must be at least 1")
     if offset < 0:
         raise ConfigError("offset must be non-negative")
 
     config = instance.load_config()
-    _validate_status_history_entity_type(config, entity_type)
+    _validate_entity_history_entity_type(config, entity_type)
 
     store = instance.get_receipt_store()
-    transitions: list[StatusTransitionItem] = []
+    changes: list[EntityChangeHistoryItem] = []
     legacy_count = 0
     try:
         receipt_ids = (
@@ -629,31 +630,23 @@ def service_get_entity_status_history(
                 if entity_id is not None and node.entity_id != entity_id:
                     continue
                 detail = node.detail
-                if detail.get("status_transition") == "none":
-                    continue
-                transition_kind = detail.get("transition_kind")
-                if transition_kind not in {"created", "changed"}:
+                change_kind = detail.get("change_kind")
+                raw_property_changes = detail.get("property_changes")
+                if change_kind not in {"created", "updated"} or not isinstance(
+                    raw_property_changes, list
+                ):
                     legacy_count += 1
                     continue
-                if "to_status" not in detail:
-                    legacy_count += 1
+                property_changes = _property_change_items(raw_property_changes)
+                if change_kind == "updated" and not property_changes:
                     continue
                 actor_context = detail.get("actor_context")
-                transitions.append(
-                    StatusTransitionItem(
+                changes.append(
+                    EntityChangeHistoryItem(
                         entity_type=entity_type,
                         entity_id=node.entity_id or "",
-                        from_status=(
-                            str(detail["from_status"])
-                            if detail.get("from_status") is not None
-                            else None
-                        ),
-                        to_status=(
-                            str(detail["to_status"])
-                            if detail.get("to_status") is not None
-                            else None
-                        ),
-                        transition_kind=cast(Literal["created", "changed"], transition_kind),
+                        change_kind=cast(Literal["created", "updated"], change_kind),
+                        property_changes=property_changes,
                         changed_at=node.timestamp,
                         receipt_id=receipt.receipt_id,
                         operation_type=receipt.operation_type,
@@ -663,46 +656,59 @@ def service_get_entity_status_history(
     finally:
         store.close()
 
-    transitions.sort(key=lambda item: (item.changed_at, item.receipt_id), reverse=True)
-    total = len(transitions)
+    changes.sort(key=lambda item: (item.changed_at, item.receipt_id), reverse=True)
+    total = len(changes)
     warnings = (
-        [f"{legacy_count} legacy entity write(s) lacked status transition detail"]
+        [f"{legacy_count} legacy entity write(s) lacked property change detail"]
         if legacy_count
         else []
     )
-    return EntityStatusHistoryResult(
+    return EntityChangeHistoryResult(
         entity_type=entity_type,
         entity_id=entity_id,
-        items=transitions[offset : offset + limit],
+        items=changes[offset : offset + limit],
         total=total,
         legacy_entity_write_count=legacy_count,
         warnings=warnings,
     )
 
 
-def _validate_status_history_entity_type(config: CoreConfig, entity_type: str) -> None:
+def _validate_entity_history_entity_type(config: CoreConfig, entity_type: str) -> None:
     entity_schema = config.get_entity_type(entity_type)
     if entity_schema is None:
         raise EntityTypeNotFoundError(entity_type, known_entity_types=list(config.entity_types))
-    status_schema = entity_schema.properties.get("status")
-    if status_schema is None or status_schema.type != "string":
-        raise ConfigError(
-            f"Entity type '{entity_type}' does not define a string status property"
-        )
 
 
 def _all_receipt_ids(store: Any) -> list[str]:
     receipt_ids: list[str] = []
     offset = 0
     while True:
-        page = store.list_receipts(limit=_STATUS_HISTORY_RECEIPT_PAGE_SIZE, offset=offset)
+        page = store.list_receipts(limit=_ENTITY_HISTORY_RECEIPT_PAGE_SIZE, offset=offset)
         if not page:
             break
         receipt_ids.extend(str(row["receipt_id"]) for row in page)
-        if len(page) < _STATUS_HISTORY_RECEIPT_PAGE_SIZE:
+        if len(page) < _ENTITY_HISTORY_RECEIPT_PAGE_SIZE:
             break
-        offset += _STATUS_HISTORY_RECEIPT_PAGE_SIZE
+        offset += _ENTITY_HISTORY_RECEIPT_PAGE_SIZE
     return receipt_ids
+
+
+def _property_change_items(raw_changes: list[Any]) -> list[PropertyChangeItem]:
+    changes: list[PropertyChangeItem] = []
+    for raw_change in raw_changes:
+        if not isinstance(raw_change, Mapping):
+            continue
+        property_name = raw_change.get("property")
+        if not isinstance(property_name, str) or not property_name:
+            continue
+        changes.append(
+            PropertyChangeItem(
+                property=property_name,
+                from_value=raw_change.get("from_value"),
+                to_value=raw_change.get("to_value"),
+            )
+        )
+    return changes
 
 
 def service_get_relationship(

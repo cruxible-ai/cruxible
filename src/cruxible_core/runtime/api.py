@@ -58,7 +58,7 @@ from cruxible_core.service import (
     service_finalize_decision_record,
     service_get_decision_record,
     service_get_entity,
-    service_get_entity_status_history,
+    service_get_entity_change_history,
     service_get_feedback_profile,
     service_get_group,
     service_get_outcome_profile,
@@ -1931,27 +1931,33 @@ def inspect_entity_history(
     entity_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> contracts.EntityStatusHistoryResult:
-    """Inspect receipt-derived status history for one entity type or entity."""
+) -> contracts.EntityChangeHistoryResult:
+    """Inspect receipt-derived entity change history for one entity type or entity."""
     check_permission("cruxible_inspect_entity_history", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    result = service_get_entity_status_history(
+    result = service_get_entity_change_history(
         instance,
         entity_type,
         entity_id=entity_id,
         limit=limit,
         offset=offset,
     )
-    return contracts.EntityStatusHistoryResult(
+    return contracts.EntityChangeHistoryResult(
         entity_type=result.entity_type,
         entity_id=result.entity_id,
         items=[
-            contracts.StatusTransitionItem(
+            contracts.EntityChangeHistoryItem(
                 entity_type=item.entity_type,
                 entity_id=item.entity_id,
-                from_status=item.from_status,
-                to_status=item.to_status,
-                transition_kind=item.transition_kind,
+                change_kind=item.change_kind,
+                property_changes=[
+                    contracts.PropertyChangeItem(
+                        property=change.property,
+                        from_value=change.from_value,
+                        to_value=change.to_value,
+                    )
+                    for change in item.property_changes
+                ],
                 changed_at=item.changed_at,
                 receipt_id=item.receipt_id,
                 operation_type=item.operation_type,

@@ -192,7 +192,7 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
             assert (instance_id, entity_type, entity_id) == ("inst_123", "Asset", "A1")
             assert limit == 5
             assert offset == 1
-            return contracts.EntityStatusHistoryResult(
+            return contracts.EntityChangeHistoryResult(
                 entity_type="Asset",
                 entity_id="A1",
                 items=[],

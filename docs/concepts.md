@@ -215,12 +215,11 @@ question so an agent or reviewer can reconstruct the decision history.
 These are different proofs. Receipts explain how Cruxible decided or changed
 state. Traces explain what executable provider produced evidence.
 
-Entity status history is a receipt-derived read model. For entity types that
-declare a string `status` property, `inspect entity-history` and the matching
-API/MCP surface show recorded status transitions from mutation receipts. This is
-not a named query over live graph state: it only reports transitions explicitly
-recorded on entity-write receipts, so receipts created before that detail existed
-are treated as legacy gaps rather than inferred timeline events.
+Entity change history is a receipt-derived read model. `inspect entity-history`
+and the matching API/MCP surface show recorded property diffs from mutation
+receipts. This is not a named query over live graph state: it only reports diffs
+explicitly recorded on entity-write receipts, so receipts created before that
+detail existed are treated as legacy gaps rather than inferred timeline events.
 
 ## Feedback And Outcomes
 

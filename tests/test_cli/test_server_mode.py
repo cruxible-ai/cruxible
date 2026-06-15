@@ -103,16 +103,21 @@ def test_server_mode_inspect_entity_history_json(
                     "offset": offset,
                 }
             )
-            return contracts.EntityStatusHistoryResult(
+            return contracts.EntityChangeHistoryResult(
                 entity_type=entity_type,
                 entity_id=entity_id,
                 items=[
-                    contracts.StatusTransitionItem(
+                    contracts.EntityChangeHistoryItem(
                         entity_type=entity_type,
                         entity_id=entity_id or "T-1",
-                        from_status="planned",
-                        to_status="active",
-                        transition_kind="changed",
+                        change_kind="updated",
+                        property_changes=[
+                            contracts.PropertyChangeItem(
+                                property="status",
+                                from_value="planned",
+                                to_value="active",
+                            )
+                        ],
                         changed_at="2026-06-15T12:00:00Z",
                         receipt_id="RCP-1",
                         operation_type="add_entity",
@@ -152,7 +157,7 @@ def test_server_mode_inspect_entity_history_json(
         "offset": 1,
     }
     payload = json.loads(result.output)
-    assert payload["items"][0]["to_status"] == "active"
+    assert payload["items"][0]["property_changes"][0]["to_value"] == "active"
 
 
 def test_server_mode_evaluate_forwards_filters(

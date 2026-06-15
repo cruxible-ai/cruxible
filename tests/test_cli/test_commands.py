@@ -618,8 +618,10 @@ class TestStatsInspectReload:
         assert payload["entity_type"] == "Task"
         assert payload["entity_id"] == "T-1"
         assert payload["total"] == 2
-        assert payload["items"][0]["from_status"] == "planned"
-        assert payload["items"][0]["to_status"] == "active"
+        assert payload["items"][0]["change_kind"] == "updated"
+        assert payload["items"][0]["property_changes"] == [
+            {"property": "status", "from_value": "planned", "to_value": "active"}
+        ]
 
     def test_inspect_entity_history_human_output(
         self,
@@ -645,7 +647,7 @@ class TestStatsInspectReload:
         )
 
         assert result.exit_code == 0
-        assert "Entity Status History" in result.output
+        assert "Entity Change History" in result.output
         assert "Task:T-1" in result.output
         assert "planned" in result.output
 

@@ -297,12 +297,18 @@ class InspectEntityResult:
 
 
 @dataclass
-class StatusTransitionItem:
+class PropertyChangeItem:
+    property: str
+    from_value: Any | None = None
+    to_value: Any | None = None
+
+
+@dataclass
+class EntityChangeHistoryItem:
     entity_type: str
     entity_id: str
-    from_status: str | None
-    to_status: str | None
-    transition_kind: Literal["created", "changed"]
+    change_kind: Literal["created", "updated"]
+    property_changes: list[PropertyChangeItem]
     changed_at: datetime
     receipt_id: str
     operation_type: str
@@ -310,10 +316,10 @@ class StatusTransitionItem:
 
 
 @dataclass
-class EntityStatusHistoryResult:
+class EntityChangeHistoryResult:
     entity_type: str
     entity_id: str | None = None
-    items: list[StatusTransitionItem] = field(default_factory=list)
+    items: list[EntityChangeHistoryItem] = field(default_factory=list)
     total: int = 0
     legacy_entity_write_count: int = 0
     warnings: list[str] = field(default_factory=list)

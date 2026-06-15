@@ -840,7 +840,7 @@ class CruxibleClient:
         entity_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> contracts.EntityStatusHistoryResult:
+    ) -> contracts.EntityChangeHistoryResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/inspect/entity-history/{entity_type}",
             params=self._omit_none_params(
@@ -851,7 +851,7 @@ class CruxibleClient:
                 }
             ),
         )
-        return self._parse_model(response, contracts.EntityStatusHistoryResult)
+        return self._parse_model(response, contracts.EntityChangeHistoryResult)
 
     def inspect_view(
         self,

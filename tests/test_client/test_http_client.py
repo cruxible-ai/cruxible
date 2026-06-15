@@ -1707,9 +1707,14 @@ def test_stats_inspect_and_reload_use_expected_routes():
                         {
                             "entity_type": "WorkItem",
                             "entity_id": "wi-1",
-                            "from_status": "planned",
-                            "to_status": "closed",
-                            "transition_kind": "changed",
+                            "change_kind": "updated",
+                            "property_changes": [
+                                {
+                                    "property": "status",
+                                    "from_value": "planned",
+                                    "to_value": "closed",
+                                }
+                            ],
                             "changed_at": "2026-06-15T12:00:00Z",
                             "receipt_id": "RCP-1",
                             "operation_type": "add_entity",
@@ -1744,7 +1749,7 @@ def test_stats_inspect_and_reload_use_expected_routes():
 
     history_result = client.inspect_entity_history("inst_123", "WorkItem", entity_id="wi-1")
     assert history_result.total == 1
-    assert history_result.items[0].to_status == "closed"
+    assert history_result.items[0].property_changes[0].to_value == "closed"
     assert "entity_id=wi-1" in captured["path"]
 
     reload_result = client.reload_config("inst_123", config_yaml='name: governed\nversion: "1.0"\n')

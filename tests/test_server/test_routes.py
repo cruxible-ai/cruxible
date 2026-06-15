@@ -515,7 +515,7 @@ def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
     assert lineage_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
 
 
-def test_inspect_entity_history_route_returns_status_transitions(
+def test_inspect_entity_history_route_returns_property_changes(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -559,9 +559,10 @@ def test_inspect_entity_history_route_returns_status_transitions(
     assert payload["entity_type"] == "Task"
     assert payload["entity_id"] == "T-1"
     assert payload["total"] == 2
-    assert payload["items"][0]["from_status"] == "planned"
-    assert payload["items"][0]["to_status"] == "active"
-    assert payload["items"][0]["transition_kind"] == "changed"
+    assert payload["items"][0]["change_kind"] == "updated"
+    assert payload["items"][0]["property_changes"] == [
+        {"property": "status", "from_value": "planned", "to_value": "active"}
+    ]
     assert payload["items"][0]["receipt_id"].startswith("RCP-")
 
 

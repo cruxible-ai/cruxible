@@ -1066,7 +1066,7 @@ findings.
 **Subcommands:**
 
 - `cruxible inspect entity` - Inspect an entity and its immediate neighbors.
-- `cruxible inspect entity-history` - Inspect receipt-derived status history for one entity type or entity.
+- `cruxible inspect entity-history` - Inspect receipt-derived entity change history for one entity type or entity.
 - `cruxible inspect governance` - Show the canonical governance view for the current instance.
 - `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
@@ -1112,7 +1112,7 @@ findings.
 
 **Usage:** `cruxible inspect entity-history [OPTIONS]`
 
-**Purpose:** Inspect receipt-derived status history for one entity type or entity.
+**Purpose:** Inspect receipt-derived entity change history for one entity type or entity.
 
 **Options And Arguments:**
 
@@ -1125,7 +1125,7 @@ findings.
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only. Shows status transitions recorded on mutation receipts for entity types that define a string `status` property.
+- Read-only. Shows property diffs recorded on mutation receipts for entity writes.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

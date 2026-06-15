@@ -594,8 +594,8 @@ def register_tools(server: FastMCP) -> list[str]:
         entity_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> contracts.EntityStatusHistoryResult:
-        """Inspect receipt-derived status transitions for one entity type or entity."""
+    ) -> contracts.EntityChangeHistoryResult:
+        """Inspect receipt-derived entity property changes for one entity type or entity."""
         return handlers.handle_inspect_entity_history(
             instance_id,
             entity_type,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from rich.table import Table
@@ -29,13 +30,12 @@ def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
     return table
 
 
-def status_history_table(items: list[Any]) -> Table:
-    """Build a Rich table for receipt-derived entity status transitions."""
-    table = Table(title="Entity Status History")
+def entity_change_history_table(items: list[Any]) -> Table:
+    """Build a Rich table for receipt-derived entity property changes."""
+    table = Table(title="Entity Change History")
     table.add_column("Entity", style="cyan", overflow="fold")
-    table.add_column("From")
-    table.add_column("To")
     table.add_column("Kind")
+    table.add_column("Changes", overflow="fold")
     table.add_column("Changed At")
     table.add_column("Receipt", overflow="fold")
     table.add_column("Operation")
@@ -46,9 +46,8 @@ def status_history_table(items: list[Any]) -> Table:
         actor = str(actor_context.get("actor_id") or "")
         table.add_row(
             f"{item.entity_type}:{item.entity_id}",
-            item.from_status or "",
-            item.to_status or "",
-            item.transition_kind,
+            item.change_kind,
+            _format_property_changes(item.property_changes),
             format_datetime(item.changed_at),
             item.receipt_id,
             item.operation_type,
@@ -56,6 +55,25 @@ def status_history_table(items: list[Any]) -> Table:
         )
 
     return table
+
+
+def _format_property_changes(changes: list[Any]) -> str:
+    if not changes:
+        return ""
+    rendered: list[str] = []
+    for change in changes:
+        rendered.append(
+            f"{change.property}: "
+            f"{_format_change_value(change.from_value)} -> "
+            f"{_format_change_value(change.to_value)}"
+        )
+    return "\n".join(rendered)
+
+
+def _format_change_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    return json.dumps(value, sort_keys=True, default=str)
 
 
 def receipts_table(receipts: list[dict[str, Any]]) -> Table:
