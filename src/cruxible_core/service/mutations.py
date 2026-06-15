@@ -8,6 +8,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
@@ -252,48 +254,11 @@ def _relationship_group_interaction_detail(
     return detail
 
 
-def _relationship_identity(
-    *,
-    relationship_type: str,
-    from_type: str,
-    from_id: str,
-    to_type: str,
-    to_id: str,
-) -> tuple[str, str, str, str, str]:
-    return (from_type, from_id, to_type, to_id, relationship_type)
-
-
-def _member_identity(member: RelationshipInstance) -> tuple[str, str, str, str, str]:
-    return _relationship_identity(
-        relationship_type=member.relationship_type,
-        from_type=member.from_type,
-        from_id=member.from_id,
-        to_type=member.to_type,
-        to_id=member.to_id,
-    )
-
-
 def _record_identity(record: Mapping[str, Any]) -> tuple[str, str, str, str, str] | None:
     try:
-        relationship_type = record["relationship_type"]
-        from_type = record["from_type"]
-        from_id = record["from_id"]
-        to_type = record["to_type"]
-        to_id = record["to_id"]
-    except KeyError:
+        return RelationshipInstance.model_validate(record).identity_tuple()
+    except ValidationError:
         return None
-    if not all(
-        isinstance(value, str)
-        for value in (relationship_type, from_type, from_id, to_type, to_id)
-    ):
-        return None
-    return _relationship_identity(
-        relationship_type=relationship_type,
-        from_type=from_type,
-        from_id=from_id,
-        to_type=to_type,
-        to_id=to_id,
-    )
 
 
 def _direct_write_conflict_record(
@@ -356,7 +321,7 @@ def _merge_direct_write_conflict_state(
             ordered_identities.append(identity)
         records_by_identity[identity] = dict(record)
 
-    member_identities = {_member_identity(member) for member in members}
+    member_identities = {member.identity_tuple() for member in members}
     conflicted_member_identities = member_identities.intersection(records_by_identity)
     member_count = len(member_identities) if member_identities else group.member_count
     conflicted_member_count = len(conflicted_member_identities)
