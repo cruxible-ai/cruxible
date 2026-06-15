@@ -154,6 +154,13 @@ tri-state signals from relationship-local signal sources:
 Accepted proposal groups create reviewed edges. Rejected groups preserve the
 decision without mutating the graph.
 
+Direct writes remain available for explicit state updates. When a direct
+relationship write overlaps a pending proposal member, Cruxible keeps the write
+permissive but annotates the affected group's `analysis_state` with
+`direct_write_conflicts` and a `direct_write_conflict_summary`. Reviewers can
+use that metadata to see that live state changed after the group was proposed;
+the group status is not changed automatically.
+
 Use built-in step types for generic deterministic dataflow mechanics:
 `shape_items`, `join_items`, `filter_items`, `dedupe_items`, graph object
 construction, and canonical apply steps. Use providers for source adapters,

@@ -310,7 +310,19 @@ class GroupStore(GroupStoreProtocol):
             cursor = self._conn.execute(
                 "UPDATE candidate_groups SET status = ? WHERE group_id = ?",
                 (status, group_id),
-            )
+        )
+        return cursor.rowcount > 0
+
+    def update_group_analysis_state(
+        self,
+        group_id: str,
+        analysis_state: dict[str, Any],
+    ) -> bool:
+        """Update only group analysis_state. Does NOT commit."""
+        cursor = self._conn.execute(
+            "UPDATE candidate_groups SET analysis_state = ? WHERE group_id = ?",
+            (json.dumps(analysis_state), group_id),
+        )
         return cursor.rowcount > 0
 
     def update_group(

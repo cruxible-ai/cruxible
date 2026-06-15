@@ -45,6 +45,11 @@ from cruxible_core.service.types import (
     RelationshipWriteInput,
     SharedEvidenceInput,
 )
+from cruxible_core.temporal import format_datetime, utc_now
+
+_DIRECT_WRITE_CONFLICTS_KEY = "direct_write_conflicts"
+_DIRECT_WRITE_CONFLICT_SUMMARY_KEY = "direct_write_conflict_summary"
+_DIRECT_WRITE_CONFLICT_REVIEW_HINT = "live_state_changed_since_proposal"
 
 
 @dataclass
@@ -245,6 +250,192 @@ def _relationship_group_interaction_detail(
     if updated_group_backed_edges:
         detail["updated_group_backed_edges"] = updated_group_backed_edges
     return detail
+
+
+def _relationship_identity(
+    *,
+    relationship_type: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+) -> tuple[str, str, str, str, str]:
+    return (from_type, from_id, to_type, to_id, relationship_type)
+
+
+def _member_identity(member: RelationshipInstance) -> tuple[str, str, str, str, str]:
+    return _relationship_identity(
+        relationship_type=member.relationship_type,
+        from_type=member.from_type,
+        from_id=member.from_id,
+        to_type=member.to_type,
+        to_id=member.to_id,
+    )
+
+
+def _record_identity(record: Mapping[str, Any]) -> tuple[str, str, str, str, str] | None:
+    try:
+        relationship_type = record["relationship_type"]
+        from_type = record["from_type"]
+        from_id = record["from_id"]
+        to_type = record["to_type"]
+        to_id = record["to_id"]
+    except KeyError:
+        return None
+    if not all(
+        isinstance(value, str)
+        for value in (relationship_type, from_type, from_id, to_type, to_id)
+    ):
+        return None
+    return _relationship_identity(
+        relationship_type=relationship_type,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
+    )
+
+
+def _direct_write_conflict_record(
+    *,
+    graph: EntityGraph,
+    interaction: DirectWriteGroupInteraction,
+    receipt_id: str | None,
+    detected_at: str,
+    source: str,
+    source_ref: str,
+) -> dict[str, Any]:
+    persisted = graph.get_relationship(
+        interaction.from_type,
+        interaction.from_id,
+        interaction.to_type,
+        interaction.to_id,
+        interaction.relationship_type,
+    )
+    return {
+        "relationship_type": interaction.relationship_type,
+        "from_type": interaction.from_type,
+        "from_id": interaction.from_id,
+        "to_type": interaction.to_type,
+        "to_id": interaction.to_id,
+        "receipt_id": receipt_id,
+        "edge_key": persisted.edge_key if persisted is not None else interaction.edge_key,
+        "detected_at": detected_at,
+        "source": source,
+        "source_ref": source_ref,
+    }
+
+
+def _merge_direct_write_conflict_state(
+    *,
+    group: CandidateGroup,
+    members: Sequence[RelationshipInstance],
+    new_records: Sequence[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    analysis_state = deepcopy(group.analysis_state)
+    existing_records = analysis_state.get(_DIRECT_WRITE_CONFLICTS_KEY, [])
+    records_by_identity: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    ordered_identities: list[tuple[str, str, str, str, str]] = []
+
+    if isinstance(existing_records, list):
+        for item in existing_records:
+            if not isinstance(item, Mapping):
+                continue
+            identity = _record_identity(item)
+            if identity is None:
+                continue
+            if identity not in records_by_identity:
+                ordered_identities.append(identity)
+            records_by_identity[identity] = dict(item)
+
+    for record in new_records:
+        identity = _record_identity(record)
+        if identity is None:
+            continue
+        if identity not in records_by_identity:
+            ordered_identities.append(identity)
+        records_by_identity[identity] = dict(record)
+
+    member_identities = {_member_identity(member) for member in members}
+    conflicted_member_identities = member_identities.intersection(records_by_identity)
+    member_count = len(member_identities) if member_identities else group.member_count
+    conflicted_member_count = len(conflicted_member_identities)
+    coverage = (
+        "full"
+        if member_count > 0 and conflicted_member_count >= member_count
+        else "partial"
+    )
+    last_receipt_id = new_records[-1].get("receipt_id") if new_records else None
+    summary = {
+        "conflicted_member_count": conflicted_member_count,
+        "member_count": member_count,
+        "coverage": coverage,
+        "last_receipt_id": last_receipt_id,
+        "review_hint": _DIRECT_WRITE_CONFLICT_REVIEW_HINT,
+    }
+    analysis_state[_DIRECT_WRITE_CONFLICTS_KEY] = [
+        records_by_identity[identity] for identity in ordered_identities
+    ]
+    analysis_state[_DIRECT_WRITE_CONFLICT_SUMMARY_KEY] = summary
+    return analysis_state, summary
+
+
+def _annotate_direct_write_conflict_groups(
+    *,
+    graph: EntityGraph,
+    group_store: GroupStoreProtocol,
+    interactions: _DirectWriteGroupInteractions,
+    receipt_id: str | None,
+    source: str,
+    source_ref: str,
+    builder: Any | None,
+) -> list[dict[str, Any]]:
+    if not interactions.pending_conflicts:
+        return []
+
+    detected_at = format_datetime(utc_now())
+    conflicts_by_group: dict[str, list[DirectWriteGroupInteraction]] = defaultdict(list)
+    for interaction in interactions.pending_conflicts:
+        conflicts_by_group[interaction.group_id].append(interaction)
+
+    annotations: list[dict[str, Any]] = []
+    for group_id, group_interactions in conflicts_by_group.items():
+        group = group_store.get_group(group_id)
+        if group is None or group.status not in {"pending_review", "applying"}:
+            continue
+        members = group_store.get_members(group_id)
+        new_records = [
+            _direct_write_conflict_record(
+                graph=graph,
+                interaction=interaction,
+                receipt_id=receipt_id,
+                detected_at=detected_at,
+                source=source,
+                source_ref=source_ref,
+            )
+            for interaction in group_interactions
+        ]
+        analysis_state, summary = _merge_direct_write_conflict_state(
+            group=group,
+            members=members,
+            new_records=new_records,
+        )
+        group_store.update_group_analysis_state(group_id, analysis_state)
+        annotations.append(
+            {
+                "group_id": group_id,
+                "coverage": summary["coverage"],
+                "conflicted_member_count": summary["conflicted_member_count"],
+                "member_count": summary["member_count"],
+            }
+        )
+
+    if annotations and builder is not None:
+        builder.record_validation(
+            passed=True,
+            detail={"direct_write_group_annotations": annotations},
+        )
+    return annotations
 
 
 def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
@@ -666,6 +857,20 @@ def service_batch_direct_write(
                     detail=evidence_detail,
                 )
 
+        if ctx.uow is not None:
+            _annotate_direct_write_conflict_groups(
+                graph=prepared.graph,
+                group_store=ctx.uow.groups,
+                interactions=_DirectWriteGroupInteractions(
+                    pending_conflicts=prepared.pending_conflicts,
+                    updated_group_backed_edges=prepared.updated_group_backed_edges,
+                ),
+                receipt_id=builder.receipt_id if builder else None,
+                source=source,
+                source_ref=source_ref,
+                builder=builder,
+            )
+
         save_graph_for_mutation(
             instance,
             prepared.graph,
@@ -1004,6 +1209,17 @@ def service_add_relationships(
                 updated += 1
             else:
                 added += 1
+
+        if ctx.uow is not None:
+            _annotate_direct_write_conflict_groups(
+                graph=graph,
+                group_store=ctx.uow.groups,
+                interactions=interactions,
+                receipt_id=builder.receipt_id if builder else None,
+                source=source,
+                source_ref=source_ref,
+                builder=builder,
+            )
 
         save_graph_for_mutation(
             instance,

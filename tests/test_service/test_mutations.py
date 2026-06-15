@@ -12,7 +12,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,
@@ -293,11 +293,12 @@ def _propose_fits_group(
     *,
     from_id: str = "BP-1",
     to_id: str = "V-1",
+    members: list[CandidateMember] | None = None,
 ) -> str:
     result = service_propose_group(
         instance,
         "fits",
-        [_candidate_member(from_id=from_id, to_id=to_id)],
+        members or [_candidate_member(from_id=from_id, to_id=to_id)],
         thesis_text="test proposal",
         thesis_facts={"source": "test"},
         source_workflow_name="test_group_flow",
@@ -306,14 +307,18 @@ def _propose_fits_group(
     return result.group_id
 
 
-def _stored_group_status(instance: CruxibleInstance, group_id: str) -> str:
+def _stored_group(instance: CruxibleInstance, group_id: str) -> CandidateGroup:
     store = instance.get_group_store()
     try:
         group = store.get_group(group_id)
     finally:
         store.close()
     assert group is not None
-    return group.status
+    return group
+
+
+def _stored_group_status(instance: CruxibleInstance, group_id: str) -> str:
+    return _stored_group(instance, group_id).status
 
 
 def _receipt(instance: CruxibleInstance, receipt_id: str | None) -> Receipt:
@@ -330,6 +335,24 @@ def _receipt(instance: CruxibleInstance, receipt_id: str | None) -> Receipt:
 def _relationship_receipt_detail(receipt: Receipt) -> dict[str, object]:
     node = next(node for node in receipt.nodes if node.node_type == "relationship_write")
     return node.detail
+
+
+def _direct_write_conflicts(instance: CruxibleInstance, group_id: str) -> list[dict[str, object]]:
+    conflicts = _stored_group(instance, group_id).analysis_state.get("direct_write_conflicts", [])
+    assert isinstance(conflicts, list)
+    return conflicts
+
+
+def _direct_write_conflict_summary(
+    instance: CruxibleInstance,
+    group_id: str,
+) -> dict[str, object]:
+    summary = _stored_group(instance, group_id).analysis_state.get(
+        "direct_write_conflict_summary",
+        {},
+    )
+    assert isinstance(summary, dict)
+    return summary
 
 
 def _seed_work_item(instance: CruxibleInstance, status: str = "planned") -> None:
@@ -1239,6 +1262,23 @@ class TestDirectWriteGroupInteractions:
         assert conflict.edge_key is None
         assert result.updated_group_backed_edges == []
         assert _stored_group_status(instance, group_id) == "pending_review"
+        conflicts = _direct_write_conflicts(instance, group_id)
+        assert len(conflicts) == 1
+        assert conflicts[0]["relationship_type"] == "fits"
+        assert conflicts[0]["from_id"] == "BP-1"
+        assert conflicts[0]["to_id"] == "V-1"
+        assert conflicts[0]["receipt_id"] == result.receipt_id
+        assert conflicts[0]["edge_key"] is not None
+        assert conflicts[0]["source"] == "test"
+        assert conflicts[0]["source_ref"] == "direct"
+        summary = _direct_write_conflict_summary(instance, group_id)
+        assert summary == {
+            "conflicted_member_count": 1,
+            "member_count": 1,
+            "coverage": "full",
+            "last_receipt_id": result.receipt_id,
+            "review_hint": "live_state_changed_since_proposal",
+        }
 
         receipt = _receipt(instance, result.receipt_id)
         validation_details = [
@@ -1248,6 +1288,12 @@ class TestDirectWriteGroupInteractions:
             detail.get("pending_conflicts", [{}])[0].get("group_id") == group_id
             for detail in validation_details
             if detail.get("pending_conflicts")
+        )
+        assert any(
+            detail.get("direct_write_group_annotations", [{}])[0].get("group_id")
+            == group_id
+            for detail in validation_details
+            if detail.get("direct_write_group_annotations")
         )
         write_detail = _relationship_receipt_detail(receipt)
         assert write_detail["pending_conflicts"][0]["group_id"] == group_id
@@ -1276,6 +1322,7 @@ class TestDirectWriteGroupInteractions:
         assert dry_run.valid is True
         assert dry_run.pending_conflicts[0].group_id == group_id
         assert dry_run.updated_group_backed_edges == []
+        assert _direct_write_conflicts(instance, group_id) == []
         assert (
             instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
             is None
@@ -1294,6 +1341,112 @@ class TestDirectWriteGroupInteractions:
         receipt = _receipt(instance, applied.receipt_id)
         write_detail = _relationship_receipt_detail(receipt)
         assert write_detail["pending_conflicts"][0]["group_id"] == group_id
+        assert _direct_write_conflicts(instance, group_id)[0]["receipt_id"] == applied.receipt_id
+        assert _direct_write_conflict_summary(instance, group_id)["coverage"] == "full"
+
+    def test_group_conflict_summary_tracks_partial_and_full_coverage(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(
+            instance,
+            members=[
+                _candidate_member(from_id="BP-1", to_id="V-1"),
+                _candidate_member(from_id="BP-2", to_id="V-2"),
+            ],
+        )
+
+        first = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct-first",
+        )
+
+        assert first.pending_conflicts[0].group_id == group_id
+        summary = _direct_write_conflict_summary(instance, group_id)
+        assert summary["coverage"] == "partial"
+        assert summary["conflicted_member_count"] == 1
+        assert summary["member_count"] == 2
+
+        second = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-2",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-2",
+                        properties={"verified": True, "source": "batch"},
+                    )
+                ],
+            ),
+        )
+
+        assert second.pending_conflicts[0].group_id == group_id
+        conflicts = _direct_write_conflicts(instance, group_id)
+        assert len(conflicts) == 2
+        summary = _direct_write_conflict_summary(instance, group_id)
+        assert summary["coverage"] == "full"
+        assert summary["conflicted_member_count"] == 2
+        assert summary["member_count"] == 2
+        assert summary["last_receipt_id"] == second.receipt_id
+
+    def test_repeated_direct_write_updates_existing_conflict_record(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+        relationship = RelationshipInstance(
+            from_type="Part",
+            from_id="BP-1",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-1",
+            properties={"verified": True, "source": "first"},
+        )
+        first = service_add_relationships(
+            instance,
+            [relationship],
+            source="test",
+            source_ref="direct-first",
+        )
+
+        second = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "second"},
+                )
+            ],
+            source="test",
+            source_ref="direct-second",
+        )
+
+        conflicts = _direct_write_conflicts(instance, group_id)
+        assert len(conflicts) == 1
+        assert conflicts[0]["receipt_id"] == second.receipt_id
+        assert conflicts[0]["source_ref"] == "direct-second"
+        assert conflicts[0]["edge_key"] is not None
+        assert first.receipt_id != second.receipt_id
 
     def test_direct_write_update_reports_group_backed_edge(
         self,
@@ -1372,6 +1525,7 @@ class TestDirectWriteGroupInteractions:
         assert result.added == 1
         assert result.pending_conflicts == []
         assert result.updated_group_backed_edges == []
+        assert _direct_write_conflicts(instance, group_id) == []
 
     def test_no_conflict_direct_write_returns_empty_interaction_lists(
         self,
@@ -1398,6 +1552,32 @@ class TestDirectWriteGroupInteractions:
         assert result.added == 1
         assert result.pending_conflicts == []
         assert result.updated_group_backed_edges == []
+
+    def test_invalid_direct_write_does_not_annotate_pending_group(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+
+        with pytest.raises(DataValidationError, match="Relationship validation failed"):
+            service_add_relationships(
+                instance,
+                [
+                    RelationshipInstance(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": "not-a-bool"},
+                    )
+                ],
+                source="test",
+                source_ref="invalid-direct",
+            )
+
+        assert _direct_write_conflicts(instance, group_id) == []
 
 
 # ---------------------------------------------------------------------------
