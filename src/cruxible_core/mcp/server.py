@@ -59,9 +59,9 @@ the `CRUXIBLE_MODE` environment variable:
 - `READ_ONLY`: query, inspect, validate — no graph or config mutations
 - `GOVERNED_WRITE`: READ_ONLY + receipt-persisting workflow runs,
   governed proposal, and feedback surfaces
-- `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation and proposal resolution
-- `ADMIN` (default): all tools available including canonical workflow
-  apply, ingest, and config mutation
+- `GRAPH_WRITE`: GOVERNED_WRITE + raw graph mutation, canonical workflow
+  apply, and proposal resolution
+- `ADMIN` (default): all tools available including ingest and config mutation
 
 If a tool call is denied, the error message indicates the required mode.
 

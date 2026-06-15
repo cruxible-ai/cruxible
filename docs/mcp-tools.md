@@ -8,8 +8,8 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
 | GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, and source artifact registration. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation and group resolution/trust updates. |
-| ADMIN | `admin` | Full lifecycle, config reload, locks, canonical apply, snapshots, clone, state publication/pull, ingest, constraints, policies. |
+| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, and group resolution/trust updates. |
+| ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
 `tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
 
