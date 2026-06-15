@@ -1983,6 +1983,23 @@ def sample(
     )
 
 
+def _direct_write_group_interaction_to_contract(
+    interaction: Any,
+) -> contracts.DirectWriteGroupInteraction:
+    return contracts.DirectWriteGroupInteraction(
+        relationship_type=interaction.relationship_type,
+        from_type=interaction.from_type,
+        from_id=interaction.from_id,
+        to_type=interaction.to_type,
+        to_id=interaction.to_id,
+        group_id=interaction.group_id,
+        group_status=interaction.group_status,
+        group_signature=interaction.group_signature,
+        source_workflow_name=interaction.source_workflow_name,
+        edge_key=interaction.edge_key,
+    )
+
+
 def add_relationships_with_provenance(
     instance_id: str,
     relationships: list[contracts.RelationshipInput],
@@ -2009,6 +2026,14 @@ def add_relationships_with_provenance(
     return contracts.AddRelationshipResult(
         added=result.added,
         updated=result.updated,
+        pending_conflicts=[
+            _direct_write_group_interaction_to_contract(item)
+            for item in result.pending_conflicts
+        ],
+        updated_group_backed_edges=[
+            _direct_write_group_interaction_to_contract(item)
+            for item in result.updated_group_backed_edges
+        ],
         receipt_id=result.receipt_id,
     )
 
@@ -2124,6 +2149,14 @@ def batch_direct_write(
         validation_errors=result.validation_errors,
         validation_warnings=result.validation_warnings,
         evidence_sources_used=result.evidence_sources_used,
+        pending_conflicts=[
+            _direct_write_group_interaction_to_contract(item)
+            for item in result.pending_conflicts
+        ],
+        updated_group_backed_edges=[
+            _direct_write_group_interaction_to_contract(item)
+            for item in result.updated_group_backed_edges
+        ],
         receipt_id=result.receipt_id,
     )
 

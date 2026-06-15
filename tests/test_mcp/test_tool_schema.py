@@ -299,7 +299,16 @@ class TestOutputSchema:
             ("cruxible_inspect_governance", {"view", "payload"}),
             ("cruxible_inspect_overview", {"view", "payload"}),
             ("cruxible_render_wiki", {"pages", "page_count"}),
-            ("cruxible_add_relationship", {"added", "updated", "receipt_id"}),
+            (
+                "cruxible_add_relationship",
+                {
+                    "added",
+                    "updated",
+                    "pending_conflicts",
+                    "updated_group_backed_edges",
+                    "receipt_id",
+                },
+            ),
             ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
             ("cruxible_add_constraint", {"name", "added", "config_updated", "warnings"}),
             ("cruxible_get_feedback_profile", {"found", "relationship_type", "profile"}),

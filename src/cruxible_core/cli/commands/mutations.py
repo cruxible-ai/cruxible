@@ -83,6 +83,38 @@ def _load_batch_direct_write_payload(path: Path) -> contracts.BatchDirectWritePa
         raise click.BadParameter(f"--payload-file is invalid: {exc}") from exc
 
 
+def _direct_write_group_interaction_payload(interaction: Any) -> dict[str, Any]:
+    if isinstance(interaction, contracts.DirectWriteGroupInteraction):
+        return interaction.model_dump(mode="json")
+    return {
+        "relationship_type": interaction.relationship_type,
+        "from_type": interaction.from_type,
+        "from_id": interaction.from_id,
+        "to_type": interaction.to_type,
+        "to_id": interaction.to_id,
+        "group_id": interaction.group_id,
+        "group_status": interaction.group_status,
+        "group_signature": interaction.group_signature,
+        "source_workflow_name": interaction.source_workflow_name,
+        "edge_key": interaction.edge_key,
+    }
+
+
+def _emit_direct_write_group_notices(result_payload: dict[str, Any], *, prefix: str = "") -> None:
+    pending_count = len(result_payload.get("pending_conflicts") or [])
+    updated_count = len(result_payload.get("updated_group_backed_edges") or [])
+    if pending_count:
+        click.secho(
+            f"{prefix}Notice: {pending_count} pending group conflict(s) detected.",
+            fg="yellow",
+        )
+    if updated_count:
+        click.secho(
+            f"{prefix}Notice: {updated_count} group-backed edge update(s) detected.",
+            fg="yellow",
+        )
+
+
 def _batch_direct_write_result_payload(result: Any) -> dict[str, Any]:
     if isinstance(result, contracts.BatchDirectWriteResult):
         return result.model_dump(mode="json")
@@ -96,6 +128,14 @@ def _batch_direct_write_result_payload(result: Any) -> dict[str, Any]:
         "validation_errors": list(result.validation_errors),
         "validation_warnings": list(result.validation_warnings),
         "evidence_sources_used": list(result.evidence_sources_used),
+        "pending_conflicts": [
+            _direct_write_group_interaction_payload(item)
+            for item in result.pending_conflicts
+        ],
+        "updated_group_backed_edges": [
+            _direct_write_group_interaction_payload(item)
+            for item in result.updated_group_backed_edges
+        ],
         "receipt_id": result.receipt_id,
     }
 
@@ -298,6 +338,19 @@ def add_relationship_cmd(
         click.echo(f"Relationship added: {edge_label}")
     if result.receipt_id:
         click.echo(f"  Receipt: {result.receipt_id}")
+    _emit_direct_write_group_notices(
+        {
+            "pending_conflicts": [
+                _direct_write_group_interaction_payload(item)
+                for item in result.pending_conflicts
+            ],
+            "updated_group_backed_edges": [
+                _direct_write_group_interaction_payload(item)
+                for item in result.updated_group_backed_edges
+            ],
+        },
+        prefix="  ",
+    )
 
 
 @click.command("batch-direct-write")
@@ -363,6 +416,7 @@ def batch_direct_write_cmd(
         click.secho(f"  Error: {error}", fg="red")
     if result_payload["receipt_id"]:
         click.echo(f"  Receipt: {result_payload['receipt_id']}")
+    _emit_direct_write_group_notices(result_payload, prefix="  ")
 
 
 @click.command("add-constraint")

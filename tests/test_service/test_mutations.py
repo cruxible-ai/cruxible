@@ -12,6 +12,8 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.group.types import CandidateMember, CandidateSignal
+from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -23,7 +25,9 @@ from cruxible_core.service import (
     service_add_relationship_inputs,
     service_add_relationships,
     service_batch_direct_write,
+    service_propose_group,
     service_register_source_artifact,
+    service_resolve_group,
 )
 from cruxible_core.storage.sqlite import SQLiteGraphRepository
 from cruxible_core.temporal import utc_now
@@ -209,6 +213,123 @@ def _actor_context(actor_id: str) -> GovernedActorContext:
         operation_id=f"op_{actor_id}",
         timestamp=utc_now(),
     )
+
+
+GROUP_WRITE_CONFIG_YAML = """\
+version: "1.0"
+name: direct_write_group_interaction_test
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+      source:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        check_v1:
+          role: required
+      auto_resolve_when: all_support
+      auto_resolve_requires_prior_trust: trusted_only
+
+constraints: []
+"""
+
+
+def _group_write_instance(tmp_path: Path) -> CruxibleInstance:
+    (tmp_path / "config.yaml").write_text(GROUP_WRITE_CONFIG_YAML)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = instance.load_graph()
+    graph.add_entity(_part("BP-1"))
+    graph.add_entity(_part("BP-2"))
+    graph.add_entity(_vehicle("V-1"))
+    graph.add_entity(_vehicle("V-2", model="Accord"))
+    instance.save_graph(graph)
+    return instance
+
+
+def _candidate_member(from_id: str = "BP-1", to_id: str = "V-1") -> CandidateMember:
+    return CandidateMember(
+        from_type="Part",
+        from_id=from_id,
+        to_type="Vehicle",
+        to_id=to_id,
+        relationship_type="fits",
+        signals=[CandidateSignal(signal_source="check_v1", signal="support")],
+        properties={"verified": False},
+    )
+
+
+def _propose_fits_group(
+    instance: CruxibleInstance,
+    *,
+    from_id: str = "BP-1",
+    to_id: str = "V-1",
+) -> str:
+    result = service_propose_group(
+        instance,
+        "fits",
+        [_candidate_member(from_id=from_id, to_id=to_id)],
+        thesis_text="test proposal",
+        thesis_facts={"source": "test"},
+        source_workflow_name="test_group_flow",
+        signal_sources_used=["check_v1"],
+    )
+    return result.group_id
+
+
+def _stored_group_status(instance: CruxibleInstance, group_id: str) -> str:
+    store = instance.get_group_store()
+    try:
+        group = store.get_group(group_id)
+    finally:
+        store.close()
+    assert group is not None
+    return group.status
+
+
+def _receipt(instance: CruxibleInstance, receipt_id: str | None) -> Receipt:
+    assert receipt_id is not None
+    store = instance.get_receipt_store()
+    try:
+        receipt = store.get_receipt(receipt_id)
+    finally:
+        store.close()
+    assert receipt is not None
+    return receipt
+
+
+def _relationship_receipt_detail(receipt: Receipt) -> dict[str, object]:
+    node = next(node for node in receipt.nodes if node.node_type == "relationship_write")
+    return node.detail
 
 
 def _seed_work_item(instance: CruxibleInstance, status: str = "planned") -> None:
@@ -1081,6 +1202,202 @@ class TestBatchDirectWrite:
 
         graph = initialized_instance.load_graph()
         assert graph.get_entity("Vehicle", "V-BATCH") is None
+
+
+class TestDirectWriteGroupInteractions:
+    def test_add_relationships_reports_pending_group_conflict_and_receipt_detail(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert result.added == 1
+        assert result.updated == 0
+        assert len(result.pending_conflicts) == 1
+        conflict = result.pending_conflicts[0]
+        assert conflict.group_id == group_id
+        assert conflict.group_status == "pending_review"
+        assert conflict.group_signature is not None
+        assert conflict.source_workflow_name == "test_group_flow"
+        assert conflict.edge_key is None
+        assert result.updated_group_backed_edges == []
+        assert _stored_group_status(instance, group_id) == "pending_review"
+
+        receipt = _receipt(instance, result.receipt_id)
+        validation_details = [
+            node.detail for node in receipt.nodes if node.node_type == "validation"
+        ]
+        assert any(
+            detail.get("pending_conflicts", [{}])[0].get("group_id") == group_id
+            for detail in validation_details
+            if detail.get("pending_conflicts")
+        )
+        write_detail = _relationship_receipt_detail(receipt)
+        assert write_detail["pending_conflicts"][0]["group_id"] == group_id
+
+    def test_batch_direct_write_reports_pending_conflict_in_dry_run_and_apply(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+        payload = BatchDirectWriteInput(
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "batch"},
+                )
+            ],
+        )
+
+        dry_run = service_batch_direct_write(instance, payload, dry_run=True)
+
+        assert dry_run.valid is True
+        assert dry_run.pending_conflicts[0].group_id == group_id
+        assert dry_run.updated_group_backed_edges == []
+        assert (
+            instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+            is None
+        )
+
+        applied = service_batch_direct_write(instance, payload)
+
+        assert applied.valid is True
+        assert applied.relationships_added == 1
+        assert applied.pending_conflicts[0].group_id == group_id
+        assert applied.updated_group_backed_edges == []
+        assert (
+            instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+            is not None
+        )
+        receipt = _receipt(instance, applied.receipt_id)
+        write_detail = _relationship_receipt_detail(receipt)
+        assert write_detail["pending_conflicts"][0]["group_id"] == group_id
+
+    def test_direct_write_update_reports_group_backed_edge(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+        service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct-update"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert result.added == 0
+        assert result.updated == 1
+        assert result.pending_conflicts == []
+        assert len(result.updated_group_backed_edges) == 1
+        updated = result.updated_group_backed_edges[0]
+        assert updated.group_id == group_id
+        assert updated.group_status == "resolved"
+        assert updated.group_signature is not None
+        assert updated.source_workflow_name == "test_group_flow"
+        assert updated.edge_key is not None
+
+        relationship = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            "fits",
+        )
+        assert relationship is not None
+        assert relationship.metadata.provenance is not None
+        assert relationship.metadata.provenance.source_ref == f"group:{group_id}"
+
+        receipt = _receipt(instance, result.receipt_id)
+        write_detail = _relationship_receipt_detail(receipt)
+        assert write_detail["updated_group_backed_edges"][0]["group_id"] == group_id
+
+    def test_resolved_rejected_group_is_not_pending_conflict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+        group_id = _propose_fits_group(instance)
+        service_resolve_group(instance, group_id, "reject", expected_pending_version=1)
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-1",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-1",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert result.added == 1
+        assert result.pending_conflicts == []
+        assert result.updated_group_backed_edges == []
+
+    def test_no_conflict_direct_write_returns_empty_interaction_lists(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _group_write_instance(tmp_path)
+
+        result = service_add_relationships(
+            instance,
+            [
+                RelationshipInstance(
+                    from_type="Part",
+                    from_id="BP-2",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2",
+                    properties={"verified": True, "source": "direct"},
+                )
+            ],
+            source="test",
+            source_ref="direct",
+        )
+
+        assert result.added == 1
+        assert result.pending_conflicts == []
+        assert result.updated_group_backed_edges == []
 
 
 # ---------------------------------------------------------------------------

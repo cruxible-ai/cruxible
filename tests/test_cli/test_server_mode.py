@@ -2644,6 +2644,19 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
             return contracts.AddRelationshipResult(
                 added=1,
                 updated=0,
+                pending_conflicts=[
+                    contracts.DirectWriteGroupInteraction(
+                        relationship_type="fits",
+                        from_type="Part",
+                        from_id="BP-1",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        group_id="GRP-pending",
+                        group_status="pending_review",
+                        group_signature="sig-pending",
+                        source_workflow_name="wf",
+                    )
+                ],
                 receipt_id="RCP-add",
             )
 
@@ -2691,6 +2704,7 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
     assert relationship.source_evidence[0].chunk_id == "CHK-1"
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
     assert "Relationship added:" in result.output
+    assert "Notice: 1 pending group conflict(s) detected." in result.output
 
 
 def test_batch_direct_write_passes_payload_file_to_server_client(
@@ -2709,6 +2723,20 @@ def test_batch_direct_write_passes_payload_file_to_server_client(
                 dry_run=dry_run,
                 valid=True,
                 entities_added=1,
+                updated_group_backed_edges=[
+                    contracts.DirectWriteGroupInteraction(
+                        relationship_type="fits",
+                        from_type="Part",
+                        from_id="BP-1",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        group_id="GRP-resolved",
+                        group_status="resolved",
+                        group_signature="sig-resolved",
+                        source_workflow_name="wf",
+                        edge_key=3,
+                    )
+                ],
                 receipt_id=None,
             )
 
@@ -2747,6 +2775,71 @@ shared_evidence: {}
     assert isinstance(payload, contracts.BatchDirectWritePayload)
     assert payload.entities[0].entity_id == "V-BATCH"
     assert "Batch direct write validated." in result.output
+    assert "Notice: 1 group-backed edge update(s) detected." in result.output
+
+
+def test_batch_direct_write_json_includes_group_interaction_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    class StubClient:
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=0,
+                relationships_added=1,
+                pending_conflicts=[
+                    contracts.DirectWriteGroupInteraction(
+                        relationship_type="fits",
+                        from_type="Part",
+                        from_id="BP-1",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        group_id="GRP-pending",
+                        group_status="pending_review",
+                        group_signature="sig-pending",
+                        source_workflow_name="wf",
+                    )
+                ],
+                updated_group_backed_edges=[],
+                receipt_id="RCP-batch",
+            )
+
+    payload_file = tmp_path / "batch.yaml"
+    payload_file.write_text(
+        """
+entities: []
+relationships:
+  - from_type: Part
+    from_id: BP-1
+    relationship_type: fits
+    to_type: Vehicle
+    to_id: V-1
+shared_evidence: {}
+"""
+    )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "batch-direct-write",
+            "--payload-file",
+            str(payload_file),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["pending_conflicts"][0]["group_id"] == "GRP-pending"
+    assert payload["updated_group_backed_edges"] == []
 
 
 @pytest.mark.parametrize("dry_run", [False, True])

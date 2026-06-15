@@ -1473,6 +1473,9 @@ def test_add_relationship_stamps_http_api_provenance(
         },
     )
     assert response.status_code == 200
+    response_payload = response.json()
+    assert response_payload["pending_conflicts"] == []
+    assert response_payload["updated_group_backed_edges"] == []
 
     lookup = app_client.get(
         f"/api/v1/{instance_id}/relationships/lookup",
@@ -1573,7 +1576,10 @@ def test_batch_direct_write_route_dry_run_and_apply(
         json={"payload": payload, "dry_run": True},
     )
     assert dry_run.status_code == 200
-    assert dry_run.json()["valid"] is True
+    dry_run_payload = dry_run.json()
+    assert dry_run_payload["valid"] is True
+    assert dry_run_payload["pending_conflicts"] == []
+    assert dry_run_payload["updated_group_backed_edges"] == []
     missing = app_client.get(f"/api/v1/{instance_id}/inspect/entity/Vehicle/V-BATCH")
     assert missing.status_code == 200
     assert missing.json()["found"] is False
@@ -1586,6 +1592,8 @@ def test_batch_direct_write_route_dry_run_and_apply(
     applied_payload = applied.json()
     assert applied_payload["entities_added"] == 2
     assert applied_payload["relationships_added"] == 1
+    assert applied_payload["pending_conflicts"] == []
+    assert applied_payload["updated_group_backed_edges"] == []
     assert applied_payload["receipt_id"]
 
     lookup = app_client.get(
@@ -2224,7 +2232,13 @@ def test_relationship_route_respects_dry_run(
         json={"relationships": [relationship], "dry_run": True},
     )
     assert dry_run.status_code == 200
-    assert dry_run.json() == {"added": 1, "updated": 0, "receipt_id": None}
+    assert dry_run.json() == {
+        "added": 1,
+        "updated": 0,
+        "pending_conflicts": [],
+        "updated_group_backed_edges": [],
+        "receipt_id": None,
+    }
 
     edges = app_client.get(
         f"/api/v1/{instance_id}/list/edges",

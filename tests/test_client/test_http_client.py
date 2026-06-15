@@ -256,6 +256,21 @@ def test_batch_direct_write_uses_expected_route_and_payload():
                 "validation_errors": [],
                 "validation_warnings": [],
                 "evidence_sources_used": [],
+                "pending_conflicts": [
+                    {
+                        "relationship_type": "fits",
+                        "from_type": "Part",
+                        "from_id": "BP-1",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                        "group_id": "GRP-pending",
+                        "group_status": "pending_review",
+                        "group_signature": "sig-pending",
+                        "source_workflow_name": "wf",
+                        "edge_key": None,
+                    }
+                ],
+                "updated_group_backed_edges": [],
                 "receipt_id": None,
             },
         )
@@ -276,6 +291,7 @@ def test_batch_direct_write_uses_expected_route_and_payload():
     )
 
     assert result.valid is True
+    assert result.pending_conflicts[0].group_id == "GRP-pending"
     assert captured == {
         "path": "/api/v1/inst_123/direct-writes/batch",
         "payload": {
@@ -501,7 +517,26 @@ def test_add_relationships_serializes_evidence_fields():
         captured["payload"] = json.loads(request.content.decode())
         return httpx.Response(
             200,
-            json={"added": 1, "updated": 0, "receipt_id": "RCP-add"},
+            json={
+                "added": 1,
+                "updated": 0,
+                "pending_conflicts": [],
+                "updated_group_backed_edges": [
+                    {
+                        "relationship_type": "fits",
+                        "from_type": "Part",
+                        "from_id": "BP-1",
+                        "to_type": "Vehicle",
+                        "to_id": "V-1",
+                        "group_id": "GRP-resolved",
+                        "group_status": "resolved",
+                        "group_signature": "sig-resolved",
+                        "source_workflow_name": "wf",
+                        "edge_key": 7,
+                    }
+                ],
+                "receipt_id": "RCP-add",
+            },
         )
 
     client = _build_client(handler)
@@ -533,6 +568,8 @@ def test_add_relationships_serializes_evidence_fields():
     )
 
     assert result.added == 1
+    assert result.updated_group_backed_edges[0].group_id == "GRP-resolved"
+    assert result.updated_group_backed_edges[0].edge_key == 7
     assert captured == {
         "path": "/api/v1/inst_123/relationships",
         "payload": {

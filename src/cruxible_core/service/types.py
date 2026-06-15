@@ -157,9 +157,25 @@ class AddEntityResult:
 
 
 @dataclass
+class DirectWriteGroupInteraction:
+    relationship_type: str
+    from_type: str
+    from_id: str
+    to_type: str
+    to_id: str
+    group_id: str
+    group_status: str | None = None
+    group_signature: str | None = None
+    source_workflow_name: str | None = None
+    edge_key: int | None = None
+
+
+@dataclass
 class AddRelationshipResult:
     added: int
     updated: int
+    pending_conflicts: list[DirectWriteGroupInteraction] = field(default_factory=list)
+    updated_group_backed_edges: list[DirectWriteGroupInteraction] = field(default_factory=list)
     receipt_id: str | None = None
 
 
@@ -174,6 +190,8 @@ class BatchDirectWriteResult:
     validation_errors: list[str] = field(default_factory=list)
     validation_warnings: list[str] = field(default_factory=list)
     evidence_sources_used: list[str] = field(default_factory=list)
+    pending_conflicts: list[DirectWriteGroupInteraction] = field(default_factory=list)
+    updated_group_backed_edges: list[DirectWriteGroupInteraction] = field(default_factory=list)
     receipt_id: str | None = None
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -20,13 +21,14 @@ from cruxible_core.graph.operations import (
     validate_entity,
     validate_relationship,
 )
-from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE
+from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE, provenance_group_id
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
     RelationshipMetadata,
 )
-from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.group.types import CandidateGroup
+from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
     mutation_guard_errors,
@@ -38,6 +40,7 @@ from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchDirectWriteResult,
     BatchRelationshipWriteInput,
+    DirectWriteGroupInteraction,
     EntityWriteInput,
     RelationshipWriteInput,
     SharedEvidenceInput,
@@ -59,6 +62,189 @@ class _PreparedBatchDirectWrite:
     validation_errors: list[str]
     validation_warnings: list[str]
     evidence_sources_used: list[str]
+    pending_conflicts: list[DirectWriteGroupInteraction]
+    updated_group_backed_edges: list[DirectWriteGroupInteraction]
+
+
+@dataclass
+class _DirectWriteGroupInteractions:
+    pending_conflicts: list[DirectWriteGroupInteraction]
+    updated_group_backed_edges: list[DirectWriteGroupInteraction]
+
+
+def _group_interaction_payload(
+    interaction: DirectWriteGroupInteraction,
+) -> dict[str, Any]:
+    return {
+        "relationship_type": interaction.relationship_type,
+        "from_type": interaction.from_type,
+        "from_id": interaction.from_id,
+        "to_type": interaction.to_type,
+        "to_id": interaction.to_id,
+        "group_id": interaction.group_id,
+        "group_status": interaction.group_status,
+        "group_signature": interaction.group_signature,
+        "source_workflow_name": interaction.source_workflow_name,
+        "edge_key": interaction.edge_key,
+    }
+
+
+def _group_interaction_from_relationship(
+    relationship: RelationshipInstance,
+    *,
+    group_id: str,
+    group: CandidateGroup | None,
+    edge_key: int | None,
+) -> DirectWriteGroupInteraction:
+    return DirectWriteGroupInteraction(
+        relationship_type=relationship.relationship_type,
+        from_type=relationship.from_type,
+        from_id=relationship.from_id,
+        to_type=relationship.to_type,
+        to_id=relationship.to_id,
+        group_id=group_id,
+        group_status=group.status if group is not None else None,
+        group_signature=group.signature if group is not None else None,
+        source_workflow_name=group.source_workflow_name if group is not None else None,
+        edge_key=edge_key,
+    )
+
+
+def _detect_direct_write_group_interactions(
+    instance: InstanceProtocol,
+    graph: EntityGraph,
+    relationships: Sequence[RelationshipInstance],
+    *,
+    group_store: GroupStoreProtocol | None = None,
+) -> _DirectWriteGroupInteractions:
+    if not relationships:
+        return _DirectWriteGroupInteractions(
+            pending_conflicts=[],
+            updated_group_backed_edges=[],
+        )
+
+    store = group_store if group_store is not None else instance.get_group_store()
+    close_store = group_store is None
+    try:
+        pending_conflicts: list[DirectWriteGroupInteraction] = []
+        tuples_by_type: dict[str, list[tuple[str, str, str, str, str]]] = defaultdict(list)
+        for relationship in relationships:
+            tuples_by_type[relationship.relationship_type].append(relationship.identity_tuple())
+
+        pending_by_type: dict[
+            str, dict[tuple[str, str, str, str, str], CandidateGroup]
+        ] = {}
+        for relationship_type, tuples in tuples_by_type.items():
+            pending_by_type[relationship_type] = store.find_pending_groups_for_tuples(
+                relationship_type,
+                tuples,
+                statuses=("pending_review", "applying"),
+            )
+
+        group_cache: dict[str, CandidateGroup | None] = {}
+        updated_group_backed_edges: list[DirectWriteGroupInteraction] = []
+        for relationship in relationships:
+            pending_group = pending_by_type.get(relationship.relationship_type, {}).get(
+                relationship.identity_tuple()
+            )
+            if pending_group is not None:
+                pending_conflicts.append(
+                    _group_interaction_from_relationship(
+                        relationship,
+                        group_id=pending_group.group_id,
+                        group=pending_group,
+                        edge_key=None,
+                    )
+                )
+
+            existing = graph.get_relationship(
+                relationship.from_type,
+                relationship.from_id,
+                relationship.to_type,
+                relationship.to_id,
+                relationship.relationship_type,
+            )
+            if existing is None or existing.metadata.provenance is None:
+                continue
+            group_id = provenance_group_id(existing.metadata.provenance)
+            if group_id is None:
+                continue
+            if group_id not in group_cache:
+                group_cache[group_id] = store.get_group(group_id)
+            updated_group_backed_edges.append(
+                _group_interaction_from_relationship(
+                    relationship,
+                    group_id=group_id,
+                    group=group_cache[group_id],
+                    edge_key=existing.edge_key,
+                )
+            )
+    finally:
+        if close_store:
+            store.close()
+
+    return _DirectWriteGroupInteractions(
+        pending_conflicts=pending_conflicts,
+        updated_group_backed_edges=updated_group_backed_edges,
+    )
+
+
+def _record_group_interaction_validation(
+    builder: Any | None,
+    interactions: _DirectWriteGroupInteractions,
+) -> None:
+    if builder is None:
+        return
+    detail: dict[str, Any] = {}
+    if interactions.pending_conflicts:
+        detail["pending_conflicts"] = [
+            _group_interaction_payload(interaction)
+            for interaction in interactions.pending_conflicts
+        ]
+    if interactions.updated_group_backed_edges:
+        detail["updated_group_backed_edges"] = [
+            _group_interaction_payload(interaction)
+            for interaction in interactions.updated_group_backed_edges
+        ]
+    if detail:
+        builder.record_validation(passed=True, detail=detail)
+
+
+def _relationship_group_interaction_detail(
+    relationship: RelationshipInstance,
+    interactions: _DirectWriteGroupInteractions,
+) -> dict[str, Any]:
+    identity = relationship.identity_tuple()
+    detail: dict[str, Any] = {}
+    pending_conflicts = [
+        _group_interaction_payload(interaction)
+        for interaction in interactions.pending_conflicts
+        if (
+            interaction.from_type,
+            interaction.from_id,
+            interaction.to_type,
+            interaction.to_id,
+            interaction.relationship_type,
+        )
+        == identity
+    ]
+    if pending_conflicts:
+        detail["pending_conflicts"] = pending_conflicts
+    updated_group_backed_edges = [
+        _group_interaction_payload(interaction)
+        for interaction in interactions.updated_group_backed_edges
+        if (
+            interaction.from_type,
+            interaction.from_id,
+            interaction.to_type,
+            interaction.to_id,
+            interaction.relationship_type,
+        )
+        == identity
+    ]
+    if updated_group_backed_edges:
+        detail["updated_group_backed_edges"] = updated_group_backed_edges
+    return detail
 
 
 def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
@@ -169,6 +355,7 @@ def _prepare_batch_direct_write(
     source_ref: str,
     actor_context: GovernedActorContext | None = None,
     builder: Any | None = None,
+    group_store: GroupStoreProtocol | None = None,
 ) -> _PreparedBatchDirectWrite:
     config = instance.load_config()
     current_graph = instance.load_graph()
@@ -316,6 +503,14 @@ def _prepare_batch_direct_write(
                 detail={"guard_error": error},
             )
 
+    interactions = _detect_direct_write_group_interactions(
+        instance,
+        current_graph,
+        [item.relationship for item in validated_relationships],
+        group_store=group_store,
+    )
+    _record_group_interaction_validation(builder, interactions)
+
     return _PreparedBatchDirectWrite(
         graph=graph,
         entities=validated_entities,
@@ -323,6 +518,8 @@ def _prepare_batch_direct_write(
         validation_errors=errors,
         validation_warnings=warnings,
         evidence_sources_used=evidence_sources,
+        pending_conflicts=interactions.pending_conflicts,
+        updated_group_backed_edges=interactions.updated_group_backed_edges,
     )
 
 
@@ -344,6 +541,8 @@ def _batch_direct_write_result(
         validation_errors=list(prepared.validation_errors),
         validation_warnings=list(prepared.validation_warnings),
         evidence_sources_used=list(prepared.evidence_sources_used),
+        pending_conflicts=list(prepared.pending_conflicts),
+        updated_group_backed_edges=list(prepared.updated_group_backed_edges),
         receipt_id=receipt_id,
     )
 
@@ -394,6 +593,7 @@ def service_batch_direct_write(
             source_ref=source_ref,
             actor_context=actor_context,
             builder=builder,
+            group_store=ctx.uow.groups if ctx.uow is not None else None,
         )
         if prepared.validation_errors:
             raise DataValidationError(
@@ -447,6 +647,15 @@ def service_batch_direct_write(
                     }
                     if edge.metadata.evidence.rationale is not None:
                         evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
+                evidence_detail.update(
+                    _relationship_group_interaction_detail(
+                        edge,
+                        _DirectWriteGroupInteractions(
+                            pending_conflicts=prepared.pending_conflicts,
+                            updated_group_backed_edges=prepared.updated_group_backed_edges,
+                        ),
+                    )
+                )
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,
@@ -734,10 +943,20 @@ def service_add_relationships(
                 errors=errors,
             )
 
+        interactions = _detect_direct_write_group_interactions(
+            instance,
+            graph,
+            [edge for _validated, edge in pending],
+            group_store=ctx.uow.groups if ctx.uow is not None else None,
+        )
+        _record_group_interaction_validation(builder, interactions)
+
         if dry_run:
             return AddRelationshipResult(
                 added=sum(1 for validated, _ in pending if not validated.is_update),
                 updated=sum(1 for validated, _ in pending if validated.is_update),
+                pending_conflicts=list(interactions.pending_conflicts),
+                updated_group_backed_edges=list(interactions.updated_group_backed_edges),
             )
 
         added = 0
@@ -771,6 +990,7 @@ def service_add_relationships(
                     }
                     if edge.metadata.evidence.rationale is not None:
                         evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
+                evidence_detail.update(_relationship_group_interaction_detail(edge, interactions))
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,
@@ -792,7 +1012,14 @@ def service_add_relationships(
             relationships=touched_relationships,
             uow=ctx.uow,
         )
-        ctx.set_result(AddRelationshipResult(added=added, updated=updated))
+        ctx.set_result(
+            AddRelationshipResult(
+                added=added,
+                updated=updated,
+                pending_conflicts=list(interactions.pending_conflicts),
+                updated_group_backed_edges=list(interactions.updated_group_backed_edges),
+            )
+        )
 
     result = ctx.result
     assert isinstance(result, AddRelationshipResult)
