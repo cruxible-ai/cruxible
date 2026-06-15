@@ -969,6 +969,8 @@ def handle_evaluate(
     instance_id: str,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
+    severity_filter: list[contracts.FindingSeverity] | None = None,
+    category_filter: list[contracts.FindingCategory] | None = None,
 ) -> contracts.EvaluateResult:
     """Evaluate graph quality."""
     return _dispatch_remote_or_local(
@@ -976,11 +978,15 @@ def handle_evaluate(
             instance_id,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+            severity_filter=severity_filter,
+            category_filter=category_filter,
         ),
         lambda: api.evaluate(
             instance_id,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+            severity_filter=severity_filter,
+            category_filter=category_filter,
         ),
     )
 

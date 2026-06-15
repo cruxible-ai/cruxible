@@ -53,6 +53,23 @@
         "agent"
       ]
     },
+    "FindingCategory": {
+      "values": [
+        "orphan_entity",
+        "coverage_gap",
+        "constraint_violation",
+        "governed_support_relationship",
+        "unreviewed_co_member",
+        "quality_check_failed"
+      ]
+    },
+    "FindingSeverity": {
+      "values": [
+        "error",
+        "warning",
+        "info"
+      ]
+    },
     "GovernedActorType": {
       "values": [
         "human_user",

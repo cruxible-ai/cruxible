@@ -236,6 +236,11 @@ Constraints encode validation rules over relationships. `evaluate` checks
 orphan entities, coverage gaps, constraint violations, governed support state,
 candidate opportunities, and weakly reviewed co-members.
 
+Evaluate findings are returned severity-first (`error`, then `warning`, then
+`info`) while preserving original order within the same severity. CLI, MCP, and
+HTTP callers can filter findings by severity and category before `max_findings`
+is applied; summary counts remain full-state counts.
+
 For governed relationships, `evaluate` distinguishes group-backed support from
 direct evidence-backed support. Direct governed relationships with stored
 evidence refs are not reported as missing group signal trails, while direct

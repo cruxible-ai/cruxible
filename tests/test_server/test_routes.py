@@ -327,7 +327,14 @@ def test_init_then_seed_then_query_round_trip(
     assert payload["receipt_id"]
     assert payload["param_hints"]["primary_key"] == "vehicle_id"
 
-    evaluate = app_client.post(f"/api/v1/{instance_id}/evaluate", json={})
+    evaluate = app_client.post(
+        f"/api/v1/{instance_id}/evaluate",
+        json={
+            "max_findings": 1,
+            "severity_filter": ["error"],
+            "category_filter": ["quality_check_failed"],
+        },
+    )
     assert evaluate.status_code == 200
     assert "quality_summary" in evaluate.json()
 

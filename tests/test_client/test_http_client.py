@@ -1179,10 +1179,17 @@ def test_evaluate_uses_expected_route():
         )
 
     client = _build_client(handler)
-    result = client.evaluate("inst_123", max_findings=5)
+    result = client.evaluate(
+        "inst_123",
+        max_findings=5,
+        severity_filter=["error"],
+        category_filter=["quality_check_failed"],
+    )
     assert result.quality_summary == {"check_ok": 0}
     assert captured["path"].endswith("/api/v1/inst_123/evaluate")
     assert captured["payload"]["max_findings"] == 5
+    assert captured["payload"]["severity_filter"] == ["error"]
+    assert captured["payload"]["category_filter"] == ["quality_check_failed"]
 
 
 def test_lint_uses_expected_route():

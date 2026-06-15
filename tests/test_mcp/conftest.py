@@ -369,11 +369,15 @@ class GovernedLocalClient:
         *,
         max_findings: int = 100,
         exclude_orphan_types: list[str] | None = None,
+        severity_filter: list[str] | None = None,
+        category_filter: list[str] | None = None,
     ):
         return api.evaluate(
             instance_id,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+            severity_filter=severity_filter,
+            category_filter=category_filter,
         )
 
     def schema(self, instance_id: str):

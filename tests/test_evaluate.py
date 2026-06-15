@@ -584,6 +584,191 @@ class TestGovernedSupportRelationships:
 
 
 class TestReportStructure:
+    def test_errors_sort_before_warnings_and_info(self):
+        config = _minimal_config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="part_category_non_empty",
+                    target="entity",
+                    entity_type="Part",
+                    property="category",
+                    rule="non_empty",
+                    severity="error",
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": ""})
+        )
+
+        report = evaluate_graph(config, graph)
+
+        severities = [finding.severity for finding in report.findings]
+        assert severities == sorted(
+            severities,
+            key={"error": 0, "warning": 1, "info": 2}.__getitem__,
+        )
+        assert report.findings[0].category == "quality_check_failed"
+        assert report.findings[0].severity == "error"
+
+    def test_severity_filter_applies_before_max_findings(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        for i in range(5):
+            graph.add_entity(EntityInstance(entity_type="Part", entity_id=f"P{i}", properties={}))
+
+        report = evaluate_graph(config, graph, max_findings=1, severity_filter=["info"])
+
+        assert len(report.findings) == 1
+        assert report.findings[0].severity == "info"
+        assert report.summary["orphan_entity"] == 5
+
+    def test_severity_filter_returns_empty_when_no_match(self):
+        config = _minimal_config()
+        graph = EntityGraph()
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P1", properties={}))
+
+        report = evaluate_graph(
+            config,
+            graph,
+            severity_filter=["error"],
+            category_filter=["constraint_violation"],
+        )
+
+        assert report.findings == []
+        assert report.summary["orphan_entity"] == 1
+
+    def test_category_filter_returns_only_that_finding_class(self):
+        config = _minimal_config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="part_category_non_empty",
+                    target="entity",
+                    entity_type="Part",
+                    property="category",
+                    rule="non_empty",
+                    severity="error",
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": ""})
+        )
+
+        report = evaluate_graph(config, graph, category_filter=["quality_check_failed"])
+
+        assert [finding.category for finding in report.findings] == ["quality_check_failed"]
+
+    def test_combined_filters_intersect(self):
+        config = _minimal_config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="part_category_non_empty",
+                    target="entity",
+                    entity_type="Part",
+                    property="category",
+                    rule="non_empty",
+                    severity="error",
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": ""})
+        )
+
+        report = evaluate_graph(
+            config,
+            graph,
+            severity_filter=["warning"],
+            category_filter=["quality_check_failed"],
+        )
+
+        assert report.findings == []
+
+    def test_summaries_count_full_state_before_filters(self):
+        config = _minimal_config(
+            quality_checks=[
+                PropertyQualityCheck(
+                    name="part_category_non_empty",
+                    target="entity",
+                    entity_type="Part",
+                    property="category",
+                    rule="non_empty",
+                    severity="error",
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P1", properties={"category": ""})
+        )
+
+        report = evaluate_graph(
+            config,
+            graph,
+            severity_filter=["info"],
+            category_filter=["coverage_gap"],
+            max_findings=1,
+        )
+
+        assert len(report.findings) == 1
+        assert set(report.summary) >= {
+            "orphan_entity",
+            "coverage_gap",
+            "quality_check_failed",
+        }
+        assert report.quality_summary["part_category_non_empty"] == 1
+
+    def test_constraint_summary_counts_full_state_before_filters(self):
+        config = _minimal_config(
+            constraints=[
+                ConstraintSchema(
+                    name="same_category",
+                    rule="replaces.FROM.category == replaces.TO.category",
+                    severity="error",
+                )
+            ]
+        )
+        graph = EntityGraph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P1",
+                properties={"category": "brakes"},
+            )
+        )
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="P2",
+                properties={"category": "filters"},
+            )
+        )
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="replaces",
+                from_type="Part",
+                from_id="P1",
+                to_type="Part",
+                to_id="P2",
+                properties={"confidence": 0.9},
+            )
+        )
+
+        report = evaluate_graph(
+            config,
+            graph,
+            severity_filter=["info"],
+            category_filter=["coverage_gap"],
+        )
+
+        assert all(finding.category == "coverage_gap" for finding in report.findings)
+        assert report.summary["constraint_violation"] == 1
+        assert report.constraint_summary["same_category"] == 1
+
     def test_max_findings_truncates(self):
         config = _minimal_config()
         graph = EntityGraph()

@@ -230,6 +230,8 @@ class DereferenceSourceEvidenceRequest(BaseModel):
 class EvaluateRequest(BaseModel):
     max_findings: int = 100
     exclude_orphan_types: list[str] | None = None
+    severity_filter: list[contracts.FindingSeverity] | None = None
+    category_filter: list[contracts.FindingCategory] | None = None
 
 
 class LintRequest(BaseModel):

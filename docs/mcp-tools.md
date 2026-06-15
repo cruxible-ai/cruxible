@@ -579,9 +579,16 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `max_findings` | no | integer |  |
-| `exclude_orphan_types` | no | array | null |  |
+| `exclude_orphan_types` | no | array or null |  |
+| `severity_filter` | no | array | Optional list of `error`, `warning`, or `info` severities to return. |
+| `category_filter` | no | array | Optional list of evaluate categories to return. |
 
 **Returns:** Top-level fields: `entity_count`, `edge_count`, `findings`, `summary`, `constraint_summary`, `quality_summary`
+
+Filtered calls still return full pre-filter `summary`, `constraint_summary`,
+and `quality_summary` counts. Agent triage example: request
+`severity_filter=["error"]` with `max_findings=1` to check whether any
+error-level finding exists.
 
 **Side Effects:** Read-only.
 

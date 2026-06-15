@@ -94,6 +94,16 @@ from cruxible_core.service import (
     service_stats,
 )
 
+_EVALUATE_SEVERITY_CHOICES = ("error", "warning", "info")
+_EVALUATE_CATEGORY_CHOICES = (
+    "orphan_entity",
+    "coverage_gap",
+    "constraint_violation",
+    "governed_support_relationship",
+    "unreviewed_co_member",
+    "quality_check_failed",
+)
+
 
 def _query_definition_payload(query: Any) -> dict[str, Any]:
     return {
@@ -841,18 +851,43 @@ def sample(entity_type: str, limit: int, output_json: bool) -> None:
 
 @click.command()
 @click.option("--limit", default=100, type=int, help="Max findings to show.")
+@click.option(
+    "--severity",
+    "severity_filter",
+    multiple=True,
+    type=click.Choice(_EVALUATE_SEVERITY_CHOICES),
+    help="Only return findings at this severity. Repeatable.",
+)
+@click.option(
+    "--category",
+    "category_filter",
+    multiple=True,
+    type=click.Choice(_EVALUATE_CATEGORY_CHOICES),
+    help="Only return findings in this category. Repeatable.",
+)
 @json_option
 @handle_errors
-def evaluate(limit: int, output_json: bool) -> None:
+def evaluate(
+    limit: int,
+    severity_filter: tuple[str, ...],
+    category_filter: tuple[str, ...],
+    output_json: bool,
+) -> None:
     """Assess graph quality: orphans, gaps, violations, unreviewed co-members."""
+    severities = cast(list[contracts.FindingSeverity] | None, list(severity_filter) or None)
+    categories = cast(list[contracts.FindingCategory] | None, list(category_filter) or None)
     report = _dispatch_cli_instance(
         lambda client, instance_id: client.evaluate(
             instance_id,
             max_findings=limit,
+            severity_filter=severities,
+            category_filter=categories,
         ),
         lambda instance: service_evaluate(
             instance,
             max_findings=limit,
+            severity_filter=severities,
+            category_filter=categories,
         ),
     )
     findings = (

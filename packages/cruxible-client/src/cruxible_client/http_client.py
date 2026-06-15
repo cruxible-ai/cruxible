@@ -644,12 +644,16 @@ class CruxibleClient:
         *,
         max_findings: int = 100,
         exclude_orphan_types: builtins.list[str] | None = None,
+        severity_filter: builtins.list[contracts.FindingSeverity] | None = None,
+        category_filter: builtins.list[contracts.FindingCategory] | None = None,
     ) -> contracts.EvaluateResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/evaluate",
             json={
                 "max_findings": max_findings,
                 "exclude_orphan_types": exclude_orphan_types,
+                "severity_filter": severity_filter,
+                "category_filter": category_filter,
             },
         )
         return self._parse_model(response, contracts.EvaluateResult)

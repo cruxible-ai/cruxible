@@ -40,13 +40,19 @@ FindingCategory = Literal[
     "unreviewed_co_member",
     "quality_check_failed",
 ]
+FindingSeverity = Literal["error", "warning", "info"]
+_SEVERITY_ORDER: dict[FindingSeverity, int] = {
+    "error": 0,
+    "warning": 1,
+    "info": 2,
+}
 
 
 class EvaluationFinding(BaseModel):
     """A single finding from graph evaluation."""
 
     category: FindingCategory
-    severity: Literal["info", "warning", "error"]
+    severity: FindingSeverity
     message: str
     detail: dict[str, Any] = Field(default_factory=dict)
 
@@ -69,6 +75,8 @@ def evaluate_graph(
     group_store: GroupStoreProtocol | None = None,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
+    severity_filter: list[FindingSeverity] | None = None,
+    category_filter: list[FindingCategory] | None = None,
 ) -> EvaluationReport:
     """Evaluate graph quality with deterministic checks.
 
@@ -97,13 +105,17 @@ def evaluate_graph(
     _check_unreviewed_co_members(config, graph, findings)
     _check_quality_rules(config, graph, findings, quality_summary)
 
-    # Truncate to max_findings
-    truncated = findings[:max_findings]
-
     # Build summary from all findings (before truncation) for accurate counts
     summary: dict[str, int] = {}
     for f in findings:
         summary[f.category] = summary.get(f.category, 0) + 1
+
+    visible_findings = _filter_and_order_findings(
+        findings,
+        severity_filter=severity_filter,
+        category_filter=category_filter,
+    )
+    truncated = visible_findings[:max_findings]
 
     return EvaluationReport(
         entity_count=graph.entity_count(),
@@ -113,6 +125,24 @@ def evaluate_graph(
         constraint_summary=constraint_summary,
         quality_summary=quality_summary,
     )
+
+
+def _filter_and_order_findings(
+    findings: list[EvaluationFinding],
+    *,
+    severity_filter: list[FindingSeverity] | None,
+    category_filter: list[FindingCategory] | None,
+) -> list[EvaluationFinding]:
+    """Apply caller filters, then return findings in severity order."""
+    severity_set = set(severity_filter or [])
+    category_set = set(category_filter or [])
+    filtered = [
+        finding
+        for finding in findings
+        if (not severity_set or finding.severity in severity_set)
+        and (not category_set or finding.category in category_set)
+    ]
+    return sorted(filtered, key=lambda finding: _SEVERITY_ORDER[finding.severity])
 
 
 def _check_orphans(

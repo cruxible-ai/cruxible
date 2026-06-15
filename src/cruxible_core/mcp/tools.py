@@ -436,6 +436,8 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         max_findings: int = 100,
         exclude_orphan_types: list[str] | None = None,
+        severity_filter: list[contracts.FindingSeverity] | None = None,
+        category_filter: list[contracts.FindingCategory] | None = None,
     ) -> contracts.EvaluateResult:
         """Run graph quality checks (orphans, gaps, violations, co-members).
 
@@ -446,11 +448,15 @@ def register_tools(server: FastMCP) -> list[str]:
 
         Use `exclude_orphan_types` to skip reference/taxonomy entity types
         (e.g. ``["PCDBPartType"]``) that are expected to be unconnected.
+        Use `severity_filter` and `category_filter` to ask narrow triage
+        questions while preserving full pre-filter summary counts.
         """
         return handlers.handle_evaluate(
             instance_id,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+            severity_filter=severity_filter,
+            category_filter=category_filter,
         )
 
     @_tool

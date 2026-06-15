@@ -16,6 +16,15 @@ QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
 QueryMode = Literal["collection", "traversal"]
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]
+FindingSeverity = Literal["error", "warning", "info"]
+FindingCategory = Literal[
+    "orphan_entity",
+    "coverage_gap",
+    "constraint_violation",
+    "governed_support_relationship",
+    "unreviewed_co_member",
+    "quality_check_failed",
+]
 
 # ── Constrained input types ───────────────────────────────────────────
 

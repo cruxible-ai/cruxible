@@ -661,7 +661,14 @@ shared_evidence:
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--limit` | no | `100` | integer | Max findings to show. |
+| `--severity` | no |  | choice: `error`, `warning`, `info` | Only return findings at this severity. Repeatable. |
+| `--category` | no |  | choice: `orphan_entity`, `coverage_gap`, `constraint_violation`, `governed_support_relationship`, `unreviewed_co_member`, `quality_check_failed` | Only return findings in this category. Repeatable. |
 | `--json` | no | `False` | boolean | Output as JSON. |
+
+Agent triage example: `cruxible evaluate --severity error --limit 1 --json`
+checks whether any error-level finding exists without fetching lower-severity
+noise. Summaries still reflect the full graph evaluation, not just the filtered
+findings.
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.

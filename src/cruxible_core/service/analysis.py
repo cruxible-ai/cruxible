@@ -17,7 +17,12 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
 from cruxible_core.group.types import TrustStatus
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.query.evaluate import EvaluationReport, evaluate_graph
+from cruxible_core.query.evaluate import (
+    EvaluationReport,
+    FindingCategory,
+    FindingSeverity,
+    evaluate_graph,
+)
 from cruxible_core.service.types import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
@@ -49,6 +54,8 @@ def service_evaluate(
     instance: InstanceProtocol,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
+    severity_filter: list[FindingSeverity] | None = None,
+    category_filter: list[FindingCategory] | None = None,
 ) -> EvaluationReport:
     """Evaluate graph quality with deterministic checks."""
     config = instance.load_config()
@@ -61,6 +68,8 @@ def service_evaluate(
             group_store=group_store,
             max_findings=max_findings,
             exclude_orphan_types=exclude_orphan_types,
+            severity_filter=severity_filter,
+            category_filter=category_filter,
         )
     finally:
         group_store.close()

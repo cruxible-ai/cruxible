@@ -236,6 +236,8 @@ async def evaluate(instance_id: str, req: EvaluateRequest) -> contracts.Evaluate
         instance_id=resolved_instance_id,
         max_findings=req.max_findings,
         exclude_orphan_types=req.exclude_orphan_types,
+        severity_filter=req.severity_filter,
+        category_filter=req.category_filter,
     )
 
 

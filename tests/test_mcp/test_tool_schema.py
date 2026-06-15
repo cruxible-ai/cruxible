@@ -153,10 +153,12 @@ class TestInputSchema:
         props = schemas["cruxible_list"].inputSchema["properties"]
         assert "property_filter" in props
 
-    def test_evaluate_has_exclude_orphan_types(self, server):
+    def test_evaluate_has_filters(self, server):
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_evaluate"].inputSchema["properties"]
         assert "exclude_orphan_types" in props
+        assert "severity_filter" in props
+        assert "category_filter" in props
 
     def test_init_optional_config_yaml(self, server):
         """cruxible_init has config_yaml in properties, not required."""

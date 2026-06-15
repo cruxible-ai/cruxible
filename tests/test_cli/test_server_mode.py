@@ -76,6 +76,71 @@ def test_server_mode_sample_json_emits_envelope(
     assert payload["entity_type"] == "Vehicle"
 
 
+def test_server_mode_evaluate_forwards_filters(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def evaluate(
+            self,
+            instance_id,
+            *,
+            max_findings=100,
+            exclude_orphan_types=None,
+            severity_filter=None,
+            category_filter=None,
+        ):
+            captured.update(
+                {
+                    "instance_id": instance_id,
+                    "max_findings": max_findings,
+                    "exclude_orphan_types": exclude_orphan_types,
+                    "severity_filter": severity_filter,
+                    "category_filter": category_filter,
+                }
+            )
+            return contracts.EvaluateResult(
+                entity_count=1,
+                edge_count=0,
+                findings=[],
+                summary={},
+                constraint_summary={},
+                quality_summary={},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "evaluate",
+            "--limit",
+            "1",
+            "--severity",
+            "error",
+            "--category",
+            "quality_check_failed",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_x",
+        "max_findings": 1,
+        "exclude_orphan_types": None,
+        "severity_filter": ["error"],
+        "category_filter": ["quality_check_failed"],
+    }
+
+
 def test_server_mode_query_error_prints_param_hints(
     monkeypatch,
     runner: CliRunner,

@@ -13,6 +13,7 @@ from cruxible_core.config.schema import (
     FeedbackReasonCodeSchema,
     OutcomeCodeSchema,
     OutcomeProfileSchema,
+    PropertyQualityCheck,
     ProposalPolicySchema,
     SignalPolicySchema,
 )
@@ -212,6 +213,37 @@ class TestEvaluate:
         orphans_all = sum(1 for f in report_all.findings if f.category == "orphan_entity")
         orphans_excl = sum(1 for f in report_excl.findings if f.category == "orphan_entity")
         assert orphans_excl <= orphans_all
+
+    def test_passes_filters_to_evaluator(self, populated_instance: CruxibleInstance) -> None:
+        config = populated_instance.load_config()
+        config.quality_checks.append(
+            PropertyQualityCheck(
+                name="part_category_non_empty",
+                target="entity",
+                entity_type="Part",
+                property="category",
+                rule="non_empty",
+                severity="error",
+            )
+        )
+        populated_instance.save_config(config)
+        graph = populated_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(entity_type="Part", entity_id="P-empty", properties={"category": ""})
+        )
+        populated_instance.save_graph(graph)
+
+        report = service_evaluate(
+            populated_instance,
+            max_findings=1,
+            severity_filter=["error"],
+            category_filter=["quality_check_failed"],
+        )
+
+        assert len(report.findings) == 1
+        assert report.findings[0].severity == "error"
+        assert report.findings[0].category == "quality_check_failed"
+        assert report.quality_summary["part_category_non_empty"] == 1
 
     def test_closes_group_store(
         self, populated_instance: CruxibleInstance, monkeypatch: pytest.MonkeyPatch

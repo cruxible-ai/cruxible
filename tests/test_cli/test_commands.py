@@ -310,6 +310,27 @@ quality_checks:
         assert "Quality checks:" in result.output
         assert "product_name_non_empty: 1" in result.output
 
+        json_result = _chdir_run(
+            runner,
+            project,
+            [
+                "evaluate",
+                "--severity",
+                "error",
+                "--category",
+                "quality_check_failed",
+                "--limit",
+                "1",
+                "--json",
+            ],
+        )
+        assert json_result.exit_code == 0
+        payload = json.loads(json_result.output)
+        assert len(payload["findings"]) == 1
+        assert payload["findings"][0]["severity"] == "error"
+        assert payload["findings"][0]["category"] == "quality_check_failed"
+        assert payload["quality_summary"]["product_name_non_empty"] == 1
+
 
 # ---------------------------------------------------------------------------
 # explain
