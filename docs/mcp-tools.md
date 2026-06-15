@@ -817,6 +817,31 @@ error-level finding exists.
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_inspect_entity_history
+
+**Permission:** `READ_ONLY`
+
+**Purpose:** Use when you need receipt-derived status transitions for one entity type or entity.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `entity_type` | yes | string |  |
+| `entity_id` | no | string | null |  |
+| `limit` | no | integer |  |
+| `offset` | no | integer |  |
+
+**Returns:** Top-level fields: `entity_type`, `entity_id`, `items`, `total`, `legacy_entity_write_count`, `warnings`
+
+**Side Effects:** Read-only.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
 ## cruxible_inspect_ontology
 
 **Permission:** `READ_ONLY`

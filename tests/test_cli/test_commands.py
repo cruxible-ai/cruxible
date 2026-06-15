@@ -19,7 +19,26 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
 from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.service import service_propose_group, service_resolve_group
+from cruxible_core.service import (
+    service_add_entities,
+    service_init,
+    service_propose_group,
+    service_resolve_group,
+)
+
+STATUS_HISTORY_YAML = """\
+version: '1.0'
+name: status_history_demo
+entity_types:
+  Task:
+    properties:
+      task_id: {type: string, primary_key: true}
+      status:
+        type: string
+        enum: [planned, active, closed]
+      title: {type: string, optional: true}
+relationships: []
+"""
 
 
 @pytest.fixture
@@ -55,6 +74,12 @@ def _assert_local_mutation_disabled(
     result = _chdir_run(runner, directory, args)
     assert result.exit_code == 2
     assert f"Local mutation disabled for {label}" in result.output
+
+
+def _status_history_instance(tmp_path: Path) -> CruxibleInstance:
+    result = service_init(tmp_path, config_yaml=STATUS_HISTORY_YAML)
+    assert isinstance(result.instance, CruxibleInstance)
+    return result.instance
 
 
 def _save_trace(instance: CruxibleInstance, trace_id: str = "TRC-cli-001") -> str:
@@ -554,6 +579,75 @@ class TestStatsInspectReload:
             neighbor["metadata"].get("provenance", {}).get("source") == "ingest"
             for neighbor in payload["neighbors"]
         )
+
+    def test_inspect_entity_history_json(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "active"},
+                )
+            ],
+        )
+
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["inspect", "entity-history", "--type", "Task", "--id", "T-1", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["entity_type"] == "Task"
+        assert payload["entity_id"] == "T-1"
+        assert payload["total"] == 2
+        assert payload["items"][0]["from_status"] == "planned"
+        assert payload["items"][0]["to_status"] == "active"
+
+    def test_inspect_entity_history_human_output(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned"},
+                )
+            ],
+        )
+
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["inspect", "entity-history", "--type", "Task"],
+        )
+
+        assert result.exit_code == 0
+        assert "Entity Status History" in result.output
+        assert "Task:T-1" in result.output
+        assert "planned" in result.output
 
     def test_inspect_trace_outputs_payload(
         self,

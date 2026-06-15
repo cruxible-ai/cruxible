@@ -588,6 +588,23 @@ def register_tools(server: FastMCP) -> list[str]:
         )
 
     @_tool
+    def cruxible_inspect_entity_history(
+        instance_id: str,
+        entity_type: str,
+        entity_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> contracts.EntityStatusHistoryResult:
+        """Inspect receipt-derived status transitions for one entity type or entity."""
+        return handlers.handle_inspect_entity_history(
+            instance_id,
+            entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    @_tool
     def cruxible_inspect_ontology(
         instance_id: str,
     ) -> contracts.CanonicalViewResult:

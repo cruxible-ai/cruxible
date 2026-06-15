@@ -189,6 +189,10 @@ class TestInputSchema:
         schemas = _get_tool_schemas(server)
         assert "limit" in schemas["cruxible_inspect_governance"].inputSchema["properties"]
         assert "relationship_type" in schemas["cruxible_inspect_entity"].inputSchema["properties"]
+        history_props = schemas["cruxible_inspect_entity_history"].inputSchema["properties"]
+        assert "entity_id" in history_props
+        assert "limit" in history_props
+        assert "offset" in history_props
         assert "config_yaml" in schemas["cruxible_reload_config"].inputSchema["properties"]
         assert "snapshot_id" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
         assert "root_dir" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
@@ -291,6 +295,17 @@ class TestOutputSchema:
                     "metadata",
                     "neighbors",
                     "total_neighbors",
+                },
+            ),
+            (
+                "cruxible_inspect_entity_history",
+                {
+                    "entity_type",
+                    "entity_id",
+                    "items",
+                    "total",
+                    "legacy_entity_write_count",
+                    "warnings",
                 },
             ),
             ("cruxible_inspect_ontology", {"view", "payload"}),

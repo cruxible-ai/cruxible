@@ -8,6 +8,7 @@ FastMCP auto-generates outputSchema from the BaseModel return annotations.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -729,6 +730,27 @@ class InspectEntityResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     neighbors: list[InspectNeighborResult] = Field(default_factory=list)
     total_neighbors: int = 0
+
+
+class StatusTransitionItem(BaseModel):
+    entity_type: str
+    entity_id: str
+    from_status: str | None = None
+    to_status: str | None = None
+    transition_kind: Literal["created", "changed"]
+    changed_at: datetime
+    receipt_id: str
+    operation_type: str
+    actor_context: dict[str, Any] | None = None
+
+
+class EntityStatusHistoryResult(BaseModel):
+    entity_type: str
+    entity_id: str | None = None
+    items: list[StatusTransitionItem] = Field(default_factory=list)
+    total: int = 0
+    legacy_entity_write_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class CanonicalViewResult(BaseModel):

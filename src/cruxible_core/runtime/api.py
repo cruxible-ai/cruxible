@@ -58,6 +58,7 @@ from cruxible_core.service import (
     service_finalize_decision_record,
     service_get_decision_record,
     service_get_entity,
+    service_get_entity_status_history,
     service_get_feedback_profile,
     service_get_group,
     service_get_outcome_profile,
@@ -1920,6 +1921,47 @@ def inspect_entity(
             for neighbor in result.neighbors
         ],
         total_neighbors=result.total_neighbors,
+    )
+
+
+def inspect_entity_history(
+    instance_id: str,
+    entity_type: str,
+    *,
+    entity_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> contracts.EntityStatusHistoryResult:
+    """Inspect receipt-derived status history for one entity type or entity."""
+    check_permission("cruxible_inspect_entity_history", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_get_entity_status_history(
+        instance,
+        entity_type,
+        entity_id=entity_id,
+        limit=limit,
+        offset=offset,
+    )
+    return contracts.EntityStatusHistoryResult(
+        entity_type=result.entity_type,
+        entity_id=result.entity_id,
+        items=[
+            contracts.StatusTransitionItem(
+                entity_type=item.entity_type,
+                entity_id=item.entity_id,
+                from_status=item.from_status,
+                to_status=item.to_status,
+                transition_kind=item.transition_kind,
+                changed_at=item.changed_at,
+                receipt_id=item.receipt_id,
+                operation_type=item.operation_type,
+                actor_context=item.actor_context,
+            )
+            for item in result.items
+        ],
+        total=result.total,
+        legacy_entity_write_count=result.legacy_entity_write_count,
+        warnings=result.warnings,
     )
 
 

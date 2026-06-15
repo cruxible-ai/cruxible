@@ -292,6 +292,26 @@ async def inspect_entity(
 
 
 @router.get(
+    "/{instance_id}/inspect/entity-history/{entity_type}",
+    response_model=contracts.EntityStatusHistoryResult,
+)
+async def inspect_entity_history(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str | None = None,
+    limit: int = Query(50, ge=1),
+    offset: int = Query(0, ge=0),
+) -> contracts.EntityStatusHistoryResult:
+    return api.inspect_entity_history(
+        resolve_server_instance_id(instance_id),
+        entity_type,
+        entity_id=entity_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
     "/{instance_id}/inspect/{view}",
     response_model=contracts.CanonicalViewResult,
 )

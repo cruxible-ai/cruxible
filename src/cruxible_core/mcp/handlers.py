@@ -1075,6 +1075,32 @@ def handle_inspect_entity(
     )
 
 
+def handle_inspect_entity_history(
+    instance_id: str,
+    entity_type: str,
+    entity_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> contracts.EntityStatusHistoryResult:
+    """Inspect receipt-derived status history for one entity type or entity."""
+    return _dispatch_remote_or_local(
+        lambda client: client.inspect_entity_history(
+            instance_id,
+            entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda: api.inspect_entity_history(
+            instance_id,
+            entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
 def handle_inspect_view(
     instance_id: str,
     view: str,

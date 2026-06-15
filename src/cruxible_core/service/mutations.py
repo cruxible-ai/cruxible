@@ -11,8 +11,9 @@ from typing import Any
 from pydantic import ValidationError
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
+from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.operations import (
@@ -65,6 +66,7 @@ class _PreparedBatchRelationship:
 class _PreparedBatchDirectWrite:
     graph: EntityGraph
     entities: list[ValidatedEntity]
+    entity_write_details: dict[tuple[str, str], dict[str, Any]]
     relationships: list[_PreparedBatchRelationship]
     validation_errors: list[str]
     validation_warnings: list[str]
@@ -77,6 +79,49 @@ class _PreparedBatchDirectWrite:
 class _DirectWriteGroupInteractions:
     pending_conflicts: list[DirectWriteGroupInteraction]
     updated_group_backed_edges: list[DirectWriteGroupInteraction]
+
+
+def _entity_status_transition_detail(
+    config: CoreConfig,
+    graph: EntityGraph,
+    validated: ValidatedEntity,
+    *,
+    actor_context: GovernedActorContext | None = None,
+) -> dict[str, Any]:
+    entity = validated.entity
+    schema = config.get_entity_type(entity.entity_type)
+    status_schema = schema.properties.get("status") if schema is not None else None
+    if status_schema is None or status_schema.type != "string":
+        return {}
+    dumped_actor = dump_actor_context(actor_context)
+    no_transition: dict[str, Any] = {"status_transition": "none"}
+    if dumped_actor is not None:
+        no_transition["actor_context"] = dumped_actor
+
+    if validated.is_update:
+        if "status" not in entity.properties:
+            return no_transition
+        previous = graph.get_entity(entity.entity_type, entity.entity_id)
+        from_status = previous.properties.get("status") if previous is not None else None
+        to_status = entity.properties.get("status")
+        if from_status == to_status:
+            return no_transition
+        transition_kind = "changed"
+    else:
+        if "status" not in entity.properties:
+            return no_transition
+        from_status = None
+        to_status = entity.properties.get("status")
+        transition_kind = "created"
+
+    detail: dict[str, Any] = {
+        "from_status": from_status,
+        "to_status": to_status,
+        "transition_kind": transition_kind,
+    }
+    if dumped_actor is not None:
+        detail["actor_context"] = dumped_actor
+    return detail
 
 
 def _group_interaction_payload(
@@ -524,6 +569,7 @@ def _prepare_batch_direct_write(
     entity_seen: set[tuple[str, str]] = set()
     relationship_seen: set[tuple[str, str, str, str, str]] = set()
     validated_entities: list[ValidatedEntity] = []
+    entity_write_details: dict[tuple[str, str], dict[str, Any]] = {}
     validated_relationships: list[_PreparedBatchRelationship] = []
 
     for index, entity in enumerate(payload.entities, start=1):
@@ -556,6 +602,12 @@ def _prepare_batch_direct_write(
             continue
         entity_seen.add(entity_key)
         validated_entities.append(validated_entity)
+        entity_write_details[entity_key] = _entity_status_transition_detail(
+            config,
+            current_graph,
+            validated_entity,
+            actor_context=actor_context,
+        )
         apply_entity(graph, validated_entity)
         if builder:
             builder.record_validation(
@@ -671,6 +723,7 @@ def _prepare_batch_direct_write(
     return _PreparedBatchDirectWrite(
         graph=graph,
         entities=validated_entities,
+        entity_write_details=entity_write_details,
         relationships=validated_relationships,
         validation_errors=errors,
         validation_warnings=warnings,
@@ -768,10 +821,14 @@ def service_batch_direct_write(
             if persisted_entity is not None:
                 touched_entities.append(persisted_entity)
             if builder:
+                detail = prepared.entity_write_details.get(
+                    (entity_item.entity.entity_type, entity_item.entity.entity_id),
+                )
                 builder.record_entity_write(
                     entity_item.entity.entity_type,
                     entity_item.entity.entity_id,
                     is_update=entity_item.is_update,
+                    detail=detail,
                 )
 
         touched_relationships = []
@@ -982,10 +1039,17 @@ def service_add_entities(
             if persisted is not None:
                 touched_entities.append(persisted)
             if builder:
+                detail = _entity_status_transition_detail(
+                    config,
+                    current_graph,
+                    validated,
+                    actor_context=actor_context,
+                )
                 builder.record_entity_write(
                     validated.entity.entity_type,
                     validated.entity.entity_id,
                     is_update=validated.is_update,
+                    detail=detail,
                 )
             if validated.is_update:
                 updated += 1

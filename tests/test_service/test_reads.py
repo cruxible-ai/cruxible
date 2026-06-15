@@ -19,11 +19,16 @@ from cruxible_core.errors import (
 from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service import (
+    BatchDirectWriteInput,
+    EntityWriteInput,
     service_add_constraint,
     service_add_decision_policy,
     service_add_entities,
+    service_batch_direct_write,
     service_get_entity,
+    service_get_entity_status_history,
     service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
@@ -40,6 +45,30 @@ from cruxible_core.service import (
     service_stats,
 )
 from tests.test_cli.conftest import CAR_PARTS_YAML
+
+STATUS_HISTORY_YAML = """\
+version: '1.0'
+name: status_history_demo
+entity_types:
+  Task:
+    properties:
+      task_id: {type: string, primary_key: true}
+      status:
+        type: string
+        enum: [planned, active, closed]
+      title: {type: string, optional: true}
+  Note:
+    properties:
+      note_id: {type: string, primary_key: true}
+      body: {type: string}
+relationships: []
+"""
+
+
+def _status_history_instance(tmp_path: Path) -> CruxibleInstance:
+    result = service_init(tmp_path, config_yaml=STATUS_HISTORY_YAML)
+    assert isinstance(result.instance, CruxibleInstance)
+    return result.instance
 
 
 def _kit_provider_config_yaml() -> str:
@@ -738,6 +767,160 @@ class TestGetEntity:
             )
 
         assert exc_info.value.relationship_name == "missing_relationship"
+
+
+# ---------------------------------------------------------------------------
+# service_get_entity_status_history
+# ---------------------------------------------------------------------------
+
+
+class TestEntityStatusHistory:
+    def test_entity_specific_status_history_from_mutation_receipts(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned", "title": "First"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "active"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"title": "Renamed"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "active"},
+                )
+            ],
+        )
+
+        history = service_get_entity_status_history(instance, "Task", entity_id="T-1")
+
+        assert history.total == 2
+        assert history.legacy_entity_write_count == 0
+        transitions = [
+            (item.from_status, item.to_status, item.transition_kind) for item in history.items
+        ]
+        assert transitions == [
+            ("planned", "active", "changed"),
+            (None, "planned", "created"),
+        ]
+        assert {item.operation_type for item in history.items} == {"add_entity"}
+        assert all(item.receipt_id.startswith("RCP-") for item in history.items)
+
+    def test_type_wide_status_history_and_pagination(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned"},
+                ),
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-2",
+                    properties={"status": "active"},
+                ),
+            ],
+        )
+
+        history = service_get_entity_status_history(instance, "Task", limit=1, offset=1)
+
+        assert history.total == 2
+        assert len(history.items) == 1
+        assert history.items[0].transition_kind == "created"
+        assert history.items[0].entity_id in {"T-1", "T-2"}
+
+    def test_batch_direct_write_records_status_history(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Task",
+                        entity_id="T-1",
+                        properties={"status": "planned"},
+                    )
+                ]
+            ),
+        )
+        service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Task",
+                        entity_id="T-1",
+                        properties={"status": "closed"},
+                    )
+                ]
+            ),
+        )
+
+        history = service_get_entity_status_history(instance, "Task", entity_id="T-1")
+
+        transitions = [
+            (item.from_status, item.to_status, item.transition_kind) for item in history.items
+        ]
+        assert transitions == [
+            ("planned", "closed", "changed"),
+            (None, "planned", "created"),
+        ]
+        assert {item.operation_type for item in history.items} == {"batch_direct_write"}
+
+    def test_legacy_entity_write_receipts_are_not_inferred(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+        builder = ReceiptBuilder(operation_type="add_entity")
+        builder.record_entity_write("Task", "T-legacy", is_update=False)
+        receipt = builder.build()
+        with instance.write_transaction() as uow:
+            uow.receipts.save_receipt(receipt)
+
+        history = service_get_entity_status_history(instance, "Task", entity_id="T-legacy")
+
+        assert history.items == []
+        assert history.total == 0
+        assert history.legacy_entity_write_count == 1
+        assert history.warnings == ["1 legacy entity write(s) lacked status transition detail"]
+
+    def test_requires_status_property(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+
+        with pytest.raises(ConfigError, match="does not define a string status property"):
+            service_get_entity_status_history(instance, "Note")
+
+    def test_unknown_entity_type_raises_typed_error(self, tmp_path: Path) -> None:
+        instance = _status_history_instance(tmp_path)
+
+        with pytest.raises(EntityTypeNotFoundError):
+            service_get_entity_status_history(instance, "Missing")
 
 
 # ---------------------------------------------------------------------------

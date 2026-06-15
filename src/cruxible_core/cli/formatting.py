@@ -29,6 +29,35 @@ def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
     return table
 
 
+def status_history_table(items: list[Any]) -> Table:
+    """Build a Rich table for receipt-derived entity status transitions."""
+    table = Table(title="Entity Status History")
+    table.add_column("Entity", style="cyan", overflow="fold")
+    table.add_column("From")
+    table.add_column("To")
+    table.add_column("Kind")
+    table.add_column("Changed At")
+    table.add_column("Receipt", overflow="fold")
+    table.add_column("Operation")
+    table.add_column("Actor", overflow="fold")
+
+    for item in items:
+        actor_context = item.actor_context or {}
+        actor = str(actor_context.get("actor_id") or "")
+        table.add_row(
+            f"{item.entity_type}:{item.entity_id}",
+            item.from_status or "",
+            item.to_status or "",
+            item.transition_kind,
+            format_datetime(item.changed_at),
+            item.receipt_id,
+            item.operation_type,
+            actor,
+        )
+
+    return table
+
+
 def receipts_table(receipts: list[dict[str, Any]]) -> Table:
     """Build a Rich table for receipt summaries."""
     table = Table(title="Receipts")

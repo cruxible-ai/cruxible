@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from cruxible_core.config.schema import CoreConfig, NamedQuerySchema
 from cruxible_core.errors import (
     ConfigError,
+    EntityTypeNotFoundError,
     QueryNotFoundError,
     ReceiptNotFoundError,
     TraceNotFoundError,
@@ -53,6 +54,7 @@ from cruxible_core.query.types import dump_query_row
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
+    EntityStatusHistoryResult,
     InspectEntityResult,
     InspectNeighborResult,
     ListResult,
@@ -63,6 +65,7 @@ from cruxible_core.service.types import (
     QueryServiceResult,
     RelationshipLineageResult,
     StatsServiceResult,
+    StatusTransitionItem,
     TraceListResult,
 )
 from cruxible_core.temporal import utc_now
@@ -76,6 +79,7 @@ _INLINE_DEFAULT_MAX_PATHS = 1000
 _INLINE_MAX_PATHS = 5000
 _INLINE_DEFAULT_MAX_PATHS_PER_RESULT = 25
 _INLINE_MAX_PATHS_PER_RESULT = 100
+_STATUS_HISTORY_RECEIPT_PAGE_SIZE = 500
 
 # ---------------------------------------------------------------------------
 # Query
@@ -585,6 +589,120 @@ def service_inspect_entity(
         ],
         total_neighbors=result.total_neighbors,
     )
+
+
+def service_get_entity_status_history(
+    instance: InstanceProtocol,
+    entity_type: str,
+    *,
+    entity_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> EntityStatusHistoryResult:
+    """Return receipt-derived status transitions for one entity type or entity."""
+    if limit < 1:
+        raise ConfigError("limit must be at least 1")
+    if offset < 0:
+        raise ConfigError("offset must be non-negative")
+
+    config = instance.load_config()
+    _validate_status_history_entity_type(config, entity_type)
+
+    store = instance.get_receipt_store()
+    transitions: list[StatusTransitionItem] = []
+    legacy_count = 0
+    try:
+        receipt_ids = (
+            store.get_receipts_for_entity(entity_type, entity_id)
+            if entity_id is not None
+            else _all_receipt_ids(store)
+        )
+        for receipt_id in receipt_ids:
+            receipt = store.get_receipt(receipt_id)
+            if receipt is None:
+                continue
+            for node in receipt.nodes:
+                if node.node_type != "entity_write":
+                    continue
+                if node.entity_type != entity_type:
+                    continue
+                if entity_id is not None and node.entity_id != entity_id:
+                    continue
+                detail = node.detail
+                if detail.get("status_transition") == "none":
+                    continue
+                transition_kind = detail.get("transition_kind")
+                if transition_kind not in {"created", "changed"}:
+                    legacy_count += 1
+                    continue
+                if "to_status" not in detail:
+                    legacy_count += 1
+                    continue
+                actor_context = detail.get("actor_context")
+                transitions.append(
+                    StatusTransitionItem(
+                        entity_type=entity_type,
+                        entity_id=node.entity_id or "",
+                        from_status=(
+                            str(detail["from_status"])
+                            if detail.get("from_status") is not None
+                            else None
+                        ),
+                        to_status=(
+                            str(detail["to_status"])
+                            if detail.get("to_status") is not None
+                            else None
+                        ),
+                        transition_kind=cast(Literal["created", "changed"], transition_kind),
+                        changed_at=node.timestamp,
+                        receipt_id=receipt.receipt_id,
+                        operation_type=receipt.operation_type,
+                        actor_context=actor_context if isinstance(actor_context, dict) else None,
+                    )
+                )
+    finally:
+        store.close()
+
+    transitions.sort(key=lambda item: (item.changed_at, item.receipt_id), reverse=True)
+    total = len(transitions)
+    warnings = (
+        [f"{legacy_count} legacy entity write(s) lacked status transition detail"]
+        if legacy_count
+        else []
+    )
+    return EntityStatusHistoryResult(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        items=transitions[offset : offset + limit],
+        total=total,
+        legacy_entity_write_count=legacy_count,
+        warnings=warnings,
+    )
+
+
+def _validate_status_history_entity_type(config: CoreConfig, entity_type: str) -> None:
+    entity_schema = config.get_entity_type(entity_type)
+    if entity_schema is None:
+        raise EntityTypeNotFoundError(entity_type, known_entity_types=list(config.entity_types))
+    status_schema = entity_schema.properties.get("status")
+    if status_schema is None or status_schema.type != "string":
+        raise ConfigError(
+            f"Entity type '{entity_type}' does not define a string status property"
+        )
+
+
+def _all_receipt_ids(store: Any) -> list[str]:
+    receipt_ids: list[str] = []
+    offset = 0
+    while True:
+        page = store.list_receipts(limit=_STATUS_HISTORY_RECEIPT_PAGE_SIZE, offset=offset)
+        if not page:
+            break
+        receipt_ids.extend(str(row["receipt_id"]) for row in page)
+        if len(page) < _STATUS_HISTORY_RECEIPT_PAGE_SIZE:
+            break
+        offset += _STATUS_HISTORY_RECEIPT_PAGE_SIZE
+    return receipt_ids
 
 
 def service_get_relationship(

@@ -832,6 +832,27 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.InspectEntityResult)
 
+    def inspect_entity_history(
+        self,
+        instance_id: str,
+        entity_type: str,
+        *,
+        entity_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> contracts.EntityStatusHistoryResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/inspect/entity-history/{entity_type}",
+            params=self._omit_none_params(
+                {
+                    "entity_id": entity_id,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            ),
+        )
+        return self._parse_model(response, contracts.EntityStatusHistoryResult)
+
     def inspect_view(
         self,
         instance_id: str,

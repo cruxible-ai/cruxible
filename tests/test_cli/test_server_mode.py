@@ -76,6 +76,85 @@ def test_server_mode_sample_json_emits_envelope(
     assert payload["entity_type"] == "Vehicle"
 
 
+def test_server_mode_inspect_entity_history_json(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def inspect_entity_history(
+            self,
+            instance_id,
+            entity_type,
+            *,
+            entity_id=None,
+            limit=50,
+            offset=0,
+        ):
+            captured.update(
+                {
+                    "instance_id": instance_id,
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            )
+            return contracts.EntityStatusHistoryResult(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                items=[
+                    contracts.StatusTransitionItem(
+                        entity_type=entity_type,
+                        entity_id=entity_id or "T-1",
+                        from_status="planned",
+                        to_status="active",
+                        transition_kind="changed",
+                        changed_at="2026-06-15T12:00:00Z",
+                        receipt_id="RCP-1",
+                        operation_type="add_entity",
+                    )
+                ],
+                total=1,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "inspect",
+            "entity-history",
+            "--type",
+            "Task",
+            "--id",
+            "T-1",
+            "--limit",
+            "5",
+            "--offset",
+            "1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_x",
+        "entity_type": "Task",
+        "entity_id": "T-1",
+        "limit": 5,
+        "offset": 1,
+    }
+    payload = json.loads(result.output)
+    assert payload["items"][0]["to_status"] == "active"
+
+
 def test_server_mode_evaluate_forwards_filters(
     monkeypatch,
     runner: CliRunner,

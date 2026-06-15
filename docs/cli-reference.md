@@ -1066,6 +1066,7 @@ findings.
 **Subcommands:**
 
 - `cruxible inspect entity` - Inspect an entity and its immediate neighbors.
+- `cruxible inspect entity-history` - Inspect receipt-derived status history for one entity type or entity.
 - `cruxible inspect governance` - Show the canonical governance view for the current instance.
 - `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
@@ -1101,6 +1102,30 @@ findings.
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible inspect entity-history
+
+**Usage:** `cruxible inspect entity-history [OPTIONS]`
+
+**Purpose:** Inspect receipt-derived status history for one entity type or entity.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | no | `` | text | Optional entity ID. |
+| `--limit` | no | `50` | integer range |  |
+| `--offset` | no | `0` | integer range |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Shows status transitions recorded on mutation receipts for entity types that define a string `status` property.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

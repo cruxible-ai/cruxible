@@ -297,6 +297,29 @@ class InspectEntityResult:
 
 
 @dataclass
+class StatusTransitionItem:
+    entity_type: str
+    entity_id: str
+    from_status: str | None
+    to_status: str | None
+    transition_kind: Literal["created", "changed"]
+    changed_at: datetime
+    receipt_id: str
+    operation_type: str
+    actor_context: dict[str, Any] | None = None
+
+
+@dataclass
+class EntityStatusHistoryResult:
+    entity_type: str
+    entity_id: str | None = None
+    items: list[StatusTransitionItem] = field(default_factory=list)
+    total: int = 0
+    legacy_entity_write_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class CanonicalViewResult:
     view: str
     payload: dict[str, Any]

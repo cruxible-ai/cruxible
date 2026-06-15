@@ -25,6 +25,19 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
+STATUS_HISTORY_YAML = """\
+version: '1.0'
+name: status_history_demo
+entity_types:
+  Task:
+    properties:
+      task_id: {type: string, primary_key: true}
+      status:
+        type: string
+        enum: [planned, active, closed]
+      title: {type: string, optional: true}
+relationships: []
+"""
 
 
 def _write_overlay_kit_manifest(
@@ -500,6 +513,56 @@ def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
     assert lineage_body["error_type"] == "EntityTypeNotFoundError"
     assert lineage_body["context"]["entity_type"] == "TypoType"
     assert lineage_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
+
+
+def test_inspect_entity_history_route_returns_status_transitions(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "status-project"
+    root.mkdir()
+    instance_id = _init_instance(app_client, root, config_yaml=STATUS_HISTORY_YAML)
+    create_response = app_client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Task",
+                    "entity_id": "T-1",
+                    "properties": {"status": "planned"},
+                }
+            ]
+        },
+    )
+    assert create_response.status_code == 200
+    update_response = app_client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Task",
+                    "entity_id": "T-1",
+                    "properties": {"status": "active"},
+                }
+            ]
+        },
+    )
+    assert update_response.status_code == 200
+
+    response = app_client.get(
+        f"/api/v1/{instance_id}/inspect/entity-history/Task",
+        params={"entity_id": "T-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entity_type"] == "Task"
+    assert payload["entity_id"] == "T-1"
+    assert payload["total"] == 2
+    assert payload["items"][0]["from_status"] == "planned"
+    assert payload["items"][0]["to_status"] == "active"
+    assert payload["items"][0]["transition_kind"] == "changed"
+    assert payload["items"][0]["receipt_id"].startswith("RCP-")
 
 
 def test_view_route_validates_reserved_pagination_params(

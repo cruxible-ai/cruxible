@@ -1186,6 +1186,17 @@ def test_optional_get_query_params_omit_none_and_preserve_falsey_values():
             return httpx.Response(200, json={"items": [], "total": 0})
         if path.endswith("/outcome/profile"):
             return httpx.Response(200, json={"found": False, "anchor_type": "receipt"})
+        if path.endswith("/inspect/entity-history/WorkItem"):
+            return httpx.Response(
+                200,
+                json={
+                    "entity_type": "WorkItem",
+                    "items": [],
+                    "total": 0,
+                    "legacy_entity_write_count": 0,
+                    "warnings": [],
+                },
+            )
         if "/inspect/entity/" in path:
             return httpx.Response(
                 200,
@@ -1250,6 +1261,7 @@ def test_optional_get_query_params_omit_none_and_preserve_falsey_values():
         relationship_type=None,
         limit=None,
     )
+    client.inspect_entity_history("inst_123", "WorkItem", entity_id=None, limit=25, offset=0)
     client.get_decision_record("inst_123", "DR-1", include_events=False)
 
     assert captured["/api/v1/inst_123/decision-records"] == {"limit": "25", "offset": "0"}
@@ -1261,6 +1273,10 @@ def test_optional_get_query_params_omit_none_and_preserve_falsey_values():
     assert captured["/api/v1/inst_123/list/entities"] == {"limit": "25", "offset": "0"}
     assert captured["/api/v1/inst_123/outcome/profile"] == {"anchor_type": "receipt"}
     assert captured["/api/v1/inst_123/inspect/entity/Vehicle/V-1"] == {"direction": "both"}
+    assert captured["/api/v1/inst_123/inspect/entity-history/WorkItem"] == {
+        "limit": "25",
+        "offset": "0",
+    }
     assert captured["/api/v1/inst_123/decision-records/DR-1"] == {"include_events": "false"}
 
 
@@ -1681,6 +1697,30 @@ def test_stats_inspect_and_reload_use_expected_routes():
                     "total_neighbors": 0,
                 },
             )
+        if "/inspect/entity-history/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "entity_type": "WorkItem",
+                    "entity_id": "wi-1",
+                    "items": [
+                        {
+                            "entity_type": "WorkItem",
+                            "entity_id": "wi-1",
+                            "from_status": "planned",
+                            "to_status": "closed",
+                            "transition_kind": "changed",
+                            "changed_at": "2026-06-15T12:00:00Z",
+                            "receipt_id": "RCP-1",
+                            "operation_type": "add_entity",
+                            "actor_context": {"actor_id": "agent"},
+                        }
+                    ],
+                    "total": 1,
+                    "legacy_entity_write_count": 0,
+                    "warnings": [],
+                },
+            )
         captured["payload"] = json.loads(request.content.decode())
         return httpx.Response(
             200,
@@ -1701,6 +1741,11 @@ def test_stats_inspect_and_reload_use_expected_routes():
     inspect_result = client.inspect_entity("inst_123", "Vehicle", "V-1", direction="both")
     assert inspect_result.found is True
     assert "/api/v1/inst_123/inspect/entity/Vehicle/V-1" in captured["path"]
+
+    history_result = client.inspect_entity_history("inst_123", "WorkItem", entity_id="wi-1")
+    assert history_result.total == 1
+    assert history_result.items[0].to_status == "closed"
+    assert "entity_id=wi-1" in captured["path"]
 
     reload_result = client.reload_config("inst_123", config_yaml='name: governed\nversion: "1.0"\n')
     assert reload_result.updated is True

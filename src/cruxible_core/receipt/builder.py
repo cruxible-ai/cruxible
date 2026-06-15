@@ -224,6 +224,7 @@ class ReceiptBuilder:
         entity_type: str,
         entity_id: str,
         is_update: bool,
+        detail: dict[str, Any] | None = None,
         parent_id: str | None = None,
     ) -> str:
         """Record that an entity was written to the graph."""
@@ -231,7 +232,7 @@ class ReceiptBuilder:
             node_type="entity_write",
             entity_type=entity_type,
             entity_id=entity_id,
-            detail={"is_update": is_update},
+            detail={"is_update": is_update, **(detail or {})},
         )
         self._add_edge(parent_id or self._root_id, node_id, "mutated")
         return node_id

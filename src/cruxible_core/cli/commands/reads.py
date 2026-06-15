@@ -66,6 +66,7 @@ from cruxible_core.cli.formatting import (
     relationship_table,
     schema_table,
     stats_table,
+    status_history_table,
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
@@ -82,6 +83,7 @@ from cruxible_core.service import (
     service_evaluate,
     service_explain_receipt,
     service_get_entity,
+    service_get_entity_status_history,
     service_get_relationship,
     service_get_relationship_lineage,
     service_get_trace,
@@ -1384,6 +1386,50 @@ def inspect_entity_cmd(
     click.echo(f"Neighbors: {inspect_result.total_neighbors}")
     if neighbor_rows:
         console.print(inspect_neighbors_table(neighbor_rows))
+
+
+@inspect_group.command("entity-history")
+@click.option("--type", "entity_type", required=True, help="Entity type.")
+@click.option("--id", "entity_id", default=None, help="Optional entity ID.")
+@click.option("--limit", type=click.IntRange(min=1), default=50, show_default=True)
+@click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
+@json_option
+@handle_errors
+def inspect_entity_history_cmd(
+    entity_type: str,
+    entity_id: str | None,
+    limit: int,
+    offset: int,
+    output_json: bool,
+) -> None:
+    """Inspect receipt-derived status history for one entity type or entity."""
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.inspect_entity_history(
+            instance_id,
+            entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        ),
+        lambda instance: service_get_entity_status_history(
+            instance,
+            entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+    if isinstance(result, contracts.EntityStatusHistoryResult):
+        payload = result.model_dump(mode="json")
+    else:
+        payload = asdict(result)
+    if output_json:
+        _emit_json(payload)
+        return
+    console.print(status_history_table(list(result.items)))
+    click.echo(f"{len(result.items)} of {result.total} status transition(s) shown.")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}")
 
 
 @inspect_group.command("trace")

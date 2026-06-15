@@ -180,6 +180,25 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
                 entity_id="A1",
             )
 
+        def inspect_entity_history(
+            self,
+            instance_id,
+            entity_type,
+            *,
+            entity_id=None,
+            limit=50,
+            offset=0,
+        ):
+            assert (instance_id, entity_type, entity_id) == ("inst_123", "Asset", "A1")
+            assert limit == 5
+            assert offset == 1
+            return contracts.EntityStatusHistoryResult(
+                entity_type="Asset",
+                entity_id="A1",
+                items=[],
+                total=0,
+            )
+
         def inspect_view(self, instance_id, view, *, limit=200):
             assert instance_id == "inst_123"
             assert view == "governance"
@@ -229,6 +248,16 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
         relationship_type="runs",
         limit=3,
     ).found
+    assert (
+        handlers.handle_inspect_entity_history(
+            "inst_123",
+            "Asset",
+            entity_id="A1",
+            limit=5,
+            offset=1,
+        ).entity_id
+        == "A1"
+    )
     assert handlers.handle_inspect_view("inst_123", "governance", limit=7).view == "governance"
     assert (
         handlers.handle_render_wiki(
