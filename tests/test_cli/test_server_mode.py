@@ -141,15 +141,13 @@ def test_server_mode_evaluate_forwards_filters(
     }
 
 
-def test_server_mode_query_error_prints_param_hints(
+def test_server_mode_query_not_found_prints_list_guidance(
     monkeypatch,
     runner: CliRunner,
     tmp_path: Path,
 ):
-    # Remote query failures raise client-package errors; the hint branch must
-    # catch them and the hint lookup must read the new sample envelope.
-    import yaml as _yaml
-
+    # Remote query failures raise client-package errors; the CLI must catch
+    # them and point agents to query discovery without leaking a traceback.
     from cruxible_client.errors import QueryNotFoundError as ClientQueryNotFoundError
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
@@ -157,23 +155,6 @@ def test_server_mode_query_error_prints_param_hints(
     class StubClient:
         def query(self, *_args, **_kwargs):
             raise ClientQueryNotFoundError("parts_for_vehicle")
-
-        def schema(self, _instance_id):
-            return _yaml.safe_load(CAR_PARTS_YAML)
-
-        def sample(self, _instance_id, entity_type, *, limit):
-            return contracts.SampleResult(
-                items=[
-                    {
-                        "entity_type": entity_type,
-                        "entity_id": "V-2024-CIVIC-EX",
-                        "properties": {"vehicle_id": "V-2024-CIVIC-EX"},
-                    }
-                ],
-                entity_type=entity_type,
-                total=1,
-                limit=limit,
-            )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
@@ -190,9 +171,9 @@ def test_server_mode_query_error_prints_param_hints(
     )
 
     assert result.exit_code == 1
-    assert "Param hints:" in result.output
-    assert "entry_point=Vehicle" in result.output
-    assert "Error:" in result.output
+    assert "Run: cruxible query list" in result.output
+    assert "Error: QueryNotFoundError:" in result.output
+    assert "Param hints:" not in result.output
     assert "Traceback" not in result.output
 
 
@@ -221,7 +202,7 @@ def test_server_mode_client_errors_render_friendly_not_traceback(
     )
 
     assert result.exit_code == 1
-    assert "Error: Request validation failed: query.offset" in result.output
+    assert "Error: DataValidationError: Request validation failed: query.offset" in result.output
     assert "Traceback" not in result.output
 
 

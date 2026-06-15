@@ -199,6 +199,27 @@ class TestQuery:
             ["query", "run", "nonexistent", "--param", "id=1"],
         )
         assert result.exit_code == 1
+        assert "Run: cruxible query list" in result.output
+        assert "Error: QueryNotFoundError:" in result.output
+        assert "Param hints:" not in result.output
+        assert "Traceback" not in result.output
+
+    def test_query_missing_required_param_prints_hints_without_traceback(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "run", "parts_for_vehicle"],
+        )
+
+        assert result.exit_code == 1
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "Error: QueryExecutionError:" in result.output
+        assert "Traceback" not in result.output
 
     def test_query_count_mode_prints_summary_and_hints(
         self,
@@ -636,6 +657,30 @@ class TestConfigViews:
 
         assert result.exit_code == 2
         assert "Missing README marker block(s): ontology" in result.output
+
+    def test_config_views_config_error_uses_typed_cli_renderer(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            """\
+version: "1.0"
+name: invalid
+entity_types: {}
+relationships:
+  - name: invalid_edge
+    from: MissingSource
+    to: MissingTarget
+"""
+        )
+
+        result = runner.invoke(cli, ["config-views", "--config", str(config_path)])
+
+        assert result.exit_code == 1
+        assert "Error: ConfigError:" in result.output
+        assert "Traceback" not in result.output
 
     def test_config_views_runtime_composes_extends_without_upstream_build_workflows(
         self,

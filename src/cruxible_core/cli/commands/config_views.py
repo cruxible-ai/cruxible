@@ -15,7 +15,7 @@ from cruxible_core.canonical_views.config import (
     selected_view_keys,
     update_readme_file,
 )
-from cruxible_core.errors import CoreError
+from cruxible_core.cli.main import handle_errors
 
 
 @click.command("config-views")
@@ -51,6 +51,7 @@ from cruxible_core.errors import CoreError
         "ontology/query surfaces but strips upstream build-only workflows."
     ),
 )
+@handle_errors
 def config_views_cmd(
     config_path: Path,
     view: str,
@@ -59,11 +60,7 @@ def config_views_cmd(
     runtime: bool,
 ) -> None:
     """Render canonical Mermaid/Markdown views for a Cruxible config."""
-    try:
-        config = load_config_for_rendering(config_path, runtime=runtime)
-    except CoreError as exc:
-        click.secho(f"Error: {exc}", fg="red", err=True)
-        raise click.exceptions.Exit(1) from exc
+    config = load_config_for_rendering(config_path, runtime=runtime)
 
     selected_keys = selected_view_keys(view)
     if update_readme is not None:

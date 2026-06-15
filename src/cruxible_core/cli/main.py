@@ -51,7 +51,7 @@ def handle_errors(f: Any) -> Any:
         try:
             return f(*args, **kwargs)
         except ClientCoreError as e:
-            click.secho(f"Error: {e}", fg="red", err=True)
+            click.secho(f"Error: {e.__class__.__name__}: {e}", fg="red", err=True)
             sys.exit(1)
 
     return wrapper

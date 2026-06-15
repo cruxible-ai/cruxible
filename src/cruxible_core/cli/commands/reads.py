@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.errors import CoreError as ClientCoreError
+from cruxible_client.errors import QueryNotFoundError as ClientQueryNotFoundError
 from cruxible_core.canonical_views import (
     GovernanceRelationshipView,
     GovernanceView,
@@ -70,6 +71,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
+from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
@@ -249,6 +251,14 @@ def _policy_summary_payload(policy_summary: Any) -> dict[str, int] | None:
     return None
 
 
+def _is_query_not_found_error(exc: BaseException) -> bool:
+    return isinstance(exc, (ClientQueryNotFoundError, CoreQueryNotFoundError))
+
+
+def _print_query_list_guidance() -> None:
+    click.echo("Run: cruxible query list")
+
+
 def _load_inline_query_definition(
     *,
     definition_json: str | None,
@@ -406,13 +416,16 @@ def _run_query_command(
                     relationship_state=effective_relationship_state,
                     decision_record_id=resolved_decision_record_id,
                 )
-        except ClientCoreError:
-            hints = _lookup_query_param_hints_server(
-                client,
-                instance_id,
-                query_name,
-            )
-            _print_query_param_hints(hints)
+        except ClientCoreError as exc:
+            if _is_query_not_found_error(exc):
+                _print_query_list_guidance()
+            else:
+                hints = _lookup_query_param_hints_server(
+                    client,
+                    instance_id,
+                    query_name,
+                )
+                _print_query_param_hints(hints)
             raise
         remote_items = _query_item_payloads(remote_result.items)
         projected_results = any("values" in item for item in remote_items)
@@ -503,8 +516,11 @@ def _run_query_command(
             relationship_state=effective_relationship_state,
             context=_operation_context(resolved_decision_record_id),
         )
-    except CoreError:
-        _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
+    except CoreError as exc:
+        if _is_query_not_found_error(exc):
+            _print_query_list_guidance()
+        else:
+            _print_query_param_hints(_lookup_query_param_hints_local(instance, query_name))
         raise
 
     results = local_result.items
