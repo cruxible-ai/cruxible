@@ -36,6 +36,7 @@ from cruxible_core.service.mutation_guards import (
     mutation_guard_errors,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
+from cruxible_core.service.property_diffs import property_value_changes
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -90,34 +91,33 @@ def _entity_property_change_detail(
     dumped_actor = dump_actor_context(actor_context)
     previous = graph.get_entity(entity.entity_type, entity.entity_id)
     previous_properties = previous.properties if previous is not None else {}
-    property_changes: list[dict[str, Any]] = []
     if validated.is_update:
-        for property_name in sorted(entity.properties):
-            from_value = previous_properties.get(property_name)
-            to_value = entity.properties[property_name]
-            if from_value != to_value:
-                property_changes.append(
-                    {
-                        "property": property_name,
-                        "from_value": from_value,
-                        "to_value": to_value,
-                    }
-                )
+        property_changes = property_value_changes(
+            entity.properties,
+            previous_properties,
+            include_added=True,
+            include_removed=False,
+        )
         change_kind = "updated"
     else:
-        for property_name in sorted(entity.properties):
-            property_changes.append(
-                {
-                    "property": property_name,
-                    "from_value": None,
-                    "to_value": entity.properties[property_name],
-                }
-            )
+        property_changes = property_value_changes(
+            entity.properties,
+            {},
+            include_added=True,
+            include_removed=False,
+        )
         change_kind = "created"
 
     detail: dict[str, Any] = {
         "change_kind": change_kind,
-        "property_changes": property_changes,
+        "property_changes": [
+            {
+                "property": change.property,
+                "from_value": change.from_value,
+                "to_value": change.to_value,
+            }
+            for change in property_changes
+        ],
     }
     if dumped_actor is not None:
         detail["actor_context"] = dumped_actor

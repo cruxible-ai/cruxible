@@ -9,6 +9,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, GroupResolution
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.service.property_diffs import property_delta as build_property_delta
 from cruxible_core.service.types import (
     GetGroupResult,
     GroupMemberReviewResult,
@@ -216,21 +217,6 @@ def list_resolutions_read_model(
         group_store.close()
 
 
-def _property_delta(
-    proposed: dict[str, Any],
-    current: dict[str, Any],
-) -> PropertyDeltaResult:
-    proposed_keys = set(proposed)
-    current_keys = set(current)
-    shared = proposed_keys & current_keys
-    return PropertyDeltaResult(
-        added=sorted(proposed_keys - current_keys),
-        removed=sorted(current_keys - proposed_keys),
-        changed=sorted(key for key in shared if proposed[key] != current[key]),
-        unchanged=sorted(key for key in shared if proposed[key] == current[key]),
-    )
-
-
 def _current_edges_for_member(
     graph: EntityGraph,
     member: CandidateMember,
@@ -261,9 +247,9 @@ def _member_review_state(
         current_review_status = (
             current.get("metadata", {}).get("assertion", {}).get("review", {}).get("status")
         )
-        property_delta = _property_delta(proposed_properties, current_properties)
+        property_delta = build_property_delta(proposed_properties, current_properties)
     elif not current_edges:
-        property_delta = _property_delta(proposed_properties, {})
+        property_delta = build_property_delta(proposed_properties, {})
     else:
         property_delta = PropertyDeltaResult()
 
