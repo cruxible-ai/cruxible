@@ -394,6 +394,7 @@ def _annotate_direct_write_conflict_groups(
         return []
 
     detected_at = format_datetime(utc_now())
+    assert detected_at is not None
     conflicts_by_group: dict[str, list[DirectWriteGroupInteraction]] = defaultdict(list)
     for interaction in interactions.pending_conflicts:
         conflicts_by_group[interaction.group_id].append(interaction)
