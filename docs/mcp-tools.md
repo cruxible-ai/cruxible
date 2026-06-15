@@ -821,7 +821,7 @@ error-level finding exists.
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need receipt-derived entity property changes for one entity type or entity.
+**Purpose:** Use when you need receipt-derived property changes for one entity type or entity.
 
 **Arguments:**
 
