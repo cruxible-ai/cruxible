@@ -52,6 +52,7 @@ from cruxible_core.service import (
     service_dereference_source_evidence,
     service_describe_query,
     service_evaluate,
+    service_explain_receipt,
     service_feedback_batch_inputs,
     service_feedback_from_query_result,
     service_feedback_input,
@@ -1149,6 +1150,23 @@ def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     instance = get_manager().get(instance_id)
     receipt = service_get_receipt(instance, receipt_id)
     return receipt.model_dump(mode="json")
+
+
+def explain_receipt(
+    instance_id: str,
+    receipt_id: str,
+    *,
+    format: contracts.ReceiptExplanationFormat = "markdown",
+) -> contracts.ReceiptExplanationResult:
+    """Render a stored receipt in a user-facing explanation format."""
+    check_permission("cruxible_receipt", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_explain_receipt(instance, receipt_id, format=format)
+    return contracts.ReceiptExplanationResult(
+        receipt_id=result.receipt_id,
+        format=result.format,
+        content=result.content,
+    )
 
 
 def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:

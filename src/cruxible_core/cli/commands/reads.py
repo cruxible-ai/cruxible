@@ -53,7 +53,6 @@ from cruxible_core.cli.commands._common import (
     _parse_params,
     _print_query_param_hints,
     _require_instance_id,
-    _require_local_instance,
     _resolve_decision_record_id,
     console,
     decision_record_option,
@@ -798,8 +797,18 @@ def query_describe_cmd(query_name: str, output_json: bool) -> None:
 @handle_errors
 def explain(receipt_id: str, fmt: str) -> None:
     """Explain a query result using its receipt."""
-    instance = _require_local_instance("explain")
-    result = service_explain_receipt(instance, receipt_id, format=fmt)  # type: ignore[arg-type]
+    result = _dispatch_cli_instance(
+        lambda client, instance_id: client.explain_receipt(
+            instance_id,
+            receipt_id,
+            format=cast(contracts.ReceiptExplanationFormat, fmt),
+        ),
+        lambda instance: service_explain_receipt(
+            instance,
+            receipt_id,
+            format=cast(contracts.ReceiptExplanationFormat, fmt),
+        ),
+    )
     click.echo(result.content)
 
 

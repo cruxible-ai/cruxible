@@ -205,7 +205,7 @@ def _require_instance_id() -> str:
 
 def _raise_server_mode_unsupported(command_name: str) -> None:
     raise click.UsageError(
-        f"{command_name} is not available in server mode. Use it locally or wait for v2."
+        f"{command_name} is local-only and is not available in server mode."
     )
 
 

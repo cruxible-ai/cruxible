@@ -130,6 +130,22 @@ async def receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
     )
 
 
+@router.get(
+    "/{instance_id}/receipts/{receipt_id}/explain",
+    response_model=contracts.ReceiptExplanationResult,
+)
+async def explain_receipt(
+    instance_id: str,
+    receipt_id: str,
+    format: contracts.ReceiptExplanationFormat = "markdown",
+) -> contracts.ReceiptExplanationResult:
+    return api.explain_receipt(
+        instance_id=resolve_server_instance_id(instance_id),
+        receipt_id=receipt_id,
+        format=format,
+    )
+
+
 @router.get("/{instance_id}/traces/{trace_id}")
 async def get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
     return api.get_trace(

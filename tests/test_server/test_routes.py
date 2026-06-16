@@ -389,6 +389,16 @@ def test_view_route_runs_named_query_with_string_params(
     receipt = app_client.get(f"/api/v1/{instance_id}/receipts/{payload['receipt_id']}")
     assert receipt.status_code == 200
 
+    explanation = app_client.get(
+        f"/api/v1/{instance_id}/receipts/{payload['receipt_id']}/explain",
+        params={"format": "mermaid"},
+    )
+    assert explanation.status_code == 200
+    explanation_payload = explanation.json()
+    assert explanation_payload["receipt_id"] == payload["receipt_id"]
+    assert explanation_payload["format"] == "mermaid"
+    assert "graph TD" in explanation_payload["content"]
+
 
 def test_view_route_windows_results_deterministically(
     app_client: TestClient,

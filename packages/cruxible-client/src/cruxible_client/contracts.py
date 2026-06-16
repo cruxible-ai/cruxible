@@ -26,6 +26,7 @@ FindingCategory = Literal[
     "unreviewed_co_member",
     "quality_check_failed",
 ]
+ReceiptExplanationFormat = Literal["json", "markdown", "mermaid"]
 
 # ── Constrained input types ───────────────────────────────────────────
 
@@ -548,6 +549,12 @@ class ListResult(ListEnvelopeFields):
 
 class TraceListResult(ListEnvelopeFields):
     items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReceiptExplanationResult(BaseModel):
+    receipt_id: str
+    format: ReceiptExplanationFormat
+    content: str
 
 
 class EvaluateResult(BaseModel):

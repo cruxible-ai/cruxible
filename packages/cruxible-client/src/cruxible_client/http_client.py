@@ -458,6 +458,19 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/receipts/{receipt_id}")
         return self._parse_json(response)
 
+    def explain_receipt(
+        self,
+        instance_id: str,
+        receipt_id: str,
+        *,
+        format: contracts.ReceiptExplanationFormat = "markdown",
+    ) -> contracts.ReceiptExplanationResult:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/receipts/{receipt_id}/explain",
+            params={"format": format},
+        )
+        return self._parse_model(response, contracts.ReceiptExplanationResult)
+
     def get_trace(self, instance_id: str, trace_id: str) -> dict[str, Any]:
         response = self._client.get(f"/api/v1/{instance_id}/traces/{trace_id}")
         return self._parse_json(response)

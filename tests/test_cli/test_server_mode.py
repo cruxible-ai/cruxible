@@ -1533,8 +1533,21 @@ def test_server_mode_lint_json_exits_zero_when_clean(
     assert payload["summary"]["evaluation_finding_count"] == 0
 
 
-def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+def test_explain_delegates_to_client_in_server_mode(monkeypatch, runner: CliRunner):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def explain_receipt(self, instance_id, receipt_id, *, format="markdown"):
+            captured["instance_id"] = instance_id
+            captured["receipt_id"] = receipt_id
+            captured["format"] = format
+            return contracts.ReceiptExplanationResult(
+                receipt_id=receipt_id,
+                format=format,
+                content="# Receipt R1\n",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
         cli,
         [
@@ -1547,8 +1560,33 @@ def test_explain_is_rejected_in_server_mode(monkeypatch, runner: CliRunner):
             "R1",
         ],
     )
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_123",
+        "receipt_id": "R1",
+        "format": "markdown",
+    }
+    assert "# Receipt R1" in result.output
+
+
+def test_local_only_server_mode_error_uses_current_wording(monkeypatch, runner: CliRunner):
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "export",
+            "edges",
+            "--output",
+            "edges.csv",
+        ],
+    )
     assert result.exit_code == 2
-    assert "not available in server mode" in result.output
+    assert "export edges is local-only and is not available in server mode" in result.output
+    assert "wait for v2" not in result.output
 
 
 def test_render_wiki_delegates_to_client_and_writes_files(

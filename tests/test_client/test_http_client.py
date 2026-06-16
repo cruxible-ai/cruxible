@@ -354,6 +354,35 @@ def test_trace_methods_call_trace_routes():
     assert seen[1][1] == expected_url
 
 
+def test_explain_receipt_calls_explain_route():
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        return httpx.Response(
+            200,
+            json={
+                "receipt_id": "RCP-1",
+                "format": "mermaid",
+                "content": "graph TD\n",
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = client.explain_receipt("inst_123", "RCP-1", format="mermaid")
+
+    assert result.receipt_id == "RCP-1"
+    assert result.format == "mermaid"
+    assert result.content == "graph TD\n"
+    assert seen == [
+        (
+            "GET",
+            "http://cruxible/api/v1/inst_123/receipts/RCP-1/explain?format=mermaid",
+        )
+    ]
+
+
 def test_paginated_client_methods_serialize_offset():
     captured: dict[str, dict[str, str]] = {}
 
