@@ -2,7 +2,7 @@
 
 This kit defines a first-pass Cruxible state model for governed dev/project
 operating state. It is for agent-assisted project work where future agents
-need durable context about roadmap items, execution work, design decisions,
+need durable context about roadmap items, execution work, decisions,
 risks, open questions, release placement, and dependency graphs.
 
 One world instance represents one product or project operating state. The first
@@ -48,7 +48,7 @@ items.
 `WorkItem` is an execution-level task, issue, bug, cleanup, research item, doc
 item, or test item.
 
-`DesignDecision` is a durable decision agents must reason about over time. It
+`Decision` is a durable decision agents must reason about over time. It
 has lifecycle state, can supersede earlier decisions, and can constrain future
 work.
 
@@ -85,7 +85,7 @@ Dev/project state:
 - `ReleaseLine`
 - `Milestone`
 - `WorkItem`
-- `DesignDecision`
+- `Decision`
 - `Risk`
 - `OpenQuestion`
 
@@ -102,7 +102,7 @@ flowchart LR
   classDef governedEntity fill:#e67e22,stroke:#a0521c,color:#fff
 
   entity_Capability["Capability"]
-  entity_DesignDecision["Design Decision"]
+  entity_Decision["Decision"]
   entity_Milestone["Milestone"]
   entity_OpenQuestion["Open Question"]
   entity_ProductArea["Product Area"]
@@ -112,7 +112,7 @@ flowchart LR
   entity_RoadmapItem["Roadmap Item"]
   entity_WorkItem["Work Item"]
   class entity_Capability,entity_Milestone,entity_ProductArea,entity_ReleaseLine,entity_ReviewRequest,entity_RoadmapItem,entity_WorkItem canonicalEntity
-  class entity_DesignDecision,entity_OpenQuestion,entity_Risk governedEntity
+  class entity_Decision,entity_OpenQuestion,entity_Risk governedEntity
 
   %% Deterministic canonical relationships
   entity_Capability -- "Capability In Area" --> entity_ProductArea
@@ -130,13 +130,13 @@ flowchart LR
   entity_WorkItem -- "Work Item Targets Area" --> entity_ProductArea
 
   %% Governed proposal/review relationships
-  entity_DesignDecision -. "Decision Affects Area" .-> entity_ProductArea
-  entity_DesignDecision -. "Decision Affects Capability" .-> entity_Capability
-  entity_DesignDecision -. "Decision Affects Roadmap Item" .-> entity_RoadmapItem
-  entity_DesignDecision -. "Decision Answers Open Question" .-> entity_OpenQuestion
-  entity_DesignDecision -. "Decision Constrains Work Item" .-> entity_WorkItem
-  entity_DesignDecision -. "Decision Supersedes Decision" .-> entity_DesignDecision
-  entity_OpenQuestion -. "Open Question Blocks Decision" .-> entity_DesignDecision
+  entity_Decision -. "Decision Affects Area" .-> entity_ProductArea
+  entity_Decision -. "Decision Affects Capability" .-> entity_Capability
+  entity_Decision -. "Decision Affects Roadmap Item" .-> entity_RoadmapItem
+  entity_Decision -. "Decision Answers Open Question" .-> entity_OpenQuestion
+  entity_Decision -. "Decision Constrains Work Item" .-> entity_WorkItem
+  entity_Decision -. "Decision Supersedes Decision" .-> entity_Decision
+  entity_OpenQuestion -. "Open Question Blocks Decision" .-> entity_Decision
   entity_OpenQuestion -. "Open Question Blocks Roadmap Item" .-> entity_RoadmapItem
   entity_OpenQuestion -. "Open Question Blocks Work Item" .-> entity_WorkItem
   entity_Risk -. "Risk Attaches To Area" .-> entity_ProductArea
@@ -196,13 +196,13 @@ describe the evidence or judgment required before project state compounds.
 <!-- CRUXIBLE:BEGIN governance-table -->
 | Relationship | Scope | Creation Path | Signals | Auto-resolve Gate | Review Policy | Feedback | Outcomes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Decision Affects Area | Design Decision -> Product Area | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Decision Affects Capability | Design Decision -> Capability | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Decision Affects Roadmap Item | Design Decision -> Roadmap Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Decision Answers Open Question | Design Decision -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Decision Constrains Work Item | Design Decision -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Decision Supersedes Decision | Design Decision -> Design Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
-| Open Question Blocks Decision | Open Question -> Design Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Affects Area | Decision -> Product Area | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Affects Capability | Decision -> Capability | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Affects Roadmap Item | Decision -> Roadmap Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Answers Open Question | Decision -> Open Question | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Constrains Work Item | Decision -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Decision Supersedes Decision | Decision -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
+| Open Question Blocks Decision | Open Question -> Decision | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Open Question Blocks Roadmap Item | Open Question -> Roadmap Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Open Question Blocks Work Item | Open Question -> Work Item | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
 | Risk Attaches To Area | Risk -> Product Area | Agent/manual group propose | Maintainer Judgment, Source Evidence | All Support; prior trust: Trusted Only | Trust-gated auto-resolve | - | - |
@@ -228,7 +228,7 @@ governed relationships that consume each signal source.
 
 ## Why Decisions Are Entities
 
-`DesignDecision` is first-class because future agents need to inspect decision
+`Decision` is first-class because future agents need to inspect decision
 lifecycle, supersession, ownership, and impact before changing work. A decision
 is not just a paragraph in a document once downstream work depends on it.
 
@@ -279,7 +279,7 @@ The named queries are intentionally narrow:
   with work, decisions, risks, questions, and capabilities for subsystem edits.
 - `release_readiness_context` starts from a release line and returns work items
   with roadmap, milestone, dependency, decision, risk, and question context.
-- `decision_impact_context` starts from a design decision and returns
+- `decision_impact_context` starts from a decision and returns
   constrained work with affected roadmap, area, capability, answered-question,
   and supersession context.
 - `open_question_context` starts from an open question and returns blocked work
@@ -300,7 +300,7 @@ flowchart LR
 
   query_entity_AnyEntity["Any Entity"]
   query_entity_Collection_query["Collection Query"]
-  query_entity_DesignDecision["Design Decision"]
+  query_entity_Decision["Decision"]
   query_entity_OpenQuestion["Open Question"]
   query_entity_ProductArea["Product Area"]
   query_entity_ReleaseLine["Release Line"]
@@ -308,13 +308,13 @@ flowchart LR
   query_entity_Risk["Risk"]
   query_entity_RoadmapItem["Roadmap Item"]
   query_entity_WorkItem["Work Item"]
-  class query_entity_AnyEntity,query_entity_Collection_query,query_entity_DesignDecision,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
-  query_entity_Collection_query --> query_entity_DesignDecision
+  class query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
+  query_entity_Collection_query --> query_entity_Decision
   query_entity_Collection_query --> query_entity_OpenQuestion
   query_entity_Collection_query --> query_entity_ReviewRequest
   query_entity_Collection_query --> query_entity_Risk
   query_entity_Collection_query --> query_entity_WorkItem
-  query_entity_DesignDecision --> query_entity_RoadmapItem
+  query_entity_Decision --> query_entity_RoadmapItem
   query_entity_OpenQuestion --> query_entity_RoadmapItem
   query_entity_ProductArea --> query_entity_RoadmapItem
   query_entity_ProductArea --> query_entity_WorkItem
@@ -342,14 +342,14 @@ paths, and intended purpose.
 | Open Questions For Owner | collection | Open Question | reviewable |  | Planned or active open questions owned by a person, with the decisions and work items they block. |
 | Open Questions Needing Review | collection | Open Question | live |  | Active open questions that should be reviewed before dependent work proceeds. |
 | Review Queue | collection | Review Request | live |  | Open review requests awaiting review. |
-| Superseded Decisions | collection | Design Decision | live |  | Design decisions whose status indicates they have been superseded. |
+| Superseded Decisions | collection | Decision | live |  | Decisions whose status indicates they have been superseded. |
 | Work Items For Owner | collection | Work Item | reviewable |  | Owner-scoped open work queue with dependency, blocker, and latest review status context. |
 
-### Design Decision
+### Decision
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Decision Impact Context | traversal | Roadmap Item | reviewable | Decision Affects Roadmap Item \| Decision Constrains Work Item \| Decision Affects Capability \| Decision Affects Area \| Decision Answers Open Question \| Decision Supersedes Decision (Outgoing) | Starting from a design decision, inspect affected roadmap, constrained work, answered questions, and supersession context. |
+| Decision Impact Context | traversal | Roadmap Item | reviewable | Decision Affects Roadmap Item \| Decision Constrains Work Item \| Decision Affects Capability \| Decision Affects Area \| Decision Answers Open Question \| Decision Supersedes Decision (Outgoing) | Starting from a decision, inspect affected roadmap, constrained work, answered questions, and supersession context. |
 
 ### Open Question
 

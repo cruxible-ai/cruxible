@@ -257,7 +257,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "ReleaseLine",
         "Milestone",
         "WorkItem",
-        "DesignDecision",
+        "Decision",
         "Risk",
         "OpenQuestion",
         "ReviewRequest",
@@ -395,7 +395,7 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
     )
     graph.add_entity(
         EntityInstance(
-            entity_type="DesignDecision",
+            entity_type="Decision",
             entity_id="dec-context",
             properties={
                 "decision_id": "dec-context",
@@ -416,7 +416,7 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="decision_constrains_work_item",
-            from_type="DesignDecision",
+            from_type="Decision",
             from_id="dec-context",
             to_type="WorkItem",
             to_id="wi-context",
@@ -452,7 +452,7 @@ def test_project_state_context_queries_return_agent_read_models(tmp_path: Path) 
         if isinstance(row, QueryPathRow) and row.path
     } == {
         ("ProductArea", "area-core", "work_item_targets_area"),
-        ("DesignDecision", "dec-context", "decision_constrains_work_item"),
+        ("Decision", "dec-context", "decision_constrains_work_item"),
     }
     for row in context_result.items:
         assert isinstance(row, QueryPathRow)
@@ -707,7 +707,7 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
             },
         ),
         EntityInstance(
-            entity_type="DesignDecision",
+            entity_type="Decision",
             entity_id="dec-blocked",
             properties={
                 "decision_id": "dec-blocked",
@@ -769,7 +769,7 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
             relationship_type="open_question_blocks_decision",
             from_type="OpenQuestion",
             from_id="oq-blocker",
-            to_type="DesignDecision",
+            to_type="Decision",
             to_id="dec-blocked",
             properties={"blocking_basis": "Decision needs the answer."},
         ),
@@ -783,7 +783,7 @@ def test_project_state_owner_queries_return_dashboard_read_models(tmp_path: Path
         ),
         RelationshipInstance(
             relationship_type="decision_constrains_work_item",
-            from_type="DesignDecision",
+            from_type="Decision",
             from_id="dec-blocked",
             to_type="WorkItem",
             to_id="wi-owner-active",

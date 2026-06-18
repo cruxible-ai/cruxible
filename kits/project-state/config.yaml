@@ -156,7 +156,7 @@ entity_types:
         type: date
         optional: true
 
-  DesignDecision:
+  Decision:
     description: Durable project decision with lifecycle, supersession, and impact.
     properties:
       decision_id:
@@ -402,8 +402,8 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_answers_open_question
-    description: Governed judgment that a design decision answers or closes an open question.
-    from: DesignDecision
+    description: Governed judgment that a decision answers or closes an open question.
+    from: Decision
     to: OpenQuestion
     properties:
       answer_basis:
@@ -419,8 +419,8 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_affects_area
-    description: Governed judgment that a design decision affects a product area.
-    from: DesignDecision
+    description: Governed judgment that a decision affects a product area.
+    from: Decision
     to: ProductArea
     properties:
       impact_basis:
@@ -436,8 +436,8 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_affects_capability
-    description: Governed judgment that a design decision affects a capability.
-    from: DesignDecision
+    description: Governed judgment that a decision affects a capability.
+    from: Decision
     to: Capability
     properties:
       impact_basis:
@@ -453,8 +453,8 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_affects_roadmap_item
-    description: Governed judgment that a design decision affects a roadmap item.
-    from: DesignDecision
+    description: Governed judgment that a decision affects a roadmap item.
+    from: Decision
     to: RoadmapItem
     properties:
       impact_type:
@@ -473,8 +473,8 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_constrains_work_item
-    description: Governed judgment that a design decision constrains how a work item should be changed.
-    from: DesignDecision
+    description: Governed judgment that a decision constrains how a work item should be changed.
+    from: Decision
     to: WorkItem
     properties:
       impact_type:
@@ -493,9 +493,9 @@ relationships:
           always_review_on_unsure: true
 
   - name: decision_supersedes_decision
-    description: Governed judgment that one design decision supersedes another.
-    from: DesignDecision
-    to: DesignDecision
+    description: Governed judgment that one decision supersedes another.
+    from: Decision
+    to: Decision
     properties:
       supersession_basis:
         type: string
@@ -561,9 +561,9 @@ relationships:
           always_review_on_unsure: true
 
   - name: open_question_blocks_decision
-    description: Governed judgment that an open question blocks a design decision.
+    description: Governed judgment that an open question blocks a decision.
     from: OpenQuestion
-    to: DesignDecision
+    to: Decision
     properties:
       blocking_basis:
         type: string
@@ -1006,8 +1006,8 @@ named_queries:
 
   decision_impact_context:
     mode: traversal
-    description: Starting from a design decision, inspect affected roadmap, constrained work, answered questions, and supersession context.
-    entry_point: DesignDecision
+    description: Starting from a decision, inspect affected roadmap, constrained work, answered questions, and supersession context.
+    entry_point: Decision
     returns: RoadmapItem
     relationship_state: reviewable
     allow_relationship_state_override: true
@@ -1211,9 +1211,9 @@ named_queries:
 
   superseded_decisions:
     mode: collection
-    description: Design decisions whose status indicates they have been superseded.
+    description: Decisions whose status indicates they have been superseded.
     result_shape: entity
-    returns: DesignDecision
+    returns: Decision
     where:
       result.properties.status:
         eq: superseded
