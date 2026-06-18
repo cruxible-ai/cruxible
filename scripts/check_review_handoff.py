@@ -18,9 +18,13 @@ from typing import Any, Protocol
 REVIEW_ENTITY_TYPE = "ReviewRequest"
 WORK_ITEM_ENTITY_TYPE = "WorkItem"
 WORK_REVIEW_RELATIONSHIP = "review_request_for_work_item"
+DEFAULT_EXPECTED_CONFIG_NAME = "agent_operation"
 
 
 class CruxibleReviewClient(Protocol):
+    def schema(self, instance_id: str) -> dict[str, Any]:
+        """Return the loaded instance config schema."""
+
     def list(
         self,
         instance_id: str,
@@ -61,6 +65,8 @@ class ReviewHandoffResult:
     ok: bool
     head: str
     repo: str | None
+    config_name: str | None
+    expected_config_name: str | None
     approved: list[ReviewCandidate]
     candidates: list[ReviewCandidate]
     failures: list[str]
@@ -86,6 +92,12 @@ def _result_items(result: Any) -> list[Any]:
     if not isinstance(items, list):
         raise TypeError("Cruxible list result did not contain an item list")
     return items
+
+
+def _config_name(client: CruxibleReviewClient, *, instance_id: str) -> str | None:
+    payload = client.schema(instance_id)
+    name = payload.get("name")
+    return name if isinstance(name, str) else None
 
 
 def _review_entity_id(item: Any) -> str:
@@ -175,12 +187,32 @@ def check_review_handoff(
     instance_id: str,
     head: str,
     repo: str | None = None,
+    expected_config_name: str | None = None,
 ) -> ReviewHandoffResult:
     """Return whether a commit has an approved, work-linked ReviewRequest."""
 
+    failures: list[str] = []
+    config_name: str | None = None
+    if expected_config_name:
+        config_name = _config_name(client, instance_id=instance_id)
+        if config_name != expected_config_name:
+            failures.append(
+                f"Target instance config is {config_name!r}, "
+                f"expected {expected_config_name!r}"
+            )
+            return ReviewHandoffResult(
+                ok=False,
+                head=head,
+                repo=repo,
+                config_name=config_name,
+                expected_config_name=expected_config_name,
+                approved=[],
+                candidates=[],
+                failures=failures,
+            )
+
     raw_reviews = _list_review_requests_for_head(client, instance_id=instance_id, head=head)
     candidates: list[ReviewCandidate] = []
-    failures: list[str] = []
     for raw_review in raw_reviews:
         review_id = _review_entity_id(raw_review)
         properties = _review_properties(raw_review)
@@ -223,6 +255,8 @@ def check_review_handoff(
         ok=bool(approved),
         head=head,
         repo=repo,
+        config_name=config_name,
+        expected_config_name=expected_config_name,
         approved=approved,
         candidates=candidates,
         failures=failures,
@@ -253,6 +287,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", default=os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN"))
     parser.add_argument("--head", default=None, help="Commit SHA to check. Defaults to HEAD.")
     parser.add_argument(
+        "--expected-config-name",
+        default=os.environ.get("CRUXIBLE_EXPECTED_CONFIG_NAME", DEFAULT_EXPECTED_CONFIG_NAME),
+        help=(
+            "Expected Cruxible config name for this review state. "
+            "Set to empty to skip the check."
+        ),
+    )
+    parser.add_argument(
         "--repo",
         default=os.environ.get("CRUXIBLE_CHANGE_REPO") or os.environ.get("GITHUB_REPOSITORY"),
         help="Optional repository full name that ReviewRequest.change_repo must match.",
@@ -269,6 +311,13 @@ def _make_client(*, server_url: str | None, server_socket: str | None, token: st
     if server_socket:
         return CruxibleClient(socket_path=server_socket, token=token)
     return CruxibleClient(base_url=server_url, token=token)
+
+
+def _normalize_expected_config_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _print_human(result: ReviewHandoffResult) -> None:
@@ -305,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         head = args.head or _default_head()
+        expected_config_name = _normalize_expected_config_name(args.expected_config_name)
         client = _make_client(
             server_url=args.server_url,
             server_socket=args.server_socket,
@@ -316,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
                 instance_id=args.instance_id,
                 head=head,
                 repo=args.repo,
+                expected_config_name=expected_config_name,
             )
         finally:
             close = getattr(client, "close", None)

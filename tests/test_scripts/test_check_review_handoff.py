@@ -17,9 +17,17 @@ class _FakeClient:
         self,
         reviews: list[dict[str, Any]],
         work_links: dict[str, list[str]],
+        *,
+        config_name: str = "agent_operation",
     ) -> None:
         self._reviews = reviews
         self._work_links = work_links
+        self._config_name = config_name
+        self.list_calls = 0
+
+    def schema(self, instance_id: str) -> dict[str, Any]:
+        assert instance_id == "inst_ops"
+        return {"name": self._config_name}
 
     def list(
         self,
@@ -31,6 +39,7 @@ class _FakeClient:
         offset: int = 0,
         property_filter: dict[str, Any] | None = None,
     ) -> _ListResult:
+        self.list_calls += 1
         assert instance_id == "inst_ops"
         assert resource_type == "entities"
         assert entity_type == "ReviewRequest"
@@ -100,6 +109,7 @@ def test_approved_review_linked_to_work_item_passes() -> None:
         instance_id="inst_ops",
         head="abc123",
         repo="cruxible-ai/cruxible-core",
+        expected_config_name="agent_operation",
     )
 
     assert result.ok is True
@@ -122,6 +132,31 @@ def test_unapproved_review_fails_even_when_linked_to_work() -> None:
 
     assert result.ok is False
     assert "rr-requested: status is 'requested', expected 'approved'" in result.failures
+
+
+def test_config_name_mismatch_fails_before_review_lookup() -> None:
+    client = _FakeClient(
+        [_review("rr-approved", status="approved")],
+        {"rr-approved": ["wi-1"]},
+        config_name="project_state",
+    )
+
+    result = check_review_handoff(
+        client,
+        instance_id="inst_ops",
+        head="abc123",
+        repo="cruxible-ai/cruxible-core",
+        expected_config_name="agent_operation",
+    )
+
+    assert result.ok is False
+    assert result.config_name == "project_state"
+    assert result.expected_config_name == "agent_operation"
+    assert (
+        "Target instance config is 'project_state', expected 'agent_operation'"
+        in result.failures
+    )
+    assert client.list_calls == 0
 
 
 def test_approved_review_without_work_item_link_fails() -> None:
