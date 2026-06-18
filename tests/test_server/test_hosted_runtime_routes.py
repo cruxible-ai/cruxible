@@ -598,7 +598,7 @@ def test_governed_write_runtime_credential_cannot_graph_write_or_admin(
 
     governed_write = client.post(
         f"/api/v1/{instance_id}/snapshots",
-        json={"label": "governed-write-allowed", "actor_context": _actor_context()},
+        json={"label": "governed-write-allowed"},
         headers=headers,
     )
     assert governed_write.status_code == 200
@@ -744,11 +744,16 @@ def test_runtime_credential_direct_write_derives_actor_context(
     assert actor_context["operation_id"].startswith("op_")
 
 
-def test_runtime_credential_explicit_actor_context_overrides_derived_context(
+def test_runtime_credential_rejects_spoofed_actor_context_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
 ) -> None:
+    # G3: a runtime credential must NOT be able to assert an arbitrary actor_id
+    # via a request-supplied actor_context. Doing so would let a credential
+    # labeled "codex-core" impersonate an authorized human reviewer and pass
+    # identity-gated approval guards. The mismatch is rejected and nothing is
+    # written.
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, server_project)
     headers = _runtime_credential_headers(
@@ -757,25 +762,81 @@ def test_runtime_credential_explicit_actor_context_overrides_derived_context(
         permission_mode=PermissionMode.GRAPH_WRITE,
         label="codex-core",
     )
-    explicit_actor = _actor_context(actor_id="usr_control_plane", operation_id="op_control")
+    spoofed_actor = _actor_context(actor_id="robert", operation_id="op_control")
 
     response = client.post(
         f"/api/v1/{instance_id}/direct-writes/batch",
         json={
-            "payload": _direct_write_payload("EXPLICIT-ACTOR"),
-            "actor_context": explicit_actor,
+            "payload": _direct_write_payload("SPOOFED-ACTOR"),
+            "actor_context": spoofed_actor,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error_type"] == "AuthenticationError"
+    # The spoofed write was rejected before any state changed.
+    fitment = client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-SPOOFED-ACTOR",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-SPOOFED-ACTOR",
+        },
+        headers=headers,
+    )
+    assert fitment.status_code == 200
+    assert fitment.json()["found"] is False
+
+
+def test_runtime_credential_matching_actor_context_keeps_credential_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    # A supplied actor_context that agrees with the credential identity is
+    # accepted; the credential remains authoritative for the identity fields
+    # and only the correlation request_id is carried through.
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    credential_label = "codex-core"
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label=credential_label,
+    )
+    matching_actor = {
+        "actor_type": "service_account",
+        "actor_id": credential_label,
+        "org_id": instance_id,
+        "operation_id": "op_supplied",
+        "timestamp": "2026-06-05T12:00:00Z",
+        "request_id": "req_correlation",
+    }
+
+    response = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": _direct_write_payload("MATCHING-ACTOR"),
+            "actor_context": matching_actor,
         },
         headers=headers,
     )
 
     assert response.status_code == 200
-    lookup = _lookup_fitment(client, instance_id, "EXPLICIT-ACTOR", headers=headers)
+    lookup = _lookup_fitment(client, instance_id, "MATCHING-ACTOR", headers=headers)
     actor_context = lookup["metadata"]["provenance"]["created_actor_context"]
-    assert actor_context["actor_type"] == explicit_actor["actor_type"]
-    assert actor_context["actor_id"] == explicit_actor["actor_id"]
-    assert actor_context["org_id"] == explicit_actor["org_id"]
-    assert actor_context["operation_id"] == explicit_actor["operation_id"]
-    assert actor_context["request_id"] == explicit_actor["request_id"]
+    assert actor_context["actor_type"] == "service_account"
+    assert actor_context["actor_id"] == credential_label
+    assert actor_context["org_id"] == instance_id
+    # Identity stays credential-derived: the supplied operation_id does NOT win.
+    assert actor_context["operation_id"] != "op_supplied"
+    assert actor_context["operation_id"].startswith("op_")
+    # The correlation request_id is preserved from the supplied context.
+    assert actor_context["request_id"] == "req_correlation"
 
 
 def test_runtime_credential_approval_guard_uses_derived_actor_identity(
@@ -889,6 +950,100 @@ def test_runtime_credential_approval_guard_uses_derived_actor_identity(
     assert closed.status_code == 200
 
 
+def test_runtime_credential_cannot_spoof_actor_to_pass_approval_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G3 end-to-end: a "codex-core" runtime credential supplies an
+    # actor_context claiming actor_id="robert" (an authorized reviewer) to try
+    # to approve its own review. The credential identity is authoritative, so
+    # the spoofed actor_context is rejected before reaching the approval guard,
+    # and the ReviewRequest is NOT approved.
+    project_root = tmp_path / "project-state"
+    project_root.mkdir()
+    (project_root / "config.yaml").write_text(PROJECT_STATE_CONFIG.read_text())
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, project_root)
+    codex_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="codex-core",
+    )
+
+    seed = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "WorkItem",
+                        "entity_id": "wi-spoof-guard",
+                        "properties": {
+                            "work_item_id": "wi-spoof-guard",
+                            "title": "Spoof guard",
+                            "type": "feature",
+                            "status": "active",
+                            "priority": "high",
+                        },
+                    },
+                    {
+                        "entity_type": "ReviewRequest",
+                        "entity_id": "rr-spoof-guard",
+                        "properties": {
+                            "review_request_id": "rr-spoof-guard",
+                            "title": "Spoof guard review",
+                            "status": "requested",
+                        },
+                    },
+                ],
+                "relationships": [
+                    {
+                        "from_type": "ReviewRequest",
+                        "from_id": "rr-spoof-guard",
+                        "relationship_type": "review_request_for_work_item",
+                        "to_type": "WorkItem",
+                        "to_id": "wi-spoof-guard",
+                    }
+                ],
+            }
+        },
+        headers=codex_headers,
+    )
+    assert seed.status_code == 200
+
+    spoofed = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "ReviewRequest",
+                    "entity_id": "rr-spoof-guard",
+                    "properties": {"status": "approved"},
+                }
+            ],
+            "actor_context": {
+                "actor_type": "human_user",
+                "actor_id": "robert",
+                "org_id": instance_id,
+                "operation_id": "op_spoof",
+                "timestamp": "2026-06-05T12:00:00Z",
+            },
+        },
+        headers=codex_headers,
+    )
+    assert spoofed.status_code == 401
+    assert spoofed.json()["error_type"] == "AuthenticationError"
+
+    review = client.get(
+        f"/api/v1/{instance_id}/entities/ReviewRequest/rr-spoof-guard",
+        headers=codex_headers,
+    )
+    assert review.status_code == 200
+    assert review.json()["found"] is True
+    assert review.json()["properties"]["status"] == "requested"
+
+
 def test_non_runtime_auth_direct_write_does_not_derive_actor_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -918,60 +1073,93 @@ def test_non_runtime_auth_direct_write_does_not_derive_actor_context(
     assert "created_actor_context" not in legacy_lookup["metadata"]["provenance"]
 
 
-def test_decision_record_routes_persist_actor_context(
+def test_decision_record_routes_persist_credential_derived_actor_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
 ) -> None:
+    # Decision records persist the actor context, but a runtime credential is
+    # authoritative for the identity: the persisted actor is derived from the
+    # credential, not from a request-supplied actor_context. A matching supplied
+    # context is accepted (request_id carried through); the identity fields stay
+    # credential-derived.
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, server_project)
+    credential_label = "decision-agent"
     headers = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
         permission_mode=PermissionMode.GOVERNED_WRITE,
+        label=credential_label,
     )
 
-    opened_actor = _actor_context(actor_id="usr_open", operation_id="op_open")
     created = client.post(
         f"/api/v1/{instance_id}/decision-records",
-        json={"question": "Decide?", "actor_context": opened_actor},
+        json={"question": "Decide?"},
         headers=headers,
     )
     assert created.status_code == 200
     record = created.json()["record"]
-    assert record["opened_actor_context"]["actor_id"] == "usr_open"
+    assert record["opened_actor_context"]["actor_type"] == "service_account"
+    assert record["opened_actor_context"]["actor_id"] == credential_label
+    assert record["opened_actor_context"]["org_id"] == instance_id
     fetched = client.get(
         f"/api/v1/{instance_id}/decision-records/{record['decision_record_id']}",
         headers=headers,
     )
     assert fetched.status_code == 200
     fetched_record = fetched.json()["record"]
-    assert fetched_record["opened_actor_context"]["actor_id"] == "usr_open"
-    assert fetched_record["opened_actor_context"]["operation_id"] == "op_open"
+    assert fetched_record["opened_actor_context"]["actor_id"] == credential_label
     assert fetched_record["finalized_actor_context"] is None
 
-    finalized_actor = _actor_context(actor_id="usr_finalize", operation_id="op_finalize")
     finalized = client.post(
         f"/api/v1/{instance_id}/decision-records/{record['decision_record_id']}/finalize",
         json={
             "final_decision": "Ship it",
             "decision_class": "recommended",
-            "actor_context": finalized_actor,
         },
         headers=headers,
     )
     assert finalized.status_code == 200
-    assert finalized.json()["record"]["finalized_actor_context"]["actor_id"] == "usr_finalize"
+    assert (
+        finalized.json()["record"]["finalized_actor_context"]["actor_id"] == credential_label
+    )
     fetched_final = client.get(
         f"/api/v1/{instance_id}/decision-records/{record['decision_record_id']}",
         headers=headers,
     )
     assert fetched_final.status_code == 200
     fetched_final_record = fetched_final.json()["record"]
-    assert fetched_final_record["opened_actor_context"]["actor_id"] == "usr_open"
-    assert fetched_final_record["opened_actor_context"]["operation_id"] == "op_open"
-    assert fetched_final_record["finalized_actor_context"]["actor_id"] == "usr_finalize"
-    assert fetched_final_record["finalized_actor_context"]["operation_id"] == "op_finalize"
+    assert fetched_final_record["opened_actor_context"]["actor_id"] == credential_label
+    assert fetched_final_record["finalized_actor_context"]["actor_id"] == credential_label
+
+
+def test_runtime_credential_decision_record_rejects_spoofed_actor_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    # A runtime credential cannot relay an arbitrary actor identity onto a
+    # decision record either; a mismatching actor_context is rejected.
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+        label="decision-agent",
+    )
+
+    spoofed = client.post(
+        f"/api/v1/{instance_id}/decision-records",
+        json={
+            "question": "Decide?",
+            "actor_context": _actor_context(actor_id="robert", operation_id="op_spoof"),
+        },
+        headers=headers,
+    )
+    assert spoofed.status_code == 401
+    assert spoofed.json()["error_type"] == "AuthenticationError"
 
 
 def test_actor_context_extra_fields_are_rejected_by_http_contract(
@@ -1015,7 +1203,6 @@ def test_graph_write_runtime_credential_cannot_admin(
         f"/api/v1/{instance_id}/entities",
         json={
             "entities": [_valid_vehicle_entity("V-GRAPH-ALLOWED")],
-            "actor_context": _actor_context(),
         },
         headers=headers,
     )
@@ -1073,7 +1260,6 @@ def test_runtime_credential_permission_scope_overrides_global_mode(
         f"/api/v1/{instance_id}/entities",
         json={
             "entities": [_valid_vehicle_entity("V-REQUEST-SCOPE")],
-            "actor_context": _actor_context(),
         },
         headers=headers,
     )

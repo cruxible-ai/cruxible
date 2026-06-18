@@ -13,7 +13,7 @@ from typing import Any, TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client import contracts
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import AuthenticationError, ConfigError
 from cruxible_core.governance.actors import (
     GovernedActorContext,
     dump_actor_context,
@@ -193,14 +193,54 @@ def _record_actor_operation(actor: GovernedActorContext) -> None:
 
 
 def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
-    if value is None:
-        actor = _runtime_credential_actor_context()
-        if actor is not None:
-            _record_actor_operation(actor)
+    credential_actor = _runtime_credential_actor_context()
+    if credential_actor is not None:
+        # The request is authenticated by a runtime credential, so the
+        # credential-derived identity is authoritative. A request-supplied
+        # actor_context must NOT be able to assert an arbitrary actor; otherwise
+        # a credential labeled e.g. "codex-core" could submit
+        # actor_id="robert" and pass identity-gated approval guards. When the
+        # request also supplies an actor_context, accept it only when it agrees
+        # with the credential identity; reject on any mismatch.
+        if value is not None:
+            actor = _reconcile_credential_actor_context(credential_actor, value)
+        else:
+            actor = credential_actor
+        _record_actor_operation(actor)
         return actor
+    if value is None:
+        return None
     actor = require_hosted_actor_context(value)
     _record_actor_operation(actor)
     return actor
+
+
+def _reconcile_credential_actor_context(
+    credential_actor: GovernedActorContext,
+    value: Any,
+) -> GovernedActorContext:
+    """Reconcile a request-supplied actor_context against the credential identity.
+
+    The runtime credential is authoritative for the actor identity fields
+    (actor_type / actor_id / org_id). A supplied actor_context may only carry
+    matching identity fields; mismatches are rejected as an authentication
+    failure rather than silently overriding the authenticated principal. Any
+    supplied request_id is preserved for correlation.
+    """
+    supplied = require_hosted_actor_context(value)
+    mismatches = [
+        field
+        for field in ("actor_type", "actor_id", "org_id")
+        if getattr(supplied, field) != getattr(credential_actor, field)
+    ]
+    if mismatches:
+        raise AuthenticationError(
+            "Supplied actor_context does not match the authenticated runtime "
+            f"credential identity (mismatched: {', '.join(mismatches)})"
+        )
+    if supplied.request_id is None:
+        return credential_actor
+    return credential_actor.model_copy(update={"request_id": supplied.request_id})
 
 
 def _has_init_config(
