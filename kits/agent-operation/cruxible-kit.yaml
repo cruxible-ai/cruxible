@@ -1,0 +1,9 @@
+schema_version: cruxible.kit.v1
+kit_id: agent-operation
+version: 0.2.0
+role: standalone
+entry_config: config.yaml
+provider_paths: []
+copy_paths:
+  - README.md
+requires_extras: []

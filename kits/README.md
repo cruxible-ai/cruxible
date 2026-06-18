@@ -10,6 +10,7 @@ views for the ontology, governed relationships, workflows, and named queries.
 |---|---|---|
 | [kev-reference](kev-reference/) | Cybersecurity | Standalone public KEV, NVD, EPSS, vendor, product, and vulnerability reference state. |
 | [kev-triage](kev-triage/) | Cybersecurity | Overlay kit for local assets, exposure triage, remediation, incidents, and controls. |
+| [agent-operation](agent-operation/) | Agent Operations | Reusable operating-state overlay for agent/human work, reviews, decisions, blockers, dependencies, composition, and lineage. |
 | [supply-chain-blast-radius](supply-chain-blast-radius/) | Supply Chain | Supplier, component, product, shipment, and incident blast-radius modeling. |
 | [case-law-monitoring](case-law-monitoring/) | Legal | Matter-centered case-law monitoring and authority impact modeling. |
 | [retail-catalog](retail-catalog/) | Retail | Product catalog relationships, substitutes, complements, and downstream retail planning surfaces. |

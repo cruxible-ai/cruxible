@@ -1,0 +1,1212 @@
+version: "1.0"
+name: agent_operation
+description: >
+  Agent-native operation state for coordinating human and agent work over one
+  or more durable domain ontologies. This kit models the operating layer:
+  work, reviews, decisions, risks, open questions, actors, lifecycle state,
+  blockers, dependencies, composition, lineage, and optional references out to
+  domain state. It is not a domain model, ticketing clone, document inventory,
+  workflow catalog, provider catalog, or memory store. Source documents,
+  transcripts, OKF bundles, plans, and review reports remain evidence for
+  state claims; they are not operation-state entities.
+
+enums:
+  actor_kind:
+    values: [human, agent, service_account, system]
+  actor_status:
+    values: [active, inactive]
+  priority:
+    values: [low, medium, high, critical]
+    ordered: low_to_high
+  lifecycle_status:
+    values: [planned, active, blocked, deferred, closed, superseded]
+  work_item_type:
+    values: [feature, bug, cleanup, research, docs, test, infrastructure, operations]
+  decision_status:
+    values: [proposed, accepted, superseded, rejected, deferred]
+  decision_impact_type:
+    values: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
+  review_status:
+    values: [requested, in_review, changes_requested, approved, withdrawn]
+  state_note_kind:
+    values: [correction, field_note, rationale_update, implementation_note, review_note]
+
+entity_types:
+  Actor:
+    description: Human, agent, service account, or system actor referenced by operation state.
+    properties:
+      actor_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      kind:
+        type: string
+        enum_ref: actor_kind
+      status:
+        type: string
+        enum_ref: actor_status
+        default: active
+      summary:
+        type: string
+        optional: true
+
+  SubjectRef:
+    description: >
+      Lightweight reference to a domain entity, external record, or composed
+      state object without absorbing that domain into operation state.
+    properties:
+      subject_ref_id:
+        type: string
+        primary_key: true
+      label:
+        type: string
+        indexed: true
+      subject_type:
+        type: string
+        indexed: true
+      subject_id:
+        type: string
+        indexed: true
+      state_ref:
+        type: string
+        optional: true
+      summary:
+        type: string
+        optional: true
+
+  WorkItem:
+    description: Execution-level item an agent or human can work, review, close, defer, or supersede.
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      description:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+      type:
+        type: string
+        enum_ref: work_item_type
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      priority:
+        type: string
+        enum_ref: priority
+      target_date:
+        type: date
+        optional: true
+
+  ReviewRequest:
+    description: Review checkpoint that can gate completion of a work item.
+    properties:
+      review_request_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      status:
+        type: string
+        enum_ref: review_status
+      summary:
+        type: string
+        optional: true
+      review_notes:
+        type: string
+        optional: true
+      change_repo:
+        type: string
+        optional: true
+      change_base:
+        type: string
+        optional: true
+      change_head:
+        type: string
+        optional: true
+      requested_at:
+        type: date
+        optional: true
+      resolved_at:
+        type: date
+        optional: true
+
+  Decision:
+    description: Durable operating decision with lifecycle, rationale, impact, and supersession context.
+    properties:
+      decision_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      rationale:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: decision_status
+      decided_at:
+        type: date
+        optional: true
+
+  Risk:
+    description: Operational risk that can block or materially delay work.
+    properties:
+      risk_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      priority:
+        type: string
+        enum_ref: priority
+
+  OpenQuestion:
+    description: Open question that can block work or decisions until answered.
+    properties:
+      question_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      due_date:
+        type: date
+        optional: true
+
+  StateNote:
+    description: >
+      Durable dated note about operation state: corrections, field notes,
+      rationale updates, implementation notes, or review notes. Notes preserve
+      evolving interpretation without turning current entity summaries into
+      changelogs.
+    properties:
+      note_id:
+        primary_key: true
+      kind:
+        enum_ref: state_note_kind
+      title:
+        indexed: true
+      summary: {}
+      body: {}
+      created_at:
+        type: datetime
+      author:
+        optional: true
+
+relationships:
+  # Ownership and accountability.
+  - name: work_item_owned_by_actor
+    description: Actor accountable for a work item.
+    from: WorkItem
+    to: Actor
+
+  - name: review_request_requested_by_actor
+    description: Actor that requested the review.
+    from: ReviewRequest
+    to: Actor
+
+  - name: review_request_assigned_to_actor
+    description: Actor expected to review the request.
+    from: ReviewRequest
+    to: Actor
+
+  - name: decision_owned_by_actor
+    description: Actor accountable for a decision.
+    from: Decision
+    to: Actor
+
+  - name: risk_owned_by_actor
+    description: Actor accountable for a risk.
+    from: Risk
+    to: Actor
+
+  - name: open_question_owned_by_actor
+    description: Actor accountable for answering an open question.
+    from: OpenQuestion
+    to: Actor
+
+  - name: state_note_authored_by_actor
+    description: Actor that authored or recorded the state note.
+    from: StateNote
+    to: Actor
+
+  # Review and lifecycle gates.
+  - name: review_request_for_work_item
+    description: Review request reviews a work item for completion or acceptance.
+    from: ReviewRequest
+    to: WorkItem
+
+  # State annotations.
+  - name: state_note_about_work_item
+    description: State note records commentary, correction, or rationale about a work item.
+    from: StateNote
+    to: WorkItem
+
+  - name: state_note_about_review_request
+    description: State note records commentary, correction, or rationale about a review request.
+    from: StateNote
+    to: ReviewRequest
+
+  - name: state_note_about_decision
+    description: State note records commentary, correction, or rationale about a decision.
+    from: StateNote
+    to: Decision
+
+  - name: state_note_about_risk
+    description: State note records commentary, correction, or rationale about a risk.
+    from: StateNote
+    to: Risk
+
+  - name: state_note_about_open_question
+    description: State note records commentary, correction, or rationale about an open question.
+    from: StateNote
+    to: OpenQuestion
+
+  - name: state_note_about_subject
+    description: State note records commentary, correction, or rationale about an external/domain subject.
+    from: StateNote
+    to: SubjectRef
+
+  - name: state_note_supersedes_state_note
+    description: State note supersedes or corrects an earlier state note.
+    from: StateNote
+    to: StateNote
+    properties:
+      supersession_basis:
+        optional: true
+
+  # Work relationship axes.
+  - name: work_item_depends_on_work_item
+    description: >
+      Sequencing axis: this work item depends on another work item landing,
+      being decided, or stabilizing first. Direction: from depends on to.
+    from: WorkItem
+    to: WorkItem
+    properties:
+      dependency_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_part_of_work_item
+    description: >
+      Composition axis: this work item is part of a larger work item.
+      Order-independent scope and roll-up; not a prerequisite or blocker.
+    from: WorkItem
+    to: WorkItem
+
+  - name: work_item_spawned_from_work_item
+    description: >
+      Lineage axis: this work item was spawned from another work item.
+      Records where the item came from; not a prerequisite, blocker, or replacement.
+    from: WorkItem
+    to: WorkItem
+
+  - name: work_item_supersedes_work_item
+    description: Governed judgment that one work item replaces or supersedes another.
+    from: WorkItem
+    to: WorkItem
+    properties:
+      supersession_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  # Blockers, answers, mitigations, and decisions.
+  - name: risk_blocks_work_item
+    description: Governed judgment that a risk blocks or materially delays a work item.
+    from: Risk
+    to: WorkItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_work_item
+    description: Governed judgment that an open question blocks or materially delays a work item.
+    from: OpenQuestion
+    to: WorkItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_decision
+    description: Governed judgment that an open question blocks a decision.
+    from: OpenQuestion
+    to: Decision
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_mitigates_risk
+    description: Governed judgment that a work item mitigates or reduces a risk.
+    from: WorkItem
+    to: Risk
+    properties:
+      mitigation_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: work_item_answers_open_question
+    description: Governed judgment that a work item answers or materially investigates an open question.
+    from: WorkItem
+    to: OpenQuestion
+    properties:
+      answer_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_answers_open_question
+    description: Governed judgment that a decision answers an open question.
+    from: Decision
+    to: OpenQuestion
+    properties:
+      answer_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_constrains_work_item
+    description: Governed judgment that a decision constrains how a work item should proceed.
+    from: Decision
+    to: WorkItem
+    properties:
+      impact_type:
+        type: string
+        enum_ref: decision_impact_type
+      constraint_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_supersedes_decision
+    description: Governed judgment that one decision supersedes another.
+    from: Decision
+    to: Decision
+    properties:
+      supersession_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  # Optional outward references to composed domain state.
+  - name: work_item_targets_subject
+    description: Work item targets or changes an external/domain subject.
+    from: WorkItem
+    to: SubjectRef
+
+  - name: decision_affects_subject
+    description: Governed judgment that a decision affects an external/domain subject.
+    from: Decision
+    to: SubjectRef
+    properties:
+      impact_type:
+        type: string
+        enum_ref: decision_impact_type
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_attaches_to_subject
+    description: Governed judgment that a risk attaches to an external/domain subject.
+    from: Risk
+    to: SubjectRef
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_concerns_subject
+    description: Governed judgment that an open question concerns an external/domain subject.
+    from: OpenQuestion
+    to: SubjectRef
+    properties:
+      concern_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+named_queries:
+  work_item_context:
+    mode: traversal
+    description: Starting from a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, and domain subjects.
+    entry_point: WorkItem
+    returns: AnyEntity
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 50
+    traversal:
+      - relationship:
+          - work_item_depends_on_work_item
+          - work_item_part_of_work_item
+          - work_item_spawned_from_work_item
+          - work_item_supersedes_work_item
+          - risk_blocks_work_item
+          - open_question_blocks_work_item
+          - work_item_mitigates_risk
+          - work_item_answers_open_question
+          - decision_constrains_work_item
+          - review_request_for_work_item
+          - work_item_owned_by_actor
+          - work_item_targets_subject
+          - state_note_about_work_item
+        direction: both
+        as: context
+    include:
+      owner:
+        from: $entry
+        relationship: work_item_owned_by_actor
+        direction: outgoing
+        many: true
+      upstream_dependencies:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      parent_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: outgoing
+        many: true
+      child_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: incoming
+        many: true
+      spawned_from:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
+        direction: outgoing
+        many: true
+      spawned_items:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
+        direction: incoming
+        many: true
+      supersedes:
+        from: $entry
+        relationship: work_item_supersedes_work_item
+        direction: outgoing
+        many: true
+      superseded_by:
+        from: $entry
+        relationship: work_item_supersedes_work_item
+        direction: incoming
+        many: true
+      reviews:
+        from: $entry
+        relationship: review_request_for_work_item
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+      subjects:
+        from: $entry
+        relationship: work_item_targets_subject
+        direction: outgoing
+        many: true
+      state_notes:
+        from: $entry
+        relationship: state_note_about_work_item
+        direction: incoming
+        many: true
+        limit: 10
+        order_by:
+          - by: $source.properties.created_at
+            direction: desc
+            value_type: datetime
+
+  actor_work_queue:
+    mode: traversal
+    description: Work items owned by an actor, with latest reviews, dependency counts, blockers, and subjects.
+    entry_point: Actor
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    result_shape: path
+    max_paths: 500
+    max_paths_per_result: 100
+    traversal:
+      - relationship: work_item_owned_by_actor
+        direction: incoming
+        as: work_item
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    include:
+      latest_review:
+        from: $result
+        relationship: review_request_for_work_item
+        direction: incoming
+        many: true
+        limit: 1
+        order_by:
+          - by: $source.properties.requested_at
+            direction: desc
+            value_type: date
+          - by: $source.properties.resolved_at
+            direction: desc
+            value_type: date
+      upstream_dependencies:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      blocking_risks:
+        from: $result
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      blocking_open_questions:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      subjects:
+        from: $result
+        relationship: work_item_targets_subject
+        direction: outgoing
+        many: true
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      type: $result.properties.type
+      latest_review_request_id: $include.latest_review.items.0.source.entity_id
+      latest_review_status: $include.latest_review.items.0.source.properties.status
+      upstream_dependency_count: $include.upstream_dependencies.count
+      downstream_dependent_count: $include.downstream_dependents.count
+      blocking_risk_count: $include.blocking_risks.count
+      blocking_open_question_count: $include.blocking_open_questions.count
+      subject_count: $include.subjects.count
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+
+  review_queue:
+    mode: collection
+    description: Review requests awaiting review or changes.
+    returns: ReviewRequest
+    result_shape: entity
+    relationship_state: reviewable
+    where:
+      result.properties.status:
+        in: [requested, in_review, changes_requested]
+    include:
+      work_items:
+        from: $result
+        relationship: review_request_for_work_item
+        direction: outgoing
+        many: true
+      assigned_reviewers:
+        from: $result
+        relationship: review_request_assigned_to_actor
+        direction: outgoing
+        many: true
+      requesters:
+        from: $result
+        relationship: review_request_requested_by_actor
+        direction: outgoing
+        many: true
+    select:
+      review_request_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      requested_at: $result.properties.requested_at
+      work_item_count: $include.work_items.count
+      work_items: $include.work_items.items
+      reviewer_count: $include.assigned_reviewers.count
+      reviewers: $include.assigned_reviewers.items
+      requester_count: $include.requesters.count
+      requesters: $include.requesters.items
+    order_by:
+      - by: $result.properties.requested_at
+        direction: asc
+        value_type: date
+    limit: 100
+
+  recent_state_notes:
+    mode: collection
+    description: Recent operation-state notes, corrections, rationale updates, implementation notes, and review notes.
+    returns: StateNote
+    result_shape: entity
+    include:
+      author:
+        from: $result
+        relationship: state_note_authored_by_actor
+        direction: outgoing
+        many: true
+      work_items:
+        from: $result
+        relationship: state_note_about_work_item
+        direction: outgoing
+        many: true
+      review_requests:
+        from: $result
+        relationship: state_note_about_review_request
+        direction: outgoing
+        many: true
+      decisions:
+        from: $result
+        relationship: state_note_about_decision
+        direction: outgoing
+        many: true
+      risks:
+        from: $result
+        relationship: state_note_about_risk
+        direction: outgoing
+        many: true
+      open_questions:
+        from: $result
+        relationship: state_note_about_open_question
+        direction: outgoing
+        many: true
+      subjects:
+        from: $result
+        relationship: state_note_about_subject
+        direction: outgoing
+        many: true
+      supersedes:
+        from: $result
+        relationship: state_note_supersedes_state_note
+        direction: outgoing
+        many: true
+      superseded_by:
+        from: $result
+        relationship: state_note_supersedes_state_note
+        direction: incoming
+        many: true
+    select:
+      note_id: $result.entity_id
+      kind: $result.properties.kind
+      title: $result.properties.title
+      summary: $result.properties.summary
+      created_at: $result.properties.created_at
+      author_count: $include.author.count
+      work_item_count: $include.work_items.count
+      review_request_count: $include.review_requests.count
+      decision_count: $include.decisions.count
+      risk_count: $include.risks.count
+      open_question_count: $include.open_questions.count
+      subject_count: $include.subjects.count
+      supersedes_count: $include.supersedes.count
+      superseded_by_count: $include.superseded_by.count
+    order_by:
+      - by: $result.properties.created_at
+        direction: desc
+        value_type: datetime
+    limit: 100
+
+  state_note_context:
+    mode: traversal
+    description: Full context for a state note, including targets, author, and supersession links.
+    entry_point: StateNote
+    returns: AnyEntity
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 200
+    max_paths_per_result: 50
+    traversal:
+      - relationship:
+          - state_note_authored_by_actor
+          - state_note_about_work_item
+          - state_note_about_review_request
+          - state_note_about_decision
+          - state_note_about_risk
+          - state_note_about_open_question
+          - state_note_about_subject
+          - state_note_supersedes_state_note
+        direction: both
+        as: note_context
+
+  state_notes_for_work_item:
+    mode: traversal
+    description: State notes attached to a work item, newest first.
+    entry_point: WorkItem
+    returns: StateNote
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 200
+    max_paths_per_result: 50
+    traversal:
+      - relationship: state_note_about_work_item
+        direction: incoming
+        as: state_note
+    order_by:
+      - by: $result.properties.created_at
+        direction: desc
+        value_type: datetime
+
+  approved_reviews_for_work_item:
+    mode: traversal
+    description: Approved review requests for a specific work item. Used by the closed-transition mutation guard.
+    entry_point: WorkItem
+    returns: ReviewRequest
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 100
+    max_paths_per_result: 25
+    traversal:
+      - relationship: review_request_for_work_item
+        direction: incoming
+        as: approved_review
+        where:
+          candidate.properties.status:
+            eq: approved
+
+  blocked_work_items:
+    mode: collection
+    description: Work items currently marked blocked, with risk and open-question blocker context.
+    returns: WorkItem
+    result_shape: entity
+    relationship_state: reviewable
+    where:
+      result.properties.status:
+        eq: blocked
+    include:
+      blocking_risks:
+        from: $result
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      blocking_open_questions:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      upstream_dependencies:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      priority: $result.properties.priority
+      blocking_risk_count: $include.blocking_risks.count
+      blocking_risks: $include.blocking_risks.items
+      blocking_open_question_count: $include.blocking_open_questions.count
+      blocking_open_questions: $include.blocking_open_questions.items
+      upstream_dependency_count: $include.upstream_dependencies.count
+      upstream_dependencies: $include.upstream_dependencies.items
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+    limit: 100
+
+  work_item_rollup_context:
+    mode: traversal
+    description: Child and descendant work items under a parent work item.
+    entry_point: WorkItem
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 100
+    traversal:
+      - relationship: work_item_part_of_work_item
+        direction: incoming
+        as: child_or_descendant
+        max_depth: 5
+
+  work_item_lineage_context:
+    mode: traversal
+    description: Work item lineage and replacement context, excluding sequencing dependencies.
+    entry_point: WorkItem
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 100
+    traversal:
+      - relationship:
+          - work_item_spawned_from_work_item
+          - work_item_supersedes_work_item
+        direction: both
+        as: lineage
+        max_depth: 5
+
+  subject_operation_context:
+    mode: traversal
+    description: Work, decisions, risks, and open questions attached to an external/domain subject reference.
+    entry_point: SubjectRef
+    returns: AnyEntity
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 100
+    traversal:
+      - relationship:
+          - work_item_targets_subject
+          - decision_affects_subject
+          - risk_attaches_to_subject
+          - open_question_concerns_subject
+          - state_note_about_subject
+        direction: incoming
+        as: operation_context
+    include:
+      work_items:
+        from: $entry
+        relationship: work_item_targets_subject
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_affects_subject
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_attaches_to_subject
+        direction: incoming
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_concerns_subject
+        direction: incoming
+        many: true
+      state_notes:
+        from: $entry
+        relationship: state_note_about_subject
+        direction: incoming
+        many: true
+
+  active_risks:
+    mode: collection
+    description: Active operational risks.
+    returns: Risk
+    result_shape: entity
+    where:
+      result.properties.status:
+        eq: active
+    order_by:
+      - by: $result.properties.priority
+        direction: desc
+        enum_ref: priority
+    limit: 100
+
+  open_questions_needing_review:
+    mode: collection
+    description: Planned or active open questions that need review.
+    returns: OpenQuestion
+    result_shape: entity
+    where:
+      result.properties.status:
+        in: [planned, active]
+    order_by:
+      - by: $result.properties.due_date
+        direction: asc
+        value_type: date
+    limit: 100
+
+  proposed_decisions:
+    mode: collection
+    description: Proposed decisions awaiting acceptance, rejection, or deferral.
+    returns: Decision
+    result_shape: entity
+    where:
+      result.properties.status:
+        eq: proposed
+    limit: 100
+
+  superseded_decisions:
+    mode: collection
+    description: Decisions whose status indicates they have been superseded.
+    returns: Decision
+    result_shape: entity
+    where:
+      result.properties.status:
+        eq: superseded
+    limit: 100
+
+  superseded_work_items:
+    mode: collection
+    description: Work items whose status indicates they have been superseded.
+    returns: WorkItem
+    result_shape: entity
+    where:
+      result.properties.status:
+        eq: superseded
+    limit: 100
+
+mutation_guards:
+  - name: work_item_closed_requires_approved_review
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      query_name: approved_reviews_for_work_item
+      params:
+        work_item_id: "$entity.entity_id"
+      min_count: 1
+    message: >-
+      Work items cannot be closed until an approved ReviewRequest reviews
+      them. Create or update a ReviewRequest with status approved linked via
+      review_request_for_work_item, or include that approved review in the same
+      guarded batch write.
+
+quality_checks:
+  - name: work_items_have_owner
+    kind: cardinality
+    description: Work items should have an accountable actor.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_owned_by_actor
+    direction: outgoing
+    min_count: 1
+
+  - name: review_requests_review_work
+    kind: cardinality
+    description: Review requests should be attached to the work item they review.
+    severity: warning
+    entity_type: ReviewRequest
+    relationship_type: review_request_for_work_item
+    direction: outgoing
+    min_count: 1
+
+  - name: work_item_part_of_single_parent
+    kind: cardinality
+    description: Work-item composition should form a tree; a child should have at most one direct parent.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_part_of_work_item
+    direction: outgoing
+    max_count: 1
+
+  - name: work_item_spawned_from_single_origin
+    kind: cardinality
+    description: Work-item lineage should record at most one direct origin.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_spawned_from_work_item
+    direction: outgoing
+    max_count: 1
+
+  - name: state_notes_have_author
+    kind: cardinality
+    description: State notes should be attributable to an actor when actor state is available.
+    severity: warning
+    entity_type: StateNote
+    relationship_type: state_note_authored_by_actor
+    direction: outgoing
+    min_count: 1
+
+  - name: work_dependencies_have_basis
+    kind: property
+    description: Work dependencies should include a short explanation of why the dependency exists.
+    severity: warning
+    target: relationship
+    relationship_type: work_item_depends_on_work_item
+    property: dependency_basis
+    rule: non_empty
+
+  - name: work_supersessions_have_basis
+    kind: property
+    description: Work supersession edges should explain what was replaced.
+    severity: warning
+    target: relationship
+    relationship_type: work_item_supersedes_work_item
+    property: supersession_basis
+    rule: non_empty
+
+  - name: risk_work_blockers_have_basis
+    kind: property
+    description: Risk blockers should include a short explanation of why the work is blocked.
+    severity: warning
+    target: relationship
+    relationship_type: risk_blocks_work_item
+    property: blocking_basis
+    rule: non_empty
+
+  - name: open_question_work_blockers_have_basis
+    kind: property
+    description: Open-question blockers should include a short explanation of why the work is blocked.
+    severity: warning
+    target: relationship
+    relationship_type: open_question_blocks_work_item
+    property: blocking_basis
+    rule: non_empty
+
+  - name: decision_work_constraints_have_type
+    kind: property
+    description: Decision-to-work constraints should identify the kind of impact the decision has on the work.
+    severity: warning
+    target: relationship
+    relationship_type: decision_constrains_work_item
+    property: impact_type
+    rule: required
+
+  - name: decision_supersessions_have_basis
+    kind: property
+    description: Decision supersession edges should explain the supersession basis.
+    severity: warning
+    target: relationship
+    relationship_type: decision_supersedes_decision
+    property: supersession_basis
+    rule: non_empty
+
+  - name: state_note_supersessions_have_basis
+    kind: property
+    description: State-note supersession edges should explain the correction or replacement.
+    severity: warning
+    target: relationship
+    relationship_type: state_note_supersedes_state_note
+    property: supersession_basis
+    rule: non_empty
+
+constraints: []
