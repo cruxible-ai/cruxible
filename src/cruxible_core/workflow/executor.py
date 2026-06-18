@@ -8,6 +8,7 @@ whether canonical apply previews stay isolated or become committed graph state.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from cruxible_core.config.schema import CoreConfig, WorkflowSchema
@@ -385,5 +386,14 @@ def _empty_workflow_read_metadata(query_receipt_ids: list[str]) -> dict[str, Any
 
 
 def _clone_graph(graph: EntityGraph) -> EntityGraph:
-    """Return an isolated graph copy for canonical preview/apply execution."""
-    return EntityGraph.from_dict(graph.to_dict())
+    """Return an isolated graph copy for canonical preview/apply execution.
+
+    ``to_dict`` (networkx ``node_link_data``) only shallow-copies node/edge
+    attribute containers, leaving the nested ``properties``/``metadata`` dicts
+    shared with the source graph. In-place mutations such as
+    ``update_entity_properties`` would then bleed back into the live cached
+    graph, so a preview/dry-run could silently mutate live state. ``deepcopy``
+    of the serialized payload severs that sharing, matching the isolation the
+    direct-write path already builds via ``deepcopy(current_graph.to_dict())``.
+    """
+    return EntityGraph.from_dict(deepcopy(graph.to_dict()))

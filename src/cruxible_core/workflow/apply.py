@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from typing import Any
 
 from cruxible_core.config.ownership import check_upstream_type_ownership
@@ -23,6 +24,8 @@ from cruxible_core.graph.evidence import (
     merge_evidence_ref_objects,
 )
 from cruxible_core.graph.operations import (
+    ValidatedEntity,
+    apply_entity,
     apply_relationship,
     validate_entity,
     validate_relationship,
@@ -313,6 +316,14 @@ def apply_entity_set(
             f"Workflow step '{step_id}' entity property validation failed: " + "; ".join(errors)
         )
 
+    _enforce_entity_mutation_guards(
+        config,
+        graph,
+        step_id,
+        validated_entities,
+        actor_context=actor_context,
+    )
+
     for validated in validated_entities:
         entity = validated.entity
         actor_metadata = (
@@ -496,6 +507,52 @@ def apply_relationship_set(
         conflicting_duplicate_count=relationship_set.conflicting_duplicate_count,
         duplicate_examples=relationship_set.duplicate_examples,
     )
+
+
+def _enforce_entity_mutation_guards(
+    config: CoreConfig,
+    graph: EntityGraph,
+    step_id: str,
+    validated_entities: list[ValidatedEntity],
+    *,
+    actor_context: GovernedActorContext | None,
+) -> None:
+    """Reject canonical workflow entity writes that violate config mutation guards.
+
+    Routes ``apply_entities`` through the same proposed-graph guard evaluation the
+    direct-write path uses (``service_add_entities`` /
+    ``service_batch_direct_write``). The current working ``graph`` is the
+    pre-write state for the guard, and a deep-copied proposed graph carries the
+    validated writes applied via the shared ``apply_entity`` helper so guard
+    conditions (named-query counts, actor identity) see the post-write values.
+
+    Raises ``QueryExecutionError`` — matching the workflow apply error contract —
+    when any proposed write trips a guard, before any live mutation is committed.
+    """
+    if not config.mutation_guards or not validated_entities:
+        return
+
+    # Deferred import: cruxible_core.service.__init__ pulls in service.execution
+    # -> workflow.executor -> workflow.apply, so a top-level import here would be
+    # circular. The function-local import breaks that cycle.
+    from cruxible_core.service.mutation_guards import mutation_guard_errors
+
+    proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
+    for validated in validated_entities:
+        apply_entity(proposed_graph, validated)
+
+    guard_errors = mutation_guard_errors(
+        config,
+        current_graph=graph,
+        proposed_graph=proposed_graph,
+        entities=validated_entities,
+        actor_context=actor_context,
+    )
+    if guard_errors:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' mutation guard validation failed: "
+            + "; ".join(guard_errors)
+        )
 
 
 def _would_update_entity(current: dict[str, Any], new_properties: dict[str, Any]) -> bool:
