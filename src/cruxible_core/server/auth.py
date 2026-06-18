@@ -30,6 +30,7 @@ from cruxible_core.server.route_paths import (
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     VERSION_PATH,
     api_v1_path,
+    is_ui_static_path,
     route_template_matches,
 )
 
@@ -133,7 +134,7 @@ async def token_auth_middleware(
     call_next: Callable[[Request], Awaitable[Any]],
 ) -> Any:
     """Resolve auth context and request-scoped permission mode for incoming requests."""
-    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
+    if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
         return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)

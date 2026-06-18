@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cruxible State Console</title>
+    <link rel="stylesheet" href="/ui/styles.css">
+  </head>
+  <body>
+    <header class="connection-bar">
+      <div class="brand">
+        <strong>Cruxible</strong>
+        <span>State Console</span>
+      </div>
+      <label>
+        Server
+        <input id="server-url" name="server-url" type="url" placeholder="same origin">
+      </label>
+      <label>
+        Instance
+        <input id="instance-id" name="instance-id" type="text" placeholder="inst_...">
+      </label>
+      <label>
+        Token
+        <input id="token" name="token" type="password" autocomplete="off" placeholder="optional bearer token">
+      </label>
+      <button id="connect" type="button">Connect</button>
+      <div class="status">
+        <span id="connection-status" data-tone="idle">Not connected</span>
+        <small id="server-summary"></small>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="nav-rail" aria-label="State views">
+        <h2>Views</h2>
+        <div id="query-list" class="query-list"></div>
+      </nav>
+
+      <main class="work-surface">
+        <section class="surface-header">
+          <div>
+            <h1 id="main-title">Overview</h1>
+            <p id="main-subtitle">Connect to load available state views.</p>
+          </div>
+          <div id="result-meta" class="result-meta"></div>
+        </section>
+
+        <div class="table-wrap">
+          <table id="result-table" class="result-table" aria-label="View results"></table>
+          <p id="empty-state" class="empty-state" hidden></p>
+        </div>
+
+        <section class="receipt-panel" aria-label="Receipt">
+          <h2>Receipt</h2>
+          <div id="receipt-panel">
+            <p class="muted">Run a view to inspect its receipt.</p>
+          </div>
+        </section>
+      </main>
+
+      <aside id="drawer" class="details-drawer" hidden>
+        <h2 id="drawer-title">Details</h2>
+        <div id="drawer-body"></div>
+      </aside>
+    </div>
+
+    <script type="module" src="/ui/app.js"></script>
+  </body>
+</html>

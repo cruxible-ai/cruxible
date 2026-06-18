@@ -67,6 +67,9 @@ Repository = "https://github.com/cruxible-ai/cruxible-core"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/cruxible_core/ui_static" = "cruxible_core/ui_static"
+
 [tool.uv.workspace]
 members = ["packages/cruxible-client"]
 

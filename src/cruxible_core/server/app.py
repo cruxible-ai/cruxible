@@ -7,7 +7,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
@@ -39,6 +40,8 @@ from cruxible_core.server.routes.snapshots import router as snapshots_router
 from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
 from cruxible_core.server.routes.state import router as state_router
 from cruxible_core.server.routes.workflows import router as workflows_router
+
+UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
 
 
 def create_app() -> FastAPI:
@@ -82,6 +85,10 @@ def create_app() -> FastAPI:
     async def version() -> dict[str, str]:
         return {"version": __version__}
 
+    @app.get("/ui", include_in_schema=False)
+    async def ui_index() -> FileResponse:
+        return FileResponse(UI_STATIC_DIR / "index.html")
+
     app.include_router(instances_router)
     app.include_router(hosted_instances_router)
     app.include_router(state_router)
@@ -94,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(workflows_router)
     app.include_router(snapshots_router)
     app.include_router(source_artifacts_router)
+    app.mount("/ui", StaticFiles(directory=UI_STATIC_DIR, html=True), name="ui")
     return app
 
 

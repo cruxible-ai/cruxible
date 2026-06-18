@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -333,6 +334,43 @@ def test_runtime_credential_gates_entire_daemon(
     )
     assert allowed.status_code == 200
     assert allowed.json()["valid"] is True
+
+
+def test_static_ui_is_served_by_daemon(app_client: TestClient):
+    index = app_client.get("/ui")
+    script = app_client.get("/ui/app.js")
+    stylesheet = app_client.get("/ui/styles.css")
+
+    assert index.status_code == 200
+    assert "Cruxible State Console" in index.text
+    assert 'href="/ui/styles.css"' in index.text
+    assert 'src="/ui/app.js"' in index.text
+    assert script.status_code == 200
+    assert "createHttpAdapter" in script.text
+    assert stylesheet.status_code == 200
+    assert "connection-bar" in stylesheet.text
+
+
+def test_static_ui_is_public_but_api_auth_still_applies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = _make_app_client(tmp_path, monkeypatch, auth_enabled=True)
+
+    assert client.get("/ui").status_code == 200
+    assert client.get("/ui/adapter.js").status_code == 200
+
+    api_response = client.get("/api/v1/server/info")
+    assert api_response.status_code == 401
+
+
+def test_static_ui_files_are_available_as_package_resources():
+    ui_root = resources.files("cruxible_core").joinpath("ui_static")
+
+    assert ui_root.joinpath("index.html").is_file()
+    assert ui_root.joinpath("adapter.js").is_file()
+    assert ui_root.joinpath("app.js").is_file()
+    assert ui_root.joinpath("styles.css").is_file()
 
 
 def test_init_then_seed_then_query_round_trip(
