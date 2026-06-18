@@ -71,6 +71,24 @@ Runtime credential tokens are stored server-side as hashes. Plaintext token
 material is returned only when a credential is created, rotated, or bootstrap is
 claimed.
 
+## Credential Custody
+
+Runtime credentials are bearer secrets. Any process that can read a token can
+exercise that token's permissions. Treat them like passwords, API keys, or SSH
+private keys:
+
+- do not paste tokens into prompts, tickets, logs, or shared documents;
+- do not put broad admin credentials in ordinary agent sessions;
+- do not give one agent session both writer and reviewer tokens if independent
+  review matters;
+- revoke or rotate tokens when a session ends or a token may have leaked.
+
+Cruxible enforces the identity and permission of the token presented on each
+request. It cannot prevent a local process from using another token that the
+operating system allows that process to read. Strong role separation therefore
+requires credential custody outside Cruxible: separate OS users, shell sessions,
+keychains, password managers, containers, VMs, or hosted user accounts.
+
 ## Agent Environment
 
 Agents should not pass bearer tokens on every individual command. Start the
@@ -120,6 +138,10 @@ Keep the writer and reviewer credentials separate even on a local machine. If
 one agent holds both tokens, Cruxible can no longer enforce that the reviewer is
 independent from the writer.
 
+Keep the admin credential separate from normal writer/reviewer agent sessions.
+An admin token can mint, revoke, and rotate other runtime credentials, so
+exposing it to an ordinary agent collapses the local role boundary.
+
 Treat agent credentials as disposable. If a Codex or Claude session closes and
 loses its token, use the stored operator/admin credential to mint a replacement
 role credential and optionally revoke the old one. Do not restart the daemon
@@ -155,6 +177,11 @@ files, or databases. That is acceptable for local recovery.
 The intended boundary is that normal Cruxible API calls preserve credential
 identity and permission mode once auth is on. Stronger isolation requires a
 separate user, VM, container boundary, or hosted runtime.
+
+Local users remain responsible for token custody. If a single process can read
+multiple role tokens, it can choose any of those roles. Cruxible will still
+record which credential acted, reject request-body identity spoofing, and apply
+permission checks, but it cannot make readable bearer secrets unusable.
 
 ## Recovery
 
