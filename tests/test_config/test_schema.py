@@ -849,17 +849,38 @@ class TestNamedQuerySchema:
                 include={"fit": {"from": "$result", "relationship": "replaces"}},
             )
 
-    def test_include_rejects_entity_shape(self):
-        with pytest.raises(ValidationError, match="include requires result_shape"):
+    def test_include_rejects_entity_shape_without_projection(self):
+        with pytest.raises(ValidationError, match="entity queries with include must define select"):
             NamedQuerySchema(
                 mode="traversal",
                 entry_point="Vehicle",
                 traversal=[TraversalStep(relationship="fits")],
                 returns="list[Part]",
                 result_shape="entity",
-                select={"part_id": "$result.entity_id"},
                 include={"side": {"from": "$result", "relationship": "replaces"}},
             )
+
+    def test_include_allows_projected_entity_shape(self):
+        query = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Vehicle",
+            traversal=[TraversalStep(relationship="fits")],
+            returns="list[Part]",
+            result_shape="entity",
+            select={
+                "part_id": "$result.entity_id",
+                "side_count": "$include.side.count",
+            },
+            include={
+                "side": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "many": True,
+                }
+            },
+        )
+
+        assert query.include["side"].from_ == "$result"
 
     def test_include_order_rejects_query_row_scopes(self):
         with pytest.raises(ValidationError, match="include order_by reference"):

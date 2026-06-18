@@ -6,7 +6,9 @@ Traversal model:
   applying edge filters and target entity constraints
 - Steps chain: output entities of step N become input for step N+1
 - max_depth controls how many hops a single step traverses (BFS)
-- Final step output is the query result
+- Final step output is the query result. Entity-shaped queries can collect
+  only declared return-type entities while traversing through intermediate
+  entity types on the final BFS step.
 """
 
 from __future__ import annotations
@@ -264,6 +266,14 @@ def execute_query_definition(
     )
 
     for step_index, step in enumerate(query_schema.traversal):
+        collect_entity_type = _step_collect_entity_type(
+            config,
+            query_schema,
+            effective_options.result_shape,
+            declared_entity_return_type,
+            step,
+            step_index=step_index,
+        )
         current_states = _execute_step(
             config,
             graph,
@@ -277,6 +287,7 @@ def execute_query_definition(
             step_index=step_index,
             policy_summary=policy_summary,
             optional_path_aliases=optional_path_aliases,
+            collect_entity_type=collect_entity_type,
             builder=builder,
         )
         steps_executed += 1
@@ -849,6 +860,46 @@ def _validate_result_context_return_types(
         )
 
 
+def _step_collect_entity_type(
+    config: CoreConfig,
+    query_schema: NamedQuerySchema,
+    result_shape: QueryResultShape,
+    declared_entity_return_type: str | None,
+    step: TraversalStep,
+    *,
+    step_index: int,
+) -> str | None:
+    """Return the final-step entity collection type, when the step can emit it."""
+    if (
+        result_shape != "entity"
+        or declared_entity_return_type is None
+        or step_index != len(query_schema.traversal) - 1
+    ):
+        return None
+    if _step_can_reach_entity_type(config, step, declared_entity_return_type):
+        return declared_entity_return_type
+    return None
+
+
+def _step_can_reach_entity_type(
+    config: CoreConfig,
+    step: TraversalStep,
+    entity_type: str,
+) -> bool:
+    """Return whether one traversal step can produce *entity_type* as a neighbor."""
+    for rel_ref in step.relationship_types:
+        resolved = config.resolve_relationship_reference(rel_ref)
+        if resolved is None:
+            raise RelationshipNotFoundError(rel_ref)
+        rel_schema, is_reverse = resolved
+        direction = _flip_relationship_direction(step.direction) if is_reverse else step.direction
+        if direction in {"outgoing", "both"} and rel_schema.to_entity == entity_type:
+            return True
+        if direction in {"incoming", "both"} and rel_schema.from_entity == entity_type:
+            return True
+    return False
+
+
 def _resolve_effective_query_options(
     config: CoreConfig,
     query_name: str,
@@ -1011,6 +1062,7 @@ def _execute_step(
     step_index: int,
     policy_summary: dict[str, int],
     optional_path_aliases: frozenset[str],
+    collect_entity_type: str | None = None,
     *,
     builder: ReceiptBuilder | None = None,
 ) -> list[_TraversalState]:
@@ -1018,8 +1070,10 @@ def _execute_step(
 
     Supports multiple relationship types per step and multi-hop traversal
     via max_depth. Entity-shaped queries can prune repeated entities during
-    expansion, while path-retaining queries preserve distinct evidence paths
-    for path or relationship-shaped output. Three dedup layers:
+    expansion and can collect only declared return-type entities on the final
+    step while traversing intermediate bridge entities. Path-retaining queries
+    preserve distinct evidence paths for path or relationship-shaped output.
+    Three dedup layers:
       1. Entity-frontier pruning: compact entity queries expand each node at most once
       2. Result dedup: final rows are deduped by entity, path, or not at all
       3. Evidence: all traversed edges are recorded in the receipt before dedup
@@ -1156,8 +1210,14 @@ def _execute_step(
                     if not passed:
                         continue
 
-                # Apply target entity filter (blocks subtree on failure)
-                if step.target_filter:
+                matches_collect_type = _matches_collect_entity_type(
+                    collect_entity_type,
+                    neighbor,
+                )
+
+                # Apply target entity filter to emitted candidates. In typed
+                # collection mode, non-return intermediates remain bridge nodes.
+                if step.target_filter and matches_collect_type:
                     passed = matches_exact_filter(
                         entity_properties_with_identity(
                             config,
@@ -1176,33 +1236,36 @@ def _execute_step(
                     if not passed:
                         continue
 
-                predicate_context = build_predicate_context(
-                    entry=state.entry,
-                    current=entity,
-                    candidate=neighbor,
-                    segment=segment,
-                    path=state.path,
-                    entities=state.entities,
-                    optional_path_aliases=optional_path_aliases,
-                )
-                if step.where is not None:
-                    passed = evaluate_query_predicates(
-                        config,
-                        step.where,
-                        predicate_context,
-                        params,
+                predicate_context = None
+                if matches_collect_type:
+                    predicate_context = build_predicate_context(
+                        entry=state.entry,
+                        current=entity,
+                        candidate=neighbor,
+                        segment=segment,
+                        path=state.path,
+                        entities=state.entities,
+                        optional_path_aliases=optional_path_aliases,
                     )
-                    if builder is not None and traversal_id is not None:
-                        builder.record_filter(
-                            filter_spec={"where": step.where.model_dump(mode="python")},
-                            passed=passed,
-                            parent_id=traversal_id,
+                    if step.where is not None:
+                        passed = evaluate_query_predicates(
+                            config,
+                            step.where,
+                            predicate_context,
+                            params,
                         )
-                    if not passed:
-                        continue
+                        if builder is not None and traversal_id is not None:
+                            builder.record_filter(
+                                filter_spec={"where": step.where.model_dump(mode="python")},
+                                passed=passed,
+                                parent_id=traversal_id,
+                            )
+                        if not passed:
+                            continue
 
-                # Apply constraint (blocks subtree on failure)
-                if step.constraint:
+                # Apply constraint to emitted candidates. Non-return
+                # intermediates may still bridge to return-type entities.
+                if step.constraint and matches_collect_type:
                     passed = _evaluate_constraint(
                         config,
                         step.constraint,
@@ -1221,7 +1284,7 @@ def _execute_step(
                     if not passed:
                         continue
 
-                if step.exclude_if_related:
+                if step.exclude_if_related and matches_collect_type:
                     excluded = False
                     for exclusion in step.exclude_if_related:
                         passed = not related_edge_exists(
@@ -1249,7 +1312,17 @@ def _execute_step(
                     if excluded:
                         continue
 
-                if step.where_related:
+                if step.where_related and matches_collect_type:
+                    if predicate_context is None:
+                        predicate_context = build_predicate_context(
+                            entry=state.entry,
+                            current=entity,
+                            candidate=neighbor,
+                            segment=segment,
+                            path=state.path,
+                            entities=state.entities,
+                            optional_path_aliases=optional_path_aliases,
+                        )
                     passed = all(
                         evaluate_related_predicate(
                             graph,
@@ -1275,7 +1348,17 @@ def _execute_step(
                     if not passed:
                         continue
 
-                if step.where_not_related:
+                if step.where_not_related and matches_collect_type:
+                    if predicate_context is None:
+                        predicate_context = build_predicate_context(
+                            entry=state.entry,
+                            current=entity,
+                            candidate=neighbor,
+                            segment=segment,
+                            path=state.path,
+                            entities=state.entities,
+                            optional_path_aliases=optional_path_aliases,
+                        )
                     passed = not any(
                         evaluate_related_predicate(
                             graph,
@@ -1348,14 +1431,15 @@ def _execute_step(
                     break
 
                 # Result dedup: first path owns the lineage
-                if not requires_path_retention:
+                if not requires_path_retention and matches_collect_type:
                     if nid not in seen_results:
                         seen_results.add(nid)
                         next_states.append(next_state)
                         produced_roots.add(root_index)
                 else:
-                    next_states.append(next_state)
-                    produced_roots.add(root_index)
+                    if requires_path_retention:
+                        next_states.append(next_state)
+                        produced_roots.add(root_index)
 
                 # Expansion dedup: enqueue for deeper hops if not yet expanded
                 if not requires_path_retention and nid not in seen_expanded:
@@ -1415,6 +1499,13 @@ def _execute_step(
             next_states.append(state)
 
     return next_states
+
+
+def _matches_collect_entity_type(
+    collect_entity_type: str | None,
+    candidate: EntityInstance,
+) -> bool:
+    return collect_entity_type is None or candidate.entity_type == collect_entity_type
 
 
 def _step_relationships_for_execution(

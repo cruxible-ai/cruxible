@@ -379,6 +379,7 @@ Validation rules:
 - `mode: traversal` queries require `entry_point` and at least one traversal step. Put filters on traversal steps, include blocks, or related predicates; top-level `where` is reserved for collection queries.
 - Traversal queries that intentionally return mixed entity types can set `returns: AnyEntity`; this skips homogeneous entity-type validation for entity/path rows.
 - `result_shape: entity` requires `dedupe: entity`.
+- For a traversal query with `result_shape: entity`, a concrete entity `returns` type, and `max_depth` on the final step, the engine may traverse through intermediate entity types and collect only the declared return type when at least one relationship in that final step can reach it. This is read-time typed collection, not a virtual or materialized relationship.
 - `result_shape: relationship` requires `dedupe: path` or `none`.
 - `relationship_state: pending` requires `result_shape: path` or `relationship`, and does not allow `dedupe: entity`.
 - `relationship_state: reviewable` requires traversal `result_shape: path` or collection `result_shape: relationship`, and does not allow `dedupe: entity`.
@@ -400,6 +401,7 @@ Validation rules:
 - Projected query receipts retain source path/relationship evidence. User-facing projected results intentionally omit that source payload by default.
 - `include` aliases must not collide with traversal aliases. Include anchors support `$entry`, `$result`, `$path.<alias>.source`, and `$path.<alias>.target`.
 - Includes are one-hop side context. They do not advance the traversal frontier and do not fan out primary rows.
+- Traversal queries with `result_shape: entity` may use includes only with `select`, so include values are projected explicitly while raw entity rows remain unchanged.
 - `include.required: true` filters out a primary row when that include has no matches. `required: false` retains the row with `exists: false`, `count: 0`, and empty `items`.
 - `include.many: false` expects at most one match and fails execution if multiple matches are found. Use `many: true` for repeated side context.
 - Include `limit` is per include per primary row. It sets that include's `truncated` flag and is separate from query `limit`, `max_paths`, and `max_paths_per_result`.
@@ -522,7 +524,7 @@ Each step in the traversal sequence:
 | `constraint` | string | no | `null` | Constraint expression to apply during traversal |
 | `constraint_value_type` | string | no | `null` | Optional typed constraint comparison: `string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime` |
 | `exclude_if_related` | list | no | `[]` | Legacy related-edge exclusion checks |
-| `max_depth` | int | no | `1` | BFS depth for this step (1 = direct neighbors only). Results include all entities from depth 1 through max_depth. |
+| `max_depth` | int | no | `1` | BFS depth for this step (1 = direct neighbors only). By default, results include entities from depth 1 through max_depth; final-step typed collection on entity-shaped traversal queries may traverse intermediates while emitting only the declared `returns` type. |
 | `required` | bool | no | `true` | Optional continuation. When `false`, preserves the incoming path if no edge passes relationship state, filters, predicates, related predicates, constraints, and policies. Matching edges still continue to the matched neighbor, which becomes the current `$result`. |
 | `as` | string | no | `null` | Alias for the traversed path segment in path/relationship outputs |
 

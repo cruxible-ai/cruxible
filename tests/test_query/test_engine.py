@@ -2135,6 +2135,150 @@ def _chain_graph() -> EntityGraph:
     return g
 
 
+def _project_fanout_config() -> CoreConfig:
+    return CoreConfig(
+        name="project_fanout",
+        entity_types={
+            "Release": EntityTypeSchema(
+                properties={"release_id": PropertySchema(type="string", primary_key=True)}
+            ),
+            "Milestone": EntityTypeSchema(
+                properties={"milestone_id": PropertySchema(type="string", primary_key=True)}
+            ),
+            "RoadmapItem": EntityTypeSchema(
+                properties={"roadmap_item_id": PropertySchema(type="string", primary_key=True)}
+            ),
+            "WorkItem": EntityTypeSchema(
+                properties={
+                    "work_item_id": PropertySchema(type="string", primary_key=True),
+                    "status": PropertySchema(type="string", optional=True),
+                }
+            ),
+            "Decision": EntityTypeSchema(
+                properties={"decision_id": PropertySchema(type="string", primary_key=True)}
+            ),
+        },
+        relationships=[
+            RelationshipSchema(
+                name="milestone_in_release",
+                from_entity="Milestone",
+                to_entity="Release",
+            ),
+            RelationshipSchema(
+                name="roadmap_item_in_milestone",
+                from_entity="RoadmapItem",
+                to_entity="Milestone",
+            ),
+            RelationshipSchema(
+                name="work_item_in_release",
+                from_entity="WorkItem",
+                to_entity="Release",
+            ),
+            RelationshipSchema(
+                name="work_item_in_milestone",
+                from_entity="WorkItem",
+                to_entity="Milestone",
+            ),
+            RelationshipSchema(
+                name="work_item_implements_roadmap_item",
+                from_entity="WorkItem",
+                to_entity="RoadmapItem",
+            ),
+            RelationshipSchema(
+                name="decision_constrains_work_item",
+                from_entity="Decision",
+                to_entity="WorkItem",
+            ),
+        ],
+        named_queries={
+            "release_work_items": NamedQuerySchema(
+                mode="traversal",
+                entry_point="Release",
+                traversal=[
+                    TraversalStep(
+                        relationship=[
+                            "milestone_in_release",
+                            "roadmap_item_in_milestone",
+                            "work_item_in_release",
+                            "work_item_in_milestone",
+                            "work_item_implements_roadmap_item",
+                        ],
+                        direction="incoming",
+                        max_depth=3,
+                    )
+                ],
+                returns="list[WorkItem]",
+                result_shape="entity",
+            ),
+        },
+    )
+
+
+def _project_fanout_graph() -> EntityGraph:
+    graph = EntityGraph()
+    for entity_type, entity_id, properties in [
+        ("Release", "rel-02", {"release_id": "rel-02"}),
+        ("Milestone", "ms-core", {"milestone_id": "ms-core"}),
+        ("RoadmapItem", "ri-batch", {"roadmap_item_id": "ri-batch"}),
+        ("WorkItem", "wi-release", {"work_item_id": "wi-release", "status": "active"}),
+        ("WorkItem", "wi-milestone", {"work_item_id": "wi-milestone", "status": "active"}),
+        ("WorkItem", "wi-roadmap", {"work_item_id": "wi-roadmap", "status": "active"}),
+        ("WorkItem", "wi-deferred", {"work_item_id": "wi-deferred", "status": "deferred"}),
+        ("Decision", "dec-review", {"decision_id": "dec-review"}),
+    ]:
+        graph.add_entity(
+            EntityInstance(entity_type=entity_type, entity_id=entity_id, properties=properties)
+        )
+    for relationship_type, from_type, from_id, to_type, to_id, metadata in [
+        ("milestone_in_release", "Milestone", "ms-core", "Release", "rel-02", None),
+        (
+            "roadmap_item_in_milestone",
+            "RoadmapItem",
+            "ri-batch",
+            "Milestone",
+            "ms-core",
+            None,
+        ),
+        ("work_item_in_release", "WorkItem", "wi-release", "Release", "rel-02", None),
+        ("work_item_in_milestone", "WorkItem", "wi-milestone", "Milestone", "ms-core", None),
+        (
+            "work_item_implements_roadmap_item",
+            "WorkItem",
+            "wi-roadmap",
+            "RoadmapItem",
+            "ri-batch",
+            None,
+        ),
+        (
+            "work_item_implements_roadmap_item",
+            "WorkItem",
+            "wi-deferred",
+            "RoadmapItem",
+            "ri-batch",
+            None,
+        ),
+        (
+            "decision_constrains_work_item",
+            "Decision",
+            "dec-review",
+            "WorkItem",
+            "wi-roadmap",
+            None,
+        ),
+    ]:
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type=relationship_type,
+                from_type=from_type,
+                from_id=from_id,
+                to_type=to_type,
+                to_id=to_id,
+                metadata=metadata or RelationshipMetadata(),
+            )
+        )
+    return graph
+
+
 class TestMaxDepth:
     def test_max_depth_2(self):
         """Depth 2 from A reaches B and C."""
@@ -2290,6 +2434,227 @@ class TestMaxDepth:
         ids = {r.entity_id for r in result.results}
         # A->B passes (weight=1.0), B->C blocked (weight=0.0), so only B
         assert ids == {"B"}
+
+    def test_final_entity_step_collects_declared_type_through_intermediates(self):
+        """Typed final-step BFS traverses intermediates but emits only WorkItems."""
+        config = _project_fanout_config()
+        graph = _project_fanout_graph()
+
+        result = execute_query(config, graph, "release_work_items", {"release_id": "rel-02"})
+
+        assert result.result_shape == "entity"
+        assert {row.entity_type for row in result.results} == {"WorkItem"}
+        assert {row.entity_id for row in result.results} == {
+            "wi-release",
+            "wi-milestone",
+            "wi-roadmap",
+            "wi-deferred",
+        }
+
+    def test_final_entity_step_collects_return_type_at_multiple_depths(self):
+        config = _project_fanout_config()
+        graph = _project_fanout_graph()
+
+        result = execute_query(config, graph, "release_work_items", {"release_id": "rel-02"})
+
+        assert result.receipt is not None
+        nodes_by_id = {node.node_id: node for node in result.receipt.nodes}
+        parent_ids_by_child: dict[str, list[str]] = {}
+        for edge in result.receipt.edges:
+            parent_ids_by_child.setdefault(edge.to_node, []).append(edge.from_node)
+        result_node = next(node for node in result.receipt.nodes if node.node_type == "result")
+        terminal_parent_ids = parent_ids_by_child[result_node.node_id]
+
+        depths_by_result: dict[str, int] = {}
+        for terminal_parent_id in terminal_parent_ids:
+            node = nodes_by_id[terminal_parent_id]
+            if node.node_type != "edge_traversal":
+                continue
+            depth = 0
+            cursor = terminal_parent_id
+            while nodes_by_id[cursor].node_type == "edge_traversal":
+                depth += 1
+                cursor = parent_ids_by_child[cursor][0]
+            depths_by_result[node.entity_id] = depth
+
+        assert depths_by_result["wi-release"] == 1
+        assert depths_by_result["wi-milestone"] == 2
+        assert depths_by_result["wi-roadmap"] == 3
+
+    def test_typed_collection_filters_only_collected_candidates(self):
+        config = _project_fanout_config()
+        config.named_queries["active_release_work_items"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Release",
+            traversal=[
+                TraversalStep(
+                    relationship=[
+                        "milestone_in_release",
+                        "roadmap_item_in_milestone",
+                        "work_item_in_release",
+                        "work_item_in_milestone",
+                        "work_item_implements_roadmap_item",
+                    ],
+                    direction="incoming",
+                    max_depth=3,
+                    where={"candidate.properties.status": {"eq": "active"}},
+                )
+            ],
+            returns="list[WorkItem]",
+            result_shape="entity",
+        )
+        graph = _project_fanout_graph()
+
+        result = execute_query(
+            config,
+            graph,
+            "active_release_work_items",
+            {"release_id": "rel-02"},
+        )
+
+        assert {row.entity_id for row in result.results} == {
+            "wi-release",
+            "wi-milestone",
+            "wi-roadmap",
+        }
+
+    def test_typed_collection_result_includes_anchor_to_collected_entity(self):
+        config = _project_fanout_config()
+        config.named_queries["release_work_item_decisions"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Release",
+            traversal=[
+                TraversalStep(
+                    relationship=[
+                        "milestone_in_release",
+                        "roadmap_item_in_milestone",
+                        "work_item_in_release",
+                        "work_item_in_milestone",
+                        "work_item_implements_roadmap_item",
+                    ],
+                    direction="incoming",
+                    max_depth=3,
+                )
+            ],
+            returns="list[WorkItem]",
+            result_shape="entity",
+            include={
+                "decisions": {
+                    "from": "$result",
+                    "relationship": "decision_constrains_work_item",
+                    "direction": "incoming",
+                    "many": True,
+                }
+            },
+            select={
+                "work_item_id": "$result.entity_id",
+                "decision_count": "$include.decisions.count",
+            },
+        )
+        graph = _project_fanout_graph()
+
+        result = execute_query(
+            config,
+            graph,
+            "release_work_item_decisions",
+            {"release_id": "rel-02"},
+        )
+
+        rows = {
+            row.values["work_item_id"]: row.values["decision_count"]
+            for row in result.results
+            if isinstance(row, ProjectedQueryRow)
+        }
+        assert rows["wi-roadmap"] == 1
+        assert rows["wi-release"] == 0
+
+    def test_typed_collection_still_rejects_unreachable_declared_return_type(self):
+        config = _project_fanout_config()
+        config.named_queries["bad_release_work_items"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Release",
+            traversal=[
+                TraversalStep(
+                    relationship="milestone_in_release",
+                    direction="incoming",
+                    max_depth=3,
+                )
+            ],
+            returns="list[WorkItem]",
+            result_shape="entity",
+        )
+        graph = _project_fanout_graph()
+
+        with pytest.raises(QueryExecutionError, match="declares result entity type 'WorkItem'"):
+            execute_query(
+                config,
+                graph,
+                "bad_release_work_items",
+                {"release_id": "rel-02"},
+            )
+
+    def test_typed_collection_receipts_record_intermediate_and_terminal_hops(self):
+        config = _project_fanout_config()
+        graph = _project_fanout_graph()
+
+        result = execute_query(config, graph, "release_work_items", {"release_id": "rel-02"})
+
+        assert result.receipt is not None
+        traversed = {
+            (node.entity_type, node.entity_id)
+            for node in result.receipt.nodes
+            if node.node_type == "edge_traversal"
+        }
+        assert ("Milestone", "ms-core") in traversed
+        assert ("RoadmapItem", "ri-batch") in traversed
+        assert ("WorkItem", "wi-roadmap") in traversed
+
+    def test_typed_collection_relationship_state_filters_intermediate_and_terminal_edges(self):
+        config = _project_fanout_config()
+        graph = _project_fanout_graph()
+        graph.update_relationship_state(
+            "WorkItem",
+            "wi-roadmap",
+            "RoadmapItem",
+            "ri-batch",
+            "work_item_implements_roadmap_item",
+            metadata=_metadata(review_status="pending"),
+        )
+        graph.update_relationship_state(
+            "RoadmapItem",
+            "ri-batch",
+            "Milestone",
+            "ms-core",
+            "roadmap_item_in_milestone",
+            metadata=_metadata(review_status="pending"),
+        )
+
+        live = execute_query(config, graph, "release_work_items", {"release_id": "rel-02"})
+
+        assert "wi-roadmap" not in {row.entity_id for row in live.results}
+        assert "wi-deferred" not in {row.entity_id for row in live.results}
+
+    def test_path_alias_include_duplicate_behavior_is_unchanged_for_max_depth(self):
+        config = _depth_config()
+        config.named_queries["depth_with_path_include"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Node",
+            traversal=[
+                TraversalStep(
+                    relationship="links",
+                    direction="outgoing",
+                    max_depth=2,
+                    alias="hop",
+                )
+            ],
+            returns="list[Node]",
+            result_shape="path",
+            include={"side": {"from": "$path.hop.target", "relationship": "alt_links"}},
+        )
+        graph = _chain_graph()
+
+        with pytest.raises(QueryExecutionError, match="Duplicate path alias 'hop'"):
+            execute_query(config, graph, "depth_with_path_include", {"node_id": "A"})
 
 
 class TestPathResults:

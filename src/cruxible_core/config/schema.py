@@ -598,8 +598,13 @@ class NamedQuerySchema(BaseModel):
         ):
             msg = "path budgets require result_shape 'path' or 'relationship'"
             raise ValueError(msg)
-        if self.result_shape == "entity" and self.include and not is_collection:
-            msg = "include requires result_shape 'path' or 'relationship'"
+        if (
+            self.result_shape == "entity"
+            and self.include
+            and not is_collection
+            and self.select is None
+        ):
+            msg = "traversal entity queries with include must define select"
             raise ValueError(msg)
         if self.result_shape == "relationship":
             if not is_collection and not self.traversal:
@@ -724,10 +729,6 @@ class NamedQuerySchema(BaseModel):
                 "from_entity",
                 "to_entity",
             }:
-                raise ValueError(
-                    f"query reference '{ref}' is not available for result_shape 'entity'"
-                )
-            if self.result_shape == "entity" and scope == "include" and self.mode != "collection":
                 raise ValueError(
                     f"query reference '{ref}' is not available for result_shape 'entity'"
                 )
