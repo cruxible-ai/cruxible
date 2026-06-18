@@ -221,6 +221,28 @@ class TestQuery:
         assert "Named Queries" in result.output
         assert "parts_for_vehicle" in result.output
 
+    def test_query_list_json_carries_full_envelope(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "list", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        names = {item["name"] for item in payload["items"]}
+        assert "parts_for_vehicle" in names
+        # Full list envelope is carried on the --json surface (R2); the local
+        # path returns the full unpaginated list, matching the server contract.
+        assert payload["total"] == len(payload["items"])
+        assert payload["limit"] is None
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
+
     def test_query_parts_for_vehicle(
         self,
         runner: CliRunner,
@@ -618,6 +640,10 @@ class TestStatsInspectReload:
         assert payload["entity_type"] == "Task"
         assert payload["entity_id"] == "T-1"
         assert payload["total"] == 2
+        # Full list envelope is carried on the --json surface (R1).
+        assert payload["limit"] == 50
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
         assert payload["items"][0]["change_kind"] == "updated"
         assert payload["items"][0]["property_changes"] == [
             {"property": "status", "from_value": "planned", "to_value": "active"}
@@ -1322,6 +1348,39 @@ class TestList:
         assert result.exit_code == 0
         assert "2 entity" in result.output
 
+    def test_list_entities_json_carries_full_envelope(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        # All rows returned: truncated is False.
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["limit"] == 50
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
+        assert len(payload["items"]) == 2
+
+        # A short page below total reports truncated True (R2).
+        truncated = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--limit", "1", "--json"],
+        )
+        assert truncated.exit_code == 0
+        truncated_payload = json.loads(truncated.output)
+        assert truncated_payload["total"] == 2
+        assert truncated_payload["limit"] == 1
+        assert truncated_payload["offset"] == 0
+        assert truncated_payload["truncated"] is True
+        assert len(truncated_payload["items"]) == 1
+
     def test_list_entities_unknown_type_errors(
         self,
         runner: CliRunner,
@@ -1371,6 +1430,10 @@ class TestList:
         payload = json.loads(result.output)
         assert payload["items"][0]["trace_id"] == trace_id
         assert payload["total"] == 1
+        # Full list envelope is carried on the --json surface (R2).
+        assert payload["limit"] == 100
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
 
     def test_list_feedback(
         self,

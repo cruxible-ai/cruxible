@@ -658,6 +658,7 @@ def service_get_entity_change_history(
 
     changes.sort(key=lambda item: (item.changed_at, item.receipt_id), reverse=True)
     total = len(changes)
+    page = changes[offset : offset + limit]
     warnings = (
         [f"{legacy_count} legacy entity write(s) lacked property change detail"]
         if legacy_count
@@ -666,8 +667,11 @@ def service_get_entity_change_history(
     return EntityChangeHistoryResult(
         entity_type=entity_type,
         entity_id=entity_id,
-        items=changes[offset : offset + limit],
+        items=page,
         total=total,
+        limit=limit,
+        offset=offset,
+        truncated=offset + len(page) < total,
         legacy_entity_write_count=legacy_count,
         warnings=warnings,
     )

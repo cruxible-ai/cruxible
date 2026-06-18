@@ -35,7 +35,11 @@ LocalResultT = TypeVar("LocalResultT")
 RemoteResultT = TypeVar("RemoteResultT")
 
 json_option = click.option(
-    "--json", "output_json", is_flag=True, default=False, help="Output as JSON.",
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output as JSON.",
 )
 
 decision_record_option = click.option(
@@ -49,6 +53,32 @@ decision_record_option = click.option(
 def _emit_json(data: Any) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""
     click.echo(_json.dumps(data, indent=2, default=str))
+
+
+def _list_envelope(
+    result: Any, *, item_count: int, limit: int | None, offset: int
+) -> dict[str, Any]:
+    """Build the standard list envelope (total/limit/offset/truncated) for CLI --json.
+
+    Server mode hands back a contract model that already carries the envelope, so
+    those values are used verbatim. Local mode returns a service result with only
+    items/total, so limit/offset/truncated are synthesized from the CLI's own
+    pagination args to match the contract/server/MCP shape.
+    """
+    total = result.total
+    if all(hasattr(result, name) for name in ("limit", "offset", "truncated")):
+        return {
+            "total": total,
+            "limit": result.limit,
+            "offset": result.offset,
+            "truncated": result.truncated,
+        }
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + item_count < total,
+    }
 
 
 def _resolve_decision_record_id(decision_record_id: str | None) -> str | None:
@@ -204,9 +234,7 @@ def _require_instance_id() -> str:
 
 
 def _raise_server_mode_unsupported(command_name: str) -> None:
-    raise click.UsageError(
-        f"{command_name} is local-only and is not available in server mode."
-    )
+    raise click.UsageError(f"{command_name} is local-only and is not available in server mode.")
 
 
 def _require_local_instance(command_name: str) -> CruxibleInstance:
@@ -290,10 +318,7 @@ def _print_apply_previews(apply_previews: dict[str, Any]) -> None:
         duplicate_count = preview.get("duplicate_input_count", 0)
         conflicting_count = preview.get("conflicting_duplicate_count", 0)
         if duplicate_count or conflicting_count:
-            summary += (
-                f" duplicates={duplicate_count} "
-                f"conflicting={conflicting_count}"
-            )
+            summary += f" duplicates={duplicate_count} conflicting={conflicting_count}"
         click.echo(summary)
 
 

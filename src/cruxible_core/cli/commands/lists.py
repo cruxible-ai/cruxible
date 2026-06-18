@@ -13,6 +13,7 @@ from cruxible_core.cli.commands._common import (
     _emit_json,
     _entities_from_payload,
     _feedback_from_payload,
+    _list_envelope,
     _outcomes_from_payload,
     _require_local_instance,
     console,
@@ -61,10 +62,11 @@ def list_entities(entity_type: str, limit: int, offset: int, output_json: bool) 
         else result.items
     )
     if output_json:
+        item_dicts = [e.model_dump(mode="python") for e in entities]
         _emit_json(
             {
-                "items": [e.model_dump(mode="python") for e in entities],
-                "total": result.total,
+                "items": item_dicts,
+                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
             }
         )
         return
@@ -109,7 +111,7 @@ def list_receipts(
         _emit_json(
             {
                 "items": result.items,
-                "total": result.total,
+                **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
             }
         )
         return
@@ -150,7 +152,12 @@ def list_traces(
     )
     traces = result.items
     if output_json:
-        _emit_json({"items": traces, "total": result.total})
+        _emit_json(
+            {
+                "items": traces,
+                **_list_envelope(result, item_count=len(traces), limit=limit, offset=offset),
+            }
+        )
         return
     if not traces:
         click.echo("No traces found.")
@@ -188,10 +195,11 @@ def list_feedback(receipt_id: str | None, limit: int, offset: int, output_json: 
         else result.items
     )
     if output_json:
+        item_dicts = [r.model_dump(mode="python") for r in records]
         _emit_json(
             {
-                "items": [r.model_dump(mode="python") for r in records],
-                "total": result.total,
+                "items": item_dicts,
+                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
             }
         )
         return
@@ -225,10 +233,11 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
         else result.items
     )
     if output_json:
+        item_dicts = [r.model_dump(mode="python") for r in records]
         _emit_json(
             {
-                "items": [r.model_dump(mode="python") for r in records],
-                "total": result.total,
+                "items": item_dicts,
+                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
             }
         )
         return
@@ -264,7 +273,7 @@ def list_edges(relationship: str | None, limit: int, offset: int, output_json: b
         _emit_json(
             {
                 "items": result.items,
-                "total": result.total,
+                **_list_envelope(result, item_count=len(result.items), limit=limit, offset=offset),
             }
         )
         return

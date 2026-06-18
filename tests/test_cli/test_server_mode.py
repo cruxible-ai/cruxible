@@ -123,7 +123,10 @@ def test_server_mode_inspect_entity_history_json(
                         operation_type="add_entity",
                     )
                 ],
-                total=1,
+                total=4,
+                limit=limit,
+                offset=offset,
+                truncated=offset + 1 < 4,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -158,6 +161,11 @@ def test_server_mode_inspect_entity_history_json(
     }
     payload = json.loads(result.output)
     assert payload["items"][0]["property_changes"][0]["to_value"] == "active"
+    # Server mode emits the contract envelope verbatim (R1).
+    assert payload["total"] == 4
+    assert payload["limit"] == 5
+    assert payload["offset"] == 1
+    assert payload["truncated"] is True
 
 
 def test_server_mode_evaluate_forwards_filters(

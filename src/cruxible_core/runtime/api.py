@@ -2024,6 +2024,9 @@ def inspect_entity_history(
             for item in result.items
         ],
         total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        truncated=result.truncated,
         legacy_entity_write_count=result.legacy_entity_write_count,
         warnings=result.warnings,
     )

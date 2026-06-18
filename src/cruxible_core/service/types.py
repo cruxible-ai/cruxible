@@ -321,6 +321,9 @@ class EntityChangeHistoryResult:
     entity_id: str | None = None
     items: list[EntityChangeHistoryItem] = field(default_factory=list)
     total: int = 0
+    limit: int | None = None
+    offset: int = 0
+    truncated: bool = False
     legacy_entity_write_count: int = 0
     warnings: list[str] = field(default_factory=list)
 

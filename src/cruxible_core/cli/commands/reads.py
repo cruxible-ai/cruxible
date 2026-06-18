@@ -611,21 +611,47 @@ def _run_query_command(
         click.echo(f"Receipt: {local_result.receipt_id}")
 
 
-def _query_list_payload() -> list[dict[str, Any]]:
+def _query_list_envelope() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return (normalized item payloads, list-envelope metadata) for query list.
+
+    Server mode carries the envelope on the QueryListResult contract; local mode
+    returns the full unpaginated list, so the envelope is synthesized to match
+    the contract/server/MCP shape (limit/offset/truncated).
+    """
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list_queries(instance_id),
         service_list_queries,
     )
-    queries = (
-        result.items if isinstance(result, contracts.QueryListResult) else cast(list[Any], result)
-    )
-    return [_query_definition_payload(query) for query in queries]
+    if isinstance(result, contracts.QueryListResult):
+        queries: list[Any] = list(result.items)
+        envelope = {
+            "total": result.total,
+            "limit": result.limit,
+            "offset": result.offset,
+            "truncated": result.truncated,
+        }
+    else:
+        # Local mode returns the full, unpaginated list: nothing is truncated.
+        queries = cast(list[Any], result)
+        envelope = {
+            "total": len(queries),
+            "limit": None,
+            "offset": 0,
+            "truncated": False,
+        }
+    payload = [_query_definition_payload(query) for query in queries]
+    return payload, envelope
+
+
+def _query_list_payload() -> list[dict[str, Any]]:
+    payload, _ = _query_list_envelope()
+    return payload
 
 
 def _emit_query_list(*, output_json: bool) -> None:
-    payload = _query_list_payload()
+    payload, envelope = _query_list_envelope()
     if output_json:
-        _emit_json({"items": payload, "total": len(payload)})
+        _emit_json({"items": payload, **envelope})
         return
     console.print(query_definitions_table(payload))
 

@@ -756,7 +756,7 @@ class EntityChangeHistoryItem(BaseModel):
     actor_context: dict[str, Any] | None = None
 
 
-class EntityChangeHistoryResult(BaseModel):
+class EntityChangeHistoryResult(ListEnvelopeFields):
     entity_type: str
     entity_id: str | None = None
     items: list[EntityChangeHistoryItem] = Field(default_factory=list)
