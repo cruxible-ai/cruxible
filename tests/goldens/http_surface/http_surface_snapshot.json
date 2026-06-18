@@ -84,6 +84,9 @@
   "/api/v1/{instance_id}/groups/{group_id}/status": {
     "GET": "GroupBucketStatusToolResult"
   },
+  "/api/v1/{instance_id}/inspect/entity-history/{entity_type}": {
+    "GET": "EntityChangeHistoryResult"
+  },
   "/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}": {
     "GET": "InspectEntityResult"
   },
@@ -119,6 +122,9 @@
   },
   "/api/v1/{instance_id}/receipts/{receipt_id}": {
     "GET": "Receipt"
+  },
+  "/api/v1/{instance_id}/receipts/{receipt_id}/explain": {
+    "GET": "ReceiptExplanationResult"
   },
   "/api/v1/{instance_id}/relationships": {
     "POST": "AddRelationshipResult"
