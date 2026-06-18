@@ -54,8 +54,10 @@ entity_types:
 
   SubjectRef:
     description: >
-      Lightweight reference to a domain entity, external record, or composed
-      state object without absorbing that domain into operation state.
+      Lightweight reference to an external, cross-instance, or not-yet-modeled
+      subject. In a composed same-instance graph, prefer explicit typed
+      operation-to-domain relationships over wrapping modeled domain entities
+      in SubjectRef.
     properties:
       subject_ref_id:
         type: string
@@ -1090,7 +1092,7 @@ mutation_guards:
     property: status
     new_value: approved
     condition:
-      allowed_actor_ids: [robert-reviewer]
+      allowed_actor_ids: [authorized-reviewer]
     message: >-
       ReviewRequest approvals require the authenticated reviewer actor. Use the
       reviewer runtime credential rather than a writer credential or request-body

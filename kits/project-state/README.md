@@ -127,6 +127,8 @@ flowchart LR
   entity_WorkItem -- "Work Item Implements Roadmap Item" --> entity_RoadmapItem
   entity_WorkItem -- "Work Item In Milestone" --> entity_Milestone
   entity_WorkItem -- "Work Item In Release" --> entity_ReleaseLine
+  entity_WorkItem -- "Work Item Part Of Work Item" --> entity_WorkItem
+  entity_WorkItem -- "Work Item Spawned From Work Item" --> entity_WorkItem
   entity_WorkItem -- "Work Item Targets Area" --> entity_ProductArea
 
   %% Governed proposal/review relationships
@@ -146,8 +148,8 @@ flowchart LR
   entity_WorkItem -. "Work Item Answers Open Question" .-> entity_OpenQuestion
   entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
   entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -301,6 +303,7 @@ flowchart LR
   query_entity_AnyEntity["Any Entity"]
   query_entity_Collection_query["Collection Query"]
   query_entity_Decision["Decision"]
+  query_entity_Milestone["Milestone"]
   query_entity_OpenQuestion["Open Question"]
   query_entity_ProductArea["Product Area"]
   query_entity_ReleaseLine["Release Line"]
@@ -308,21 +311,24 @@ flowchart LR
   query_entity_Risk["Risk"]
   query_entity_RoadmapItem["Roadmap Item"]
   query_entity_WorkItem["Work Item"]
-  class query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
+  class query_entity_AnyEntity,query_entity_Collection_query,query_entity_Decision,query_entity_Milestone,query_entity_OpenQuestion,query_entity_ProductArea,query_entity_ReleaseLine,query_entity_ReviewRequest,query_entity_Risk,query_entity_RoadmapItem,query_entity_WorkItem queryEntity
   query_entity_Collection_query --> query_entity_Decision
   query_entity_Collection_query --> query_entity_OpenQuestion
   query_entity_Collection_query --> query_entity_ReviewRequest
   query_entity_Collection_query --> query_entity_Risk
   query_entity_Collection_query --> query_entity_WorkItem
   query_entity_Decision --> query_entity_RoadmapItem
+  query_entity_Milestone --> query_entity_WorkItem
   query_entity_OpenQuestion --> query_entity_RoadmapItem
   query_entity_ProductArea --> query_entity_RoadmapItem
   query_entity_ProductArea --> query_entity_WorkItem
   query_entity_ReleaseLine --> query_entity_AnyEntity
   query_entity_ReleaseLine --> query_entity_WorkItem
   query_entity_RoadmapItem --> query_entity_RoadmapItem
+  query_entity_RoadmapItem --> query_entity_WorkItem
   query_entity_WorkItem --> query_entity_AnyEntity
   query_entity_WorkItem --> query_entity_ReviewRequest
+  query_entity_WorkItem --> query_entity_WorkItem
 ```
 <!-- CRUXIBLE:END query-map -->
 
@@ -351,6 +357,12 @@ paths, and intended purpose.
 | --- | --- | --- | --- | --- | --- |
 | Decision Impact Context | traversal | Roadmap Item | reviewable | Decision Affects Roadmap Item \| Decision Constrains Work Item \| Decision Affects Capability \| Decision Affects Area \| Decision Answers Open Question \| Decision Supersedes Decision (Outgoing) | Starting from a decision, inspect affected roadmap, constrained work, answered questions, and supersession context. |
 
+### Milestone
+
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Milestone Work Items | traversal | Work Item | live | Work Item In Milestone \| Roadmap Item In Milestone \| Work Item Implements Roadmap Item (Incoming, depth=2) | Work items reachable from a milestone directly or through roadmap items in the milestone. |
+
 ### Open Question
 
 | Query | Mode | Returns | State | Traversal | Purpose |
@@ -362,6 +374,7 @@ paths, and intended purpose.
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Area Change Context | traversal | Roadmap Item | reviewable | Roadmap Item Targets Area (Incoming) | Starting from a product area, inspect roadmap items, work, decisions, risks, and open questions before editing the subsystem. |
+| Area Work Items | traversal | Work Item | live | Work Item Targets Area \| Roadmap Item Targets Area \| Capability In Area \| Roadmap Item Targets Capability \| Work Item Implements Roadmap Item (Incoming, depth=3) | Work items reachable from a product area directly, through capabilities, or through roadmap items. |
 | Work Items For Area | traversal | Work Item | live | Work Item Targets Area (Incoming) | Flat work items attached to a product area for agents that need a scannable area work queue. |
 
 ### Release Line
@@ -370,19 +383,23 @@ paths, and intended purpose.
 | --- | --- | --- | --- | --- | --- |
 | Deferred Release Gating Work Items | traversal | Work Item | reviewable | Work Item In Release (Incoming) | Deferred work items that are still attached to a release line and an active, planned, or blocked milestone. |
 | Release Readiness Context | traversal | Any Entity | reviewable | Work Item In Release \| Roadmap Item In Release (Incoming) | Starting from a release line, inspect active, planned, or blocked work plus roadmap items, including roadmap items that have not yet been decomposed into work. |
+| Release Work Items | traversal | Work Item | live | Work Item In Release \| Milestone In Release \| Roadmap Item In Release \| Work Item In Milestone \| Roadmap Item In Milestone \| Work Item Implements Roadmap Item (Incoming, depth=3) | Work items reachable from a release line directly, through release milestones, or through release roadmap items. |
 
 ### Roadmap Item
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Roadmap Item Context | traversal | Roadmap Item | reviewable | Roadmap Item Depends On Roadmap Item (Outgoing) | Starting from a roadmap item, inspect dependencies, dependents, delivery placement, work, decisions, risks, and open questions. |
+| Roadmap Item Work Items | traversal | Work Item | live | Work Item Implements Roadmap Item (Incoming) | Work items that implement a roadmap item. |
 
 ### Work Item
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | Approved Reviews For Work Item | traversal | Review Request | reviewable | Review Request For Work Item (Incoming) | Approved review requests reviewing a specific work item. Used by the work_item_closed_requires_approved_review mutation guard as the closed-transition condition. |
-| Work Item Change Context | traversal | Any Entity | reviewable | Work Item Implements Roadmap Item \| Work Item Targets Area \| Work Item In Release \| Work Item In Milestone \| Work Item Depends On Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item (Both) | Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions. |
+| Work Item Change Context | traversal | Any Entity | reviewable | Work Item Implements Roadmap Item \| Work Item Targets Area \| Work Item In Release \| Work Item In Milestone \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item (Both) | Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions. |
+| Work Item Lineage Context | traversal | Work Item | live | Work Item Spawned From Work Item (Incoming, depth=5) | Follow-up work items spawned from a work item, excluding dependency sequencing. |
+| Work Item Rollup Context | traversal | Work Item | live | Work Item Part Of Work Item (Incoming, depth=5) | Child and descendant work items under a parent work item. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Quality Rules
@@ -412,6 +429,8 @@ No configured constraints.
 | `roadmap_dependencies_have_basis` | Property | Roadmap Item Depends On Roadmap Item.dependency_basis | Warning | Non Empty |
 | `roadmap_items_target_area` | Cardinality | Roadmap Item -> Roadmap Item Targets Area (out) | Warning | min `1` |
 | `work_dependencies_have_basis` | Property | Work Item Depends On Work Item.dependency_basis | Warning | Non Empty |
+| `work_item_part_of_single_parent` | Cardinality | Work Item -> Work Item Part Of Work Item (out) | Warning | max `1` |
+| `work_item_spawned_from_single_origin` | Cardinality | Work Item -> Work Item Spawned From Work Item (out) | Warning | max `1` |
 | `work_items_target_area` | Cardinality | Work Item -> Work Item Targets Area (out) | Warning | min `1` |
 <!-- CRUXIBLE:END quality-rules -->
 

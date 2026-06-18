@@ -18,7 +18,7 @@ class _FakeClient:
         reviews: list[dict[str, Any]],
         work_links: dict[str, list[str]],
         *,
-        config_name: str = "agent_operation",
+        config_name: str = "project_state",
     ) -> None:
         self._reviews = reviews
         self._work_links = work_links
@@ -109,7 +109,7 @@ def test_approved_review_linked_to_work_item_passes() -> None:
         instance_id="inst_ops",
         head="abc123",
         repo="cruxible-ai/cruxible-core",
-        expected_config_name="agent_operation",
+        expected_config_name="project_state",
     )
 
     assert result.ok is True
@@ -138,7 +138,7 @@ def test_config_name_mismatch_fails_before_review_lookup() -> None:
     client = _FakeClient(
         [_review("rr-approved", status="approved")],
         {"rr-approved": ["wi-1"]},
-        config_name="project_state",
+        config_name="agent_operation",
     )
 
     result = check_review_handoff(
@@ -146,14 +146,14 @@ def test_config_name_mismatch_fails_before_review_lookup() -> None:
         instance_id="inst_ops",
         head="abc123",
         repo="cruxible-ai/cruxible-core",
-        expected_config_name="agent_operation",
+        expected_config_name="project_state",
     )
 
     assert result.ok is False
-    assert result.config_name == "project_state"
-    assert result.expected_config_name == "agent_operation"
+    assert result.config_name == "agent_operation"
+    assert result.expected_config_name == "project_state"
     assert (
-        "Target instance config is 'project_state', expected 'agent_operation'"
+        "Target instance config is 'agent_operation', expected 'project_state'"
         in result.failures
     )
     assert client.list_calls == 0

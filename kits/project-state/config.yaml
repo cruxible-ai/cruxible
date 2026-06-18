@@ -140,6 +140,10 @@ entity_types:
       summary:
         type: string
         optional: true
+      description:
+        optional: true
+      rationale:
+        optional: true
       type:
         type: string
         enum_ref: work_item_type
@@ -167,6 +171,8 @@ entity_types:
         indexed: true
       summary:
         type: string
+        optional: true
+      rationale:
         optional: true
       status:
         type: string
@@ -331,6 +337,26 @@ relationships:
     description: Roadmap item targets a capability.
     from: RoadmapItem
     to: Capability
+
+  - name: work_item_part_of_work_item
+    description: >
+      Work item is part of a larger work item. This is order-independent
+      composition and roll-up, not a prerequisite or blocker.
+    from: WorkItem
+    to: WorkItem
+    properties:
+      composition_basis:
+        optional: true
+
+  - name: work_item_spawned_from_work_item
+    description: >
+      Work item was spawned from another work item. This records follow-up
+      lineage, not sequencing, blocking, or replacement.
+    from: WorkItem
+    to: WorkItem
+    properties:
+      lineage_basis:
+        optional: true
 
   # Governed interpretation relationships for agent proposals.
   - name: roadmap_item_depends_on_roadmap_item
@@ -689,6 +715,8 @@ named_queries:
           - work_item_in_release
           - work_item_in_milestone
           - work_item_depends_on_work_item
+          - work_item_part_of_work_item
+          - work_item_spawned_from_work_item
           - work_item_mitigates_risk
           - work_item_answers_open_question
           - decision_constrains_work_item
@@ -720,6 +748,26 @@ named_queries:
       downstream_dependents:
         from: $entry
         relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      parent_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: outgoing
+        many: true
+      child_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: incoming
+        many: true
+      spawned_from:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
+        direction: outgoing
+        many: true
+      spawned_items:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
         direction: incoming
         many: true
       constraining_decisions:
@@ -763,6 +811,33 @@ named_queries:
       - relationship: work_item_targets_area
         direction: incoming
         as: work_item
+
+  area_work_items:
+    mode: traversal
+    description: Work items reachable from a product area directly, through capabilities, or through roadmap items.
+    entry_point: ProductArea
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_targets_area
+          - roadmap_item_targets_area
+          - capability_in_area
+          - roadmap_item_targets_capability
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: area_work
+        max_depth: 3
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
 
   work_items_for_owner:
     mode: collection
@@ -971,6 +1046,124 @@ named_queries:
         relationship: open_question_blocks_roadmap_item
         direction: incoming
         many: true
+
+  release_work_items:
+    mode: traversal
+    description: Work items reachable from a release line directly, through release milestones, or through release roadmap items.
+    entry_point: ReleaseLine
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_in_release
+          - milestone_in_release
+          - roadmap_item_in_release
+          - work_item_in_milestone
+          - roadmap_item_in_milestone
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: release_work
+        max_depth: 3
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  milestone_work_items:
+    mode: traversal
+    description: Work items reachable from a milestone directly or through roadmap items in the milestone.
+    entry_point: Milestone
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_in_milestone
+          - roadmap_item_in_milestone
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: milestone_work
+        max_depth: 2
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  roadmap_item_work_items:
+    mode: traversal
+    description: Work items that implement a roadmap item.
+    entry_point: RoadmapItem
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_implements_roadmap_item
+        direction: incoming
+        as: roadmap_work
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  work_item_rollup_context:
+    mode: traversal
+    description: Child and descendant work items under a parent work item.
+    entry_point: WorkItem
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_part_of_work_item
+        direction: incoming
+        as: child_or_descendant
+        max_depth: 5
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  work_item_lineage_context:
+    mode: traversal
+    description: Follow-up work items spawned from a work item, excluding dependency sequencing.
+    entry_point: WorkItem
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_spawned_from_work_item
+        direction: incoming
+        as: spawned_descendant
+        max_depth: 5
+        where:
+          candidate.properties.status:
+            not_in: [closed, superseded]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
 
   deferred_release_gating_work_items:
     mode: traversal
@@ -1241,7 +1434,7 @@ mutation_guards:
     new_value: approved
     condition:
       allowed_actor_ids:
-        - robert
+        - authorized-reviewer
     message: >-
       ReviewRequest approvals must be written by an authorized approver actor.
 
@@ -1290,6 +1483,24 @@ quality_checks:
     relationship_type: work_item_depends_on_work_item
     property: dependency_basis
     rule: non_empty
+
+  - name: work_item_part_of_single_parent
+    kind: cardinality
+    description: Work-item composition should form a tree; a child should have at most one direct parent.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_part_of_work_item
+    direction: outgoing
+    max_count: 1
+
+  - name: work_item_spawned_from_single_origin
+    kind: cardinality
+    description: Work-item lineage should record at most one direct origin.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_spawned_from_work_item
+    direction: outgoing
+    max_count: 1
 
   - name: decision_roadmap_impacts_have_type
     kind: property

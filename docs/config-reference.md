@@ -998,7 +998,7 @@ mutation_guards:
     property: status
     new_value: approved
     condition:
-      allowed_actor_ids: [robert]
+      allowed_actor_ids: [authorized-reviewer]
     message: "ReviewRequest approvals require an authorized actor."
 ```
 

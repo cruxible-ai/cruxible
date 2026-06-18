@@ -1,7 +1,7 @@
 """Require an approved Cruxible ReviewRequest before merge/release.
 
 The check is intentionally outside Cruxible core runtime code: it treats the
-agent-operation state graph as the authority for review handoff policy while
+project-state graph as the authority for 0.2 review handoff policy while
 remaining runnable from CI or a local release shell.
 """
 
@@ -18,7 +18,7 @@ from typing import Any, Protocol
 REVIEW_ENTITY_TYPE = "ReviewRequest"
 WORK_ITEM_ENTITY_TYPE = "WorkItem"
 WORK_REVIEW_RELATIONSHIP = "review_request_for_work_item"
-DEFAULT_EXPECTED_CONFIG_NAME = "agent_operation"
+DEFAULT_EXPECTED_CONFIG_NAME = "project_state"
 
 
 class CruxibleReviewClient(Protocol):
