@@ -1834,7 +1834,7 @@ cruxible query inline \
 
 **Usage:** `cruxible server info [OPTIONS]`
 
-**Purpose:** Show live daemon metadata such as agent mode and state dir.
+**Purpose:** Show live daemon metadata such as auth mode and state dir.
 
 **Options And Arguments:**
 
@@ -1843,7 +1843,8 @@ cruxible query inline \
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Command-specific output only.
+- Prints daemon version, server requirement, auth enabled/required status, state
+  directory, and instance count. With `--json`, returns the same fields.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

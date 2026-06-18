@@ -14,8 +14,6 @@ from cruxible_core.errors import CoreError
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
-    get_runtime_bootstrap_secret,
-    get_server_token,
     is_server_auth_enabled,
     validate_server_startup_settings,
 )
@@ -101,14 +99,15 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     """Run the Cruxible server using UDS or host/port transport."""
-    runtime_credentials_available = False
-    if (
-        is_server_auth_enabled()
-        and get_server_token() is None
-        and get_runtime_bootstrap_secret() is None
-    ):
-        runtime_credentials_available = get_runtime_credential_store().has_active_credentials()
-    validate_server_startup_settings(runtime_credentials_available=runtime_credentials_available)
+    credential_store = get_runtime_credential_store()
+    runtime_credentials_available = credential_store.has_active_credentials()
+    auth_required = credential_store.is_auth_required()
+    validate_server_startup_settings(
+        runtime_credentials_available=runtime_credentials_available,
+        auth_required=auth_required,
+    )
+    if is_server_auth_enabled():
+        credential_store.mark_auth_required("server_startup_auth_enabled")
 
     import uvicorn
 

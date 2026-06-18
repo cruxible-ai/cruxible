@@ -17,8 +17,13 @@ from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.app import create_app
 from cruxible_core.server.config import get_server_state_dir
+from cruxible_core.server.credentials import (
+    get_runtime_credential_store,
+    reset_runtime_credential_store,
+)
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
 from tests.test_cli.conftest import CAR_PARTS_YAML
@@ -122,18 +127,17 @@ def _make_app_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
     auth_enabled: bool = False,
-    token: str | None = None,
 ) -> TestClient:
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     if auth_enabled:
         monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-        assert token is not None
-        monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", token)
     else:
         monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-        monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
     reset_permissions()
     reset_registry()
+    reset_runtime_credential_store()
     reset_client_cache()
     get_manager().clear()
     return TestClient(create_app())
@@ -283,6 +287,8 @@ def test_server_info_endpoint_returns_live_metadata(
     assert payload["version"]
     assert payload["state_dir"] == str(get_server_state_dir())
     assert payload["instance_count"] == 1
+    assert payload["auth_enabled"] is False
+    assert payload["auth_required"] is False
 
 
 def test_daemon_auth_defaults_to_disabled_for_local_server(
@@ -295,11 +301,20 @@ def test_daemon_auth_defaults_to_disabled_for_local_server(
     assert response.json()["valid"] is True
 
 
-def test_optional_server_token_gates_entire_daemon(
+def test_runtime_credential_gates_entire_daemon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
 ) -> None:
-    client = _make_app_client(tmp_path, monkeypatch, auth_enabled=True, token="local-secret")
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    created = get_runtime_credential_store().create_credential(
+        instance_id=instance_id,
+        label="local-reader",
+        permission_mode=PermissionMode.READ_ONLY,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
     missing = client.post("/api/v1/validate", json={"config_yaml": CAR_PARTS_YAML})
     assert missing.status_code == 401
@@ -314,7 +329,7 @@ def test_optional_server_token_gates_entire_daemon(
     allowed = client.post(
         "/api/v1/validate",
         json={"config_yaml": CAR_PARTS_YAML},
-        headers={"Authorization": "Bearer local-secret"},
+        headers={"Authorization": f"Bearer {created.token}"},
     )
     assert allowed.status_code == 200
     assert allowed.json()["valid"] is True

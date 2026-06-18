@@ -252,6 +252,8 @@ class ServerInfoServiceResult:
     state_dir: str
     version: str
     instance_count: int
+    auth_enabled: bool
+    auth_required: bool
 
 
 @dataclass

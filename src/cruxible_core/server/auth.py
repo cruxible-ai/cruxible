@@ -19,7 +19,6 @@ from cruxible_core.runtime.permissions import (
 )
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
-    get_server_token,
     is_server_auth_enabled,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
@@ -150,22 +149,11 @@ async def token_auth_middleware(
             return _unauthorized_request_response(request)
 
     resolved_context: ResolvedAuthContext | None = None
-    configured_token = get_server_token()
     bootstrap_secret = get_runtime_bootstrap_secret()
     auth_enabled = is_server_auth_enabled()
 
     if bearer_token is not None:
-        if configured_token and hmac.compare_digest(bearer_token, configured_token):
-            resolved_context = ResolvedAuthContext(
-                principal_id="legacy_server_token",
-                principal_label="legacy_server_token",
-                credential_type="legacy_server_token",
-                instance_scope=None,
-                role="admin",
-                effective_permission_mode=None,
-                created_by="legacy_server_token",
-            )
-        elif (
+        if (
             auth_enabled
             and _is_hosted_instance_init_request(request)
             and bootstrap_secret

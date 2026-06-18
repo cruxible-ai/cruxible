@@ -143,18 +143,13 @@ def _make_app_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
     auth_enabled: bool = False,
-    token: str | None = None,
 ) -> TestClient:
     monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
     if auth_enabled:
         monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-        if token is not None:
-            monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", token)
-        else:
-            monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     else:
         monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-        monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
     reset_permissions()
     reset_registry()
@@ -373,11 +368,20 @@ def test_daemon_auth_defaults_to_disabled_for_local_server(
     assert response.json()["valid"] is True
 
 
-def test_optional_server_token_gates_entire_daemon(
+def test_runtime_credential_gates_entire_daemon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
 ) -> None:
-    client = _make_app_client(tmp_path, monkeypatch, auth_enabled=True, token="local-secret")
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    created = get_runtime_credential_store().create_credential(
+        instance_id=instance_id,
+        label="local-reader",
+        permission_mode=PermissionMode.READ_ONLY,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
     missing = client.post("/api/v1/validate", json={"config_yaml": CAR_PARTS_YAML})
     assert missing.status_code == 401
@@ -392,7 +396,7 @@ def test_optional_server_token_gates_entire_daemon(
     allowed = client.post(
         "/api/v1/validate",
         json={"config_yaml": CAR_PARTS_YAML},
-        headers={"Authorization": "Bearer local-secret"},
+        headers={"Authorization": f"Bearer {created.token}"},
     )
     assert allowed.status_code == 200
     assert allowed.json()["valid"] is True
@@ -1044,7 +1048,7 @@ def test_runtime_credential_cannot_spoof_actor_to_pass_approval_guard(
     assert review.json()["properties"]["status"] == "requested"
 
 
-def test_non_runtime_auth_direct_write_does_not_derive_actor_context(
+def test_legacy_bearer_direct_write_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
@@ -1061,16 +1065,14 @@ def test_non_runtime_auth_direct_write_does_not_derive_actor_context(
     assert "created_actor_context" not in no_auth_lookup["metadata"]["provenance"]
 
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
-    monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "legacy-token")
     legacy_headers = {"Authorization": "Bearer legacy-token"}
     legacy = client.post(
         f"/api/v1/{instance_id}/direct-writes/batch",
         json={"payload": _direct_write_payload("LEGACY-AUTH")},
         headers=legacy_headers,
     )
-    assert legacy.status_code == 200
-    legacy_lookup = _lookup_fitment(client, instance_id, "LEGACY-AUTH", headers=legacy_headers)
-    assert "created_actor_context" not in legacy_lookup["metadata"]["provenance"]
+    assert legacy.status_code == 401
+    assert legacy.json()["error_type"] == "AuthenticationError"
 
 
 def test_decision_record_routes_persist_credential_derived_actor_context(
@@ -1967,6 +1969,8 @@ def test_runtime_credential_scope_allows_global_read_routes(
     info = client.get("/api/v1/server/info", headers=headers)
     assert info.status_code == 200
     assert info.json()["instance_count"] == 1
+    assert info.json()["auth_enabled"] is True
+    assert info.json()["auth_required"] is True
 
 
 def test_runtime_credential_plaintext_is_only_returned_on_creation(

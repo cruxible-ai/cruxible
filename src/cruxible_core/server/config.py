@@ -80,15 +80,6 @@ def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return _is_truthy(env.get("CRUXIBLE_SERVER_AUTH"))
 
 
-def get_server_token(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the configured legacy bearer token, if any."""
-    env = environ or os.environ
-    token = env.get("CRUXIBLE_SERVER_TOKEN")
-    if token and token.strip():
-        return token.strip()
-    return None
-
-
 def get_runtime_bootstrap_secret(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the configured one-time runtime bootstrap secret, if any."""
     env = environ or os.environ
@@ -99,13 +90,9 @@ def get_runtime_bootstrap_secret(environ: Mapping[str, str] | None = None) -> st
 
 
 def get_runtime_bearer_token(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return the configured runtime bearer credential for CLI/MCP clients.
-
-    ``CRUXIBLE_SERVER_BEARER_TOKEN`` is the preferred env var. ``CRUXIBLE_SERVER_TOKEN``
-    remains as a backward-compatible alias for local/dev workflows.
-    """
+    """Return the configured runtime bearer credential for CLI/MCP clients."""
     env = environ or os.environ
-    token = env.get("CRUXIBLE_SERVER_BEARER_TOKEN") or env.get("CRUXIBLE_SERVER_TOKEN")
+    token = env.get("CRUXIBLE_SERVER_BEARER_TOKEN")
     if token:
         return token
     return None
@@ -127,23 +114,28 @@ def validate_server_startup_settings(
     environ: Mapping[str, str] | None = None,
     *,
     runtime_credentials_available: bool = False,
+    auth_required: bool = False,
 ) -> None:
     """Validate HTTP server startup settings that are unsafe when miscombined."""
     env = environ or os.environ
 
     auth_enabled = is_server_auth_enabled(env)
-    token = get_server_token(env)
     bootstrap_secret = get_runtime_bootstrap_secret(env)
+
+    if auth_required and not auth_enabled:
+        raise ConfigError(
+            "Refusing to start cruxible-server without auth because this server "
+            "state dir previously required auth. Set CRUXIBLE_SERVER_AUTH=true."
+        )
 
     if (
         auth_enabled
-        and token is None
         and bootstrap_secret is None
         and not runtime_credentials_available
     ):
         raise ConfigError(
-            "CRUXIBLE_SERVER_AUTH=true requires CRUXIBLE_SERVER_TOKEN, "
-            "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET, or stored runtime credentials."
+            "CRUXIBLE_SERVER_AUTH=true requires CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
+            "or stored runtime credentials."
         )
 
     if env.get("CRUXIBLE_SERVER_SOCKET"):
@@ -153,7 +145,7 @@ def validate_server_startup_settings(
     if not _is_loopback_host(host) and not auth_enabled:
         raise ConfigError(
             "Refusing to bind cruxible-server to a non-loopback host without auth. "
-            "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_SERVER_TOKEN, "
-            "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET, or stored runtime credentials, "
+            "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
+            "or stored runtime credentials, "
             "or bind CRUXIBLE_HOST to 127.0.0.1/localhost."
         )

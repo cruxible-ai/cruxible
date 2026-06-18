@@ -664,6 +664,8 @@ def server_info() -> contracts.ServerInfoResult:
         state_dir=result.state_dir,
         version=result.version,
         instance_count=result.instance_count,
+        auth_enabled=result.auth_enabled,
+        auth_required=result.auth_required,
     )
 
 

@@ -16,6 +16,61 @@ def test_create_server_fails_when_server_required_without_endpoint(monkeypatch: 
         create_server()
 
 
+def test_server_mode_client_uses_bearer_token_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "http://server")
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", "runtime-token")
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def __init__(self, *, base_url=None, socket_path=None, token=None):
+            captured["base_url"] = base_url
+            captured["socket_path"] = socket_path
+            captured["token"] = token
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(handlers, "CruxibleClient", StubClient)
+    handlers.reset_client_cache()
+
+    try:
+        client = handlers._get_client()
+    finally:
+        handlers.reset_client_cache()
+
+    assert client is not None
+    assert captured["base_url"] == "http://server"
+    assert captured["token"] == "runtime-token"
+
+
+def test_server_mode_client_ignores_legacy_server_token(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "http://server")
+    monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "legacy-token")
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def __init__(self, *, base_url=None, socket_path=None, token=None):
+            captured["base_url"] = base_url
+            captured["socket_path"] = socket_path
+            captured["token"] = token
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(handlers, "CruxibleClient", StubClient)
+    handlers.reset_client_cache()
+
+    try:
+        client = handlers._get_client()
+    finally:
+        handlers.reset_client_cache()
+
+    assert client is not None
+    assert captured["base_url"] == "http://server"
+    assert captured["token"] is None
+
+
 def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def query(self, instance_id, query_name, params, limit=None, offset=0):
@@ -50,11 +105,15 @@ def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch
                 state_dir="/srv/cruxible-state",
                 version="0.2.0",
                 instance_count=2,
+                auth_enabled=True,
+                auth_required=True,
             )
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     result = handlers.handle_server_info()
     assert result.server_required is True
+    assert result.auth_enabled is True
+    assert result.auth_required is True
     assert result.instance_count == 2
 
 

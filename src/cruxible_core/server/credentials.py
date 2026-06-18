@@ -124,6 +124,16 @@ class RuntimeCredentialStore:
                 ON runtime_bootstrap_claims(instance_id)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_auth_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    reason TEXT
+                )
+                """
+            )
 
     def create_credential(
         self,
@@ -142,6 +152,11 @@ class RuntimeCredentialStore:
         created_at = format_datetime(utc_now())
         assert created_at is not None
         with self._connect() as conn:
+            self._mark_auth_required_conn(
+                conn,
+                updated_at=created_at,
+                reason="runtime_credential_created",
+            )
             conn.execute(
                 """
                 INSERT INTO runtime_credentials(
@@ -227,6 +242,11 @@ class RuntimeCredentialStore:
                 if prior_admin is not None:
                     raise AuthenticationError("Invalid bootstrap secret")
 
+                self._mark_auth_required_conn(
+                    conn,
+                    updated_at=created_at,
+                    reason="runtime_bootstrap_claimed",
+                )
                 conn.execute(
                     """
                     INSERT INTO runtime_credentials(
@@ -411,6 +431,11 @@ class RuntimeCredentialStore:
             if existing is None or existing["revoked_at"] is not None:
                 raise RuntimeCredentialNotFoundError(credential_id)
 
+            self._mark_auth_required_conn(
+                conn,
+                updated_at=created_at,
+                reason="runtime_credential_rotated",
+            )
             conn.execute(
                 """
                 UPDATE runtime_credentials
@@ -460,6 +485,54 @@ class RuntimeCredentialStore:
                 """
             ).fetchone()
         return row is not None
+
+    def mark_auth_required(self, reason: str) -> None:
+        """Persist that this server state dir must not restart without auth."""
+        updated_at = format_datetime(utc_now())
+        assert updated_at is not None
+        with self._connect() as conn:
+            self._mark_auth_required_conn(conn, updated_at=updated_at, reason=reason)
+
+    def is_auth_required(self) -> bool:
+        """Return whether this state dir must use authenticated daemon mode."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT value
+                FROM runtime_auth_state
+                WHERE key = 'auth_required'
+                """
+            ).fetchone()
+            if row is not None and row["value"] == "true":
+                return True
+            active = conn.execute(
+                """
+                SELECT 1
+                FROM runtime_credentials
+                WHERE revoked_at IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+        return active is not None
+
+    @staticmethod
+    def _mark_auth_required_conn(
+        conn: sqlite3.Connection,
+        *,
+        updated_at: str,
+        reason: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO runtime_auth_state(key, value, updated_at, reason)
+            VALUES ('auth_required', 'true', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at,
+                reason = excluded.reason
+            """,
+            (updated_at, reason),
+        )
 
     @staticmethod
     def _fetch_record_row(

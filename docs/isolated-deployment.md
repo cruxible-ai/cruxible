@@ -74,7 +74,7 @@ sudo -u cruxd /opt/cruxible-core/bin/pip install "cruxible-core[server]"
 sudo -u cruxd env \
   CRUXIBLE_SERVER_STATE_DIR=/var/lib/cruxible \
   CRUXIBLE_SERVER_AUTH=true \
-  CRUXIBLE_SERVER_TOKEN=change-me \
+  CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=127.0.0.1 \
   CRUXIBLE_PORT=8100 \
   /opt/cruxible-core/bin/cruxible-server
@@ -83,8 +83,12 @@ sudo -u cruxd env \
 Notes:
 
 - `CRUXIBLE_HOST=127.0.0.1` keeps the daemon local to the machine.
-- `CRUXIBLE_SERVER_AUTH=true` and `CRUXIBLE_SERVER_TOKEN` enable bearer-token auth.
+- `CRUXIBLE_SERVER_AUTH=true` and `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET` enable
+  runtime credential bootstrapping.
 - `CRUXIBLE_SERVER_STATE_DIR` ensures the server-owned state stays under the runtime user's directory.
+- Claim the bootstrap secret, create role-specific runtime credentials, and use
+  those tokens from the agent environment. See
+  [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md).
 
 ### 4. Install only the client in the agent environment
 
@@ -103,7 +107,7 @@ from cruxible_client import CruxibleClient
 
 with CruxibleClient(
     base_url="http://127.0.0.1:8100",
-    token="change-me",
+    token="<runtime-credential-token>",
 ) as client:
     result = client.validate(config_path="config.yaml")
     print(result.valid)
@@ -134,7 +138,7 @@ python3 -m venv /opt/cruxible-core
 env \
   CRUXIBLE_SERVER_STATE_DIR=/var/lib/cruxible \
   CRUXIBLE_SERVER_AUTH=true \
-  CRUXIBLE_SERVER_TOKEN=change-me \
+  CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=0.0.0.0 \
   CRUXIBLE_PORT=8100 \
   /opt/cruxible-core/bin/cruxible-server
@@ -155,7 +159,7 @@ from cruxible_client import CruxibleClient
 
 with CruxibleClient(
     base_url="https://your-cruxible-host.example.com",
-    token="change-me",
+    token="<runtime-credential-token>",
 ) as client:
     result = client.validate(config_path="config.yaml")
     print(result.valid)

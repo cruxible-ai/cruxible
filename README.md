@@ -320,7 +320,8 @@ CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 
 The daemon is local-only by default and binds to `127.0.0.1:8100`. For a simple
 local hardening layer, set `CRUXIBLE_SERVER_AUTH=true` and
-`CRUXIBLE_SERVER_TOKEN=...`.
+`CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=...`, then claim the bootstrap secret to
+create runtime credentials.
 
 If you prefer [uv](https://docs.astral.sh/uv/):
 

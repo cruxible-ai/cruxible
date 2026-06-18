@@ -22,6 +22,9 @@ Permission modes are enforced at the daemon boundary. If the agent can import
 `cruxible-core`, read daemon state files, or control the daemon runtime, local
 permission modes are advisory.
 
+For auth bootstrapping, runtime credentials, and reviewer/writer identity
+boundaries, see [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md).
+
 Recommended agent mode:
 
 ```bash

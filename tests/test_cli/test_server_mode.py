@@ -527,6 +527,8 @@ def test_server_info_uses_live_server_surface(
                 state_dir="/srv/cruxible-state",
                 version="0.2.0",
                 instance_count=3,
+                auth_enabled=True,
+                auth_required=True,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: StubClient())
@@ -536,6 +538,8 @@ def test_server_info_uses_live_server_surface(
     assert captured["called"] is True
     payload = json.loads(result.output)
     assert payload["server_required"] is True
+    assert payload["auth_enabled"] is True
+    assert payload["auth_required"] is True
     assert payload["state_dir"] == "/srv/cruxible-state"
     assert payload["instance_count"] == 3
 
@@ -3129,7 +3133,7 @@ def test_add_relationship_rejects_malformed_source_evidence_flag(
 
 
 def test_server_mode_uses_env_bearer_token_for_client_construction(monkeypatch, runner: CliRunner):
-    monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "local-secret")
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", "local-secret")
     captured: dict[str, object] = {}
 
     class StubClient:
@@ -3164,6 +3168,49 @@ def test_server_mode_uses_env_bearer_token_for_client_construction(monkeypatch, 
     assert result.exit_code == 0
     assert captured["base_url"] == "http://server"
     assert captured["token"] == "local-secret"
+    assert captured["instance_id"] == "inst_123"
+
+
+def test_server_mode_does_not_use_legacy_server_token_for_client_construction(
+    monkeypatch,
+    runner: CliRunner,
+):
+    monkeypatch.setenv("CRUXIBLE_SERVER_TOKEN", "legacy-secret")
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def __init__(self, *, base_url=None, socket_path=None, token=None):
+            captured["base_url"] = base_url
+            captured["socket_path"] = socket_path
+            captured["token"] = token
+
+        def stats(self, instance_id):
+            captured["instance_id"] = instance_id
+            return contracts.StatsResult(
+                entity_count=1,
+                edge_count=0,
+                entity_counts={},
+                relationship_counts={},
+                head_snapshot_id=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common.CruxibleClient", StubClient)
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "stats",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["base_url"] == "http://server"
+    assert captured["token"] is None
     assert captured["instance_id"] == "inst_123"
 
 

@@ -17866,6 +17866,26 @@
     },
     "ServerInfoResult": {
       "fields": {
+        "auth_enabled": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "auth_enabled",
+          "required": true,
+          "schema": {
+            "title": "Auth Enabled",
+            "type": "boolean"
+          }
+        },
+        "auth_required": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "auth_required",
+          "required": true,
+          "schema": {
+            "title": "Auth Required",
+            "type": "boolean"
+          }
+        },
         "instance_count": {
           "has_default": false,
           "has_default_factory": false,
@@ -17909,6 +17929,14 @@
       },
       "json_schema": {
         "properties": {
+          "auth_enabled": {
+            "title": "Auth Enabled",
+            "type": "boolean"
+          },
+          "auth_required": {
+            "title": "Auth Required",
+            "type": "boolean"
+          },
           "instance_count": {
             "title": "Instance Count",
             "type": "integer"
@@ -17930,12 +17958,16 @@
           "server_required",
           "state_dir",
           "version",
-          "instance_count"
+          "instance_count",
+          "auth_enabled",
+          "auth_required"
         ],
         "title": "ServerInfoResult",
         "type": "object"
       },
       "required_fields": [
+        "auth_enabled",
+        "auth_required",
         "instance_count",
         "server_required",
         "state_dir",

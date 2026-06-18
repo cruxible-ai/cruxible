@@ -23,9 +23,14 @@ it with:
 
 ```bash
 CRUXIBLE_SERVER_AUTH=true
-CRUXIBLE_SERVER_TOKEN=change-me
+CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
+
+Claim the bootstrap secret to create an admin runtime credential, then use that
+runtime credential as `CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or
+client calls. See [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md)
+for the full bootstrap and agent-role flow.
 
 Use `cruxible-client` in a separate agent environment when the agent should not
 import the runtime directly:

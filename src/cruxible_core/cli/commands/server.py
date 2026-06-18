@@ -29,5 +29,7 @@ def server_info_cmd(output_json: bool) -> None:
         return
     click.echo(f"Version: {result.version}")
     click.echo(f"Server required: {'yes' if result.server_required else 'no'}")
+    click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
+    click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
     click.echo(f"State dir: {result.state_dir}")
     click.echo(f"Instances: {result.instance_count}")

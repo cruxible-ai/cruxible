@@ -47,9 +47,10 @@ Expected response:
 {"status":"ok"}
 ```
 
-Do not bake bootstrap secrets, runtime credentials, or server tokens into the
-image. Provide them at container runtime through environment variables or the
-future deployment secret layer.
+Do not bake bootstrap secrets or runtime credentials into the image. Provide
+them at container runtime through environment variables or the future deployment
+secret layer. See [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md)
+for the bootstrap and credential model.
 
 ## Shared Profile Customer Code Policy
 
