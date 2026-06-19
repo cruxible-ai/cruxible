@@ -2740,6 +2740,34 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
         (["init", "--config", "config.yaml"], "init"),
         (["run", "--workflow", "wf"], "run"),
         (["entity", "add", "--type", "Vehicle", "--id", "V-1"], "entity add"),
+        (["add", "entity", "Vehicle", "V-1"], "add entity"),
+        (["update", "entity", "Vehicle", "V-1", "--set", "make=Honda"], "update entity"),
+        (
+            [
+                "add",
+                "relationship",
+                "fits",
+                "Part",
+                "BP-1",
+                "Vehicle",
+                "V-1",
+            ],
+            "add relationship",
+        ),
+        (
+            [
+                "update",
+                "relationship",
+                "fits",
+                "Part",
+                "BP-1",
+                "Vehicle",
+                "V-1",
+                "--set",
+                "source=manual",
+            ],
+            "update relationship",
+        ),
         (
             [
                 "state",
@@ -3036,6 +3064,485 @@ shared_evidence: {}
     assert payload.entities[0].entity_id == "V-STDIN"
     expected = "validated" if dry_run else "applied"
     assert f"Batch direct write {expected}." in result.output
+
+
+def test_add_entity_shorthand_preserves_string_setters_and_json_values(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_entity(self, instance_id, entity_type, entity_id):
+            captured["preflight"] = (instance_id, entity_type, entity_id)
+            return contracts.GetEntityResult(
+                found=False,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["instance_id"] = instance_id
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_added=1,
+                receipt_id="RCP-add-verb",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add",
+            "entity",
+            "Vehicle",
+            "V-NEW",
+            "--set",
+            "region=NO",
+            "--set",
+            "status=no",
+            "--set",
+            "version=1.20",
+            "--set",
+            "code=0755",
+            "--set",
+            "literal_null=null",
+            "--set",
+            "empty=",
+            "--set-json",
+            "year=2025",
+            "--set-json",
+            'metadata={"ok":true}',
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["preflight"] == ("inst_123", "Vehicle", "V-NEW")
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.entities[0].properties == {
+        "region": "NO",
+        "status": "no",
+        "version": "1.20",
+        "code": "0755",
+        "literal_null": "null",
+        "empty": "",
+        "year": 2025,
+        "metadata": {"ok": True},
+    }
+    assert json.loads(result.output)["receipt_id"] == "RCP-add-verb"
+
+
+def test_update_entity_shorthand_requires_existing_entity(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    class StubClient:
+        def get_entity(self, instance_id, entity_type, entity_id):
+            return contracts.GetEntityResult(
+                found=False,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            raise AssertionError("missing entity update should not write")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "update",
+            "entity",
+            "Vehicle",
+            "V-MISSING",
+            "--set",
+            "make=Honda",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: DataValidationError:" in result.output
+    assert "Entity Vehicle:V-MISSING not found" in result.output
+
+
+def test_update_entity_shorthand_forwards_batch_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_entity(self, instance_id, entity_type, entity_id):
+            return contracts.GetEntityResult(
+                found=True,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                entities_updated=1,
+                receipt_id="RCP-update-verb",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "update",
+            "entity",
+            "Vehicle",
+            "V-1",
+            "--set",
+            "make=Honda",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.entities[0].entity_id == "V-1"
+    assert payload.entities[0].properties == {"make": "Honda"}
+    assert captured["dry_run"] is True
+    assert "Update entity Vehicle:V-1 validated." in result.output
+
+
+def test_add_entity_shorthand_rejects_duplicate_fields(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add",
+            "entity",
+            "Vehicle",
+            "V-1",
+            "--set",
+            "make=Honda",
+            "--set-json",
+            "make=true",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "duplicate property assignment for 'make'" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--set", "make"], "--set must use FIELD=VALUE"),
+        (["--set", "=Honda"], "--set field name must not be blank"),
+        (["--set-json", "year=not-json"], "must be valid JSON"),
+    ],
+)
+def test_add_entity_shorthand_rejects_malformed_setters(
+    runner: CliRunner,
+    args: list[str],
+    expected: str,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add",
+            "entity",
+            "Vehicle",
+            "V-1",
+            *args,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert expected in result.output
+
+
+def test_add_relationship_shorthand_forwards_properties_and_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            captured["preflight"] = (
+                instance_id,
+                from_type,
+                from_id,
+                relationship_type,
+                to_type,
+                to_id,
+            )
+            return contracts.GetRelationshipResult(
+                found=False,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["payload"] = payload
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                relationships_added=1,
+                pending_conflicts=[
+                    contracts.DirectWriteGroupInteraction(
+                        relationship_type="fits",
+                        from_type="Part",
+                        from_id="BP-1",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        group_id="GRP-pending",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add",
+            "relationship",
+            "fits",
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            "--set",
+            "source=manual",
+            "--set-json",
+            "verified=true",
+            "--evidence-ref",
+            '{"source":"doc","source_record_id":"section"}',
+            "--source-evidence",
+            '{"source_artifact_id":"SRC-1","chunk_id":"CHK-1"}',
+            "--evidence-rationale",
+            "Observed in docs.",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["preflight"] == ("inst_123", "Part", "BP-1", "fits", "Vehicle", "V-1")
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    relationship = payload.relationships[0]
+    assert relationship.properties == {"source": "manual", "verified": True}
+    assert relationship.evidence_refs[0].source_record_id == "section"
+    assert relationship.source_evidence[0].chunk_id == "CHK-1"
+    assert relationship.evidence_rationale == "Observed in docs."
+    assert "Notice: 1 pending group conflict(s) detected." in result.output
+
+
+def test_add_relationship_shorthand_rejects_existing_relationship(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    class StubClient:
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            return contracts.GetRelationshipResult(
+                found=True,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+                edge_key=1,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            raise AssertionError("existing relationship add should not write")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "add",
+            "relationship",
+            "fits",
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Relationship already exists" in result.output
+
+
+def test_update_relationship_shorthand_requires_existing_relationship(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    class StubClient:
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            return contracts.GetRelationshipResult(
+                found=False,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            raise AssertionError("missing relationship update should not write")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "update",
+            "relationship",
+            "fits",
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            "--set",
+            "source=manual",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Relationship not found" in result.output
+
+
+def test_update_relationship_shorthand_forwards_evidence_only_update(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            return contracts.GetRelationshipResult(
+                found=True,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+                edge_key=7,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["payload"] = payload
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                relationships_updated=1,
+                receipt_id="RCP-rel-update",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "update",
+            "relationship",
+            "fits",
+            "Part",
+            "BP-1",
+            "Vehicle",
+            "V-1",
+            "--evidence-rationale",
+            "Updated supporting rationale.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["relationships_updated"] == 1
+    batch_payload = captured["payload"]
+    assert isinstance(batch_payload, contracts.BatchDirectWritePayload)
+    assert batch_payload.relationships[0].properties == {}
+    assert batch_payload.relationships[0].evidence_rationale == "Updated supporting rationale."
 
 
 @pytest.mark.parametrize(

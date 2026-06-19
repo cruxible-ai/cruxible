@@ -13,6 +13,73 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
 - `explain` and `export edges` are direct-local file/rendering utilities. Use receipts and list/query tools for daemon/MCP flows.
 
+## cruxible add
+
+**Usage:**
+
+```bash
+cruxible add entity ENTITY_TYPE ENTITY_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible add relationship REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+```
+
+**Purpose:** Ergonomic CLI shorthand for adding entities and relationships without
+hand-authoring a direct-write payload file or `--props` JSON object.
+
+**Field Assignment:**
+- `--set FIELD=VALUE` stores `VALUE` as a string. Values such as `NO`, `no`,
+  `1.20`, `0755`, and `null` are not coerced.
+- `--set-json FIELD=JSON` stores an explicitly typed JSON value.
+- Duplicate fields, blank field names, and malformed assignments are rejected.
+
+**Relationship Evidence Options:**
+- `--evidence-ref JSON`
+- `--source-evidence JSON`
+- `--evidence-rationale TEXT`
+
+**Output And Side Effects:**
+- Uses the same guarded direct-write path as `batch-direct-write`, with the same
+  dry-run behavior, receipts, mutation guards, and group-interaction notices.
+- `add entity` fails if the entity already exists.
+- `add relationship` fails if the relationship tuple already exists.
+- Actor attribution remains credential-derived when daemon auth is enabled.
+
+**Examples:**
+
+```bash
+cruxible add entity WorkItem wi-example --set title="Add write verbs" --set status=planned
+cruxible add relationship work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Same ergonomics slice"
+```
+
+## cruxible update
+
+**Usage:**
+
+```bash
+cruxible update entity ENTITY_TYPE ENTITY_ID --set FIELD=VALUE [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible update relationship REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+```
+
+**Purpose:** Ergonomic CLI shorthand for updating existing entities and
+relationships without hand-authoring JSON payloads.
+
+**Behavior:**
+- `update entity` fails if the entity does not exist and requires at least one
+  `--set` or `--set-json`.
+- `update relationship` fails if the relationship tuple does not exist and
+  requires at least one property or evidence update.
+- Relationship updates use the existing tuple-based direct-write semantics; if a
+  relationship target is ambiguous, use the lower-level relationship inspection
+  surfaces to resolve it before writing.
+- This command does not add first-class `status` or `note` semantics. Those
+  remain ontology/config concepts expressed as ordinary fields or entities.
+
+**Example:**
+
+```bash
+cruxible update entity WorkItem wi-example --set status=closed
+cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Refined after review"
+```
+
 ## cruxible add-constraint
 
 **Usage:** `cruxible add-constraint [OPTIONS]`
