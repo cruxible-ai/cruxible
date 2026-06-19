@@ -843,7 +843,7 @@ def test_runtime_credential_matching_actor_context_keeps_credential_identity(
     assert actor_context["request_id"] == "req_correlation"
 
 
-def test_runtime_credential_approval_guard_uses_derived_actor_identity(
+def test_runtime_credential_review_approval_is_ungated_but_close_gate_remains(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -857,12 +857,6 @@ def test_runtime_credential_approval_guard_uses_derived_actor_identity(
         instance_id=instance_id,
         permission_mode=PermissionMode.GRAPH_WRITE,
         label="codex-core",
-    )
-    robert_headers = _runtime_credential_headers(
-        monkeypatch,
-        instance_id=instance_id,
-        permission_mode=PermissionMode.GRAPH_WRITE,
-        label="robert",
     )
 
     seed = client.post(
@@ -906,22 +900,22 @@ def test_runtime_credential_approval_guard_uses_derived_actor_identity(
     )
     assert seed.status_code == 200
 
-    denied = client.post(
+    close_before_approval = client.post(
         f"/api/v1/{instance_id}/entities",
         json={
             "entities": [
                 {
-                    "entity_type": "ReviewRequest",
-                    "entity_id": "rr-approval-guard",
-                    "properties": {"status": "approved"},
+                    "entity_type": "WorkItem",
+                    "entity_id": "wi-approval-guard",
+                    "properties": {"status": "closed"},
                 }
             ]
         },
         headers=codex_headers,
     )
-    assert denied.status_code == 400
-    assert denied.json()["error_type"] == "DataValidationError"
-    assert "review_request_approval_requires_authorized_actor" in denied.text
+    assert close_before_approval.status_code == 400
+    assert close_before_approval.json()["error_type"] == "DataValidationError"
+    assert "work_item_closed_requires_approved_review" in close_before_approval.text
 
     approved = client.post(
         f"/api/v1/{instance_id}/entities",
@@ -934,7 +928,7 @@ def test_runtime_credential_approval_guard_uses_derived_actor_identity(
                 }
             ]
         },
-        headers=robert_headers,
+        headers=codex_headers,
     )
     assert approved.status_code == 200
 
@@ -949,7 +943,7 @@ def test_runtime_credential_approval_guard_uses_derived_actor_identity(
                 }
             ]
         },
-        headers=robert_headers,
+        headers=codex_headers,
     )
     assert closed.status_code == 200
 
