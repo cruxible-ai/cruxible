@@ -1316,6 +1316,22 @@ named_queries:
         in: [requested, in_review]
     limit: 100
 
+  work_queue:
+    mode: collection
+    description: Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active.
+    returns: WorkItem
+    result_shape: entity
+    where:
+      result.properties.status:
+        in: [active]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      priority: $result.properties.priority
+      type: $result.properties.type
+      summary: $result.properties.summary
+    limit: 100
+
   changes_requested_reviews:
     mode: collection
     description: Review requests sent back with changes requested.
