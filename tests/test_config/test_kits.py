@@ -341,6 +341,12 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "review_queue",
         "changes_requested_reviews",
         "open_questions_for_owner",
+        "area_work_items",
+        "milestone_work_items",
+        "release_work_items",
+        "roadmap_item_work_items",
+        "work_item_lineage_context",
+        "work_item_rollup_context",
     }
     assert set(config.named_queries) == required_queries
     for name in {

@@ -3,7 +3,9 @@
 Proves the shipped kit config rejects any direct write resulting in
 WorkItem.status=closed — creating work as closed included — until an
 approved ReviewRequest reviews the work item, then allows the same write,
-across single direct writes and batch direct writes.
+across single direct writes and batch direct writes. ReviewRequest approval
+itself is ordinary project state in this kit; actor identity enforcement is
+left to auth-on runtime credentials rather than an auth-off config guard.
 """
 
 from __future__ import annotations
@@ -177,54 +179,46 @@ class TestProjectStateReviewGate:
         _close_work_item(instance)
         assert _work_item_status(instance) == "closed"
 
-    def test_approval_rejected_without_authorized_actor(self, tmp_path: Path) -> None:
+    def test_approval_allowed_without_actor_gate(self, tmp_path: Path) -> None:
         instance = _project_state_instance(tmp_path)
         _seed_work_item(instance)
         _seed_review(instance, status="requested")
 
-        with pytest.raises(
-            DataValidationError,
-            match="review_request_approval_requires_authorized_actor",
-        ):
-            service_add_entity_inputs(
-                instance,
-                [
-                    EntityWriteInput(
-                        entity_type="ReviewRequest",
-                        entity_id="rr-gated",
-                        properties={"status": "approved"},
-                    )
-                ],
-            )
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-gated",
+                    properties={"status": "approved"},
+                )
+            ],
+        )
 
         review = instance.load_graph().get_entity("ReviewRequest", "rr-gated")
         assert review is not None
-        assert review.properties["status"] == "requested"
+        assert review.properties["status"] == "approved"
 
-    def test_approval_rejected_with_unauthorized_actor(self, tmp_path: Path) -> None:
+    def test_approval_allowed_with_any_actor_context(self, tmp_path: Path) -> None:
         instance = _project_state_instance(tmp_path)
         _seed_work_item(instance)
         _seed_review(instance, status="requested")
 
-        with pytest.raises(
-            DataValidationError,
-            match="review_request_approval_requires_authorized_actor",
-        ):
-            service_add_entity_inputs(
-                instance,
-                [
-                    EntityWriteInput(
-                        entity_type="ReviewRequest",
-                        entity_id="rr-gated",
-                        properties={"status": "approved"},
-                    )
-                ],
-                actor_context=_actor_context("codex-core"),
-            )
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="ReviewRequest",
+                    entity_id="rr-gated",
+                    properties={"status": "approved"},
+                )
+            ],
+            actor_context=_actor_context("codex-core"),
+        )
 
         review = instance.load_graph().get_entity("ReviewRequest", "rr-gated")
         assert review is not None
-        assert review.properties["status"] == "requested"
+        assert review.properties["status"] == "approved"
 
     def test_batch_close_rejected_atomically_without_review(
         self, tmp_path: Path
