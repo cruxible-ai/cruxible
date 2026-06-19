@@ -480,11 +480,12 @@ def service_sample(
     instance: InstanceProtocol,
     entity_type: str,
     limit: int = 5,
+    fields: list[str] | None = None,
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
     config = instance.load_config()
     graph = instance.load_graph()
-    return read_sample_entities(graph, entity_type, config=config, limit=limit)
+    return read_sample_entities(graph, entity_type, config=config, fields=fields, limit=limit)
 
 
 def service_stats(instance: InstanceProtocol) -> StatsServiceResult:
@@ -894,6 +895,7 @@ def service_list(
     receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
+    fields: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListResult:
@@ -904,6 +906,8 @@ def service_list(
 
     if property_filter is not None and resource not in ("entities", "edges"):
         raise ConfigError("property_filter is only supported for entities and edges")
+    if fields is not None and resource != "entities":
+        raise ConfigError("fields is only supported for entities")
 
     if resource == "entities":
         if not entity_type:
@@ -915,6 +919,7 @@ def service_list(
             entity_type,
             config=config,
             property_filter=property_filter,
+            fields=fields,
             limit=limit,
             offset=offset,
         )

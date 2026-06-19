@@ -1361,11 +1361,17 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type to list. |
+| `--field` | no | `` | text | Property field to include. Repeat to project compact entity payloads. |
 | `--limit` | no | `50` | integer | Max entities to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- Read-only. Without `--field`, returns full entity records. With `--field`,
+  returns the same list envelope but trims each entity's `properties` to the
+  requested fields while always keeping `entity_type` and `entity_id`.
+- Field projection reduces payload size after the caller has already selected
+  an entity type; it is not topic search.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -1781,11 +1787,14 @@ cruxible query inline \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type to sample. |
+| `--field` | no | `` | text | Property field to include. Repeat to project compact entity payloads. |
 | `--limit` | no | `5` | integer | Number of entities to show. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- Read-only. Without `--field`, returns full sampled entity records. With
+  `--field`, trims each entity's `properties` to the requested fields while
+  always keeping `entity_type` and `entity_id`.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

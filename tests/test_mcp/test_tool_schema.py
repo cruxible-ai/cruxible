@@ -152,6 +152,12 @@ class TestInputSchema:
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_list"].inputSchema["properties"]
         assert "property_filter" in props
+        assert "fields" in props
+
+    def test_sample_has_fields(self, server):
+        schemas = _get_tool_schemas(server)
+        props = schemas["cruxible_sample"].inputSchema["properties"]
+        assert "fields" in props
 
     def test_evaluate_has_filters(self, server):
         schemas = _get_tool_schemas(server)

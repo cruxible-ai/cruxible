@@ -183,6 +183,7 @@ async def list_resources(
     offset: int = Query(default=0, ge=0),
     property_filter: str | None = None,
     operation_type: str | None = None,
+    fields: list[str] | None = Query(default=None),
 ) -> contracts.ListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_resources(
@@ -196,6 +197,7 @@ async def list_resources(
         offset=offset,
         property_filter=_parse_property_filter(property_filter),
         operation_type=operation_type,
+        fields=fields,
     )
 
 
@@ -237,11 +239,17 @@ async def stats(instance_id: str) -> contracts.StatsResult:
 
 
 @router.get("/{instance_id}/sample/{entity_type}", response_model=contracts.SampleResult)
-async def sample(instance_id: str, entity_type: str, limit: int = 5) -> contracts.SampleResult:
+async def sample(
+    instance_id: str,
+    entity_type: str,
+    limit: int = 5,
+    fields: list[str] | None = Query(default=None),
+) -> contracts.SampleResult:
     return api.sample(
         resolve_server_instance_id(instance_id),
         entity_type,
         limit=limit,
+        fields=fields,
     )
 
 

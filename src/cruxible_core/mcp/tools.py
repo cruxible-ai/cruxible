@@ -406,6 +406,7 @@ def register_tools(server: FastMCP) -> list[str]:
         offset: int = 0,
         property_filter: dict[str, Any] | None = None,
         operation_type: str | None = None,
+        fields: list[str] | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -413,6 +414,7 @@ def register_tools(server: FastMCP) -> list[str]:
         `relationship_type` filters edges by type for `resource_type="edges"`.
         `property_filter` filters by exact property matches (AND semantics).
         Applies to `resource_type="entities"` and `resource_type="edges"`.
+        `fields` projects entity properties for `resource_type="entities"`.
         `operation_type` filters receipts (e.g. "query", "add_entity", "ingest").
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
@@ -429,6 +431,7 @@ def register_tools(server: FastMCP) -> list[str]:
             offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
+            fields=fields,
         )
 
     @_tool
@@ -564,9 +567,10 @@ def register_tools(server: FastMCP) -> list[str]:
         instance_id: str,
         entity_type: str,
         limit: int = 5,
+        fields: list[str] | None = None,
     ) -> contracts.SampleResult:
         """Return up to `limit` entities for quick data inspection."""
-        return handlers.handle_sample(instance_id, entity_type, limit)
+        return handlers.handle_sample(instance_id, entity_type, limit, fields)
 
     @_tool
     def cruxible_inspect_entity(

@@ -888,14 +888,26 @@ def stats_cmd(output_json: bool) -> None:
 
 @click.command()
 @click.option("--type", "entity_type", required=True, help="Entity type to sample.")
+@click.option("--field", "fields", multiple=True, help="Property field to include. Repeatable.")
 @click.option("--limit", default=5, help="Number of entities to show.")
 @json_option
 @handle_errors
-def sample(entity_type: str, limit: int, output_json: bool) -> None:
+def sample(entity_type: str, fields: tuple[str, ...], limit: int, output_json: bool) -> None:
     """Show a sample of entities of a given type."""
+    projected_fields = list(fields) or None
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.sample(instance_id, entity_type, limit=limit),
-        lambda instance: service_sample(instance, entity_type, limit=limit),
+        lambda client, instance_id: client.sample(
+            instance_id,
+            entity_type,
+            limit=limit,
+            **({"fields": projected_fields} if projected_fields is not None else {}),
+        ),
+        lambda instance: service_sample(
+            instance,
+            entity_type,
+            limit=limit,
+            **({"fields": projected_fields} if projected_fields is not None else {}),
+        ),
     )
     entities = (
         _entities_from_payload(result.items)

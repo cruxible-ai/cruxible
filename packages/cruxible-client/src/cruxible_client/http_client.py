@@ -646,6 +646,7 @@ class CruxibleClient:
         offset: int = 0,
         property_filter: dict[str, Any] | None = None,
         operation_type: str | None = None,
+        fields: builtins.list[str] | None = None,
     ) -> contracts.ListResult:
         params: dict[str, Any] = {
             "entity_type": entity_type,
@@ -655,6 +656,7 @@ class CruxibleClient:
             "limit": limit,
             "offset": offset,
             "operation_type": operation_type,
+            "fields": fields,
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)
@@ -892,10 +894,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ReloadConfigResult)
 
-    def sample(self, instance_id: str, entity_type: str, limit: int = 5) -> contracts.SampleResult:
+    def sample(
+        self,
+        instance_id: str,
+        entity_type: str,
+        limit: int = 5,
+        *,
+        fields: builtins.list[str] | None = None,
+    ) -> contracts.SampleResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/sample/{entity_type}",
-            params={"limit": limit},
+            params=self._omit_none_params({"limit": limit, "fields": fields}),
         )
         return self._parse_model(response, contracts.SampleResult)
 

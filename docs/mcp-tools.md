@@ -557,10 +557,15 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `limit` | no | integer |  |
 | `property_filter` | no | object | null |  |
 | `operation_type` | no | string | null |  |
+| `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
 **Side Effects:** Read-only.
+
+For entity lists, `fields` is an opt-in projection that reduces payload size
+after the caller has selected an entity type. It trims entity `properties` but
+always keeps `entity_type` and `entity_id`; it is not topic search.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.
@@ -781,10 +786,14 @@ error-level finding exists.
 | `instance_id` | yes | string |  |
 | `entity_type` | yes | string |  |
 | `limit` | no | integer |  |
+| `fields` | no | array[string] | null | Entity property fields to include in sampled entities. |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `entity_type`
 
 **Side Effects:** Read-only.
+
+`fields` is an opt-in projection for compact samples. It trims entity
+`properties` but always keeps `entity_type` and `entity_id`.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.

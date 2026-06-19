@@ -578,6 +578,58 @@ def test_type_keyed_read_routes_reject_unknown_types_with_error_envelopes(
     assert lineage_body["context"]["known_entity_types"] == ["Part", "Vehicle"]
 
 
+def test_entity_list_and_sample_accept_projection_fields(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    list_response = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params=[
+            ("entity_type", "Part"),
+            ("fields", "name"),
+            ("fields", "category"),
+            ("limit", "1"),
+        ],
+    )
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["total"] == 2
+    assert list_payload["items"][0]["entity_id"] == "BP-1001"
+    assert list_payload["items"][0]["properties"] == {
+        "category": "brakes",
+        "name": "Ceramic Brake Pads",
+    }
+
+    sample_response = app_client.get(
+        f"/api/v1/{instance_id}/sample/Part",
+        params=[("fields", "name"), ("limit", "1")],
+    )
+    assert sample_response.status_code == 200
+    sample_payload = sample_response.json()
+    assert sample_payload["entity_type"] == "Part"
+    assert sample_payload["items"][0]["properties"] == {"name": "Ceramic Brake Pads"}
+
+
+def test_entity_projection_unknown_field_errors(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    response = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={"entity_type": "Part", "fields": "nope"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_type"] == "ConfigError"
+    assert "Unknown field(s) for entity type 'Part': nope" in body["message"]
+
+
 def test_inspect_entity_history_route_returns_property_changes(
     app_client: TestClient,
     tmp_path: Path,

@@ -14,8 +14,10 @@ from cruxible_core.graph.types import RelationshipMetadata
 from cruxible_core.service import (
     OperationContext,
     service_create_decision_record,
+    service_list,
     service_list_decision_events,
     service_query_inline_surface,
+    service_sample,
 )
 
 
@@ -44,6 +46,106 @@ def _inline_path_definition(name: str = "fit_paths") -> dict[str, object]:
         "returns": "Part",
         "result_shape": "path",
     }
+
+
+def test_list_entities_without_fields_preserves_full_properties(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_list(
+        populated_instance,
+        "entities",
+        entity_type="Part",
+        limit=1,
+    )
+
+    assert result.total == 2
+    assert result.items[0].properties == {
+        "category": "brakes",
+        "name": "Ceramic Brake Pads",
+        "part_number": "BP-1001",
+        "price": 49.99,
+    }
+
+
+def test_list_entities_projects_requested_fields(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_list(
+        populated_instance,
+        "entities",
+        entity_type="Part",
+        fields=["name", "category"],
+        limit=1,
+    )
+
+    assert result.total == 2
+    assert result.items[0].entity_type == "Part"
+    assert result.items[0].entity_id == "BP-1001"
+    assert result.items[0].properties == {
+        "category": "brakes",
+        "name": "Ceramic Brake Pads",
+    }
+
+
+def test_entity_projection_accepts_identity_aliases(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_list(
+        populated_instance,
+        "entities",
+        entity_type="Vehicle",
+        fields=["id", "entity_id", "type", "entity_type", "make"],
+        limit=1,
+    )
+
+    assert result.items[0].entity_type == "Vehicle"
+    assert result.items[0].entity_id == "V-2024-ACCORD-SPORT"
+    assert result.items[0].properties == {"make": "Honda"}
+
+
+def test_entity_projection_rejects_unknown_fields(
+    populated_instance: CruxibleInstance,
+) -> None:
+    with pytest.raises(ConfigError, match="Unknown field\\(s\\) for entity type 'Part': nope"):
+        service_list(
+            populated_instance,
+            "entities",
+            entity_type="Part",
+            fields=["name", "nope"],
+        )
+
+
+def test_entity_projection_preserves_filter_and_pagination(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_list(
+        populated_instance,
+        "entities",
+        entity_type="Vehicle",
+        property_filter={"model": "Civic"},
+        fields=["make"],
+        limit=1,
+        offset=0,
+    )
+
+    assert result.total == 1
+    assert result.items[0].entity_id == "V-2024-CIVIC-EX"
+    assert result.items[0].properties == {"make": "Honda"}
+
+
+def test_sample_entities_projects_requested_fields(
+    populated_instance: CruxibleInstance,
+) -> None:
+    result = service_sample(
+        populated_instance,
+        "Part",
+        limit=1,
+        fields=["name"],
+    )
+
+    assert len(result) == 1
+    assert result[0].entity_id == "BP-1001"
+    assert result[0].properties == {"name": "Ceramic Brake Pads"}
 
 
 def test_inline_collection_query_persists_receipt_and_not_config(

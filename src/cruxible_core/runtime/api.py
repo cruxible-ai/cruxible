@@ -1428,6 +1428,7 @@ def list_resources(
     limit: int = 50,
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
+    fields: list[str] | None = None,
     offset: int = 0,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
@@ -1443,6 +1444,7 @@ def list_resources(
         receipt_id=receipt_id,
         property_filter=property_filter,
         operation_type=operation_type,
+        fields=fields,
         limit=limit,
         offset=offset,
     )
@@ -2081,11 +2083,12 @@ def sample(
     instance_id: str,
     entity_type: str,
     limit: int = 5,
+    fields: list[str] | None = None,
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
     check_permission("cruxible_sample", instance_id=instance_id)
     instance = get_manager().get(instance_id)
-    sampled = service_sample(instance, entity_type, limit=limit)
+    sampled = service_sample(instance, entity_type, limit=limit, fields=fields)
     return contracts.SampleResult(
         items=[entity.model_dump(mode="json") for entity in sampled],
         entity_type=entity_type,

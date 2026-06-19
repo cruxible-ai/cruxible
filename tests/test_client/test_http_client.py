@@ -409,6 +409,29 @@ def test_paginated_client_methods_serialize_offset():
     assert captured["/api/v1/inst_123/resolutions"]["offset"] == "9"
 
 
+def test_entity_list_and_sample_serialize_projection_fields():
+    captured: dict[str, list[str]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = request.url.params.get_list("fields")
+        if request.url.path.endswith("/sample/Part"):
+            return httpx.Response(200, json={"items": [], "entity_type": "Part", "total": 0})
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    client = _build_client(handler)
+
+    client.list(
+        "inst_123",
+        resource_type="entities",
+        entity_type="Part",
+        fields=["name", "category"],
+    )
+    client.sample("inst_123", "Part", fields=["name"])
+
+    assert captured["/api/v1/inst_123/list/entities"] == ["name", "category"]
+    assert captured["/api/v1/inst_123/sample/Part"] == ["name"]
+
+
 def test_feedback_from_query_uses_expected_route_and_payload():
     captured: dict[str, Any] = {}
 

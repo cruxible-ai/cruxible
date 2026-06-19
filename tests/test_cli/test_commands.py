@@ -1381,6 +1381,52 @@ class TestList:
         assert truncated_payload["truncated"] is True
         assert len(truncated_payload["items"]) == 1
 
+    def test_list_entities_json_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "entities",
+                "--type",
+                "Part",
+                "--field",
+                "name",
+                "--field",
+                "category",
+                "--limit",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["items"][0]["entity_type"] == "Part"
+        assert payload["items"][0]["entity_id"] == "BP-1001"
+        assert payload["items"][0]["properties"] == {
+            "category": "brakes",
+            "name": "Ceramic Brake Pads",
+        }
+
+    def test_list_entities_human_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--field", "name", "--limit", "1"],
+        )
+        assert result.exit_code == 0
+        assert "Ceramic Brake Pads" in result.output
+        assert "price" not in result.output
+
     def test_list_entities_unknown_type_errors(
         self,
         runner: CliRunner,
@@ -1500,6 +1546,30 @@ class TestSample:
             ["sample", "--type", "Part", "--limit", "1"],
         )
         assert result.exit_code == 0
+
+    def test_sample_entities_json_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "sample",
+                "--type",
+                "Part",
+                "--field",
+                "name",
+                "--limit",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["items"][0]["entity_id"] == "BP-1001"
+        assert payload["items"][0]["properties"] == {"name": "Ceramic Brake Pads"}
 
 
 # ---------------------------------------------------------------------------

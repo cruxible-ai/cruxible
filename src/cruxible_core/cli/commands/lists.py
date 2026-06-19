@@ -38,12 +38,20 @@ def list_group() -> None:
 
 @list_group.command("entities")
 @click.option("--type", "entity_type", required=True, help="Entity type to list.")
+@click.option("--field", "fields", multiple=True, help="Property field to include. Repeatable.")
 @click.option("--limit", default=50, help="Max entities to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_entities(entity_type: str, limit: int, offset: int, output_json: bool) -> None:
+def list_entities(
+    entity_type: str,
+    fields: tuple[str, ...],
+    limit: int,
+    offset: int,
+    output_json: bool,
+) -> None:
     """List entities of a given type."""
+    projected_fields = list(fields) or None
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -51,9 +59,15 @@ def list_entities(entity_type: str, limit: int, offset: int, output_json: bool) 
             entity_type=entity_type,
             limit=limit,
             offset=offset,
+            **({"fields": projected_fields} if projected_fields is not None else {}),
         ),
         lambda instance: service_list(
-            instance, "entities", entity_type=entity_type, limit=limit, offset=offset
+            instance,
+            "entities",
+            entity_type=entity_type,
+            limit=limit,
+            offset=offset,
+            **({"fields": projected_fields} if projected_fields is not None else {}),
         ),
     )
     entities = (

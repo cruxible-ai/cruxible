@@ -3249,3 +3249,108 @@ def test_list_entities_forwards_offset_to_client(
     assert result.exit_code == 0
     assert captured["limit"] == 5
     assert captured["offset"] == 10
+
+
+def test_list_entities_forwards_fields_to_client(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def list(self, instance_id, **kwargs):
+            captured.update(kwargs)
+            return contracts.ListResult(
+                items=[
+                    {
+                        "entity_type": "Vehicle",
+                        "entity_id": "V-1",
+                        "properties": {"make": "Honda"},
+                    }
+                ],
+                total=1,
+                limit=5,
+                offset=0,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "list",
+            "entities",
+            "--type",
+            "Vehicle",
+            "--field",
+            "make",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["fields"] == ["make"]
+    payload = json.loads(result.output)
+    assert payload["items"][0]["properties"] == {"make": "Honda"}
+
+
+def test_server_mode_sample_forwards_fields_to_client(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def sample(self, instance_id, entity_type, *, limit, fields=None):
+            captured.update(
+                {
+                    "instance_id": instance_id,
+                    "entity_type": entity_type,
+                    "limit": limit,
+                    "fields": fields,
+                }
+            )
+            return contracts.SampleResult(
+                items=[
+                    {
+                        "entity_type": entity_type,
+                        "entity_id": "P-1",
+                        "properties": {"name": "Pad"},
+                    }
+                ],
+                entity_type=entity_type,
+                total=1,
+                limit=limit,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "sample",
+            "--type",
+            "Part",
+            "--field",
+            "name",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "instance_id": "inst_x",
+        "entity_type": "Part",
+        "limit": 5,
+        "fields": ["name"],
+    }

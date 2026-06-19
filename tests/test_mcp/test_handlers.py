@@ -442,9 +442,11 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
             "instance_id": dev_graph_instance_id,
             "resource_type": "entities",
             "entity_type": "Vehicle",
+            "fields": ["make"],
         },
     )
     assert listed["total"] == 2
+    assert listed["items"][0]["properties"] == {"make": "Honda"}
 
     list_error = call_tool_expect_error(
         server,
@@ -461,9 +463,10 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
     sample = call_tool(
         server,
         "cruxible_sample",
-        {"instance_id": dev_graph_instance_id, "entity_type": "Part"},
+        {"instance_id": dev_graph_instance_id, "entity_type": "Part", "fields": ["name"]},
     )
     assert sample["total"] == 2
+    assert sample["items"][0]["properties"] == {"name": "Brake Pads"}
 
     entity = call_tool(
         server,

@@ -935,6 +935,7 @@ def handle_list(
     offset: int = 0,
     property_filter: dict[str, Any] | None = None,
     operation_type: str | None = None,
+    fields: list[str] | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     return _dispatch_remote_or_local(
@@ -949,6 +950,7 @@ def handle_list(
             offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
+            fields=fields,
         ),
         lambda: api.list_resources(
             instance_id,
@@ -961,6 +963,7 @@ def handle_list(
             offset=offset,
             property_filter=property_filter,
             operation_type=operation_type,
+            fields=fields,
         ),
     )
 
@@ -1037,11 +1040,12 @@ def handle_sample(
     instance_id: str,
     entity_type: str,
     limit: int = 5,
+    fields: list[str] | None = None,
 ) -> contracts.SampleResult:
     """Sample entities of a given type."""
     return _dispatch_remote_or_local(
-        lambda client: client.sample(instance_id, entity_type, limit=limit),
-        lambda: api.sample(instance_id, entity_type, limit=limit),
+        lambda client: client.sample(instance_id, entity_type, limit=limit, fields=fields),
+        lambda: api.sample(instance_id, entity_type, limit=limit, fields=fields),
     )
 
 

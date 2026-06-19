@@ -350,6 +350,7 @@ class GovernedLocalClient:
         entity_type: str | None = None,
         relationship_type: str | None = None,
         property_filter: dict | None = None,
+        fields: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ):
@@ -359,6 +360,7 @@ class GovernedLocalClient:
             entity_type=entity_type,
             relationship_type=relationship_type,
             property_filter=property_filter,
+            fields=fields,
             limit=limit,
             offset=offset,
         )
@@ -383,8 +385,15 @@ class GovernedLocalClient:
     def schema(self, instance_id: str):
         return api.schema(instance_id)
 
-    def sample(self, instance_id: str, entity_type: str, limit: int | None = None):
-        return api.sample(instance_id, entity_type, limit=limit)
+    def sample(
+        self,
+        instance_id: str,
+        entity_type: str,
+        limit: int | None = None,
+        *,
+        fields: list[str] | None = None,
+    ):
+        return api.sample(instance_id, entity_type, limit=limit, fields=fields)
 
     def add_relationships(self, instance_id: str, relationships, *, dry_run: bool = False):
         return api.add_relationships(instance_id, relationships, dry_run=dry_run)

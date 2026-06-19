@@ -12,6 +12,7 @@ from cruxible_core.config.property_validation import (
 )
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import (
+    ConfigError,
     EntityTypeNotFoundError,
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
@@ -83,12 +84,14 @@ def list_entities(
     *,
     config: CoreConfig | None = None,
     property_filter: dict[str, Any] | None = None,
+    fields: list[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> ReadListResult:
     """List entities of a type with shared limit/offset/filter semantics."""
     if config is not None:
         _require_entity_type(config, entity_type)
+        _validate_entity_projection_fields(config, entity_type, fields)
     if config is None:
         entities = graph.list_entities(entity_type, property_filter=property_filter)
     else:
@@ -106,6 +109,8 @@ def list_entities(
             ]
     entities = sorted(entities, key=lambda entity: (entity.entity_type, entity.entity_id))
     items = _paginate(entities, limit=limit, offset=offset)
+    if config is not None and fields is not None:
+        items = [_project_entity_fields(config, entity, fields) for entity in items]
     return ReadListResult(items=items, total=len(entities))
 
 
@@ -291,13 +296,56 @@ def sample_entities(
     entity_type: str,
     *,
     config: CoreConfig | None = None,
+    fields: list[str] | None = None,
     limit: int = 5,
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
     return cast(
         list[EntityInstance],
-        list_entities(graph, entity_type, config=config, limit=limit).items,
+        list_entities(graph, entity_type, config=config, fields=fields, limit=limit).items,
     )
+
+
+_IDENTITY_PROJECTION_FIELDS = {"id", "entity_id", "type", "entity_type"}
+
+
+def _validate_entity_projection_fields(
+    config: CoreConfig,
+    entity_type: str,
+    fields: list[str] | None,
+) -> None:
+    if fields is None:
+        return
+    entity_schema = config.get_entity_type(entity_type)
+    if entity_schema is None:
+        _require_entity_type(config, entity_type)
+        return
+    known_fields = set(entity_schema.properties) | _IDENTITY_PROJECTION_FIELDS
+    unknown_fields = sorted(set(fields) - known_fields)
+    if unknown_fields:
+        field_list = ", ".join(unknown_fields)
+        known = ", ".join(sorted(known_fields))
+        raise ConfigError(
+            f"Unknown field(s) for entity type '{entity_type}': {field_list}. "
+            f"Known fields: {known}"
+        )
+
+
+def _project_entity_fields(
+    config: CoreConfig,
+    entity: EntityInstance,
+    fields: list[str],
+) -> EntityInstance:
+    entity_schema = config.get_entity_type(entity.entity_type)
+    if entity_schema is None:
+        return entity
+    property_fields = [field for field in fields if field not in _IDENTITY_PROJECTION_FIELDS]
+    projected = {
+        field: entity.properties[field]
+        for field in property_fields
+        if field in entity.properties
+    }
+    return entity.model_copy(update={"properties": projected})
 
 
 def graph_stats(

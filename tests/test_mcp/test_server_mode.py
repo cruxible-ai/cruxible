@@ -97,6 +97,43 @@ def test_public_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     assert result.receipt_id == "RCPT-1"
 
 
+def test_list_and_sample_handlers_forward_fields_to_client(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def list(self, instance_id, **kwargs):
+            captured["list"] = {"instance_id": instance_id, **kwargs}
+            return contracts.ListResult(items=[], total=0, limit=10, offset=0)
+
+        def sample(self, instance_id, entity_type, *, limit=5, fields=None):
+            captured["sample"] = {
+                "instance_id": instance_id,
+                "entity_type": entity_type,
+                "limit": limit,
+                "fields": fields,
+            }
+            return contracts.SampleResult(
+                items=[],
+                entity_type=entity_type,
+                total=0,
+                limit=limit,
+            )
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
+
+    handlers.handle_list(
+        "inst_123",
+        "entities",
+        entity_type="Part",
+        limit=10,
+        fields=["name", "category"],
+    )
+    handlers.handle_sample("inst_123", "Part", fields=["name"])
+
+    assert captured["list"]["fields"] == ["name", "category"]
+    assert captured["sample"]["fields"] == ["name"]
+
+
 def test_server_info_handler_delegates_to_client(monkeypatch: pytest.MonkeyPatch):
     class StubClient:
         def server_info(self):
