@@ -1640,6 +1640,7 @@ def test_add_relationship_stamps_http_api_provenance(
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
+                    "pending": True,
                     "evidence_refs": [
                         {
                             "source": "roadmap_doc",
@@ -1670,6 +1671,8 @@ def test_add_relationship_stamps_http_api_provenance(
     metadata = lookup.json()["metadata"]
     assert metadata["provenance"]["source"] == "http_api"
     assert metadata["provenance"]["source_ref"] == "add_relationship"
+    assert metadata["assertion"]["review"]["status"] == "pending"
+    assert metadata["assertion"]["review"]["source"] == "agent"
     assert metadata["evidence"]["rationale"] == "Accepted direct source-backed assertion."
     assert metadata["evidence"]["evidence_refs"] == [
         {
@@ -1912,6 +1915,85 @@ def test_feedback_batch_route(
     assert payload["total"] == 2
     assert payload["applied_count"] == 2
     assert payload["receipt_id"]
+
+
+def test_feedback_route_approves_pending_relationship_without_source_receipt(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    for entity in [
+        {
+            "entity_type": "Part",
+            "entity_id": "BP-1",
+            "properties": {
+                "part_number": "BP-1",
+                "name": "Pads",
+                "category": "brakes",
+                "price": 49.99,
+            },
+        },
+        {
+            "entity_type": "Vehicle",
+            "entity_id": "V-1",
+            "properties": {
+                "vehicle_id": "V-1",
+                "year": 2024,
+                "make": "Honda",
+                "model": "Civic",
+            },
+        },
+    ]:
+        response = app_client.post(f"/api/v1/{instance_id}/entities", json={"entities": [entity]})
+        assert response.status_code == 200
+
+    add = app_client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-1",
+                    "relationship_type": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                    "properties": {"verified": True},
+                    "pending": True,
+                }
+            ]
+        },
+    )
+    assert add.status_code == 200
+
+    feedback = app_client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={
+            "action": "approve",
+            "source": "human",
+            "from_type": "Part",
+            "from_id": "BP-1",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-1",
+        },
+    )
+    assert feedback.status_code == 200
+    assert feedback.json()["applied"] is True
+
+    lookup = app_client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-1",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-1",
+        },
+    )
+    assert lookup.status_code == 200
+    metadata = lookup.json()["metadata"]
+    assert metadata["assertion"]["review"]["status"] == "approved"
+    assert metadata["assertion"]["review"]["source"] == "human"
 
 
 def test_workflow_propose_snapshot_and_overlay_round_trip(

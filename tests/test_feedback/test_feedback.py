@@ -505,6 +505,20 @@ class TestFeedbackStore:
         assert loaded.target == target
         assert loaded.reason == "Bad fitment"
 
+    def test_save_and_get_without_source_receipt(
+        self,
+        store: FeedbackStore,
+        target: RelationshipInstance,
+    ) -> None:
+        fb = FeedbackRecord(action="approve", target=target, reason="Reviewed coordinates")
+        fid = store.save_feedback(fb)
+
+        loaded = store.get_feedback(fid)
+
+        assert loaded is not None
+        assert loaded.receipt_id is None
+        assert loaded.reason == "Reviewed coordinates"
+
     def test_get_nonexistent(self, store: FeedbackStore):
         assert store.get_feedback("FB-nope") is None
 

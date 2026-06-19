@@ -66,6 +66,7 @@ def test_handle_add_relationship_preserves_evidence_fields(
                 relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
+                pending=True,
                 evidence_refs=[
                     contracts.EvidenceRef(
                         source="roadmap_doc",
@@ -89,6 +90,7 @@ def test_handle_add_relationship_preserves_evidence_fields(
     assert isinstance(relationships, list)
     relationship = relationships[0]
     assert isinstance(relationship, contracts.RelationshipInput)
+    assert relationship.pending is True
     assert relationship.evidence_refs[0].source == "roadmap_doc"
     assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
@@ -282,7 +284,6 @@ def workflow_instance_id(canonical_workflow_project: Path) -> str:
             "cruxible_feedback",
             {
                 "instance_id": "inst_123",
-                "receipt_id": "RCP-1",
                 "action": "approve",
                 "source": "human",
                 "from_type": "Part",

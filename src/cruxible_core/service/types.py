@@ -104,6 +104,7 @@ class RelationshipWriteInput:
     to_type: str
     to_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    pending: bool = False
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
     evidence_rationale: str | None = None
@@ -139,9 +140,9 @@ class RelationshipTargetInput:
 
 @dataclass
 class FeedbackItemInput:
-    receipt_id: str
     action: Literal["approve", "reject", "correct", "flag"]
     target: RelationshipTargetInput
+    receipt_id: str | None = None
     reason: str = ""
     reason_code: str | None = None
     scope_hints: dict[str, Any] | None = None

@@ -273,7 +273,6 @@ def register_tools(server: FastMCP) -> list[str]:
     @_tool
     def cruxible_feedback(
         instance_id: str,
-        receipt_id: str,
         action: contracts.FeedbackAction,
         source: contracts.FeedbackSource,
         from_type: str,
@@ -287,8 +286,9 @@ def register_tools(server: FastMCP) -> list[str]:
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
+        receipt_id: str | None = None,
     ) -> contracts.FeedbackResult:
-        """Record edge-level feedback tied to a receipt.
+        """Record edge-level feedback by explicit relationship coordinates.
 
         ``source`` identifies who produced this feedback:
         ``"human"`` for human review, ``"agent"`` for AI agent review.
@@ -305,21 +305,21 @@ def register_tools(server: FastMCP) -> list[str]:
         graph.
         """
         return handlers.handle_feedback(
-            instance_id,
-            receipt_id,
-            action,
-            source,
-            from_type,
-            from_id,
-            relationship_type,
-            to_type,
-            to_id,
-            edge_key,
-            reason,
-            reason_code,
-            scope_hints,
-            corrections,
-            group_override,
+            instance_id=instance_id,
+            receipt_id=receipt_id,
+            action=action,
+            source=source,
+            from_type=from_type,
+            from_id=from_id,
+            relationship_type=relationship_type,
+            to_type=to_type,
+            to_id=to_id,
+            edge_key=edge_key,
+            reason=reason,
+            reason_code=reason_code,
+            scope_hints=scope_hints,
+            corrections=corrections,
+            group_override=group_override,
         )
 
     @_tool

@@ -602,6 +602,7 @@ def test_add_relationships_serializes_evidence_fields():
                 to_type="Vehicle",
                 to_id="V-1",
                 properties={"verified": True},
+                pending=True,
                 evidence_refs=[
                     contracts.EvidenceRef(
                         source="roadmap_doc",
@@ -633,6 +634,7 @@ def test_add_relationships_serializes_evidence_fields():
                     "to_type": "Vehicle",
                     "to_id": "V-1",
                     "properties": {"verified": True},
+                    "pending": True,
                     "evidence_refs": [
                         {
                             "source": "roadmap_doc",
@@ -2267,3 +2269,33 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
         == actor_context
     )
     assert captured["/api/v1/inst_123/groups/propose"]["actor_context"] == actor_context
+
+
+def test_feedback_omits_source_receipt_by_default():
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "feedback_id": "FB-1",
+                "applied": True,
+                "receipt_id": "RCP-feedback",
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.feedback(
+        "inst_123",
+        action="approve",
+        source="human",
+        from_type="Part",
+        from_id="P-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+    )
+
+    assert result.applied is True
+    assert captured["payload"]["receipt_id"] is None

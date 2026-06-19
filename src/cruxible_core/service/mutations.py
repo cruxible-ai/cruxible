@@ -60,6 +60,7 @@ class _PreparedBatchRelationship:
     validated: ValidatedRelationship
     relationship: RelationshipInstance
     evidence_refs: list[EvidenceRef]
+    pending: bool = False
 
 
 @dataclass
@@ -461,7 +462,7 @@ def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
 def _relationship_from_input(
     instance: InstanceProtocol,
     value: RelationshipWriteInput,
-) -> RelationshipInstance:
+) -> tuple[RelationshipInstance, bool]:
     evidence_refs = resolve_evidence_refs(
         instance,
         evidence_refs=value.evidence_refs,
@@ -475,14 +476,17 @@ def _relationship_from_input(
                 rationale=value.evidence_rationale,
             )
         )
-    return RelationshipInstance(
-        from_type=value.from_type,
-        from_id=value.from_id,
-        relationship_type=value.relationship_type,
-        to_type=value.to_type,
-        to_id=value.to_id,
-        properties=value.properties,
-        metadata=metadata,
+    return (
+        RelationshipInstance(
+            from_type=value.from_type,
+            from_id=value.from_id,
+            relationship_type=value.relationship_type,
+            to_type=value.to_type,
+            to_id=value.to_id,
+            properties=value.properties,
+            metadata=metadata,
+        ),
+        value.pending,
     )
 
 
@@ -663,12 +667,23 @@ def _prepare_batch_direct_write(
                 )
             continue
         validated_relationship.relationship.metadata = edge.metadata
+        if relationship.pending and validated_relationship.is_update:
+            errors.append(
+                f"Relationship {index}: pending relationship writes can only create new edges"
+            )
+            if builder:
+                builder.record_validation(
+                    passed=False,
+                    detail={"relationship": index, "error": "pending update not allowed"},
+                )
+            continue
         relationship_seen.add(relationship_key)
         validated_relationships.append(
             _PreparedBatchRelationship(
                 validated=validated_relationship,
                 relationship=edge,
                 evidence_refs=refs,
+                pending=relationship.pending,
             )
         )
         _record_evidence_sources(evidence_sources, evidence_seen, refs)
@@ -691,6 +706,7 @@ def _prepare_batch_direct_write(
                 relationship_item.validated,
                 source=source,
                 source_ref=source_ref,
+                pending=relationship_item.pending,
             )
 
     try:
@@ -840,6 +856,7 @@ def service_batch_direct_write(
                 source_ref,
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
+                pending=relationship_item.pending,
             )
             persisted_relationship = prepared.graph.get_relationship(
                 edge.from_type,
@@ -869,6 +886,8 @@ def service_batch_direct_write(
                         ),
                     )
                 )
+                if relationship_item.pending:
+                    evidence_detail["review_status"] = "pending"
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,
@@ -1079,14 +1098,19 @@ def service_add_relationship_inputs(
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Normalize relationship write inputs, then add or update graph relationships."""
+    normalized = [
+        _relationship_from_input(instance, relationship)
+        for relationship in relationships
+    ]
     return service_add_relationships(
         instance,
-        [_relationship_from_input(instance, relationship) for relationship in relationships],
+        [relationship for relationship, _pending in normalized],
         source=source,
         source_ref=source_ref,
         dry_run=dry_run,
         actor_context=actor_context,
         _create_receipt=_create_receipt,
+        pending=[pending for _relationship, pending in normalized],
     )
 
 
@@ -1099,6 +1123,7 @@ def service_add_relationships(
     dry_run: bool = False,
     actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
+    pending: bool | Sequence[bool] = False,
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
 
@@ -1123,9 +1148,17 @@ def service_add_relationships(
         builder = ctx.builder
         errors: list[str] = []
         batch_seen: set[tuple[str, str, str, str, str]] = set()
-        pending = []
+        prepared_relationships = []
+        pending_flags = (
+            list(pending)
+            if isinstance(pending, Sequence) and not isinstance(pending, (str, bytes))
+            else [bool(pending)] * len(relationships)
+        )
+        if len(pending_flags) != len(relationships):
+            raise DataValidationError("pending flag count must match relationship count")
 
         for i, edge in enumerate(relationships, start=1):
+            pending_flag = pending_flags[i - 1]
             key = edge.identity_tuple()
             if key in batch_seen:
                 errors.append(
@@ -1158,8 +1191,16 @@ def service_add_relationships(
                 continue
 
             validated.relationship.metadata = edge.metadata
+            if pending_flag and validated.is_update:
+                errors.append(f"Edge {i}: pending relationship writes can only create new edges")
+                if builder:
+                    builder.record_validation(
+                        passed=False,
+                        detail={"edge": i, "error": "pending update not allowed"},
+                    )
+                continue
             batch_seen.add(key)
-            pending.append((validated, edge))
+            prepared_relationships.append((validated, edge, pending_flag))
             if builder:
                 builder.record_validation(
                     passed=True,
@@ -1179,15 +1220,23 @@ def service_add_relationships(
         interactions = _detect_direct_write_group_interactions(
             instance,
             graph,
-            [edge for _validated, edge in pending],
+            [edge for _validated, edge, _pending_flag in prepared_relationships],
             group_store=ctx.uow.groups if ctx.uow is not None else None,
         )
         _record_group_interaction_validation(builder, interactions)
 
         if dry_run:
             return AddRelationshipResult(
-                added=sum(1 for validated, _ in pending if not validated.is_update),
-                updated=sum(1 for validated, _ in pending if validated.is_update),
+                added=sum(
+                    1
+                    for validated, _edge, _pending_flag in prepared_relationships
+                    if not validated.is_update
+                ),
+                updated=sum(
+                    1
+                    for validated, _edge, _pending_flag in prepared_relationships
+                    if validated.is_update
+                ),
                 pending_conflicts=list(interactions.pending_conflicts),
                 updated_group_backed_edges=list(interactions.updated_group_backed_edges),
             )
@@ -1195,7 +1244,7 @@ def service_add_relationships(
         added = 0
         updated = 0
         touched_relationships = []
-        for validated, edge in pending:
+        for validated, edge, pending_flag in prepared_relationships:
             apply_relationship(
                 graph,
                 validated,
@@ -1203,6 +1252,7 @@ def service_add_relationships(
                 source_ref,
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
+                pending=pending_flag,
             )
             persisted = graph.get_relationship(
                 edge.from_type,
@@ -1224,6 +1274,8 @@ def service_add_relationships(
                     if edge.metadata.evidence.rationale is not None:
                         evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
                 evidence_detail.update(_relationship_group_interaction_detail(edge, interactions))
+                if pending_flag:
+                    evidence_detail["review_status"] = "pending"
                 builder.record_relationship_write(
                     edge.from_type,
                     edge.from_id,

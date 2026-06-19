@@ -68,6 +68,7 @@ class RelationshipInput(BaseModel):
     to_type: str
     to_id: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    pending: bool = False
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
     evidence_rationale: str | None = None

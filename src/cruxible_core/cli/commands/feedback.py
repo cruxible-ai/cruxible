@@ -44,7 +44,7 @@ def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
 
 
 @click.command("feedback")
-@click.option("--receipt", "receipt_id", required=True, help="Receipt ID.")
+@click.option("--receipt", "receipt_id", default=None, help="Optional source receipt ID.")
 @click.option(
     "--action",
     required=True,

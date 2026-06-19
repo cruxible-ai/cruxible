@@ -15,7 +15,7 @@ from cruxible_core.temporal import format_datetime
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS feedback (
     feedback_id TEXT PRIMARY KEY,
-    receipt_id TEXT NOT NULL,
+    receipt_id TEXT,
     action TEXT NOT NULL,
     target_json TEXT NOT NULL,
     target_relationship TEXT NOT NULL DEFAULT '',
@@ -90,7 +90,11 @@ class FeedbackStore(FeedbackStoreProtocol):
         self._conn.row_factory = sqlite3.Row
         if initialize_schema:
             self._conn.executescript(_SCHEMA)
-            self._ensure_actor_context_columns()
+            self._ensure_feedback_schema()
+
+    def _ensure_feedback_schema(self) -> None:
+        self._ensure_actor_context_columns()
+        self._ensure_feedback_receipt_nullable()
 
     def _ensure_actor_context_columns(self) -> None:
         feedback_columns = {
@@ -103,6 +107,63 @@ class FeedbackStore(FeedbackStoreProtocol):
         }
         if "actor_context" not in outcome_columns:
             self._conn.execute("ALTER TABLE outcomes ADD COLUMN actor_context TEXT")
+
+    def _ensure_feedback_receipt_nullable(self) -> None:
+        rows = self._conn.execute("PRAGMA table_info(feedback)").fetchall()
+        receipt_column = next((row for row in rows if row["name"] == "receipt_id"), None)
+        if receipt_column is None or not receipt_column["notnull"]:
+            return
+
+        self._conn.execute("ALTER TABLE feedback RENAME TO feedback_receipt_not_null_old")
+        self._conn.executescript(
+            """\
+CREATE TABLE feedback (
+    feedback_id TEXT PRIMARY KEY,
+    receipt_id TEXT,
+    action TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    target_relationship TEXT NOT NULL DEFAULT '',
+    target_from_type TEXT NOT NULL DEFAULT '',
+    target_from_id TEXT NOT NULL DEFAULT '',
+    target_to_type TEXT NOT NULL DEFAULT '',
+    target_to_id TEXT NOT NULL DEFAULT '',
+    target_edge_key INTEGER,
+    reason TEXT NOT NULL DEFAULT '',
+    reason_code TEXT,
+    reason_remediation_hint TEXT,
+    scope_hints TEXT NOT NULL DEFAULT '{}',
+    feedback_profile_key TEXT,
+    feedback_profile_version INTEGER,
+    decision_context TEXT NOT NULL DEFAULT '{}',
+    context_snapshot TEXT NOT NULL DEFAULT '{}',
+    decision_surface_type TEXT,
+    decision_surface_name TEXT,
+    source TEXT NOT NULL DEFAULT 'human',
+    model_id TEXT,
+    corrections TEXT NOT NULL DEFAULT '{}',
+    actor_context TEXT,
+    created_at TEXT NOT NULL
+);
+INSERT INTO feedback (
+    feedback_id, receipt_id, action, target_json, target_relationship,
+    target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    reason, reason_code, reason_remediation_hint, scope_hints,
+    feedback_profile_key, feedback_profile_version,
+    decision_context, context_snapshot, decision_surface_type,
+    decision_surface_name, source, model_id, corrections, actor_context, created_at
+)
+SELECT
+    feedback_id, receipt_id, action, target_json, target_relationship,
+    target_from_type, target_from_id, target_to_type, target_to_id, target_edge_key,
+    reason, reason_code, reason_remediation_hint, scope_hints,
+    feedback_profile_key, feedback_profile_version,
+    decision_context, context_snapshot, decision_surface_type,
+    decision_surface_name, source, model_id, corrections, actor_context, created_at
+FROM feedback_receipt_not_null_old;
+DROP TABLE feedback_receipt_not_null_old;
+CREATE INDEX IF NOT EXISTS idx_feedback_receipt ON feedback(receipt_id);
+"""
+        )
 
     # -----------------------------------------------------------------
     # Feedback

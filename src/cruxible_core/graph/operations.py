@@ -32,6 +32,7 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
 )
+from cruxible_core.temporal import utc_now
 
 
 @dataclass
@@ -190,6 +191,20 @@ def _initial_assertion(source: str) -> RelationshipAssertion:
     return RelationshipAssertion()
 
 
+def _pending_assertion(
+    actor_context: GovernedActorContext | None,
+) -> RelationshipAssertion:
+    return RelationshipAssertion(
+        review=RelationshipReviewState(
+            status="pending",
+            source="agent",
+            updated_at=utc_now(),
+            updated_by="relationship:add_pending",
+            actor_context=actor_context,
+        )
+    )
+
+
 def apply_relationship(
     graph: EntityGraph,
     validated: ValidatedRelationship,
@@ -199,6 +214,7 @@ def apply_relationship(
     receipt_id: str | None = None,
     resolution_id: str | None = None,
     actor_context: GovernedActorContext | None = None,
+    pending: bool = False,
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
@@ -254,7 +270,7 @@ def apply_relationship(
                 resolution_id=resolution_id,
                 actor_context=actor_context,
             ),
-            assertion=_initial_assertion(source),
+            assertion=_pending_assertion(actor_context) if pending else _initial_assertion(source),
             evidence=incoming_evidence,
         )
         graph.add_relationship(rel)

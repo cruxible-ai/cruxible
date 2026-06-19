@@ -501,7 +501,6 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        receipt_id: str,
         action: contracts.FeedbackAction,
         source: contracts.FeedbackSource,
         from_type: str,
@@ -515,6 +514,7 @@ class CruxibleClient:
         scope_hints: dict[str, Any] | None = None,
         corrections: dict[str, Any] | None = None,
         group_override: bool = False,
+        receipt_id: str | None = None,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.FeedbackResult:
         response = self._client.post(

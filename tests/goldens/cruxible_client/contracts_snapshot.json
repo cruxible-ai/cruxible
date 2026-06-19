@@ -1999,6 +1999,11 @@
                 "title": "From Type",
                 "type": "string"
               },
+              "pending": {
+                "default": false,
+                "title": "Pending",
+                "type": "boolean"
+              },
               "properties": {
                 "additionalProperties": true,
                 "title": "Properties",
@@ -2659,6 +2664,19 @@
             "type": "string"
           }
         },
+        "pending": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          }
+        },
         "properties": {
           "has_default": false,
           "has_default_factory": true,
@@ -2905,6 +2923,11 @@
           "from_type": {
             "title": "From Type",
             "type": "string"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
           },
           "properties": {
             "additionalProperties": true,
@@ -16532,6 +16555,19 @@
             "type": "string"
           }
         },
+        "pending": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          }
+        },
         "properties": {
           "has_default": false,
           "has_default_factory": true,
@@ -16765,6 +16801,11 @@
           "from_type": {
             "title": "From Type",
             "type": "string"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
           },
           "properties": {
             "additionalProperties": true,

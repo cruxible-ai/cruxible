@@ -2669,6 +2669,53 @@ def test_governed_write_commands_delegate_to_client_in_server_mode(
     assert "Feedback FB-QUERY-1 applied to graph." in feedback_from_query.output
 
 
+def test_feedback_explicit_coordinates_without_receipt_forwards_none(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def feedback(self, instance_id, **kwargs):
+            captured["instance_id"] = instance_id
+            captured.update(kwargs)
+            return contracts.FeedbackResult(
+                feedback_id="FB-no-receipt",
+                applied=True,
+                receipt_id="RCP-feedback",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback",
+            "--action",
+            "approve",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["instance_id"] == "inst_123"
+    assert captured["receipt_id"] is None
+    assert captured["action"] == "approve"
+    assert "Feedback FB-no-receipt applied to graph." in result.output
+
+
 def test_reload_config_uploads_composed_yaml_in_server_mode(
     monkeypatch,
     runner: CliRunner,
@@ -2910,6 +2957,79 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
     assert "Add relationship Part:BP-1 -[fits]-> Vehicle:V-1 applied." in result.output
     assert "Notice: 1 pending group conflict(s) detected." in result.output
+
+
+def test_add_relationship_pending_forwards_to_server_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            return contracts.GetRelationshipResult(
+                found=False,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
+            captured["instance_id"] = instance_id
+            captured["payload"] = payload
+            captured["dry_run"] = dry_run
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                relationships_added=1,
+                receipt_id="RCP-pending",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "relationship",
+            "add",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--set-json",
+            "verified=true",
+            "--pending",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    assert payload.relationships[0].pending is True
+    output = json.loads(result.output)
+    assert output["relationships_added"] == 1
+    assert output["receipt_id"] == "RCP-pending"
 
 
 def test_batch_direct_write_passes_payload_file_to_server_client(

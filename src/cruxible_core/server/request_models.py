@@ -128,7 +128,7 @@ class BatchDirectWriteRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    receipt_id: str
+    receipt_id: str | None = None
     action: contracts.FeedbackAction
     source: contracts.FeedbackSource
     from_type: str

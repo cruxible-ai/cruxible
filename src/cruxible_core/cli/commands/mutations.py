@@ -308,6 +308,7 @@ def _contract_batch_payload_to_service(
                 to_type=edge.to_type,
                 to_id=edge.to_id,
                 properties=edge.properties,
+                pending=edge.pending,
                 evidence_refs=[ref.model_dump(mode="python") for ref in edge.evidence_refs],
                 source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
                 evidence_rationale=edge.evidence_rationale,
@@ -433,6 +434,7 @@ def _relationship_payload(
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
+    pending: bool = False,
 ) -> contracts.BatchDirectWritePayload:
     return contracts.BatchDirectWritePayload(
         entities=[],
@@ -444,6 +446,7 @@ def _relationship_payload(
                 to_type=to_type,
                 to_id=to_id,
                 properties=dict(properties),
+                pending=pending,
                 evidence_refs=[_parse_evidence_ref(raw) for raw in evidence_refs],
                 source_evidence=[_parse_source_evidence(raw) for raw in source_evidence],
                 evidence_rationale=evidence_rationale,
@@ -620,6 +623,11 @@ def update_entity_cmd(
     default=None,
     help="Optional rationale for the attached relationship evidence.",
 )
+@click.option(
+    "--pending",
+    is_flag=True,
+    help="Create the relationship as pending review instead of live state.",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
@@ -640,6 +648,7 @@ def add_relationship_cmd(
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
+    pending: bool,
     dry_run: bool,
     output_json: bool,
 ) -> None:
@@ -681,6 +690,7 @@ def add_relationship_cmd(
             evidence_refs=evidence_refs,
             source_evidence=source_evidence,
             evidence_rationale=evidence_rationale,
+            pending=pending,
         ),
         dry_run=dry_run,
         command_name="relationship add",

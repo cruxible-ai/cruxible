@@ -1248,7 +1248,6 @@ def list_traces(
 
 def feedback(
     instance_id: str,
-    receipt_id: str,
     action: contracts.FeedbackAction,
     source: contracts.FeedbackSource,
     from_type: str,
@@ -1262,6 +1261,7 @@ def feedback(
     scope_hints: dict[str, Any] | None = None,
     corrections: dict[str, Any] | None = None,
     group_override: bool = False,
+    receipt_id: str | None = None,
     actor_context: Any | None = None,
 ) -> contracts.FeedbackResult:
     """Record feedback on an edge."""
@@ -2178,6 +2178,7 @@ def _relationship_input_to_service(
         to_type=edge.to_type,
         to_id=edge.to_id,
         properties=edge.properties,
+        pending=edge.pending,
         evidence_refs=[
             ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
             for ref in edge.evidence_refs
@@ -2208,6 +2209,7 @@ def _batch_payload_to_service(
                 to_type=edge.to_type,
                 to_id=edge.to_id,
                 properties=edge.properties,
+                pending=edge.pending,
                 evidence_refs=[
                     ref.model_dump(mode="python") if isinstance(ref, BaseModel) else ref
                     for ref in edge.evidence_refs

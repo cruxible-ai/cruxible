@@ -13,11 +13,14 @@ from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
     EntityWriteInput,
+    FeedbackItemInput,
+    RelationshipTargetInput,
     RelationshipWriteInput,
     SharedEvidenceInput,
     service_add_entities,
@@ -25,7 +28,9 @@ from cruxible_core.service import (
     service_add_relationship_inputs,
     service_add_relationships,
     service_batch_direct_write,
+    service_feedback_input,
     service_propose_group,
+    service_query_inline_surface,
     service_register_source_artifact,
     service_resolve_group,
 )
@@ -91,6 +96,34 @@ def _batch_payload() -> BatchDirectWriteInput:
                 evidence_refs=[{"source": "roadmap_doc", "source_record_id": "batch-section"}],
             )
         },
+    )
+
+
+def _parts_for_vehicle_inline_query() -> dict[str, object]:
+    return {
+        "name": "inline_fits_for_vehicle",
+        "mode": "traversal",
+        "entry_point": "Vehicle",
+        "traversal": [
+            {
+                "relationship": "fits",
+                "direction": "incoming",
+                "filter": {"verified": True},
+            }
+        ],
+        "returns": "fits",
+        "result_shape": "relationship",
+        "allow_relationship_state_override": True,
+    }
+
+
+def _batch_fit_target() -> RelationshipTargetInput:
+    return RelationshipTargetInput(
+        from_type="Part",
+        from_id="BP-BATCH",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-BATCH",
     )
 
 
@@ -1186,6 +1219,128 @@ class TestBatchDirectWrite:
         assert receipt is not None
         assert receipt.operation_type == "batch_direct_write"
         assert receipt.committed is True
+
+    def test_pending_relationship_write_is_reviewable_not_live(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = _batch_payload()
+        payload.relationships[0].pending = True
+
+        result = service_batch_direct_write(
+            initialized_instance,
+            payload,
+            source="test_batch",
+            source_ref="test-batch",
+        )
+
+        assert result.valid is True
+        assert result.relationships_added == 1
+        graph = initialized_instance.load_graph()
+        relationship = graph.get_relationship("Part", "BP-BATCH", "Vehicle", "V-BATCH", "fits")
+        assert relationship is not None
+        assert relationship.metadata.assertion.review.status == "pending"
+        assert relationship.metadata.assertion.review.source == "agent"
+
+        query = _parts_for_vehicle_inline_query()
+        params = {"vehicle_id": "V-BATCH"}
+        live = service_query_inline_surface(initialized_instance, query, params)
+        pending = service_query_inline_surface(
+            initialized_instance,
+            query,
+            params,
+            relationship_state="pending",
+        )
+
+        assert live.items == []
+        assert len(pending.items) == 1
+        assert relationship_matches_query_state(relationship.metadata, "reviewable")
+
+    def test_receiptless_feedback_approves_pending_relationship(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = _batch_payload()
+        payload.relationships[0].pending = True
+        service_batch_direct_write(initialized_instance, payload)
+
+        result = service_feedback_input(
+            initialized_instance,
+            FeedbackItemInput(
+                action="approve",
+                target=_batch_fit_target(),
+            ),
+            source="human",
+        )
+
+        assert result.applied is True
+        assert result.receipt_id is not None
+        store = initialized_instance.get_feedback_store()
+        try:
+            record = store.get_feedback(result.feedback_id)
+        finally:
+            store.close()
+        assert record is not None
+        assert record.receipt_id is None
+        graph = initialized_instance.load_graph()
+        relationship = graph.get_relationship("Part", "BP-BATCH", "Vehicle", "V-BATCH", "fits")
+        assert relationship is not None
+        assert relationship.metadata.assertion.review.status == "approved"
+        assert relationship.metadata.assertion.review.source == "human"
+
+        live = service_query_inline_surface(
+            initialized_instance,
+            _parts_for_vehicle_inline_query(),
+            {"vehicle_id": "V-BATCH"},
+        )
+        assert len(live.items) == 1
+
+    def test_receiptless_feedback_rejects_pending_relationship(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = _batch_payload()
+        payload.relationships[0].pending = True
+        service_batch_direct_write(initialized_instance, payload)
+
+        result = service_feedback_input(
+            initialized_instance,
+            FeedbackItemInput(
+                action="reject",
+                target=_batch_fit_target(),
+            ),
+            source="human",
+        )
+
+        assert result.applied is True
+        graph = initialized_instance.load_graph()
+        relationship = graph.get_relationship("Part", "BP-BATCH", "Vehicle", "V-BATCH", "fits")
+        assert relationship is not None
+        assert relationship.metadata.assertion.review.status == "rejected"
+        live = service_query_inline_surface(
+            initialized_instance,
+            _parts_for_vehicle_inline_query(),
+            {"vehicle_id": "V-BATCH"},
+        )
+        pending = service_query_inline_surface(
+            initialized_instance,
+            _parts_for_vehicle_inline_query(),
+            {"vehicle_id": "V-BATCH"},
+            relationship_state="pending",
+        )
+        assert live.items == []
+        assert pending.items == []
+
+    def test_pending_relationship_duplicate_tuple_is_rejected(
+        self,
+        initialized_instance: CruxibleInstance,
+    ) -> None:
+        payload = _batch_payload()
+        payload.relationships[0].pending = True
+        service_batch_direct_write(initialized_instance, payload)
+
+        with pytest.raises(DataValidationError, match="pending relationship writes"):
+            service_batch_direct_write(initialized_instance, payload)
 
     def test_invalid_apply_does_not_commit_partial_entities(
         self,

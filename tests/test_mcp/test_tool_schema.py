@@ -39,6 +39,13 @@ class TestInputSchema:
         source = schemas["cruxible_feedback"].inputSchema["properties"]["source"]
         assert source["enum"] == ["human", "agent"]
 
+    def test_feedback_receipt_is_optional_for_explicit_coordinates(self, server):
+        schemas = _get_tool_schemas(server)
+        required = set(schemas["cruxible_feedback"].inputSchema["required"])
+        props = schemas["cruxible_feedback"].inputSchema["properties"]
+        assert "receipt_id" in props
+        assert "receipt_id" not in required
+
     def test_feedback_from_query_schema(self, server):
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
@@ -99,10 +106,12 @@ class TestInputSchema:
             "evidence_refs",
             "source_evidence",
             "evidence_rationale",
+            "pending",
         } <= set(rel_def["properties"])
         assert "evidence_refs" not in required
         assert "source_evidence" not in required
         assert "evidence_rationale" not in required
+        assert "pending" not in required
 
     def test_add_entity_schema(self, server):
         """EntityInput fields appear as required in the entities array schema."""

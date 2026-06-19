@@ -1269,6 +1269,26 @@ class TestFeedback:
             "feedback",
         )
 
+    def test_feedback_from_query_still_requires_receipt(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "feedback-from-query",
+                "--result-index",
+                "0",
+                "--action",
+                "approve",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "Missing option '--receipt'" in result.output
+
 
 # ---------------------------------------------------------------------------
 # outcome
@@ -1879,6 +1899,29 @@ class TestAddRelationship:
             ],
             "relationship add",
         )
+
+    def test_update_rejects_pending_option(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "relationship",
+                "update",
+                "fits",
+                "Part",
+                "BP-1001",
+                "Vehicle",
+                "V-2024-CIVIC-EX",
+                "--pending",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "No such option: --pending" in result.output
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ class FeedbackRecord(BaseModel):
     """Human or AI feedback on a query result or specific relationship."""
 
     feedback_id: str = Field(default_factory=lambda: new_id("FB"))
-    receipt_id: str
+    receipt_id: str | None = None
     action: Literal["approve", "reject", "correct", "flag"]
     target: RelationshipInstance
     reason: str = ""

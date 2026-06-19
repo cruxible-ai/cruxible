@@ -73,8 +73,8 @@ def _normalize_feedback_record(
     *,
     config: CoreConfig,
     graph: EntityGraph,
-    receipt: Receipt,
-    receipt_id: str,
+    receipt: Receipt | None,
+    receipt_id: str | None,
     action: Literal["approve", "reject", "correct", "flag"],
     source: Literal["human", "agent"],
     target: RelationshipInstance,
@@ -237,8 +237,15 @@ def _validate_feedback_inputs(
         )
 
 
-def _build_decision_context(receipt: Receipt) -> dict[str, Any]:
+def _build_decision_context(receipt: Receipt | None) -> dict[str, Any]:
     """Derive stable decision-surface metadata from the anchored receipt."""
+    if receipt is None:
+        return {
+            "surface_type": "operation",
+            "surface_name": "explicit_feedback",
+            "operation_type": "feedback",
+            "source_receipt_id": None,
+        }
     if receipt.operation_type == "query":
         surface_type = "query"
         surface_name = receipt.query_name
@@ -735,6 +742,8 @@ def _relationship_target_from_input(target: RelationshipTargetInput) -> Relation
 
 
 def _feedback_batch_item_from_input(item: FeedbackItemInput) -> FeedbackBatchItem:
+    if item.receipt_id is None:
+        raise ConfigError("Batch feedback items require receipt_id")
     return FeedbackBatchItem(
         receipt_id=item.receipt_id,
         action=item.action,
@@ -1024,7 +1033,7 @@ def service_feedback_from_query_result(
 
 def service_feedback(
     instance: InstanceProtocol,
-    receipt_id: str,
+    receipt_id: str | None,
     action: Literal["approve", "reject", "correct", "flag"],
     source: Literal["human", "agent"],
     target: RelationshipInstance,
@@ -1053,11 +1062,11 @@ def service_feedback(
     )
     config = instance.load_config()
     graph = instance.load_graph()
-    receipts = _load_receipts(instance, [receipt_id])
+    receipt = _load_receipts(instance, [receipt_id])[receipt_id] if receipt_id is not None else None
     record = _normalize_feedback_record(
         config=config,
         graph=graph,
-        receipt=receipts[receipt_id],
+        receipt=receipt,
         receipt_id=receipt_id,
         action=action,
         source=source,
@@ -1071,9 +1080,10 @@ def service_feedback(
     )
 
     receipt_parameters: dict[str, Any] = {
-        "receipt_id": receipt_id,
+        "source_receipt_id": receipt_id,
         "action": action,
         "source": source,
+        "target": _feedback_target_label(target),
     }
     if _feedback_from_query is not None:
         receipt_parameters["feedback_from_query"] = _feedback_from_query
