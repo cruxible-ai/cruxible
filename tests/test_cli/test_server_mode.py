@@ -2734,30 +2734,40 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
     assert "Config updated on server." in result.output
 
 
+@pytest.mark.parametrize("command", ["add", "update"])
+def test_top_level_write_verb_groups_are_not_registered(
+    runner: CliRunner,
+    command: str,
+) -> None:
+    result = runner.invoke(cli, [command, "--help"])
+
+    assert result.exit_code == 2
+    assert f"No such command '{command}'" in result.output
+
+
 @pytest.mark.parametrize(
     ("args", "label"),
     [
         (["init", "--config", "config.yaml"], "init"),
         (["run", "--workflow", "wf"], "run"),
         (["entity", "add", "--type", "Vehicle", "--id", "V-1"], "entity add"),
-        (["add", "entity", "Vehicle", "V-1"], "add entity"),
-        (["update", "entity", "Vehicle", "V-1", "--set", "make=Honda"], "update entity"),
+        (["entity", "update", "Vehicle", "V-1", "--set", "make=Honda"], "entity update"),
         (
             [
-                "add",
                 "relationship",
+                "add",
                 "fits",
                 "Part",
                 "BP-1",
                 "Vehicle",
                 "V-1",
             ],
-            "add relationship",
+            "relationship add",
         ),
         (
             [
-                "update",
                 "relationship",
+                "update",
                 "fits",
                 "Part",
                 "BP-1",
@@ -2766,7 +2776,7 @@ def test_reload_config_uploads_composed_yaml_in_server_mode(
                 "--set",
                 "source=manual",
             ],
-            "update relationship",
+            "relationship update",
         ),
         (
             [
@@ -2804,13 +2814,41 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
     captured: dict[str, object] = {}
 
     class StubClient:
-        def add_relationships(self, instance_id, relationships, *, dry_run=False):
+        def get_relationship(
+            self,
+            instance_id,
+            *,
+            from_type,
+            from_id,
+            relationship_type,
+            to_type,
+            to_id,
+        ):
+            captured["preflight"] = (
+                instance_id,
+                from_type,
+                from_id,
+                relationship_type,
+                to_type,
+                to_id,
+            )
+            return contracts.GetRelationshipResult(
+                found=False,
+                from_type=from_type,
+                from_id=from_id,
+                relationship_type=relationship_type,
+                to_type=to_type,
+                to_id=to_id,
+            )
+
+        def batch_direct_write(self, instance_id, payload, *, dry_run=False):
             captured["instance_id"] = instance_id
-            captured["relationships"] = relationships
+            captured["payload"] = payload
             captured["dry_run"] = dry_run
-            return contracts.AddRelationshipResult(
-                added=1,
-                updated=0,
+            return contracts.BatchDirectWriteResult(
+                dry_run=dry_run,
+                valid=True,
+                relationships_added=1,
                 pending_conflicts=[
                     contracts.DirectWriteGroupInteraction(
                         relationship_type="fits",
@@ -2860,17 +2898,17 @@ def test_add_relationship_passes_evidence_fields_to_server_client(
 
     assert result.exit_code == 0, result.output
     assert captured["instance_id"] == "inst_123"
-    relationships = captured["relationships"]
-    assert isinstance(relationships, list)
-    relationship = relationships[0]
-    assert isinstance(relationship, contracts.RelationshipInput)
+    assert captured["preflight"] == ("inst_123", "Part", "BP-1", "fits", "Vehicle", "V-1")
+    payload = captured["payload"]
+    assert isinstance(payload, contracts.BatchDirectWritePayload)
+    relationship = payload.relationships[0]
     assert relationship.properties == {"verified": True}
     assert relationship.evidence_refs[0].source == "roadmap_doc"
     assert relationship.evidence_refs[0].source_record_id == "section-p0"
     assert relationship.source_evidence[0].source_artifact_id == "SRC-1"
     assert relationship.source_evidence[0].chunk_id == "CHK-1"
     assert relationship.evidence_rationale == "Accepted direct source-backed assertion."
-    assert "Relationship added:" in result.output
+    assert "Add relationship Part:BP-1 -[fits]-> Vehicle:V-1 applied." in result.output
     assert "Notice: 1 pending group conflict(s) detected." in result.output
 
 
@@ -3100,8 +3138,8 @@ def test_add_entity_shorthand_preserves_string_setters_and_json_values(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add",
             "entity",
+            "add",
             "Vehicle",
             "V-NEW",
             "--set",
@@ -3164,8 +3202,8 @@ def test_update_entity_shorthand_requires_existing_entity(
             "http://server",
             "--instance-id",
             "inst_123",
-            "update",
             "entity",
+            "update",
             "Vehicle",
             "V-MISSING",
             "--set",
@@ -3210,8 +3248,8 @@ def test_update_entity_shorthand_forwards_batch_payload(
             "http://server",
             "--instance-id",
             "inst_123",
-            "update",
             "entity",
+            "update",
             "Vehicle",
             "V-1",
             "--set",
@@ -3239,8 +3277,8 @@ def test_add_entity_shorthand_rejects_duplicate_fields(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add",
             "entity",
+            "add",
             "Vehicle",
             "V-1",
             "--set",
@@ -3274,8 +3312,8 @@ def test_add_entity_shorthand_rejects_malformed_setters(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add",
             "entity",
+            "add",
             "Vehicle",
             "V-1",
             *args,
@@ -3346,8 +3384,8 @@ def test_add_relationship_shorthand_forwards_properties_and_evidence(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add",
             "relationship",
+            "add",
             "fits",
             "Part",
             "BP-1",
@@ -3414,8 +3452,8 @@ def test_add_relationship_shorthand_rejects_existing_relationship(
             "http://server",
             "--instance-id",
             "inst_123",
-            "add",
             "relationship",
+            "add",
             "fits",
             "Part",
             "BP-1",
@@ -3463,8 +3501,8 @@ def test_update_relationship_shorthand_requires_existing_relationship(
             "http://server",
             "--instance-id",
             "inst_123",
-            "update",
             "relationship",
+            "update",
             "fits",
             "Part",
             "BP-1",
@@ -3523,8 +3561,8 @@ def test_update_relationship_shorthand_forwards_evidence_only_update(
             "http://server",
             "--instance-id",
             "inst_123",
-            "update",
             "relationship",
+            "update",
             "fits",
             "Part",
             "BP-1",

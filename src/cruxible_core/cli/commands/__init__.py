@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     add_constraint_cmd: Any
     add_decision_policy_cmd: Any
     add_entity_cmd: Any
-    add_group: Any
     add_relationship_cmd: Any
     analyze_feedback_cmd: Any
     analyze_outcomes_cmd: Any
@@ -48,7 +47,8 @@ if TYPE_CHECKING:
     source_group: Any
     stats_cmd: Any
     test_cmd: Any
-    update_group: Any
+    update_entity_cmd: Any
+    update_relationship_cmd: Any
     validate: Any
     state_group: Any
 else:
@@ -76,11 +76,11 @@ else:
         add_constraint_cmd,
         add_decision_policy_cmd,
         add_entity_cmd,
-        add_group,
         add_relationship_cmd,
         batch_direct_write_cmd,
         reload_config_cmd,
-        update_group,
+        update_entity_cmd,
+        update_relationship_cmd,
     )
     from cruxible_core.cli.commands.reads import (
         analyze_feedback_cmd,
@@ -117,7 +117,6 @@ __all__ = [
     "add_constraint_cmd",
     "add_decision_policy_cmd",
     "add_entity_cmd",
-    "add_group",
     "add_relationship_cmd",
     "analyze_feedback_cmd",
     "analyze_outcomes_cmd",
@@ -157,7 +156,8 @@ __all__ = [
     "source_group",
     "stats_cmd",
     "test_cmd",
-    "update_group",
+    "update_entity_cmd",
+    "update_relationship_cmd",
     "validate",
     "state_group",
 ]

@@ -107,7 +107,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     add_constraint_cmd,
     add_decision_policy_cmd,
     add_entity_cmd,
-    add_group,
     add_relationship_cmd,
     analyze_feedback_cmd,
     analyze_outcomes_cmd,
@@ -148,7 +147,8 @@ from cruxible_core.cli.commands import (  # noqa: E402
     state_group,
     stats_cmd,
     test_cmd,
-    update_group,
+    update_entity_cmd,
+    update_relationship_cmd,
     validate,
 )  # re-exported from cli.commands submodules
 
@@ -187,14 +187,14 @@ cli.add_command(sample)
 cli.add_command(evaluate)
 cli.add_command(lint_cmd, "lint")
 cli.add_command(inspect_group, "inspect")
-cli.add_command(add_group, "add")
-cli.add_command(update_group, "update")
 entity_group = click.Group("entity", help="Entity reads and writes.")
 entity_group.add_command(add_entity_cmd, "add")
+entity_group.add_command(update_entity_cmd, "update")
 entity_group.add_command(get_entity_cmd, "get")
 
 relationship_group = click.Group("relationship", help="Relationship reads and writes.")
 relationship_group.add_command(add_relationship_cmd, "add")
+relationship_group.add_command(update_relationship_cmd, "update")
 relationship_group.add_command(get_relationship_cmd, "get")
 
 cli.add_command(entity_group, "entity")

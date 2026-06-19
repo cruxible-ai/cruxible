@@ -1,5 +1,4 @@
-"""CLI commands for add-entity, add-relationship, add-constraint,
-add-decision-policy, and reload-config."""
+"""CLI commands for direct mutations, config updates, and reload-config."""
 
 from __future__ import annotations
 
@@ -24,17 +23,13 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.provenance import (
-    SOURCE_REF_ADD_RELATIONSHIP,
     SOURCE_REF_BATCH_DIRECT_WRITE,
 )
 from cruxible_core.service import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
     EntityWriteInput,
-    RelationshipWriteInput,
     SharedEvidenceInput,
-    service_add_entity_inputs,
-    service_add_relationship_inputs,
     service_batch_direct_write,
     service_reload_config,
 )
@@ -53,8 +48,10 @@ def _field_assignment(raw: str, *, option_name: str) -> tuple[str, str]:
 def _parse_property_assignments(
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
+    *,
+    initial: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    properties: dict[str, Any] = {}
+    properties: dict[str, Any] = dict(initial or {})
     for raw in set_values:
         field, value = _field_assignment(raw, option_name="--set")
         if field in properties:
@@ -69,6 +66,28 @@ def _parse_property_assignments(
         except json.JSONDecodeError as exc:
             raise click.BadParameter(f"--set-json value for '{field}' must be valid JSON") from exc
     return properties
+
+
+def _parse_props_option(props: str | None) -> dict[str, Any]:
+    try:
+        properties = json.loads(props) if props else {}
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("--props must be valid JSON") from exc
+    if not isinstance(properties, dict):
+        raise click.BadParameter("--props must be a JSON object")
+    return cast(dict[str, Any], properties)
+
+
+def _parse_property_inputs(
+    props: str | None,
+    set_values: tuple[str, ...],
+    set_json_values: tuple[str, ...],
+) -> dict[str, Any]:
+    return _parse_property_assignments(
+        set_values,
+        set_json_values,
+        initial=_parse_props_option(props),
+    )
 
 
 def _parse_json_object(raw: str, *, option_name: str) -> dict[str, Any]:
@@ -154,6 +173,93 @@ def _require_server_client(command_name: str) -> tuple[Any, str]:
             f"Local mutation disabled for {command_name}; use server mode."
         )
     return client, _require_instance_id()
+
+
+def _resolve_arg_or_option(
+    *,
+    arg_value: str | None,
+    option_value: str | None,
+    option_name: str,
+    label: str,
+) -> str:
+    if arg_value and option_value and arg_value != option_value:
+        raise click.UsageError(
+            f"{label} supplied both positionally and as {option_name} with different values"
+        )
+    value = arg_value or option_value
+    if not value:
+        raise click.UsageError(f"Missing {label}")
+    return value
+
+
+def _resolve_entity_identity(
+    entity_type: str | None,
+    entity_id: str | None,
+    *,
+    entity_type_option: str | None,
+    entity_id_option: str | None,
+) -> tuple[str, str]:
+    return (
+        _resolve_arg_or_option(
+            arg_value=entity_type,
+            option_value=entity_type_option,
+            option_name="--type",
+            label="entity type",
+        ),
+        _resolve_arg_or_option(
+            arg_value=entity_id,
+            option_value=entity_id_option,
+            option_name="--id",
+            label="entity id",
+        ),
+    )
+
+
+def _resolve_relationship_identity(
+    relationship_type: str | None,
+    from_type: str | None,
+    from_id: str | None,
+    to_type: str | None,
+    to_id: str | None,
+    *,
+    relationship_option: str | None,
+    from_type_option: str | None,
+    from_id_option: str | None,
+    to_type_option: str | None,
+    to_id_option: str | None,
+) -> tuple[str, str, str, str, str]:
+    return (
+        _resolve_arg_or_option(
+            arg_value=relationship_type,
+            option_value=relationship_option,
+            option_name="--relationship",
+            label="relationship type",
+        ),
+        _resolve_arg_or_option(
+            arg_value=from_type,
+            option_value=from_type_option,
+            option_name="--from-type",
+            label="source entity type",
+        ),
+        _resolve_arg_or_option(
+            arg_value=from_id,
+            option_value=from_id_option,
+            option_name="--from-id",
+            label="source entity id",
+        ),
+        _resolve_arg_or_option(
+            arg_value=to_type,
+            option_value=to_type_option,
+            option_name="--to-type",
+            label="target entity type",
+        ),
+        _resolve_arg_or_option(
+            arg_value=to_id,
+            option_value=to_id_option,
+            option_name="--to-id",
+            label="target entity id",
+        ),
+    )
 
 
 def _batch_direct_write_result_payload(result: Any) -> dict[str, Any]:
@@ -347,24 +453,27 @@ def _relationship_payload(
     )
 
 
+def _validate_relationship_evidence(
+    evidence_refs: tuple[str, ...],
+    source_evidence: tuple[str, ...],
+) -> None:
+    for raw in evidence_refs:
+        _parse_evidence_ref(raw)
+    for raw in source_evidence:
+        _parse_source_evidence(raw)
+
+
 def _require_property_assignments(properties: Mapping[str, Any], *, command_name: str) -> None:
     if not properties:
         raise click.UsageError(f"{command_name} requires at least one --set or --set-json")
 
 
-@click.group("add")
-def add_group() -> None:
-    """Ergonomic add commands for direct graph writes."""
-
-
-@click.group("update")
-def update_group() -> None:
-    """Ergonomic update commands for direct graph writes."""
-
-
-@add_group.command("entity")
-@click.argument("entity_type")
-@click.argument("entity_id")
+@click.command("add")
+@click.argument("entity_type", required=False)
+@click.argument("entity_id", required=False)
+@click.option("--type", "entity_type_option", default=None, help="Entity type.")
+@click.option("--id", "entity_id_option", default=None, help="Entity ID.")
+@click.option("--props", default=None, help="JSON object of properties.")
 @click.option(
     "--set",
     "set_values",
@@ -380,22 +489,31 @@ def update_group() -> None:
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
-def add_entity_shorthand_cmd(
-    entity_type: str,
-    entity_id: str,
+def add_entity_cmd(
+    entity_type: str | None,
+    entity_id: str | None,
+    entity_type_option: str | None,
+    entity_id_option: str | None,
+    props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
     dry_run: bool,
     output_json: bool,
 ) -> None:
-    """Add one entity using FIELD=VALUE property assignments."""
-    properties = _parse_property_assignments(set_values, set_json_values)
-    if _entity_exists(entity_type, entity_id, command_name="add entity"):
+    """Create one entity using JSON properties or FIELD=VALUE assignments."""
+    entity_type, entity_id = _resolve_entity_identity(
+        entity_type,
+        entity_id,
+        entity_type_option=entity_type_option,
+        entity_id_option=entity_id_option,
+    )
+    properties = _parse_property_inputs(props, set_values, set_json_values)
+    if _entity_exists(entity_type, entity_id, command_name="entity add"):
         raise DataValidationError(f"Entity {entity_type}:{entity_id} already exists")
     result = _run_batch_payload(
         _entity_payload(entity_type, entity_id, properties),
         dry_run=dry_run,
-        command_name="add entity",
+        command_name="entity add",
     )
     _emit_batch_write_result(
         result,
@@ -405,9 +523,12 @@ def add_entity_shorthand_cmd(
     )
 
 
-@update_group.command("entity")
-@click.argument("entity_type")
-@click.argument("entity_id")
+@click.command("update")
+@click.argument("entity_type", required=False)
+@click.argument("entity_id", required=False)
+@click.option("--type", "entity_type_option", default=None, help="Entity type.")
+@click.option("--id", "entity_id_option", default=None, help="Entity ID.")
+@click.option("--props", default=None, help="JSON object of properties.")
 @click.option(
     "--set",
     "set_values",
@@ -423,23 +544,32 @@ def add_entity_shorthand_cmd(
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
-def update_entity_shorthand_cmd(
-    entity_type: str,
-    entity_id: str,
+def update_entity_cmd(
+    entity_type: str | None,
+    entity_id: str | None,
+    entity_type_option: str | None,
+    entity_id_option: str | None,
+    props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
     dry_run: bool,
     output_json: bool,
 ) -> None:
     """Update one existing entity using FIELD=VALUE property assignments."""
-    properties = _parse_property_assignments(set_values, set_json_values)
+    entity_type, entity_id = _resolve_entity_identity(
+        entity_type,
+        entity_id,
+        entity_type_option=entity_type_option,
+        entity_id_option=entity_id_option,
+    )
+    properties = _parse_property_inputs(props, set_values, set_json_values)
     _require_property_assignments(properties, command_name="update entity")
-    if not _entity_exists(entity_type, entity_id, command_name="update entity"):
+    if not _entity_exists(entity_type, entity_id, command_name="entity update"):
         raise DataValidationError(f"Entity {entity_type}:{entity_id} not found")
     result = _run_batch_payload(
         _entity_payload(entity_type, entity_id, properties),
         dry_run=dry_run,
-        command_name="update entity",
+        command_name="entity update",
     )
     _emit_batch_write_result(
         result,
@@ -449,12 +579,18 @@ def update_entity_shorthand_cmd(
     )
 
 
-@add_group.command("relationship")
-@click.argument("relationship_type")
-@click.argument("from_type")
-@click.argument("from_id")
-@click.argument("to_type")
-@click.argument("to_id")
+@click.command("add")
+@click.argument("relationship_type", required=False)
+@click.argument("from_type", required=False)
+@click.argument("from_id", required=False)
+@click.argument("to_type", required=False)
+@click.argument("to_id", required=False)
+@click.option("--from-type", "from_type_option", default=None, help="Source entity type.")
+@click.option("--from-id", "from_id_option", default=None, help="Source entity ID.")
+@click.option("--relationship", "relationship_option", default=None, help="Relationship type.")
+@click.option("--to-type", "to_type_option", default=None, help="Target entity type.")
+@click.option("--to-id", "to_id_option", default=None, help="Target entity ID.")
+@click.option("--props", default=None, help="JSON object of edge properties.")
 @click.option(
     "--set",
     "set_values",
@@ -487,12 +623,18 @@ def update_entity_shorthand_cmd(
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
-def add_relationship_shorthand_cmd(
-    relationship_type: str,
-    from_type: str,
-    from_id: str,
-    to_type: str,
-    to_id: str,
+def add_relationship_cmd(
+    relationship_type: str | None,
+    from_type: str | None,
+    from_id: str | None,
+    to_type: str | None,
+    to_id: str | None,
+    relationship_option: str | None,
+    from_type_option: str | None,
+    from_id_option: str | None,
+    to_type_option: str | None,
+    to_id_option: str | None,
+    props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
     evidence_refs: tuple[str, ...],
@@ -502,14 +644,27 @@ def add_relationship_shorthand_cmd(
     output_json: bool,
 ) -> None:
     """Add one relationship using FIELD=VALUE property assignments."""
-    properties = _parse_property_assignments(set_values, set_json_values)
+    relationship_type, from_type, from_id, to_type, to_id = _resolve_relationship_identity(
+        relationship_type,
+        from_type,
+        from_id,
+        to_type,
+        to_id,
+        relationship_option=relationship_option,
+        from_type_option=from_type_option,
+        from_id_option=from_id_option,
+        to_type_option=to_type_option,
+        to_id_option=to_id_option,
+    )
+    properties = _parse_property_inputs(props, set_values, set_json_values)
+    _validate_relationship_evidence(evidence_refs, source_evidence)
     if _relationship_exists(
         relationship_type,
         from_type,
         from_id,
         to_type,
         to_id,
-        command_name="add relationship",
+        command_name="relationship add",
     ):
         raise DataValidationError(
             f"Relationship already exists: "
@@ -528,7 +683,7 @@ def add_relationship_shorthand_cmd(
             evidence_rationale=evidence_rationale,
         ),
         dry_run=dry_run,
-        command_name="add relationship",
+        command_name="relationship add",
     )
     _emit_batch_write_result(
         result,
@@ -541,12 +696,18 @@ def add_relationship_shorthand_cmd(
     )
 
 
-@update_group.command("relationship")
-@click.argument("relationship_type")
-@click.argument("from_type")
-@click.argument("from_id")
-@click.argument("to_type")
-@click.argument("to_id")
+@click.command("update")
+@click.argument("relationship_type", required=False)
+@click.argument("from_type", required=False)
+@click.argument("from_id", required=False)
+@click.argument("to_type", required=False)
+@click.argument("to_id", required=False)
+@click.option("--from-type", "from_type_option", default=None, help="Source entity type.")
+@click.option("--from-id", "from_id_option", default=None, help="Source entity ID.")
+@click.option("--relationship", "relationship_option", default=None, help="Relationship type.")
+@click.option("--to-type", "to_type_option", default=None, help="Target entity type.")
+@click.option("--to-id", "to_id_option", default=None, help="Target entity ID.")
+@click.option("--props", default=None, help="JSON object of edge properties.")
 @click.option(
     "--set",
     "set_values",
@@ -579,12 +740,18 @@ def add_relationship_shorthand_cmd(
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
-def update_relationship_shorthand_cmd(
-    relationship_type: str,
-    from_type: str,
-    from_id: str,
-    to_type: str,
-    to_id: str,
+def update_relationship_cmd(
+    relationship_type: str | None,
+    from_type: str | None,
+    from_id: str | None,
+    to_type: str | None,
+    to_id: str | None,
+    relationship_option: str | None,
+    from_type_option: str | None,
+    from_id_option: str | None,
+    to_type_option: str | None,
+    to_id_option: str | None,
+    props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
     evidence_refs: tuple[str, ...],
@@ -594,7 +761,20 @@ def update_relationship_shorthand_cmd(
     output_json: bool,
 ) -> None:
     """Update one existing relationship using FIELD=VALUE property assignments."""
-    properties = _parse_property_assignments(set_values, set_json_values)
+    relationship_type, from_type, from_id, to_type, to_id = _resolve_relationship_identity(
+        relationship_type,
+        from_type,
+        from_id,
+        to_type,
+        to_id,
+        relationship_option=relationship_option,
+        from_type_option=from_type_option,
+        from_id_option=from_id_option,
+        to_type_option=to_type_option,
+        to_id_option=to_id_option,
+    )
+    properties = _parse_property_inputs(props, set_values, set_json_values)
+    _validate_relationship_evidence(evidence_refs, source_evidence)
     if not (properties or evidence_refs or source_evidence or evidence_rationale):
         raise click.UsageError(
             "update relationship requires at least one --set, --set-json, "
@@ -606,7 +786,7 @@ def update_relationship_shorthand_cmd(
         from_id,
         to_type,
         to_id,
-        command_name="update relationship",
+        command_name="relationship update",
     ):
         raise DataValidationError(
             f"Relationship not found: "
@@ -625,7 +805,7 @@ def update_relationship_shorthand_cmd(
             evidence_rationale=evidence_rationale,
         ),
         dry_run=dry_run,
-        command_name="update relationship",
+        command_name="relationship update",
     )
     _emit_batch_write_result(
         result,
@@ -635,181 +815,6 @@ def update_relationship_shorthand_cmd(
         ),
         dry_run=dry_run,
         output_json=output_json,
-    )
-
-
-@click.command("add-entity")
-@click.option("--type", "entity_type", required=True, help="Entity type.")
-@click.option("--id", "entity_id", required=True, help="Entity ID.")
-@click.option("--props", default=None, help="JSON object of properties.")
-@click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
-@handle_errors
-def add_entity_cmd(entity_type: str, entity_id: str, props: str | None, dry_run: bool) -> None:
-    """Add or update an entity in the graph."""
-    try:
-        properties = json.loads(props) if props else {}
-    except json.JSONDecodeError as exc:
-        raise click.BadParameter("--props must be valid JSON") from exc
-    if not isinstance(properties, dict):
-        raise click.BadParameter("--props must be a JSON object")
-
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.add_entities(
-            instance_id,
-            [
-                contracts.EntityInput(
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    properties=properties,
-                )
-            ],
-            dry_run=dry_run,
-        ),
-        lambda instance: service_add_entity_inputs(
-            instance,
-            [
-                EntityWriteInput(
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    properties=properties,
-                )
-            ],
-            dry_run=dry_run,
-        ),
-        allow_local=False,
-        command_name="entity add",
-    )
-
-    label = f"{entity_type}:{entity_id}"
-    updated = (
-        result.entities_updated > 0
-        if isinstance(result, contracts.AddEntityResult)
-        else result.updated
-    )
-    verb = "updated" if updated else "added"
-    if dry_run:
-        click.echo(f"Dry run: entity {label} would be {verb}.")
-    elif updated:
-        click.echo(f"Entity {label} updated.")
-    else:
-        click.echo(f"Entity {label} added.")
-    if result.receipt_id:
-        click.echo(f"  Receipt: {result.receipt_id}")
-
-
-@click.command("add-relationship")
-@click.option("--from-type", required=True, help="Source entity type.")
-@click.option("--from-id", required=True, help="Source entity ID.")
-@click.option("--relationship", required=True, help="Relationship type.")
-@click.option("--to-type", required=True, help="Target entity type.")
-@click.option("--to-id", required=True, help="Target entity ID.")
-@click.option("--props", default=None, help="JSON object of edge properties.")
-@click.option(
-    "--evidence-ref",
-    "evidence_refs",
-    multiple=True,
-    help="JSON evidence ref object. Repeat to attach multiple refs.",
-)
-@click.option(
-    "--source-evidence",
-    "source_evidence",
-    multiple=True,
-    help="JSON source-evidence locator. Repeat to attach multiple locators.",
-)
-@click.option(
-    "--evidence-rationale",
-    default=None,
-    help="Optional rationale for the attached relationship evidence.",
-)
-@click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
-@handle_errors
-def add_relationship_cmd(
-    from_type: str,
-    from_id: str,
-    relationship: str,
-    to_type: str,
-    to_id: str,
-    props: str | None,
-    evidence_refs: tuple[str, ...],
-    source_evidence: tuple[str, ...],
-    evidence_rationale: str | None,
-    dry_run: bool,
-) -> None:
-    """Add or update a relationship in the graph."""
-    try:
-        properties = json.loads(props) if props else {}
-    except json.JSONDecodeError as exc:
-        raise click.BadParameter("--props must be valid JSON") from exc
-    if not isinstance(properties, dict):
-        raise click.BadParameter("--props must be a JSON object")
-    parsed_evidence_refs = [_parse_evidence_ref(raw) for raw in evidence_refs]
-    parsed_source_evidence = [_parse_source_evidence(raw) for raw in source_evidence]
-    local_evidence_refs = [item.model_dump(mode="python") for item in parsed_evidence_refs]
-    local_source_evidence = [item.model_dump(mode="python") for item in parsed_source_evidence]
-
-    result = _dispatch_cli_instance(
-        lambda client, instance_id: client.add_relationships(
-            instance_id,
-            [
-                contracts.RelationshipInput(
-                    from_type=from_type,
-                    from_id=from_id,
-                    relationship_type=relationship,
-                    to_type=to_type,
-                    to_id=to_id,
-                    properties=properties,
-                    evidence_refs=parsed_evidence_refs,
-                    source_evidence=parsed_source_evidence,
-                    evidence_rationale=evidence_rationale,
-                )
-            ],
-            dry_run=dry_run,
-        ),
-        lambda instance: service_add_relationship_inputs(
-            instance,
-            [
-                RelationshipWriteInput(
-                    from_type=from_type,
-                    from_id=from_id,
-                    relationship_type=relationship,
-                    to_type=to_type,
-                    to_id=to_id,
-                    properties=properties,
-                    evidence_refs=local_evidence_refs,
-                    source_evidence=local_source_evidence,
-                    evidence_rationale=evidence_rationale,
-                )
-            ],
-            source="cli_add",
-            source_ref=SOURCE_REF_ADD_RELATIONSHIP,
-            dry_run=dry_run,
-        ),
-        allow_local=False,
-        command_name="relationship add",
-    )
-
-    edge_label = f"{from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}"
-    verb = "updated" if result.updated else "added"
-    if dry_run:
-        click.echo(f"Dry run: relationship would be {verb}: {edge_label}")
-    elif result.updated:
-        click.echo(f"Relationship updated: {edge_label}")
-    else:
-        click.echo(f"Relationship added: {edge_label}")
-    if result.receipt_id:
-        click.echo(f"  Receipt: {result.receipt_id}")
-    _emit_direct_write_group_notices(
-        {
-            "pending_conflicts": [
-                _direct_write_group_interaction_payload(item)
-                for item in result.pending_conflicts
-            ],
-            "updated_group_backed_edges": [
-                _direct_write_group_interaction_payload(item)
-                for item in result.updated_group_backed_edges
-            ],
-        },
-        prefix="  ",
     )
 
 

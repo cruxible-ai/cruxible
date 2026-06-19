@@ -13,22 +13,38 @@ This is the full searchable reference for the `cruxible` command line. Walkthrou
 - `run` rejects proposal workflows; use `propose` for workflows that return governed relationship proposals.
 - `explain` and `export edges` are direct-local file/rendering utilities. Use receipts and list/query tools for daemon/MCP flows.
 
-## cruxible add
+## Command Word Order
+
+Operations on a specific named resource instance are noun-first:
+`cruxible entity add`, `cruxible entity update`, `cruxible relationship add`,
+and `cruxible relationship update`. Cross-resource collection and inspection
+commands remain top-level where the target is not a single CRUD-style resource,
+for example `list`, `inspect`, and `sample`.
+
+There is no hard-delete/remove command. Cruxible state is receipted and
+append-oriented; retire entities by setting ontology lifecycle fields such as
+`status=closed` or `status=superseded`, and reject relationship assertions with
+the feedback/review surfaces.
+
+## Direct Write Shorthand
 
 **Usage:**
 
 ```bash
-cruxible add entity ENTITY_TYPE ENTITY_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
-cruxible add relationship REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible entity add ENTITY_TYPE ENTITY_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible entity update ENTITY_TYPE ENTITY_ID --set FIELD=VALUE [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible relationship add REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
+cruxible relationship update REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
 ```
 
-**Purpose:** Ergonomic CLI shorthand for adding entities and relationships without
-hand-authoring a direct-write payload file or `--props` JSON object.
+**Purpose:** Ergonomic CLI shorthand for creating and updating entities and
+relationships without hand-authoring a direct-write payload file.
 
 **Field Assignment:**
 - `--set FIELD=VALUE` stores `VALUE` as a string. Values such as `NO`, `no`,
   `1.20`, `0755`, and `null` are not coerced.
 - `--set-json FIELD=JSON` stores an explicitly typed JSON value.
+- `--props JSON` remains accepted on noun write commands for compatibility.
 - Duplicate fields, blank field names, and malformed assignments are rejected.
 
 **Relationship Evidence Options:**
@@ -39,45 +55,19 @@ hand-authoring a direct-write payload file or `--props` JSON object.
 **Output And Side Effects:**
 - Uses the same guarded direct-write path as `batch-direct-write`, with the same
   dry-run behavior, receipts, mutation guards, and group-interaction notices.
-- `add entity` fails if the entity already exists.
-- `add relationship` fails if the relationship tuple already exists.
+- `entity add` and `relationship add` fail if the target already exists.
+- `entity update` and `relationship update` fail if the target does not exist.
+- `--json` emits the same `BatchDirectWriteResult` envelope as
+  `batch-direct-write`.
 - Actor attribution remains credential-derived when daemon auth is enabled.
 
 **Examples:**
 
 ```bash
-cruxible add entity WorkItem wi-example --set title="Add write verbs" --set status=planned
-cruxible add relationship work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Same ergonomics slice"
-```
-
-## cruxible update
-
-**Usage:**
-
-```bash
-cruxible update entity ENTITY_TYPE ENTITY_ID --set FIELD=VALUE [--set-json FIELD=JSON] [--dry-run] [--json]
-cruxible update relationship REL_TYPE FROM_TYPE FROM_ID TO_TYPE TO_ID [--set FIELD=VALUE] [--set-json FIELD=JSON] [--dry-run] [--json]
-```
-
-**Purpose:** Ergonomic CLI shorthand for updating existing entities and
-relationships without hand-authoring JSON payloads.
-
-**Behavior:**
-- `update entity` fails if the entity does not exist and requires at least one
-  `--set` or `--set-json`.
-- `update relationship` fails if the relationship tuple does not exist and
-  requires at least one property or evidence update.
-- Relationship updates use the existing tuple-based direct-write semantics; if a
-  relationship target is ambiguous, use the lower-level relationship inspection
-  surfaces to resolve it before writing.
-- This command does not add first-class `status` or `note` semantics. Those
-  remain ontology/config concepts expressed as ordinary fields or entities.
-
-**Example:**
-
-```bash
-cruxible update entity WorkItem wi-example --set status=closed
-cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Refined after review"
+cruxible entity add WorkItem wi-example --set title="Add write verbs" --set status=planned
+cruxible entity update WorkItem wi-example --set status=closed
+cruxible relationship add work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Same ergonomics slice"
+cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Refined after review"
 ```
 
 ## cruxible add-constraint
@@ -140,8 +130,9 @@ cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkI
 
 **Subcommands:**
 
-- `cruxible entity add` - Add or update an entity in the graph.
+- `cruxible entity add` - Create one entity.
 - `cruxible entity get` - Look up a specific entity by type and ID.
+- `cruxible entity update` - Update one existing entity.
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -153,21 +144,59 @@ cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkI
 
 ## cruxible entity add
 
-**Usage:** `cruxible entity add [OPTIONS]`
+**Usage:** `cruxible entity add [OPTIONS] [ENTITY_TYPE] [ENTITY_ID]`
 
-**Purpose:** Add or update an entity in the graph.
+**Purpose:** Create one entity using JSON properties or FIELD=VALUE assignments.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
-| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `ENTITY_TYPE` | no | `` | argument | Entity type. |
+| `ENTITY_ID` | no | `` | argument | Entity ID. |
+| `--type` | no | `` | text | Entity type, for compatibility with older noun command usage. |
+| `--id` | no | `` | text | Entity ID, for compatibility with older noun command usage. |
 | `--props` | no | `` | text | JSON object of properties. |
+| `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
+| `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Uses the same guarded direct-write path as `batch-direct-write`.
+- Fails if the entity already exists.
+- JSON output is a `BatchDirectWriteResult`.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible entity update
+
+**Usage:** `cruxible entity update [OPTIONS] [ENTITY_TYPE] [ENTITY_ID]`
+
+**Purpose:** Update one existing entity using JSON properties or FIELD=VALUE assignments.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ENTITY_TYPE` | no | `` | argument | Entity type. |
+| `ENTITY_ID` | no | `` | argument | Entity ID. |
+| `--type` | no | `` | text | Entity type, for compatibility with older noun command usage. |
+| `--id` | no | `` | text | Entity ID, for compatibility with older noun command usage. |
+| `--props` | no | `` | text | JSON object of properties. |
+| `--set` | no | `` | text | String property assignment FIELD=VALUE. Repeat for multiple properties. |
+| `--set-json` | no | `` | text | Typed JSON property assignment FIELD=JSON. Repeat for multiple properties. |
+| `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Uses the same guarded direct-write path as `batch-direct-write`.
+- Fails if the entity does not already exist.
+- Requires at least one `--props`, `--set`, or `--set-json` property update.
+- JSON output is a `BatchDirectWriteResult`.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -204,8 +233,9 @@ cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkI
 
 **Subcommands:**
 
-- `cruxible relationship add` - Add or update a relationship in the graph.
+- `cruxible relationship add` - Create one relationship.
 - `cruxible relationship get` - Look up a specific relationship by its endpoints and type.
+- `cruxible relationship update` - Update one existing relationship.
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -217,43 +247,91 @@ cruxible update relationship work_item_part_of_work_item WorkItem wi-child WorkI
 
 ## cruxible relationship add
 
-**Usage:** `cruxible relationship add [OPTIONS]`
+**Usage:** `cruxible relationship add [OPTIONS] [RELATIONSHIP_TYPE] [FROM_TYPE] [FROM_ID] [TO_TYPE] [TO_ID]`
 
-**Purpose:** Add or update a relationship in the graph.
+**Purpose:** Create one relationship using JSON properties, FIELD=VALUE assignments, or evidence flags.
 
 **Options And Arguments:**
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
-| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
-| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
-| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
-| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `RELATIONSHIP_TYPE` | no | `` | argument | Relationship type. |
+| `FROM_TYPE` | no | `` | argument | Source entity type. |
+| `FROM_ID` | no | `` | argument | Source entity ID. |
+| `TO_TYPE` | no | `` | argument | Target entity type. |
+| `TO_ID` | no | `` | argument | Target entity ID. |
+| `--from-type` | no | `` | text | Source entity type, for compatibility with older noun command usage. |
+| `--from-id` | no | `` | text | Source entity ID, for compatibility with older noun command usage. |
+| `--relationship` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
+| `--to-type` | no | `` | text | Target entity type, for compatibility with older noun command usage. |
+| `--to-id` | no | `` | text | Target entity ID, for compatibility with older noun command usage. |
 | `--props` | no | `` | text | JSON object of edge properties. |
+| `--set` | no | `` | text | String relationship property assignment FIELD=VALUE. |
+| `--set-json` | no | `` | text | Typed JSON relationship property assignment FIELD=JSON. |
 | `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
 | `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
 | `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
 | `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Writes live relationship state and records a mutation receipt. Evidence refs
-  and source-evidence locators are persisted as relationship evidence metadata.
+- Uses the same guarded direct-write path as `batch-direct-write`.
+- Fails if the relationship tuple already exists.
+- Evidence refs and source-evidence locators are persisted as relationship evidence metadata.
   Direct adds are not group-reviewed accepted relationships; use `group propose`
   and `group resolve --action approve` when review/acceptance state matters.
+- JSON output is a `BatchDirectWriteResult`.
 
 **Example:**
 
 ```bash
 cruxible relationship add \
-  --from-type RoadmapItem \
-  --from-id ri-compact-workflow-trace-payloads \
-  --relationship roadmap_item_depends_on_roadmap_item \
-  --to-type RoadmapItem \
-  --to-id ri-transactional-sqlite-state \
+  roadmap_item_depends_on_roadmap_item \
+  RoadmapItem ri-compact-workflow-trace-payloads \
+  RoadmapItem ri-transactional-sqlite-state \
   --source-evidence '{"source_artifact_id":"SRC-...","chunk_id":"CHK-..."}' \
   --evidence-rationale "Extracted from the P0 section."
 ```
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship update
+
+**Usage:** `cruxible relationship update [OPTIONS] [RELATIONSHIP_TYPE] [FROM_TYPE] [FROM_ID] [TO_TYPE] [TO_ID]`
+
+**Purpose:** Update one existing relationship using JSON properties, FIELD=VALUE assignments, or evidence flags.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `RELATIONSHIP_TYPE` | no | `` | argument | Relationship type. |
+| `FROM_TYPE` | no | `` | argument | Source entity type. |
+| `FROM_ID` | no | `` | argument | Source entity ID. |
+| `TO_TYPE` | no | `` | argument | Target entity type. |
+| `TO_ID` | no | `` | argument | Target entity ID. |
+| `--from-type` | no | `` | text | Source entity type, for compatibility with older noun command usage. |
+| `--from-id` | no | `` | text | Source entity ID, for compatibility with older noun command usage. |
+| `--relationship` | no | `` | text | Relationship type, for compatibility with older noun command usage. |
+| `--to-type` | no | `` | text | Target entity type, for compatibility with older noun command usage. |
+| `--to-id` | no | `` | text | Target entity ID, for compatibility with older noun command usage. |
+| `--props` | no | `` | text | JSON object of edge properties. |
+| `--set` | no | `` | text | String relationship property assignment FIELD=VALUE. |
+| `--set-json` | no | `` | text | Typed JSON relationship property assignment FIELD=JSON. |
+| `--evidence-ref` | no | `` | text | JSON evidence ref object. Repeat to attach multiple refs. |
+| `--source-evidence` | no | `` | text | JSON source-evidence locator. Repeat to attach multiple locators. |
+| `--evidence-rationale` | no | `` | text | Optional rationale for the attached relationship evidence. |
+| `--dry-run` | no | `False` | boolean | Validate without mutating graph state. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Uses the same guarded direct-write path as `batch-direct-write`.
+- Fails if the relationship tuple does not already exist.
+- Requires at least one property or evidence update.
+- JSON output is a `BatchDirectWriteResult`.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
