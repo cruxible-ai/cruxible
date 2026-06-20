@@ -1426,6 +1426,58 @@ def test_instance_snapshot_and_restore_routes(
     assert stats.status_code == 200
 
 
+def test_instance_relocate_route_repoints_registry(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    original_location = get_registry().get(instance_id).location
+    target = tmp_path / "relocated-governed"
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": False},
+    )
+
+    assert relocated.status_code == 200
+    payload = relocated.json()
+    assert payload["instance_id"] == instance_id
+    assert payload["to_dir"] == str(target)
+    assert payload["source_removed"] is False
+    # Registry now points at the new directory; identity is preserved.
+    record = get_registry().get(instance_id)
+    assert record is not None
+    assert Path(record.location) == target
+    assert Path(record.location) != Path(original_location)
+    # The relocated instance is live and queryable under the same ID.
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+    # The old directory is kept (orphaned, disk-only) when remove_source is False.
+    assert Path(original_location).exists()
+
+
+def test_instance_relocate_route_remove_source_deletes_old_dir(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    original_location = get_registry().get(instance_id).location
+    target = tmp_path / "relocated-removed"
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": True},
+    )
+
+    assert relocated.status_code == 200
+    assert relocated.json()["source_removed"] is True
+    assert not Path(original_location).exists()
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+
+
 def test_create_state_overlay_route_accepts_state_ref(
     app_client: TestClient,
     server_project: Path,

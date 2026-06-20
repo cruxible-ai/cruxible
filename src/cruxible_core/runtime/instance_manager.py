@@ -24,6 +24,14 @@ class InstanceManager:
     def register(self, instance_id: str, instance: InstanceProtocol) -> None:
         self._instances[instance_id] = instance
 
+    def unregister(self, instance_id: str) -> None:
+        """Drop a live instance from the manager without touching its on-disk state.
+
+        Safe no-op when the instance is not currently loaded. The instance is
+        transparently reloaded from the registry the next time ``get`` is called.
+        """
+        self._instances.pop(instance_id, None)
+
     def get(self, instance_id: str) -> InstanceProtocol:
         instance = self._instances.get(instance_id)
         if instance is not None:

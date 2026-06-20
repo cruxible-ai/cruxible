@@ -1627,6 +1627,28 @@ def handle_instance_restore(
     )
 
 
+def handle_instance_relocate(
+    instance_id: str,
+    to_dir: str,
+    remove_source: bool = False,
+) -> contracts.InstanceRelocateResult:
+    """Move a healthy daemon-backed instance to a new directory, preserving identity."""
+    return _dispatch_remote_or_local(
+        lambda client: client.relocate_instance(
+            instance_id,
+            to_dir=to_dir,
+            remove_source=remove_source,
+        ),
+        lambda: api.relocate_instance(
+            instance_id,
+            to_dir=to_dir,
+            remove_source=remove_source,
+        ),
+        allow_local=False,
+        operation_name="cruxible_instance_relocate",
+    )
+
+
 def handle_list_snapshots(
     instance_id: str,
     *,

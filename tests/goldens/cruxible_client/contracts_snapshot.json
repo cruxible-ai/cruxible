@@ -8921,6 +8921,192 @@
         "original_config_path"
       ]
     },
+    "InstanceRelocateResult": {
+      "fields": {
+        "from_dir": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_dir",
+          "required": true,
+          "schema": {
+            "title": "From Dir",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "manifest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "manifest",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InstanceBackupManifest"
+          }
+        },
+        "registry_status": {
+          "default": "registered",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "registry_status",
+          "required": false,
+          "schema": {
+            "default": "registered",
+            "enum": [
+              "registered",
+              "repaired",
+              "unchanged"
+            ],
+            "title": "Registry Status",
+            "type": "string"
+          }
+        },
+        "source_removed": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_removed",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Source Removed",
+            "type": "boolean"
+          }
+        },
+        "to_dir": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_dir",
+          "required": true,
+          "schema": {
+            "title": "To Dir",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InstanceBackupManifest": {
+            "properties": {
+              "artifacts": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Artifacts",
+                "type": "object"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "string"
+              },
+              "cruxible_version": {
+                "title": "Cruxible Version",
+                "type": "string"
+              },
+              "format_version": {
+                "default": 1,
+                "title": "Format Version",
+                "type": "integer"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "instance_mode": {
+                "title": "Instance Mode",
+                "type": "string"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "original_config_path": {
+                "title": "Original Config Path",
+                "type": "string"
+              },
+              "restored_config_path": {
+                "default": "config.yaml",
+                "title": "Restored Config Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "created_at",
+              "cruxible_version",
+              "original_config_path",
+              "instance_mode"
+            ],
+            "title": "InstanceBackupManifest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "from_dir": {
+            "title": "From Dir",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/$defs/InstanceBackupManifest"
+          },
+          "registry_status": {
+            "default": "registered",
+            "enum": [
+              "registered",
+              "repaired",
+              "unchanged"
+            ],
+            "title": "Registry Status",
+            "type": "string"
+          },
+          "source_removed": {
+            "default": false,
+            "title": "Source Removed",
+            "type": "boolean"
+          },
+          "to_dir": {
+            "title": "To Dir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "from_dir",
+          "to_dir",
+          "manifest"
+        ],
+        "title": "InstanceRelocateResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "from_dir",
+        "instance_id",
+        "manifest",
+        "to_dir"
+      ]
+    },
     "InstanceRestoreResult": {
       "fields": {
         "instance_id": {

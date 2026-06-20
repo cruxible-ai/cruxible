@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import zipfile
 from collections.abc import Mapping
@@ -21,6 +22,7 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
     CloneSnapshotResult,
+    InstanceRelocateResult,
     InstanceRestoreResult,
     InstanceSnapshotResult,
     SnapshotCreateResult,
@@ -221,6 +223,78 @@ def service_restore_instance(
         root_dir=str(root),
         manifest=manifest,
         registry_status=registry_status,
+    )
+
+
+def service_relocate_instance(
+    instance: InstanceProtocol,
+    *,
+    instance_id: str,
+    to_dir: str | Path,
+    instance_mode: str = CruxibleInstance.GOVERNED_MODE,
+    remove_source: bool = False,
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered",
+) -> InstanceRelocateResult:
+    """Move a healthy same-identity instance to *to_dir* by snapshot-then-restore.
+
+    Steps, ordered so an abort never leaves the instance unreachable:
+      1. Snapshot the (still-healthy) instance to a throwaway artifact. If this
+         fails, the source is untouched.
+      2. Restore the artifact into ``to_dir`` (atomic ``os.replace`` of a staging
+         dir). If this fails, the source is still untouched and usable.
+      3. Only after a successful restore, optionally remove the source directory.
+         A failure here leaves an orphaned (disk-only) copy at the old path while
+         the restored instance at ``to_dir`` is the live one.
+
+    The caller (runtime layer) is responsible for dropping the instance from the
+    in-process manager before this runs and re-registering it afterward; this
+    function only performs filesystem + identity-preserving work.
+    """
+    if not isinstance(instance, CruxibleInstance):
+        raise ConfigError("Instance relocate currently supports only local filesystem instances")
+
+    source_root = instance.get_root_path()
+    target_root = Path(to_dir).expanduser()
+    if target_root.resolve() == source_root.resolve():
+        raise ConfigError(f"Relocate target is the current location: {target_root}")
+
+    # 1. Snapshot the healthy instance to a throwaway artifact. Keep it under the
+    #    target's parent so the temp + restore staging share a filesystem.
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="cruxible_instance_relocate_",
+        dir=str(target_root.parent),
+    ) as tmp:
+        artifact = Path(tmp) / "relocate.cruxible.zip"
+        snapshot = service_snapshot_instance(
+            instance,
+            instance_id=instance_id,
+            artifact_path=artifact,
+            label=f"relocate:{source_root}",
+        )
+        # 2. Restore into the new location. Refuses if non-empty / already an
+        #    instance; the source remains untouched on any failure here.
+        restored = service_restore_instance(
+            artifact_path=artifact,
+            root_dir=target_root,
+            instance_mode=instance_mode,
+            registry_status=registry_status,
+        )
+
+    # 3. Optional, post-success source cleanup. Orphaning the old dir is safe.
+    source_removed = False
+    if remove_source and source_root.resolve() != target_root.resolve():
+        shutil.rmtree(source_root, ignore_errors=False)
+        source_removed = True
+
+    return InstanceRelocateResult(
+        instance=restored.instance,
+        instance_id=restored.instance_id,
+        from_dir=str(source_root),
+        to_dir=restored.root_dir,
+        manifest=snapshot.manifest,
+        source_removed=source_removed,
+        registry_status=restored.registry_status,
     )
 
 

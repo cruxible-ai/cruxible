@@ -349,6 +349,11 @@ class InstanceRestoreRequest(BaseModel):
     root_dir: str | None = None
 
 
+class InstanceRelocateRequest(BaseModel):
+    to_dir: str
+    remove_source: bool = False
+
+
 class CloneSnapshotRequest(BaseModel):
     snapshot_id: str
     root_dir: str

@@ -16,6 +16,7 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_add_entities
 from cruxible_core.service.snapshots import (
     read_instance_backup_manifest,
+    service_relocate_instance,
     service_restore_instance,
     service_snapshot_instance,
 )
@@ -175,3 +176,93 @@ def test_instance_restore_rejects_existing_instance(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="Instance already exists"):
         service_restore_instance(artifact_path=artifact, root_dir=target.root)
+
+
+def test_relocate_moves_instance_preserving_identity_and_graph(tmp_path: Path) -> None:
+    source = _instance(tmp_path / "source")
+    service_add_entities(
+        source,
+        [
+            EntityInstance(
+                entity_type="Thing",
+                entity_id="T-moved",
+                properties={"thing_id": "T-moved", "title": "Moved"},
+            )
+        ],
+    )
+    target = tmp_path / "moved"
+
+    result = service_relocate_instance(
+        source,
+        instance_id="inst_relocated",
+        to_dir=target,
+    )
+
+    assert result.instance_id == "inst_relocated"
+    assert Path(result.from_dir) == source.root
+    assert Path(result.to_dir) == target
+    assert result.source_removed is False
+    # Source is intentionally kept by default (orphaned, disk-only copy).
+    assert (source.root / "config.yaml").exists()
+    # Restored instance carries the same graph + identity.
+    relocated = CruxibleInstance.load(target)
+    assert relocated.is_governed_mode()
+    assert relocated.load_graph().get_entity("Thing", "T-moved") is not None
+    assert (target / "config.yaml").read_text() == CONFIG_YAML
+
+
+def test_relocate_remove_source_deletes_old_dir(tmp_path: Path) -> None:
+    source = _instance(tmp_path / "source")
+    target = tmp_path / "moved"
+
+    result = service_relocate_instance(
+        source,
+        instance_id="inst_relocated",
+        to_dir=target,
+        remove_source=True,
+    )
+
+    assert result.source_removed is True
+    assert not source.root.exists()
+    assert (target / "config.yaml").exists()
+
+
+def test_relocate_rejects_same_location(tmp_path: Path) -> None:
+    source = _instance(tmp_path / "source")
+
+    with pytest.raises(ConfigError, match="current location"):
+        service_relocate_instance(
+            source,
+            instance_id="inst_relocated",
+            to_dir=source.root,
+        )
+
+
+def test_aborted_relocate_leaves_original_usable(tmp_path: Path) -> None:
+    source = _instance(tmp_path / "source")
+    service_add_entities(
+        source,
+        [
+            EntityInstance(
+                entity_type="Thing",
+                entity_id="T-keep",
+                properties={"thing_id": "T-keep", "title": "Keep"},
+            )
+        ],
+    )
+    # Pre-existing instance at the target makes restore refuse mid-relocate.
+    occupied = _instance(tmp_path / "occupied")
+
+    with pytest.raises(ConfigError):
+        service_relocate_instance(
+            source,
+            instance_id="inst_relocated",
+            to_dir=occupied.root,
+            remove_source=True,
+        )
+
+    # Original instance is untouched: still on disk, still loadable, still queryable,
+    # and never deleted despite remove_source=True.
+    assert (source.root / "config.yaml").exists()
+    reloaded = CruxibleInstance.load(source.root)
+    assert reloaded.load_graph().get_entity("Thing", "T-keep") is not None
