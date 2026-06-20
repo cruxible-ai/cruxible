@@ -90,9 +90,12 @@ from cruxible_core.service.queries import (
 )
 from cruxible_core.service.server import service_server_info
 from cruxible_core.service.snapshots import (
+    read_instance_backup_manifest,
     service_clone_snapshot,
     service_create_snapshot,
     service_list_snapshots,
+    service_restore_instance,
+    service_snapshot_instance,
 )
 from cruxible_core.service.source_artifacts import (
     service_dereference_source_evidence,
@@ -141,6 +144,8 @@ from cruxible_core.service.types import (
     InitResult,
     InspectEntityResult,
     InspectNeighborResult,
+    InstanceRestoreResult,
+    InstanceSnapshotResult,
     LintServiceResult,
     LintSummary,
     ListGroupsResult,
@@ -237,6 +242,8 @@ __all__ = [
     "InspectEntityResult",
     "InspectNeighborResult",
     "InitResult",
+    "InstanceRestoreResult",
+    "InstanceSnapshotResult",
     "LockServiceResult",
     "StateOverlayResult",
     "StatePublishResult",
@@ -303,9 +310,12 @@ __all__ = [
     "service_run",
     "service_test",
     "service_create_snapshot",
+    "read_instance_backup_manifest",
     "service_dereference_source_evidence",
     "service_clone_snapshot",
     "service_list_snapshots",
+    "service_restore_instance",
+    "service_snapshot_instance",
     "service_explain_receipt",
     "service_export_edges",
     "service_inspect_view",

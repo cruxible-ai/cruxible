@@ -338,6 +338,17 @@ class SnapshotCreateRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
+class InstanceSnapshotRequest(BaseModel):
+    artifact_path: str
+    label: str | None = None
+    actor_context: contracts.GovernedActorContext | None = None
+
+
+class InstanceRestoreRequest(BaseModel):
+    artifact_path: str
+    root_dir: str | None = None
+
+
 class CloneSnapshotRequest(BaseModel):
     snapshot_id: str
     root_dir: str

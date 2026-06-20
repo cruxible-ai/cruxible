@@ -1556,6 +1556,64 @@ def test_snapshot_create_uses_expected_route():
     assert captured["payload"]["label"] == "baseline"
 
 
+def test_instance_snapshot_and_restore_use_expected_routes():
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        captured.append((request.url.path, payload))
+        manifest = {
+            "format_version": 1,
+            "instance_id": "inst_123",
+            "created_at": "2026-03-21T00:00:00Z",
+            "cruxible_version": "0.2.0",
+            "label": "pre-release",
+            "original_config_path": "/srv/project/config.yaml",
+            "restored_config_path": "config.yaml",
+            "instance_mode": "governed",
+            "artifacts": {"state.db": "sha256:abc"},
+        }
+        if request.url.path.endswith("/instance/snapshot"):
+            return httpx.Response(
+                200,
+                json={
+                    "instance_id": "inst_123",
+                    "artifact_path": "/tmp/backup.zip",
+                    "manifest": manifest,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_123",
+                "root_dir": "/srv/restored",
+                "manifest": manifest,
+                "registry_status": "registered",
+            },
+        )
+
+    client = _build_client(handler)
+    snap = client.snapshot_instance(
+        "inst_123",
+        artifact_path="/tmp/backup.zip",
+        label="pre-release",
+    )
+    restored = client.restore_instance(artifact_path="/tmp/backup.zip", root_dir="/srv/restored")
+
+    assert snap.instance_id == "inst_123"
+    assert restored.root_dir == "/srv/restored"
+    assert captured == [
+        (
+            "/api/v1/inst_123/instance/snapshot",
+            {"artifact_path": "/tmp/backup.zip", "label": "pre-release"},
+        ),
+        (
+            "/api/v1/instances/restore",
+            {"artifact_path": "/tmp/backup.zip", "root_dir": "/srv/restored"},
+        ),
+    ]
+
+
 def test_state_endpoints_use_expected_routes():
     captured: list[tuple[str, str | None]] = []
 

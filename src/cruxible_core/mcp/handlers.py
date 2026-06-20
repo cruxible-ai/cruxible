@@ -1596,6 +1596,37 @@ def handle_create_snapshot(
     )
 
 
+def handle_instance_snapshot(
+    instance_id: str,
+    artifact_path: str,
+    label: str | None = None,
+) -> contracts.InstanceSnapshotResult:
+    """Write a portable same-identity backup artifact for an instance."""
+    return _dispatch_remote_or_local(
+        lambda client: client.snapshot_instance(
+            instance_id,
+            artifact_path=artifact_path,
+            label=label,
+        ),
+        lambda: api.snapshot_instance(instance_id, artifact_path=artifact_path, label=label),
+        allow_local=False,
+        operation_name="cruxible_instance_snapshot",
+    )
+
+
+def handle_instance_restore(
+    artifact_path: str,
+    root_dir: str | None = None,
+) -> contracts.InstanceRestoreResult:
+    """Restore a same-identity daemon-backed instance from an artifact."""
+    return _dispatch_remote_or_local(
+        lambda client: client.restore_instance(artifact_path=artifact_path, root_dir=root_dir),
+        lambda: api.restore_instance(artifact_path=artifact_path, root_dir=root_dir),
+        allow_local=False,
+        operation_name="cruxible_instance_restore",
+    )
+
+
 def handle_list_snapshots(
     instance_id: str,
     *,

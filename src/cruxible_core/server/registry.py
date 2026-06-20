@@ -170,6 +170,36 @@ class InstanceRegistry:
             preferred_instance_id=instance_id,
         )
 
+    def update_governed_instance_location(
+        self,
+        instance_id: str,
+        location: str | Path,
+        workspace_root: str | Path | None = None,
+    ) -> InstanceRecord:
+        """Update an existing governed instance registry row after restore repair."""
+        _validate_instance_id(instance_id)
+        resolved_location = str(Path(location).expanduser().resolve())
+        resolved_workspace_root: str | None = None
+        if workspace_root is not None:
+            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE instances
+                SET backend = ?, location = ?, workspace_root = ?
+                WHERE instance_id = ?
+                """,
+                (
+                    GOVERNED_DAEMON_BACKEND,
+                    resolved_location,
+                    resolved_workspace_root,
+                    instance_id,
+                ),
+            )
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def _create_governed_instance(
         self,
         *,

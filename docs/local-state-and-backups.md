@@ -67,6 +67,18 @@ decision records, feedback, outcomes, locks, configs, and kit metadata.
 
 Use snapshots to reason about state. Use backups to recover the deployment.
 
+`cruxible instance snapshot` writes a portable same-identity backup artifact for
+the active instance. The artifact includes the SQLite state database, active
+config, instance metadata, optional workflow lock, and a manifest with content
+digests. The service uses SQLite's backup API for the database copy instead of
+copying a live database file byte-for-byte.
+
+`cruxible instance restore` restores that artifact into a clean target and keeps
+the original `instance_id`. This is different from `cruxible clone`, which
+creates a new local instance from a graph snapshot. Restore is an admin
+lifecycle operation and should only be used when the old instance is stopped or
+unregistered, because the result is the same logical instance identity.
+
 ## Portability
 
 State is not meant to be trapped in SQLite forever. The durable product

@@ -95,16 +95,19 @@ from cruxible_core.service import (
     service_reload_config,
     service_render_wiki,
     service_resolve_group,
+    service_restore_instance,
     service_run,
     service_sample,
     service_schema,
     service_server_info,
+    service_snapshot_instance,
     service_state_status,
     service_stats,
     service_test,
     service_update_trust_status,
     service_validate,
 )
+from cruxible_core.service.snapshots import read_instance_backup_manifest
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -837,6 +840,100 @@ def create_snapshot(
     return contracts.SnapshotCreateResult(
         snapshot=contracts.SnapshotMetadata.model_validate(result.snapshot.model_dump(mode="json"))
     )
+
+
+def snapshot_instance(
+    instance_id: str,
+    *,
+    artifact_path: str,
+    label: str | None = None,
+    actor_context: Any | None = None,
+) -> contracts.InstanceSnapshotResult:
+    """Write a same-identity backup artifact for a governed instance."""
+    check_permission("cruxible_instance_snapshot", instance_id=instance_id)
+    _hosted_actor_context(actor_context)
+    instance = get_manager().get(instance_id)
+    result = service_snapshot_instance(
+        instance,
+        instance_id=instance_id,
+        artifact_path=artifact_path,
+        label=label,
+    )
+    return contracts.InstanceSnapshotResult(
+        instance_id=result.instance_id,
+        artifact_path=result.artifact_path,
+        manifest=contracts.InstanceBackupManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        ),
+    )
+
+
+def restore_instance(
+    *,
+    artifact_path: str,
+    root_dir: str | None = None,
+) -> contracts.InstanceRestoreResult:
+    """Restore a same-identity governed instance from a backup artifact."""
+    manifest = read_instance_backup_manifest(artifact_path)
+    check_permission("cruxible_instance_restore", instance_id=manifest.instance_id)
+    registry = get_registry()
+    manager = get_manager()
+    if manifest.instance_id in manager.list_ids():
+        raise ConfigError(
+            f"Instance '{manifest.instance_id}' is already loaded; stop it before restore"
+        )
+
+    record = registry.get(manifest.instance_id)
+    if record is not None and record.backend != GOVERNED_DAEMON_BACKEND:
+        raise ConfigError(
+            f"Instance '{manifest.instance_id}' is registered with unsupported backend "
+            f"'{record.backend}'"
+        )
+    target_root = (
+        Path(root_dir).expanduser()
+        if root_dir is not None
+        else registry.governed_instance_location(manifest.instance_id)
+    )
+    validate_root_dir(str(target_root))
+
+    registry_status = "registered"
+    if record is not None:
+        registered_root = Path(record.location)
+        if _registry_record_points_to_healthy_instance(registered_root):
+            raise ConfigError(
+                f"Instance '{manifest.instance_id}' already exists at {registered_root}"
+            )
+        registry_status = "repaired"
+
+    result = service_restore_instance(
+        artifact_path=artifact_path,
+        root_dir=target_root,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+        registry_status=registry_status,
+    )
+    if record is None:
+        created = registry.create_governed_instance_with_id(manifest.instance_id)
+        if Path(created.record.location) != target_root:
+            registry.update_governed_instance_location(manifest.instance_id, target_root)
+    else:
+        registry.update_governed_instance_location(manifest.instance_id, target_root)
+    manager.register(manifest.instance_id, result.instance)
+    return contracts.InstanceRestoreResult(
+        instance_id=result.instance_id,
+        root_dir=result.root_dir,
+        manifest=contracts.InstanceBackupManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        ),
+        registry_status=result.registry_status,
+    )
+
+
+def _registry_record_points_to_healthy_instance(root: Path) -> bool:
+    try:
+        loaded = CruxibleInstance.load(root)
+    except Exception:
+        return False
+    return loaded.is_governed_mode()
 
 
 def create_decision_record(

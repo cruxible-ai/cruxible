@@ -128,6 +128,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     group_group,
     init,
     inspect_group,
+    instance_group,
     lint_cmd,
     list_group,
     lock_cmd,
@@ -159,6 +160,7 @@ cli.add_command(connect_group, "context")
 cli.add_command(decision_records_cmd, "decision-record")
 cli.add_command(lock_cmd)
 cli.add_command(state_group, "state")
+cli.add_command(instance_group, "instance")
 cli.add_command(plan_cmd)
 cli.add_command(run_cmd)
 cli.add_command(apply_cmd)

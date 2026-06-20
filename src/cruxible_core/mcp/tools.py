@@ -1091,6 +1091,23 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_create_snapshot(instance_id, label=label)
 
     @_tool
+    def cruxible_instance_snapshot(
+        instance_id: str,
+        artifact_path: str,
+        label: str | None = None,
+    ) -> contracts.InstanceSnapshotResult:
+        """Write a portable same-identity backup artifact for an instance."""
+        return handlers.handle_instance_snapshot(instance_id, artifact_path, label=label)
+
+    @_tool
+    def cruxible_instance_restore(
+        artifact_path: str,
+        root_dir: str | None = None,
+    ) -> contracts.InstanceRestoreResult:
+        """Restore a same-identity daemon-backed instance from an artifact."""
+        return handlers.handle_instance_restore(artifact_path, root_dir=root_dir)
+
+    @_tool
     def cruxible_list_snapshots(
         instance_id: str,
         limit: int | None = None,

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     get_relationship_cmd: Any
     group_group: Any
     init: Any
+    instance_group: Any
     inspect_group: Any
     lint_cmd: Any
     list_group: Any
@@ -68,6 +69,7 @@ else:
     from cruxible_core.cli.commands.groups import (
         group_group,
     )
+    from cruxible_core.cli.commands.instances import instance_group
     from cruxible_core.cli.commands.lists import (
         export_group,
         list_group,
@@ -137,6 +139,7 @@ __all__ = [
     "get_relationship_cmd",
     "group_group",
     "init",
+    "instance_group",
     "inspect_group",
     "lint_cmd",
     "list_group",

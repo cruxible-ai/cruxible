@@ -167,6 +167,17 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = WAL")
 
 
+def backup_sqlite_database(source: Path, target: Path) -> None:
+    """Copy a SQLite database using SQLite's online backup API."""
+    source_conn = sqlite3.connect(source)
+    target_conn = sqlite3.connect(target)
+    try:
+        source_conn.backup(target_conn)
+    finally:
+        target_conn.close()
+        source_conn.close()
+
+
 class SQLiteGraphRepository:
     """Repository for live graph rows in the unified SQLite state database."""
 

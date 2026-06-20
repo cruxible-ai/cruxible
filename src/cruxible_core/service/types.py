@@ -38,6 +38,7 @@ from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.snapshot.types import (
+    InstanceBackupManifest,
     PublishedStateManifest,
     StateCompatibility,
     StateSnapshot,
@@ -768,6 +769,22 @@ class SnapshotListResult:
 class CloneSnapshotResult:
     instance: InstanceProtocol
     snapshot: StateSnapshot
+
+
+@dataclass
+class InstanceSnapshotResult:
+    instance_id: str
+    artifact_path: str
+    manifest: InstanceBackupManifest
+
+
+@dataclass
+class InstanceRestoreResult:
+    instance: InstanceProtocol
+    instance_id: str
+    root_dir: str
+    manifest: InstanceBackupManifest
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
 
 
 @dataclass

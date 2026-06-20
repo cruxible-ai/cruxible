@@ -226,7 +226,6 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
         parent_snapshot_id=None,
         origin_snapshot_id=None,
     )
-
     class StubClient:
         def stats(self, instance_id):
             assert instance_id == "inst_123"
@@ -379,6 +378,14 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
         parent_snapshot_id=None,
         origin_snapshot_id=None,
     )
+    manifest = contracts.InstanceBackupManifest(
+        instance_id="inst_123",
+        created_at="2026-05-04T00:00:00Z",
+        cruxible_version="0.2.0",
+        original_config_path="/srv/project/config.yaml",
+        instance_mode="governed",
+        artifacts={"state.db": "sha256:state"},
+    )
 
     class StubClient:
         def workflow_test(self, instance_id, *, name=None):
@@ -400,6 +407,26 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
             assert label == "baseline"
             return contracts.SnapshotCreateResult(snapshot=snapshot)
 
+        def snapshot_instance(self, instance_id, *, artifact_path, label=None):
+            assert instance_id == "inst_123"
+            assert artifact_path == "/tmp/backup.zip"
+            assert label == "backup"
+            return contracts.InstanceSnapshotResult(
+                instance_id=instance_id,
+                artifact_path=artifact_path,
+                manifest=manifest,
+            )
+
+        def restore_instance(self, *, artifact_path, root_dir=None):
+            assert artifact_path == "/tmp/backup.zip"
+            assert root_dir == "/srv/restored"
+            return contracts.InstanceRestoreResult(
+                instance_id="inst_123",
+                root_dir=root_dir,
+                manifest=manifest,
+                registry_status="registered",
+            )
+
         def clone_snapshot(self, instance_id, *, snapshot_id, root_dir):
             assert instance_id == "inst_123"
             assert snapshot_id == "snap_1"
@@ -411,6 +438,14 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
     assert handlers.handle_workflow_test("inst_123", "smoke").passed == 1
     assert handlers.handle_reload_config("inst_123", config_yaml="name: demo\n").updated
     assert handlers.handle_create_snapshot("inst_123", "baseline").snapshot.snapshot_id == "snap_1"
+    assert (
+        handlers.handle_instance_snapshot("inst_123", "/tmp/backup.zip", "backup").artifact_path
+        == "/tmp/backup.zip"
+    )
+    assert (
+        handlers.handle_instance_restore("/tmp/backup.zip", "/srv/restored").instance_id
+        == "inst_123"
+    )
     assert (
         handlers.handle_clone_snapshot("inst_123", "snap_1", "/srv/clone").instance_id
         == "inst_clone"
@@ -563,6 +598,16 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
         (handlers.handle_workflow_test, ("inst_123", None), "cruxible_test_workflow"),
         (handlers.handle_reload_config, ("inst_123",), "cruxible_reload_config"),
         (handlers.handle_create_snapshot, ("inst_123", None), "cruxible_create_snapshot"),
+        (
+            handlers.handle_instance_snapshot,
+            ("inst_123", "/tmp/backup.zip", None),
+            "cruxible_instance_snapshot",
+        ),
+        (
+            handlers.handle_instance_restore,
+            ("/tmp/backup.zip", None),
+            "cruxible_instance_restore",
+        ),
         (
             handlers.handle_clone_snapshot,
             ("inst_123", "snap_1", "/tmp/clone"),

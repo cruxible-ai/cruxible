@@ -455,6 +455,14 @@ class TestOutputSchema:
             ),
             ("cruxible_create_snapshot", {"snapshot"}),
             (
+                "cruxible_instance_snapshot",
+                {"instance_id", "artifact_path", "manifest"},
+            ),
+            (
+                "cruxible_instance_restore",
+                {"instance_id", "root_dir", "manifest", "registry_status"},
+            ),
+            (
                 "cruxible_list_snapshots",
                 {"items", "total", "limit", "offset", "truncated"},
             ),

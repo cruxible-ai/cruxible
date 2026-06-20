@@ -27,6 +27,7 @@ from cruxible_core.server.credentials import (
 )
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.service.snapshots import service_snapshot_instance
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1379,6 +1380,50 @@ def test_state_publish_overlay_and_status_routes(
     assert status.status_code == 200
     assert status.json()["upstream"]["state_id"] == "car-parts"
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
+
+
+def test_instance_snapshot_and_restore_routes(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    artifact = tmp_path / "project-state.cruxible.zip"
+
+    snapshot = app_client.post(
+        f"/api/v1/{instance_id}/instance/snapshot",
+        json={"artifact_path": str(artifact), "label": "pre-release"},
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["instance_id"] == instance_id
+    assert snapshot.json()["manifest"]["label"] == "pre-release"
+    assert artifact.exists()
+
+    source_root = tmp_path / "restore-source"
+    source_root.mkdir()
+    (source_root / "config.yaml").write_text(CAR_PARTS_YAML)
+    source_instance = CruxibleInstance.init(source_root, "config.yaml")
+    restore_artifact = tmp_path / "restore.cruxible.zip"
+    service_snapshot_instance(
+        source_instance,
+        instance_id="inst_restored",
+        artifact_path=restore_artifact,
+    )
+    restore_root = tmp_path / "restored-governed"
+
+    restored = app_client.post(
+        "/api/v1/instances/restore",
+        json={"artifact_path": str(restore_artifact), "root_dir": str(restore_root)},
+    )
+
+    assert restored.status_code == 200
+    payload = restored.json()
+    assert payload["instance_id"] == "inst_restored"
+    assert payload["root_dir"] == str(restore_root)
+    assert payload["registry_status"] == "registered"
+    assert get_registry().get("inst_restored") is not None
+    stats = app_client.get("/api/v1/inst_restored/stats")
+    assert stats.status_code == 200
 
 
 def test_create_state_overlay_route_accepts_state_ref(

@@ -222,6 +222,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_create_snapshot": (
         "Use when you need to mark the current state with a named snapshot."
     ),
+    "cruxible_instance_snapshot": (
+        "Use when you need a portable same-identity backup of an instance, including "
+        "its authoritative state database."
+    ),
+    "cruxible_instance_restore": (
+        "Use when you need to restore a daemon-backed instance from a same-identity "
+        "backup artifact."
+    ),
     "cruxible_list_snapshots": ("Use when you need to browse available snapshots for an instance."),
     "cruxible_register_source_artifact": (
         "Use when you need to register a source document so relationship evidence can "

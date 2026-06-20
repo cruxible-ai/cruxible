@@ -142,3 +142,75 @@ def test_server_mode_create_state_overlay_no_activate_leaves_context(
     assert "Active instance unchanged: inst_old" in result.output
     shown = runner.invoke(cli, ["context", "show", "--json"])
     assert json.loads(shown.output)["instance_id"] == "inst_old"
+
+
+def test_server_mode_instance_snapshot_and_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+    captured: dict[str, object] = {}
+    manifest = contracts.InstanceBackupManifest(
+        instance_id="inst_restored",
+        created_at="2026-03-21T00:00:00Z",
+        cruxible_version="0.2.0",
+        label="pre-release",
+        original_config_path="/srv/project/config.yaml",
+        restored_config_path="config.yaml",
+        instance_mode="governed",
+        artifacts={"state.db": "sha256:abc"},
+    )
+
+    class StubClient:
+        def snapshot_instance(self, instance_id, *, artifact_path, label=None):
+            captured["snapshot_instance_id"] = instance_id
+            captured["snapshot_artifact_path"] = artifact_path
+            captured["snapshot_label"] = label
+            return contracts.InstanceSnapshotResult(
+                instance_id=instance_id,
+                artifact_path=artifact_path,
+                manifest=manifest,
+            )
+
+        def restore_instance(self, *, artifact_path, root_dir=None):
+            captured["restore_artifact_path"] = artifact_path
+            captured["restore_root_dir"] = root_dir
+            return contracts.InstanceRestoreResult(
+                instance_id="inst_restored",
+                root_dir=root_dir or "/server/default",
+                manifest=manifest,
+                registry_status="registered",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    snap = runner.invoke(
+        cli,
+        ["instance", "snapshot", "/tmp/backup.zip", "--label", "pre-release"],
+    )
+    assert snap.exit_code == 0
+    assert "Wrote instance backup /tmp/backup.zip" in snap.output
+    assert captured["snapshot_instance_id"] == "inst_old"
+    assert captured["snapshot_label"] == "pre-release"
+
+    restore = runner.invoke(
+        cli,
+        ["instance", "restore", "/tmp/backup.zip", "--at", "/srv/restored"],
+    )
+    assert restore.exit_code == 0
+    assert "Restored instance inst_restored" in restore.output
+    assert "Active instance: inst_restored" in restore.output
+    assert "Previous active instance: inst_old" in restore.output
+    assert captured["restore_root_dir"] == "/srv/restored"
+    shown = runner.invoke(cli, ["context", "show", "--json"])
+    assert json.loads(shown.output)["instance_id"] == "inst_restored"

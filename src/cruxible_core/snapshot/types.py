@@ -46,6 +46,20 @@ class StateSnapshot(BaseModel):
     actor_context: GovernedActorContext | None = None
 
 
+class InstanceBackupManifest(BaseModel):
+    """Portable same-identity instance backup metadata."""
+
+    format_version: int = 1
+    instance_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    cruxible_version: str
+    label: str | None = None
+    original_config_path: str
+    restored_config_path: str = "config.yaml"
+    instance_mode: str
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+
 class PublishedStateManifest(BaseModel):
     """Distribution metadata for a published state release bundle."""
 

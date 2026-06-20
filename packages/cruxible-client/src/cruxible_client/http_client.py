@@ -1086,6 +1086,35 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SnapshotCreateResult)
 
+    def snapshot_instance(
+        self,
+        instance_id: str,
+        *,
+        artifact_path: str,
+        label: str | None = None,
+        actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
+    ) -> contracts.InstanceSnapshotResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/instance/snapshot",
+            json=self._with_actor_context(
+                {"artifact_path": artifact_path, "label": label},
+                actor_context,
+            ),
+        )
+        return self._parse_model(response, contracts.InstanceSnapshotResult)
+
+    def restore_instance(
+        self,
+        *,
+        artifact_path: str,
+        root_dir: str | None = None,
+    ) -> contracts.InstanceRestoreResult:
+        response = self._client.post(
+            "/api/v1/instances/restore",
+            json={"artifact_path": artifact_path, "root_dir": root_dir},
+        )
+        return self._parse_model(response, contracts.InstanceRestoreResult)
+
     def list_snapshots(
         self,
         instance_id: str,

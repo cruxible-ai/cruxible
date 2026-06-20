@@ -887,6 +887,31 @@ class CloneSnapshotResult(BaseModel):
     snapshot: SnapshotMetadata
 
 
+class InstanceBackupManifest(BaseModel):
+    format_version: int = 1
+    instance_id: str
+    created_at: str
+    cruxible_version: str
+    label: str | None = None
+    original_config_path: str
+    restored_config_path: str = "config.yaml"
+    instance_mode: str
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+
+class InstanceSnapshotResult(BaseModel):
+    instance_id: str
+    artifact_path: str
+    manifest: InstanceBackupManifest
+
+
+class InstanceRestoreResult(BaseModel):
+    instance_id: str
+    root_dir: str
+    manifest: InstanceBackupManifest
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
+
+
 class PublishedStateManifest(BaseModel):
     format_version: int
     state_id: str

@@ -132,6 +132,10 @@ class TestCheckPermission:
             check_permission("cruxible_create_snapshot")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_clone_snapshot")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_snapshot")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_restore")
 
     def test_graph_write_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
@@ -172,11 +176,17 @@ class TestCheckPermission:
         init_permissions()
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_lock_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_snapshot")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_restore")
 
     def test_admin_tool_in_admin(self):
         check_permission("cruxible_lock_workflow")
         check_permission("cruxible_reload_config")
         check_permission("cruxible_clone_snapshot")
+        check_permission("cruxible_instance_snapshot")
+        check_permission("cruxible_instance_restore")
         check_permission("cruxible_state_publish")
         check_permission("cruxible_state_create_overlay")
 

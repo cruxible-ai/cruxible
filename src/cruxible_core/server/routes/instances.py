@@ -11,6 +11,7 @@ from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.request_models import (
     BootstrapClaimRequest,
     InitRequest,
+    InstanceRestoreRequest,
     ValidateRequest,
 )
 from cruxible_core.server.route_paths import RUNTIME_BOOTSTRAP_CLAIM_PATH
@@ -42,6 +43,12 @@ async def validate_instance(req: ValidateRequest) -> contracts.ValidateResult:
         config_path=req.config_path,
         config_yaml=req.config_yaml,
     )
+
+
+@router.post("/instances/restore", response_model=contracts.InstanceRestoreResult)
+async def restore_instance(req: InstanceRestoreRequest) -> contracts.InstanceRestoreResult:
+    """Restore a same-identity daemon-backed instance from a local artifact path."""
+    return api.restore_instance(artifact_path=req.artifact_path, root_dir=req.root_dir)
 
 
 @router.post(
