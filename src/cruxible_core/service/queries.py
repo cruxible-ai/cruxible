@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Literal, cast
 
+import structlog
 from pydantic import ValidationError
 
 from cruxible_core.config.property_validation import entity_with_identity_properties
@@ -73,6 +74,8 @@ from cruxible_core.service.types import (
     TraceListResult,
 )
 from cruxible_core.temporal import utc_now
+
+logger = structlog.get_logger("cruxible.service.reads")
 
 _INPUT_REF_RE = re.compile(r"\$input\.([A-Za-z_][\w-]*)")
 _CONSTRAINT_PARAM_RE = re.compile(r"\$([A-Za-z_][\w-]*)(?:\.([A-Za-z_][\w-]*))?")
@@ -188,7 +191,12 @@ def service_query_surface(
         relationship_state=relationship_state,
         context=context,
     )
-    return _query_result_with_response_limit(result, surface_limit=surface_limit, offset=offset)
+    return _query_result_with_response_limit(
+        result,
+        surface_limit=surface_limit,
+        offset=offset,
+        resource=f"query:{query_name}",
+    )
 
 
 def service_query_inline_surface(
@@ -250,7 +258,11 @@ def service_query_inline_surface(
         head_snapshot_id=receipt_head_snapshot_id,
         started_at=started_at,
     )
-    return _query_result_with_response_limit(result, surface_limit=surface_limit)
+    return _query_result_with_response_limit(
+        result,
+        surface_limit=surface_limit,
+        resource=f"query_inline:{inline_name}",
+    )
 
 
 def service_evaluate_query_surface(
@@ -272,7 +284,11 @@ def service_evaluate_query_surface(
         params,
         relationship_state=relationship_state,
     )
-    return _query_result_with_response_limit(result, surface_limit=surface_limit)
+    return _query_result_with_response_limit(
+        result,
+        surface_limit=surface_limit,
+        resource=f"query:{query_name}",
+    )
 
 
 def _evaluate_query_result(
@@ -922,7 +938,7 @@ def service_list(
     if resource == "entities":
         if not entity_type:
             raise ConfigError("entity_type is required when listing entities")
-        return _service_list_entities(
+        result = _service_list_entities(
             instance,
             entity_type=entity_type,
             property_filter=property_filter,
@@ -931,9 +947,8 @@ def service_list(
             limit=limit,
             offset=offset,
         )
-
-    if resource == "edges":
-        return _service_list_edges(
+    elif resource == "edges":
+        result = _service_list_edges(
             instance,
             relationship_type=relationship_type,
             property_filter=property_filter,
@@ -941,8 +956,7 @@ def service_list(
             limit=limit,
             offset=offset,
         )
-
-    if resource == "receipts":
+    elif resource == "receipts":
         store = instance.get_receipt_store()
         try:
             summaries = store.list_receipts(
@@ -954,9 +968,8 @@ def service_list(
             total = store.count_receipts(query_name=query_name, operation_type=operation_type)
         finally:
             store.close()
-        return ListResult(items=summaries, total=total)
-
-    if resource == "feedback":
+        result = ListResult(items=summaries, total=total)
+    elif resource == "feedback":
         feedback_store = instance.get_feedback_store()
         try:
             feedback_records = feedback_store.list_feedback(
@@ -967,20 +980,28 @@ def service_list(
             total = feedback_store.count_feedback(receipt_id=receipt_id)
         finally:
             feedback_store.close()
-        return ListResult(items=feedback_records, total=total)
+        result = ListResult(items=feedback_records, total=total)
+    else:  # outcomes
+        feedback_store = instance.get_feedback_store()
+        try:
+            outcome_records = feedback_store.list_outcomes(
+                receipt_id=receipt_id,
+                limit=limit,
+                offset=offset,
+            )
+            total = feedback_store.count_outcomes(receipt_id=receipt_id)
+        finally:
+            feedback_store.close()
+        result = ListResult(items=outcome_records, total=total)
 
-    # outcomes
-    feedback_store = instance.get_feedback_store()
-    try:
-        outcome_records = feedback_store.list_outcomes(
-            receipt_id=receipt_id,
-            limit=limit,
-            offset=offset,
-        )
-        total = feedback_store.count_outcomes(receipt_id=receipt_id)
-    finally:
-        feedback_store.close()
-    return ListResult(items=outcome_records, total=total)
+    _warn_on_dropped_read(
+        resource=f"list:{resource}",
+        total=result.total,
+        returned=len(result.items),
+        limit=limit,
+        offset=offset,
+    )
+    return result
 
 
 def _service_list_entities(
@@ -1128,9 +1149,7 @@ def _validate_list_where_fields(
 ) -> None:
     for field, operators in where.items():
         if not _LIST_FIELD_RE.fullmatch(field):
-            raise ConfigError(
-                f"where field '{field}' must be a bare configured property name"
-            )
+            raise ConfigError(f"where field '{field}' must be a bare configured property name")
         if field not in known_fields:
             known = ", ".join(sorted(known_fields)) or "(none)"
             raise ConfigError(f"Unknown where field for {subject}: {field}. Known fields: {known}")
@@ -1400,11 +1419,24 @@ def _query_result_with_response_limit(
     *,
     surface_limit: int | None,
     offset: int = 0,
+    resource: str = "query",
 ) -> QueryServiceResult:
     visible, effective_limit, truncated, response_truncated = _apply_response_limit(
         result,
         surface_limit=surface_limit,
         offset=offset,
+    )
+    final_reasons = _merge_truncation_reasons(
+        result.truncation_reasons,
+        "response_limit" if response_truncated else None,
+    )
+    _warn_on_dropped_read(
+        resource=resource,
+        total=result.total,
+        returned=len(visible),
+        limit=effective_limit,
+        offset=offset,
+        truncation_reasons=final_reasons,
     )
     return replace(
         result,
@@ -1413,10 +1445,7 @@ def _query_result_with_response_limit(
         offset=offset,
         truncated=truncated,
         limit_truncated=result.limit_truncated or response_truncated,
-        truncation_reasons=_merge_truncation_reasons(
-            result.truncation_reasons,
-            "response_limit" if response_truncated else None,
-        ),
+        truncation_reasons=final_reasons,
     )
 
 
@@ -1428,3 +1457,49 @@ def _merge_truncation_reasons(
     if extra is not None and extra not in merged:
         merged.append(extra)
     return merged
+
+
+def _warn_on_dropped_read(
+    *,
+    resource: str,
+    total: int,
+    returned: int,
+    limit: int | None = None,
+    offset: int = 0,
+    truncation_reasons: Sequence[str] = (),
+) -> None:
+    """Emit a diagnostic warning when a read drops rows it should have returned.
+
+    Read-pipeline drop detection (diagnostic invariant). When a result reports
+    ``total > 0`` yet the window that should contain rows comes back empty and no
+    truncation reason explains the shortfall, a consumer cannot distinguish a
+    genuine empty page from a silent serialization/render drop. This guard makes
+    such a drop loud and localized at the service result boundary so every
+    consumer (CLI, client, MCP) benefits.
+
+    Never raises: a diagnostic must never break a legitimate read. It stays
+    silent for ``total == 0`` (legitimate empty), for normal/expected results,
+    and when the empty window is explained by pagination (the window starts at or
+    past ``total``) or by an existing truncation reason.
+    """
+    try:
+        if total <= 0:
+            return
+        if returned > 0:
+            return
+        # The window genuinely contains no rows: legitimate empty page.
+        if offset >= total:
+            return
+        # A truncation reason explains the (possibly empty) window.
+        if truncation_reasons:
+            return
+        logger.warning(
+            "read_pipeline_drop",
+            resource=resource,
+            total=total,
+            returned=returned,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception:  # pragma: no cover - diagnostics must never break a read
+        return
