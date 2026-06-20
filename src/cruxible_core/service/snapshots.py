@@ -263,11 +263,12 @@ def service_relocate_instance(
     # Reject either direction of containment: a target nested inside the source
     # (or vice versa) means a later source removal would also delete the restored
     # instance, and overlapping trees make atomic restore impossible.
-    if resolved_source in resolved_target.parents:
+    overlap = paths_overlap(resolved_target, resolved_source)
+    if overlap == "nested_inside":
         raise ConfigError(
             f"Relocate target {target_root} is nested inside the source {source_root}"
         )
-    if resolved_target in resolved_source.parents:
+    if overlap == "contains":
         raise ConfigError(
             f"Relocate target {target_root} contains the source {source_root}"
         )
@@ -304,6 +305,22 @@ def service_relocate_instance(
         source_removed=False,
         registry_status=restored.registry_status,
     )
+
+
+def paths_overlap(target: Path, other: Path) -> Literal["", "same", "nested_inside", "contains"]:
+    """Classify how two already-resolved paths overlap on the filesystem tree.
+
+    Returns ``"same"`` when the paths are identical, ``"nested_inside"`` when
+    *target* is a descendant of *other*, ``"contains"`` when *target* is an
+    ancestor of *other*, and ``""`` when the two trees are disjoint.
+    """
+    if target == other:
+        return "same"
+    if other in target.parents:
+        return "nested_inside"
+    if target in other.parents:
+        return "contains"
+    return ""
 
 
 def read_instance_backup_manifest(artifact_path: str | Path) -> InstanceBackupManifest:
