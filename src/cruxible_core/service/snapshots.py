@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 import zipfile
 from collections.abc import Mapping
@@ -232,7 +231,6 @@ def service_relocate_instance(
     instance_id: str,
     to_dir: str | Path,
     instance_mode: str = CruxibleInstance.GOVERNED_MODE,
-    remove_source: bool = False,
     registry_status: Literal["registered", "repaired", "unchanged"] = "registered",
 ) -> InstanceRelocateResult:
     """Move a healthy same-identity instance to *to_dir* by snapshot-then-restore.
@@ -242,21 +240,37 @@ def service_relocate_instance(
          fails, the source is untouched.
       2. Restore the artifact into ``to_dir`` (atomic ``os.replace`` of a staging
          dir). If this fails, the source is still untouched and usable.
-      3. Only after a successful restore, optionally remove the source directory.
-         A failure here leaves an orphaned (disk-only) copy at the old path while
-         the restored instance at ``to_dir`` is the live one.
 
-    The caller (runtime layer) is responsible for dropping the instance from the
-    in-process manager before this runs and re-registering it afterward; this
-    function only performs filesystem + identity-preserving work.
+    This function never removes the source directory: removal is the caller's
+    responsibility and must happen only after the registry has been repointed and
+    the in-process manager slot has been swapped to the relocated instance. That
+    ordering keeps the source as a usable fallback if any of those later steps
+    fail, so ``source_removed`` is always ``False`` in the returned result.
+
+    The source instance stays live and queryable throughout snapshot + restore;
+    the caller atomically overwrites the manager slot with the relocated instance
+    at the end (the source is never dropped from the manager mid-relocate).
     """
     if not isinstance(instance, CruxibleInstance):
         raise ConfigError("Instance relocate currently supports only local filesystem instances")
 
     source_root = instance.get_root_path()
     target_root = Path(to_dir).expanduser()
-    if target_root.resolve() == source_root.resolve():
+    resolved_source = source_root.resolve()
+    resolved_target = target_root.resolve()
+    if resolved_target == resolved_source:
         raise ConfigError(f"Relocate target is the current location: {target_root}")
+    # Reject either direction of containment: a target nested inside the source
+    # (or vice versa) means a later source removal would also delete the restored
+    # instance, and overlapping trees make atomic restore impossible.
+    if resolved_source in resolved_target.parents:
+        raise ConfigError(
+            f"Relocate target {target_root} is nested inside the source {source_root}"
+        )
+    if resolved_target in resolved_source.parents:
+        raise ConfigError(
+            f"Relocate target {target_root} contains the source {source_root}"
+        )
 
     # 1. Snapshot the healthy instance to a throwaway artifact. Keep it under the
     #    target's parent so the temp + restore staging share a filesystem.
@@ -281,19 +295,13 @@ def service_relocate_instance(
             registry_status=registry_status,
         )
 
-    # 3. Optional, post-success source cleanup. Orphaning the old dir is safe.
-    source_removed = False
-    if remove_source and source_root.resolve() != target_root.resolve():
-        shutil.rmtree(source_root, ignore_errors=False)
-        source_removed = True
-
     return InstanceRelocateResult(
         instance=restored.instance,
         instance_id=restored.instance_id,
         from_dir=str(source_root),
         to_dir=restored.root_dir,
         manifest=snapshot.manifest,
-        source_removed=source_removed,
+        source_removed=False,
         registry_status=restored.registry_status,
     )
 

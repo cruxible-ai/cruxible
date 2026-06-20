@@ -127,6 +127,17 @@ class InstanceRegistry:
             resolved_workspace_root,
         )
 
+    def get_governed_instance_by_location(
+        self,
+        location: str | Path,
+    ) -> InstanceRecord | None:
+        """Return the governed instance registered at *location*, if any."""
+        resolved_location = str(Path(location).expanduser().resolve())
+        return self._get_by_backend_location(
+            GOVERNED_DAEMON_BACKEND,
+            resolved_location,
+        )
+
     def create_governed_instance(
         self,
         workspace_root: str | Path | None = None,
