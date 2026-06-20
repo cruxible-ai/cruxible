@@ -570,6 +570,11 @@ always keeps `entity_type` and `entity_id`; it is not topic search.
 Use `where` for bounded property predicates on entity or edge lists, for
 example `{"status": {"eq": "active"}}` or
 `{"dependency_basis": {"contains": "schema"}}`. This is not semantic search.
+For `resource_type="edges"`, this is a stored-relationship inspection surface:
+it may return pending, rejected, or otherwise non-live stored edges. Named
+queries are logical-state reads and apply `relationship_state` filtering, so
+use `cruxible_query` when you need live/reviewable truth rather than store
+inspection.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.

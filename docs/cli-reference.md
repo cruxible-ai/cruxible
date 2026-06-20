@@ -1490,6 +1490,10 @@ findings.
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- `list edges` is a stored-relationship inspection surface. It may show
+  pending, rejected, or otherwise non-live stored edges. Named queries are
+  logical-state reads and apply `relationship_state` filtering, so use query
+  commands when you need live/reviewable truth rather than store inspection.
 - Example: `cruxible list edges --relationship work_item_depends_on_work_item --where dependency_basis~schema --json`
 
 **Common Errors:**
