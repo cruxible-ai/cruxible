@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 import structlog
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from cruxible_core.mcp.handlers import reset_client_cache
@@ -22,6 +24,10 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import reset_registry
+from cruxible_core.server.request_logging import (
+    configure_request_logging,
+    log_runtime_request,
+)
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -300,3 +306,76 @@ def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
     assert event["principal_id"] == "runtime_bootstrap"
     assert event["principal_label"] == "runtime_bootstrap"
     assert event["credential_type"] == "runtime_bootstrap"
+
+
+def _make_request(path: str = "/api/v1/health") -> Request:
+    """Build a minimal ASGI Request sufficient for log field extraction."""
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [],
+        "path_params": {},
+        "state": {},
+    }
+    return Request(scope)
+
+
+def test_log_runtime_request_swallows_broken_pipe_from_dead_sink(
+    request_log_buffer: io.StringIO,
+) -> None:
+    """A dead log sink (EPIPE) must never propagate into request handling.
+
+    Reproduces the daemon wedge: the request logger writes to an inherited
+    pipe whose read end has closed, so the write raises BrokenPipeError. The
+    ``request_log_buffer`` fixture restores a healthy sink on teardown.
+    """
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)  # closing the reader makes every write raise EPIPE
+    dead_writer = os.fdopen(write_fd, "w", buffering=1)
+    try:
+        # Sanity-check, on a throwaway handle to the same dead pipe, that a
+        # write really does raise EPIPE — so this test exercises the guard
+        # rather than a silently-healthy sink. Kept off ``dead_writer`` so no
+        # buffered bytes linger to re-raise during teardown's flush/close.
+        probe_fd = os.dup(write_fd)
+        with pytest.raises(OSError):
+            os.write(probe_fd, b"probe\n")
+        os.close(probe_fd)
+
+        # Configure the request logger like configure_request_logging(), but
+        # point the sink at the broken pipe instead of stderr.
+        structlog.configure(
+            processors=[
+                structlog.processors.TimeStamper(fmt="iso", utc=True),
+                structlog.processors.add_log_level,
+                structlog.processors.JSONRenderer(),
+            ],
+            logger_factory=structlog.PrintLoggerFactory(file=dead_writer),
+            cache_logger_on_first_use=False,
+        )
+
+        # The actual assertion: emitting a runtime request log must not raise,
+        # even though the underlying sink is dead.
+        log_runtime_request(
+            _make_request(),
+            status=200,
+            auth_context=None,
+        )
+    finally:
+        # The sink is broken, so flushing buffered bytes on close raises EPIPE;
+        # that is expected here and unrelated to request handling.
+        try:
+            dead_writer.close()
+        except OSError:
+            pass
+
+
+def test_configure_request_logging_is_callable() -> None:
+    """configure_request_logging stays importable and runs without error."""
+    configure_request_logging()
