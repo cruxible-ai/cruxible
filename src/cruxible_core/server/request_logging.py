@@ -52,7 +52,26 @@ def log_runtime_request(
         fields["operation_id"] = str(resolved_operation_id)
     if error_type is not None:
         fields["error_type"] = error_type
-    _log.info("runtime_request", **fields)
+    _emit("runtime_request", fields)
+
+
+def _emit(event: str, fields: dict[str, Any]) -> None:
+    """Write one log event, swallowing any sink failure.
+
+    Request logging must never take down request handling. The structured
+    logger writes to stderr (an inherited pipe under daemon mode); if that
+    pipe's reader has gone away the write raises ``BrokenPipeError`` (EPIPE),
+    and structlog's ``PrintLogger`` has no guard of its own. Catch broadly so
+    a dead log sink degrades to a dropped log line rather than a failed
+    request.
+    """
+    try:
+        _log.info(event, **fields)
+    except Exception:
+        # A logging failure is never worth failing the request over. We
+        # deliberately do not re-log here: the sink we would use is the one
+        # that just failed.
+        pass
 
 
 def _context_field(auth_context: Any, field: str, default: str | None) -> str | None:
