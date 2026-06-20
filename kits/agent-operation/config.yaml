@@ -19,7 +19,9 @@ enums:
     values: [low, medium, high, critical]
     ordered: low_to_high
   lifecycle_status:
-    values: [planned, active, blocked, deferred, closed, superseded]
+    # watching: open but not actively worked, awaiting a defined trigger/signal
+    # (e.g. a recurrence or external event). State the wake condition in the summary.
+    values: [planned, active, blocked, watching, deferred, closed, superseded]
   work_item_type:
     values: [feature, bug, cleanup, research, docs, test, infrastructure, operations]
   decision_status:

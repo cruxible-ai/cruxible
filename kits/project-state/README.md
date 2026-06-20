@@ -17,7 +17,7 @@ structural truth.
 
 This kit is for answering questions such as:
 
-- What work is planned, blocked, deferred, or release-critical?
+- What work is planned, blocked, watching (awaiting a trigger), deferred, or release-critical?
 - Which decisions affect an area, capability, roadmap item, or work item?
 - Which risks or open questions block roadmap items or work items?
 - Which roadmap items depend on other roadmap items landing first?
