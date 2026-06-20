@@ -85,6 +85,11 @@ When authoring graph schemas, keep configs compact: entity and relationship
 properties default to `type: string` and optional, `{}` is valid for optional
 string fields, and `required: true` is the positive form for required non-ID
 fields. Contract fields are different: they still need explicit `type`.
+For operation-style kits, use the reusable axes in
+[Kit Authoring And Distribution](kit-authoring.md#operation-style-relationship-axes)
+before adding domain-specific variants: sequencing dependencies, impediment
+blockers, composition roll-ups, lineage/follow-up, replacement, review gates,
+and durable state notes should remain distinct relationships.
 
 ## Recipe: Validate And Lock After Edits
 

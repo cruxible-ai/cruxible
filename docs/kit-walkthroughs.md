@@ -44,6 +44,11 @@ requires_extras: []
 
 Start with one entity, one relationship, and one query. Add contracts,
 artifacts, providers, and workflows only after the graph shape is clear.
+If the kit models work, reviews, operations, remediation, or investigations,
+start from the operation-style relationship axes in
+[Kit Authoring And Distribution](kit-authoring.md#operation-style-relationship-axes)
+so dependencies, blockers, roll-ups, lineage, replacement, and review gates do
+not collapse into one ambiguous relationship.
 
 ```yaml
 schema_version: cruxible.config.v1
