@@ -12,7 +12,9 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
+    is_volatile_state_path,
     validate_server_startup_settings,
+    volatile_state_path_warnings,
 )
 from cruxible_core.server.credentials import (
     get_runtime_credential_store,
@@ -115,6 +117,26 @@ def test_get_runtime_bootstrap_secret_strips_whitespace() -> None:
     assert get_runtime_bootstrap_secret({"CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "   "}) is None
 
 
+def test_volatile_state_path_detection() -> None:
+    assert is_volatile_state_path("/tmp/cruxible-state")
+    assert is_volatile_state_path("/var/tmp/cruxible-state")
+    assert not is_volatile_state_path(Path.home() / ".cruxible" / "server")
+
+
+def test_volatile_state_path_warnings_include_state_dir_and_instances() -> None:
+    warnings = volatile_state_path_warnings(
+        environ={"CRUXIBLE_SERVER_STATE_DIR": "/tmp/cruxible-server"},
+        instance_locations=[
+            ("inst_tmp", "/tmp/cruxible-server/instances/inst_tmp"),
+            ("inst_durable", str(Path.home() / ".cruxible" / "instances" / "inst_durable")),
+        ],
+    )
+
+    assert len(warnings) == 2
+    assert "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path" in warnings[0]
+    assert "Instance inst_tmp is registered under a volatile temp path" in warnings[1]
+
+
 def test_main_fails_before_uvicorn_for_public_bind_without_auth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -158,6 +180,45 @@ def test_main_reaches_uvicorn_for_valid_public_bind(
 
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 8123
+
+
+def test_main_warns_for_volatile_state_dir_and_instance_location(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: dict[str, object] = {}
+
+    def capture_run(*_args: object, **kwargs: object) -> None:
+        called.update(kwargs)
+
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    reset_registry()
+    reset_runtime_credential_store()
+    workspace_root = tmp_path / "project"
+    workspace_root.mkdir()
+    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+
+    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
+    monkeypatch.setenv("CRUXIBLE_PORT", "8126")
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
+
+    try:
+        server_app.main()
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    stderr = capsys.readouterr().err
+    assert "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path" in stderr
+    assert (
+        f"Instance {registered.record.instance_id} is registered under a volatile temp path"
+        in stderr
+    )
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 8126
 
 
 def test_main_reaches_uvicorn_with_stored_runtime_credentials(

@@ -18,6 +18,11 @@ pip install "cruxible-core[server,mcp]"
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
 ```
 
+Use a durable state directory such as `~/.cruxible/server` or
+`/var/lib/cruxible`. Do not put long-lived daemon state under `/tmp`,
+`/var/tmp`, or macOS private temp directories; Cruxible warns at startup when
+the configured server state path resolves under a known volatile temp location.
+
 The daemon binds locally by default. For a simple local hardening layer, start
 it with:
 

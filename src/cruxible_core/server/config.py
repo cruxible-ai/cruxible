@@ -6,9 +6,17 @@ import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from cruxible_core.errors import ConfigError
+
+_VOLATILE_STATE_ROOTS = (
+    Path("/tmp"),
+    Path("/private/tmp"),
+    Path("/var/tmp"),
+    Path("/private/var/tmp"),
+    Path("/private/var/folders"),
+)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -72,6 +80,41 @@ def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return (Path.home() / ".cruxible" / "server").resolve()
+
+
+def is_volatile_state_path(path: str | Path) -> bool:
+    """Return whether *path* resolves under a known volatile temp location."""
+    resolved = Path(path).expanduser().resolve()
+    for root in _VOLATILE_STATE_ROOTS:
+        volatile_root = root.resolve()
+        if resolved == volatile_root or resolved.is_relative_to(volatile_root):
+            return True
+    return False
+
+
+def volatile_state_path_warnings(
+    *,
+    environ: Mapping[str, str] | None = None,
+    instance_locations: Iterable[tuple[str, str]] = (),
+) -> list[str]:
+    """Return startup warnings for durable state paths under volatile dirs."""
+    state_dir = get_server_state_dir(environ)
+    warnings: list[str] = []
+    if is_volatile_state_path(state_dir):
+        warnings.append(
+            "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path "
+            f"({state_dir}). Use a durable directory such as ~/.cruxible/server "
+            "or /var/lib/cruxible for long-lived daemon state."
+        )
+
+    for instance_id, location in instance_locations:
+        if is_volatile_state_path(location):
+            warnings.append(
+                f"Instance {instance_id} is registered under a volatile temp path "
+                f"({Path(location).expanduser().resolve()}). Move or restore it to "
+                "durable storage before relying on it for long-lived state."
+            )
+    return warnings
 
 
 def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:

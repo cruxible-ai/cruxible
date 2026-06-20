@@ -91,6 +91,18 @@ class InstanceRegistry:
         assert row is not None
         return int(row["count"])
 
+    def list_instances(self) -> list[InstanceRecord]:
+        """Return all registered instances ordered by instance ID."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT instance_id, backend, location, workspace_root, created_at
+                FROM instances
+                ORDER BY instance_id
+                """
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def get_or_create_local_instance(self, location: str | Path) -> RegisteredInstance:
         resolved_location = str(Path(location).expanduser().resolve())
         existing = self._get_by_backend_location(LOCAL_FILESYSTEM_BACKEND, resolved_location)

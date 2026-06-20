@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -17,6 +18,7 @@ from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
     is_server_auth_enabled,
     validate_server_startup_settings,
+    volatile_state_path_warnings,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.errors import (
@@ -108,6 +110,7 @@ def create_app() -> FastAPI:
 def main() -> None:
     """Run the Cruxible server using UDS or host/port transport."""
     credential_store = get_runtime_credential_store()
+    registry = get_registry()
     runtime_credentials_available = credential_store.has_active_credentials()
     auth_required = credential_store.is_auth_required()
     validate_server_startup_settings(
@@ -116,6 +119,13 @@ def main() -> None:
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
+    for warning in volatile_state_path_warnings(
+        instance_locations=[
+            (record.instance_id, record.location)
+            for record in registry.list_instances()
+        ],
+    ):
+        print(f"Warning: {warning}", file=sys.stderr)
 
     import uvicorn
 

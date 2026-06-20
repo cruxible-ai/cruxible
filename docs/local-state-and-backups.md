@@ -20,6 +20,12 @@ The daemon materializes governed instances under `instances/inst_*` and returns
 opaque instance IDs to clients. Keep this directory outside the agent workspace
 when the agent should not have direct state access.
 
+Do not use `/tmp`, `/var/tmp`, or macOS private temp directories for long-lived
+daemon state. Those paths may be cleaned by the operating system while the
+daemon is still running. Cruxible emits a startup warning when the server state
+directory or a registered instance location resolves under a known volatile temp
+path.
+
 Direct local runtime still creates a `.cruxible/` directory under the workspace.
 That mode is convenient for development, but it is not the recommended agent
 boundary.
