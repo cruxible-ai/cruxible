@@ -432,6 +432,26 @@ def test_entity_list_and_sample_serialize_projection_fields():
     assert captured["/api/v1/inst_123/sample/Part"] == ["name"]
 
 
+def test_list_serializes_where_filter():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(dict(request.url.params))
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    client = _build_client(handler)
+
+    client.list(
+        "inst_123",
+        resource_type="entities",
+        entity_type="Part",
+        where={"name": {"contains": "Brake"}},
+    )
+
+    assert json.loads(captured["where"]) == {"name": {"contains": "Brake"}}
+    assert "property_filter" not in captured
+
+
 def test_feedback_from_query_uses_expected_route_and_payload():
     captured: dict[str, Any] = {}
 

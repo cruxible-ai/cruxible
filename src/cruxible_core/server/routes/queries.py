@@ -39,6 +39,18 @@ def _parse_property_filter(property_filter: str | None) -> dict[str, Any] | None
     return parsed
 
 
+def _parse_where_filter(where: str | None) -> dict[str, dict[str, Any]] | None:
+    if where is None:
+        return None
+    try:
+        parsed = json.loads(where)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("where must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ConfigError("where must decode to a JSON object")
+    return parsed
+
+
 @router.post("/{instance_id}/queries/run", response_model=contracts.QueryToolResult)
 async def query(instance_id: str, req: QueryRequest) -> contracts.QueryToolResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
@@ -182,6 +194,7 @@ async def list_resources(
     limit: int = 50,
     offset: int = Query(default=0, ge=0),
     property_filter: str | None = None,
+    where: str | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = Query(default=None),
 ) -> contracts.ListResult:
@@ -196,6 +209,7 @@ async def list_resources(
         limit=limit,
         offset=offset,
         property_filter=_parse_property_filter(property_filter),
+        where=_parse_where_filter(where),
         operation_type=operation_type,
         fields=fields,
     )

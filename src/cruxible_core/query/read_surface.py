@@ -25,12 +25,6 @@ from cruxible_core.query.types import QueryResult
 
 
 @dataclass
-class ReadListResult:
-    items: list[Any] = field(default_factory=list)
-    total: int = 0
-
-
-@dataclass
 class ReadInspectNeighbor:
     direction: str
     relationship_type: str
@@ -78,72 +72,12 @@ def run_query(
     )
 
 
-def list_entities(
-    graph: EntityGraph,
-    entity_type: str,
-    *,
-    config: CoreConfig | None = None,
-    property_filter: dict[str, Any] | None = None,
-    fields: list[str] | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> ReadListResult:
-    """List entities of a type with shared limit/offset/filter semantics."""
-    if config is not None:
-        _require_entity_type(config, entity_type)
-        _validate_entity_projection_fields(config, entity_type, fields)
-    if config is None:
-        entities = graph.list_entities(entity_type, property_filter=property_filter)
-    else:
-        entities = [
-            entity_with_identity_properties(config, entity)
-            for entity in graph.list_entities(entity_type)
-        ]
-        if property_filter:
-            entities = [
-                entity
-                for entity in entities
-                if all(
-                    entity.properties.get(key) == value for key, value in property_filter.items()
-                )
-            ]
-    entities = sorted(entities, key=lambda entity: (entity.entity_type, entity.entity_id))
-    items = _paginate(entities, limit=limit, offset=offset)
-    if config is not None and fields is not None:
-        items = [_project_entity_fields(config, entity, fields) for entity in items]
-    return ReadListResult(items=items, total=len(entities))
-
-
-def list_relationships(
-    graph: EntityGraph,
-    *,
-    config: CoreConfig | None = None,
-    relationship_type: str | None = None,
-    property_filter: dict[str, Any] | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> ReadListResult:
-    """List relationships with shared limit/offset/filter semantics."""
-    if config is not None and relationship_type is not None:
-        _require_relationship_type(config, relationship_type)
-    relationships = graph.list_edges(relationship_type=relationship_type)
-    if property_filter:
-        relationships = [
-            edge
-            for edge in relationships
-            if all(edge["properties"].get(key) == value for key, value in property_filter.items())
-        ]
-    relationships = sorted(relationships, key=_relationship_sort_key)
-    items = _paginate(relationships, limit=limit, offset=offset)
-    return ReadListResult(items=items, total=len(relationships))
-
-
 def _paginate(items: list[Any], *, limit: int | None, offset: int) -> list[Any]:
     end = None if limit is None else offset + limit
     return items[offset:end]
 
 
-def _relationship_sort_key(edge: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+def relationship_sort_key(edge: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
     return (
         str(edge.get("relationship_type")),
         str(edge.get("from_type")),
@@ -300,16 +234,26 @@ def sample_entities(
     limit: int = 5,
 ) -> list[EntityInstance]:
     """Sample entities of a given type."""
-    return cast(
-        list[EntityInstance],
-        list_entities(graph, entity_type, config=config, fields=fields, limit=limit).items,
-    )
+    if config is not None:
+        _require_entity_type(config, entity_type)
+        validate_entity_projection_fields(config, entity_type, fields)
+        entities = [
+            entity_with_identity_properties(config, entity)
+            for entity in graph.list_entities(entity_type)
+        ]
+    else:
+        entities = graph.list_entities(entity_type)
+    entities = sorted(entities, key=lambda entity: (entity.entity_type, entity.entity_id))
+    items = cast(list[EntityInstance], _paginate(entities, limit=limit, offset=0))
+    if config is not None and fields is not None:
+        items = [project_entity_fields(config, entity, fields) for entity in items]
+    return items
 
 
 _IDENTITY_PROJECTION_FIELDS = {"id", "entity_id", "type", "entity_type"}
 
 
-def _validate_entity_projection_fields(
+def validate_entity_projection_fields(
     config: CoreConfig,
     entity_type: str,
     fields: list[str] | None,
@@ -331,7 +275,7 @@ def _validate_entity_projection_fields(
         )
 
 
-def _project_entity_fields(
+def project_entity_fields(
     config: CoreConfig,
     entity: EntityInstance,
     fields: list[str],
@@ -375,12 +319,12 @@ __all__ = [
     "get_entity",
     "get_relationship",
     "inspect_entity",
-    "list_entities",
-    "list_relationships",
+    "project_entity_fields",
     "ReadInspectEntity",
     "ReadInspectNeighbor",
-    "ReadListResult",
     "ReadStatsResult",
+    "relationship_sort_key",
     "run_query",
     "sample_entities",
+    "validate_entity_projection_fields",
 ]

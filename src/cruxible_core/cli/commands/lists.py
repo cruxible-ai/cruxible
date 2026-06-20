@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -31,6 +32,34 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.service import service_export_edges, service_list, service_list_traces
 
 
+def _parse_where_options(values: tuple[str, ...]) -> dict[str, dict[str, Any]] | None:
+    if not values:
+        return None
+    where: dict[str, dict[str, Any]] = {}
+    for raw in values:
+        if ":in=" in raw:
+            field, raw_value = raw.split(":in=", 1)
+            operator = "in"
+            value: Any = raw_value.split(",") if raw_value else []
+        elif "~" in raw:
+            field, value = raw.split("~", 1)
+            operator = "contains"
+        elif "=" in raw:
+            field, value = raw.split("=", 1)
+            operator = "eq"
+        else:
+            raise click.BadParameter(
+                "where must use FIELD=VALUE, FIELD~VALUE, or FIELD:in=A,B"
+            )
+        if not field:
+            raise click.BadParameter("where field must be non-empty")
+        operators = where.setdefault(field, {})
+        if operator in operators:
+            raise click.BadParameter(f"duplicate where operator for field '{field}'")
+        operators[operator] = value
+    return where
+
+
 @click.group("list")
 def list_group() -> None:
     """List entities, receipts, or feedback."""
@@ -39,6 +68,12 @@ def list_group() -> None:
 @list_group.command("entities")
 @click.option("--type", "entity_type", required=True, help="Entity type to list.")
 @click.option("--field", "fields", multiple=True, help="Property field to include. Repeatable.")
+@click.option(
+    "--where",
+    "where_values",
+    multiple=True,
+    help="Property predicate: FIELD=VALUE, FIELD~VALUE, or FIELD:in=A,B. Repeatable.",
+)
 @click.option("--limit", default=50, help="Max entities to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
@@ -46,12 +81,14 @@ def list_group() -> None:
 def list_entities(
     entity_type: str,
     fields: tuple[str, ...],
+    where_values: tuple[str, ...],
     limit: int,
     offset: int,
     output_json: bool,
 ) -> None:
     """List entities of a given type."""
     projected_fields = list(fields) or None
+    where = _parse_where_options(where_values)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -59,6 +96,7 @@ def list_entities(
             entity_type=entity_type,
             limit=limit,
             offset=offset,
+            **({"where": where} if where is not None else {}),
             **({"fields": projected_fields} if projected_fields is not None else {}),
         ),
         lambda instance: service_list(
@@ -67,6 +105,7 @@ def list_entities(
             entity_type=entity_type,
             limit=limit,
             offset=offset,
+            **({"where": where} if where is not None else {}),
             **({"fields": projected_fields} if projected_fields is not None else {}),
         ),
     )
@@ -261,12 +300,25 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 
 @list_group.command("edges")
 @click.option("--relationship", default=None, help="Filter by relationship type.")
+@click.option(
+    "--where",
+    "where_values",
+    multiple=True,
+    help="Relationship property predicate: FIELD=VALUE, FIELD~VALUE, or FIELD:in=A,B. Repeatable.",
+)
 @click.option("--limit", default=50, help="Max edges to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
 @json_option
 @handle_errors
-def list_edges(relationship: str | None, limit: int, offset: int, output_json: bool) -> None:
+def list_edges(
+    relationship: str | None,
+    where_values: tuple[str, ...],
+    limit: int,
+    offset: int,
+    output_json: bool,
+) -> None:
     """List edges in the graph."""
+    where = _parse_where_options(where_values)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -274,6 +326,7 @@ def list_edges(relationship: str | None, limit: int, offset: int, output_json: b
             relationship_type=relationship,
             limit=limit,
             offset=offset,
+            **({"where": where} if where is not None else {}),
         ),
         lambda instance: service_list(
             instance,
@@ -281,6 +334,7 @@ def list_edges(relationship: str | None, limit: int, offset: int, output_json: b
             relationship_type=relationship,
             limit=limit,
             offset=offset,
+            **({"where": where} if where is not None else {}),
         ),
     )
     if output_json:

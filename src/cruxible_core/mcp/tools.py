@@ -405,6 +405,7 @@ def register_tools(server: FastMCP) -> list[str]:
         limit: int = 50,
         offset: int = 0,
         property_filter: dict[str, Any] | None = None,
+        where: dict[str, dict[str, Any]] | None = None,
         operation_type: str | None = None,
         fields: list[str] | None = None,
     ) -> contracts.ListResult:
@@ -414,6 +415,9 @@ def register_tools(server: FastMCP) -> list[str]:
         `relationship_type` filters edges by type for `resource_type="edges"`.
         `property_filter` filters by exact property matches (AND semantics).
         Applies to `resource_type="entities"` and `resource_type="edges"`.
+        `where` filters entity/edge properties with bounded operators such as
+        `{"status": {"eq": "active"}}`, `{"title": {"contains": "query"}}`,
+        or `{"status": {"in": ["active", "planned"]}}`.
         `fields` projects entity properties for `resource_type="entities"`.
         `operation_type` filters receipts (e.g. "query", "add_entity", "ingest").
 
@@ -430,6 +434,7 @@ def register_tools(server: FastMCP) -> list[str]:
             limit=limit,
             offset=offset,
             property_filter=property_filter,
+            where=where,
             operation_type=operation_type,
             fields=fields,
         )

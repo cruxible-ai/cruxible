@@ -1433,6 +1433,57 @@ class TestList:
             "name": "Ceramic Brake Pads",
         }
 
+    def test_list_entities_where_filters_and_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "entities",
+                "--type",
+                "Part",
+                "--where",
+                "name~Performance",
+                "--field",
+                "name",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 1
+        assert payload["items"][0]["entity_id"] == "BP-1002"
+        assert payload["items"][0]["properties"] == {"name": "Performance Brake Pads"}
+
+    def test_list_edges_where_filters_relationship_properties(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "edges",
+                "--relationship",
+                "fits",
+                "--where",
+                "source=user_report",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 1
+        assert payload["items"][0]["from_id"] == "BP-1002"
+
     def test_list_entities_human_projects_fields(
         self,
         runner: CliRunner,

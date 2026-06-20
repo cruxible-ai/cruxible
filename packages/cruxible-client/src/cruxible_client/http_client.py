@@ -645,6 +645,7 @@ class CruxibleClient:
         limit: int = 50,
         offset: int = 0,
         property_filter: dict[str, Any] | None = None,
+        where: dict[str, dict[str, Any]] | None = None,
         operation_type: str | None = None,
         fields: builtins.list[str] | None = None,
     ) -> contracts.ListResult:
@@ -660,6 +661,8 @@ class CruxibleClient:
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)
+        if where is not None:
+            params["where"] = json.dumps(where)
         response = self._client.get(
             f"/api/v1/{instance_id}/list/{resource_type}",
             params=self._omit_none_params(params),

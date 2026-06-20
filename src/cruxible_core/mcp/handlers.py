@@ -934,6 +934,7 @@ def handle_list(
     limit: int = 50,
     offset: int = 0,
     property_filter: dict[str, Any] | None = None,
+    where: dict[str, dict[str, Any]] | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
 ) -> contracts.ListResult:
@@ -949,6 +950,7 @@ def handle_list(
             limit=limit,
             offset=offset,
             property_filter=property_filter,
+            where=where,
             operation_type=operation_type,
             fields=fields,
         ),
@@ -962,6 +964,7 @@ def handle_list(
             limit=limit,
             offset=offset,
             property_filter=property_filter,
+            where=where,
             operation_type=operation_type,
             fields=fields,
         ),

@@ -16,6 +16,7 @@ from cruxible_core.errors import (
     RelationshipNotFoundError,
     TraceNotFoundError,
 )
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.provider.types import ExecutionTrace
@@ -1342,6 +1343,55 @@ class TestList:
         assert result.total == 1
         assert result.items[0].properties["vehicle_id"] == "V-1"
 
+    def test_entities_where_filters_with_query_predicates(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        eq_result = service_list(
+            populated_instance,
+            "entities",
+            entity_type="Part",
+            where={"category": {"eq": "brakes"}},
+        )
+        assert eq_result.total == 2
+
+        contains_result = service_list(
+            populated_instance,
+            "entities",
+            entity_type="Part",
+            where={"name": {"contains": "Performance"}},
+        )
+        assert contains_result.total == 1
+        assert contains_result.items[0].entity_id == "BP-1002"
+
+        in_result = service_list(
+            populated_instance,
+            "entities",
+            entity_type="Vehicle",
+            where={"model": {"in": ["Civic", "Missing"]}},
+        )
+        assert in_result.total == 1
+        assert in_result.items[0].entity_id == "V-2024-CIVIC-EX"
+
+    def test_entities_where_rejects_unknown_fields_and_property_filter_mix(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        with pytest.raises(ConfigError, match="Unknown where field"):
+            service_list(
+                populated_instance,
+                "entities",
+                entity_type="Part",
+                where={"unknown": {"eq": "value"}},
+            )
+
+        with pytest.raises(ConfigError, match="mutually exclusive"):
+            service_list(
+                populated_instance,
+                "entities",
+                entity_type="Part",
+                property_filter={"category": "brakes"},
+                where={"name": {"contains": "Brake"}},
+            )
+
     def test_edges(self, populated_instance: CruxibleInstance) -> None:
         result = service_list(populated_instance, "edges")
         assert result.total >= 3  # 3 fits + 1 replaces in populated graph
@@ -1369,6 +1419,69 @@ class TestList:
         assert result.total == 2
         assert len(result.items) == 2
         assert all(edge["properties"]["source"] == "catalog" for edge in result.items)
+
+    def test_edges_where_filters_with_query_predicates(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        contains_result = service_list(
+            populated_instance,
+            "edges",
+            relationship_type="fits",
+            where={"source": {"contains": "user"}},
+        )
+        assert contains_result.total == 1
+        assert contains_result.items[0]["from_id"] == "BP-1002"
+
+        in_result = service_list(
+            populated_instance,
+            "edges",
+            relationship_type="replaces",
+            where={"direction": {"in": ["upgrade", "equivalent"]}},
+        )
+        assert in_result.total == 1
+        assert in_result.items[0]["relationship_type"] == "replaces"
+
+    def test_edges_where_rejects_unknown_fields(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        with pytest.raises(ConfigError, match="Unknown where field"):
+            service_list(
+                populated_instance,
+                "edges",
+                relationship_type="fits",
+                where={"confidence": {"eq": 0.95}},
+            )
+
+    def test_edges_list_keeps_rejected_stored_edges_visible(
+        self, populated_instance: CruxibleInstance
+    ) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="BP-1002",
+                to_type="Vehicle",
+                to_id="V-2024-ACCORD-SPORT",
+                properties={"verified": True, "source": "catalog"},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(status="rejected")
+                    )
+                ),
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        result = service_list(
+            populated_instance,
+            "edges",
+            relationship_type="fits",
+            where={"source": {"eq": "catalog"}},
+        )
+
+        assert result.total == 3
+        assert any(edge["from_id"] == "BP-1002" for edge in result.items)
 
     def test_receipts(self, populated_instance: CruxibleInstance) -> None:
         # Create a receipt first

@@ -443,10 +443,11 @@ def test_list_sample_schema_and_getters_work_locally_for_dev_instance(
             "instance_id": dev_graph_instance_id,
             "resource_type": "entities",
             "entity_type": "Vehicle",
+            "where": {"model": {"eq": "Civic"}},
             "fields": ["make"],
         },
     )
-    assert listed["total"] == 2
+    assert listed["total"] == 1
     assert listed["items"][0]["properties"] == {"make": "Honda"}
 
     list_error = call_tool_expect_error(

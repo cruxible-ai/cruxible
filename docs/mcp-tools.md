@@ -556,6 +556,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `receipt_id` | no | string | null |  |
 | `limit` | no | integer |  |
 | `property_filter` | no | object | null |  |
+| `where` | no | object | null | Bounded entity/edge property predicates such as `{"status": {"eq": "active"}}`, `{"title": {"contains": "query"}}`, or `{"status": {"in": ["active", "planned"]}}`. |
 | `operation_type` | no | string | null |  |
 | `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
 
@@ -566,6 +567,9 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 For entity lists, `fields` is an opt-in projection that reduces payload size
 after the caller has selected an entity type. It trims entity `properties` but
 always keeps `entity_type` and `entity_id`; it is not topic search.
+Use `where` for bounded property predicates on entity or edge lists, for
+example `{"status": {"eq": "active"}}` or
+`{"dependency_basis": {"contains": "schema"}}`. This is not semantic search.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -629,6 +630,59 @@ def test_entity_projection_unknown_field_errors(
     body = response.json()
     assert body["error_type"] == "ConfigError"
     assert "Unknown field(s) for entity type 'Part': nope" in body["message"]
+
+
+def test_list_route_accepts_where_for_entities_and_edges(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    entity_response = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={
+            "entity_type": "Part",
+            "where": json.dumps({"name": {"contains": "Performance"}}),
+        },
+    )
+    assert entity_response.status_code == 200
+    entity_payload = entity_response.json()
+    assert entity_payload["total"] == 1
+    assert entity_payload["items"][0]["entity_id"] == "BP-1002"
+
+    edge_response = app_client.get(
+        f"/api/v1/{instance_id}/list/edges",
+        params={
+            "relationship_type": "fits",
+            "where": json.dumps({"source": {"eq": "user_report"}}),
+        },
+    )
+    assert edge_response.status_code == 200
+    edge_payload = edge_response.json()
+    assert edge_payload["total"] == 1
+    assert edge_payload["items"][0]["from_id"] == "BP-1002"
+
+
+def test_list_route_rejects_property_filter_and_where_together(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    response = app_client.get(
+        f"/api/v1/{instance_id}/list/entities",
+        params={
+            "entity_type": "Part",
+            "property_filter": json.dumps({"category": "brakes"}),
+            "where": json.dumps({"name": {"contains": "Brake"}}),
+        },
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_type"] == "ConfigError"
+    assert "mutually exclusive" in body["message"]
 
 
 def test_inspect_entity_history_route_returns_property_changes(

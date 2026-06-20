@@ -9,23 +9,27 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
-from cruxible_core.config.schema import CoreConfig, NamedQuerySchema
+from cruxible_core.config.property_validation import entity_with_identity_properties
+from cruxible_core.config.schema import CoreConfig, NamedQuerySchema, QueryPredicateSpec
 from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
     QueryNotFoundError,
     ReceiptNotFoundError,
+    RelationshipNotFoundError,
     TraceNotFoundError,
 )
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
     dump_provenance,
     provenance_group_id,
 )
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.enums import QueryRelationshipState
+from cruxible_core.query.predicates import build_predicate_context, evaluate_query_predicates
 from cruxible_core.query.read_surface import (
     get_entity as read_get_entity,
 )
@@ -39,10 +43,9 @@ from cruxible_core.query.read_surface import (
     inspect_entity as read_inspect_entity,
 )
 from cruxible_core.query.read_surface import (
-    list_entities as read_list_entities,
-)
-from cruxible_core.query.read_surface import (
-    list_relationships as read_list_relationships,
+    project_entity_fields,
+    relationship_sort_key,
+    validate_entity_projection_fields,
 )
 from cruxible_core.query.read_surface import (
     run_query as read_run_query,
@@ -50,7 +53,7 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.query.read_surface import (
     sample_entities as read_sample_entities,
 )
-from cruxible_core.query.types import dump_query_row
+from cruxible_core.query.types import QueryPathSegment, dump_query_row
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import record_decision_event_for_context
 from cruxible_core.service.types import (
@@ -73,6 +76,8 @@ from cruxible_core.temporal import utc_now
 
 _INPUT_REF_RE = re.compile(r"\$input\.([A-Za-z_][\w-]*)")
 _CONSTRAINT_PARAM_RE = re.compile(r"\$([A-Za-z_][\w-]*)(?:\.([A-Za-z_][\w-]*))?")
+_LIST_FIELD_RE = re.compile(r"^[A-Za-z_][\w-]*$")
+_LIST_WHERE_OPERATORS = {"eq", "contains", "in"}
 _INLINE_QUERY_PREFIX = "inline:"
 _INLINE_DEFAULT_LIMIT = 50
 _INLINE_MAX_LIMIT = 500
@@ -894,6 +899,7 @@ def service_list(
     query_name: str | None = None,
     receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
+    where: Mapping[str, Mapping[str, Any]] | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
     limit: int = 50,
@@ -906,37 +912,35 @@ def service_list(
 
     if property_filter is not None and resource not in ("entities", "edges"):
         raise ConfigError("property_filter is only supported for entities and edges")
+    if where is not None and resource not in ("entities", "edges"):
+        raise ConfigError("where is only supported for entities and edges")
+    if property_filter is not None and where is not None:
+        raise ConfigError("property_filter and where are mutually exclusive")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
 
     if resource == "entities":
         if not entity_type:
             raise ConfigError("entity_type is required when listing entities")
-        config = instance.load_config()
-        graph = instance.load_graph()
-        result = read_list_entities(
-            graph,
-            entity_type,
-            config=config,
+        return _service_list_entities(
+            instance,
+            entity_type=entity_type,
             property_filter=property_filter,
+            where=where,
             fields=fields,
             limit=limit,
             offset=offset,
         )
-        return ListResult(items=result.items, total=result.total)
 
     if resource == "edges":
-        config = instance.load_config()
-        graph = instance.load_graph()
-        result = read_list_relationships(
-            graph,
-            config=config,
+        return _service_list_edges(
+            instance,
             relationship_type=relationship_type,
             property_filter=property_filter,
+            where=where,
             limit=limit,
             offset=offset,
         )
-        return ListResult(items=result.items, total=result.total)
 
     if resource == "receipts":
         store = instance.get_receipt_store()
@@ -977,6 +981,259 @@ def service_list(
     finally:
         feedback_store.close()
     return ListResult(items=outcome_records, total=total)
+
+
+def _service_list_entities(
+    instance: InstanceProtocol,
+    *,
+    entity_type: str,
+    property_filter: Mapping[str, Any] | None,
+    where: Mapping[str, Mapping[str, Any]] | None,
+    fields: list[str] | None,
+    limit: int,
+    offset: int,
+) -> ListResult:
+    config = instance.load_config()
+    _require_list_entity_type(config, entity_type)
+    validate_entity_projection_fields(config, entity_type, fields)
+    query_where = _compile_entity_list_where(
+        config,
+        entity_type,
+        property_filter=property_filter,
+        where=where,
+    )
+    query_schema = NamedQuerySchema(
+        mode="collection",
+        returns=entity_type,
+        result_shape="entity",
+        where=query_where,
+    )
+    query_result = execute_query_definition(
+        config,
+        instance.load_graph(),
+        "__list_entities__",
+        query_schema,
+        {},
+    )
+    entities = sorted(
+        [cast(EntityInstance, row) for row in query_result.results],
+        key=lambda entity: (entity.entity_type, entity.entity_id),
+    )
+    total = len(entities)
+    page = _paginate_items(entities, limit=limit, offset=offset)
+    if fields is not None:
+        page = [project_entity_fields(config, entity, fields) for entity in page]
+    return ListResult(items=page, total=total)
+
+
+def _service_list_edges(
+    instance: InstanceProtocol,
+    *,
+    relationship_type: str | None,
+    property_filter: Mapping[str, Any] | None,
+    where: Mapping[str, Mapping[str, Any]] | None,
+    limit: int,
+    offset: int,
+) -> ListResult:
+    config = instance.load_config()
+    graph = instance.load_graph()
+    if relationship_type is not None:
+        _require_list_relationship_type(config, relationship_type)
+        relationship_types = [relationship_type]
+    else:
+        relationship_types = [relationship.name for relationship in config.relationships]
+    query_where = _compile_edge_list_where(
+        config,
+        relationship_type,
+        property_filter=property_filter,
+        where=where,
+    )
+    relationships = [
+        _relationship_list_payload(relationship)
+        for name in relationship_types
+        for relationship in graph.iter_relationships(name)
+        if _relationship_matches_list_where(config, graph, relationship, query_where)
+    ]
+    relationships = sorted(relationships, key=relationship_sort_key)
+    total = len(relationships)
+    return ListResult(
+        items=_paginate_items(relationships, limit=limit, offset=offset),
+        total=total,
+    )
+
+
+def _paginate_items(items: list[Any], *, limit: int, offset: int) -> list[Any]:
+    return items[offset : offset + limit]
+
+
+def _compile_entity_list_where(
+    config: CoreConfig,
+    entity_type: str,
+    *,
+    property_filter: Mapping[str, Any] | None,
+    where: Mapping[str, Mapping[str, Any]] | None,
+) -> QueryPredicateSpec | None:
+    normalized = _normalize_list_where(property_filter=property_filter, where=where)
+    if not normalized:
+        return None
+    known_fields = set(config.entity_types[entity_type].properties)
+    _validate_list_where_fields(normalized, known_fields, subject=f"entity type '{entity_type}'")
+    return _query_predicate_from_list_where(normalized, scope="result")
+
+
+def _compile_edge_list_where(
+    config: CoreConfig,
+    relationship_type: str | None,
+    *,
+    property_filter: Mapping[str, Any] | None,
+    where: Mapping[str, Mapping[str, Any]] | None,
+) -> QueryPredicateSpec | None:
+    normalized = _normalize_list_where(property_filter=property_filter, where=where)
+    if not normalized:
+        return None
+    known_fields = _relationship_property_names(config, relationship_type)
+    subject = (
+        f"relationship type '{relationship_type}'"
+        if relationship_type is not None
+        else "configured relationships"
+    )
+    _validate_list_where_fields(normalized, known_fields, subject=subject)
+    return _query_predicate_from_list_where(normalized, scope="edge")
+
+
+def _normalize_list_where(
+    *,
+    property_filter: Mapping[str, Any] | None,
+    where: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]] | None:
+    if property_filter is not None and where is not None:
+        raise ConfigError("property_filter and where are mutually exclusive")
+    if property_filter is not None:
+        return {str(field): {"eq": value} for field, value in property_filter.items()}
+    if where is None:
+        return None
+    normalized: dict[str, dict[str, Any]] = {}
+    for field, operators in where.items():
+        if not isinstance(operators, Mapping) or not operators:
+            raise ConfigError(f"where field '{field}' must define at least one operator")
+        normalized[str(field)] = dict(operators)
+    return normalized
+
+
+def _validate_list_where_fields(
+    where: Mapping[str, Mapping[str, Any]],
+    known_fields: set[str],
+    *,
+    subject: str,
+) -> None:
+    for field, operators in where.items():
+        if not _LIST_FIELD_RE.fullmatch(field):
+            raise ConfigError(
+                f"where field '{field}' must be a bare configured property name"
+            )
+        if field not in known_fields:
+            known = ", ".join(sorted(known_fields)) or "(none)"
+            raise ConfigError(f"Unknown where field for {subject}: {field}. Known fields: {known}")
+        unsupported = sorted(set(operators) - _LIST_WHERE_OPERATORS)
+        if unsupported:
+            allowed = ", ".join(sorted(_LIST_WHERE_OPERATORS))
+            raise ConfigError(
+                f"Unsupported where operator for field '{field}': {', '.join(unsupported)}. "
+                f"Allowed: {allowed}"
+            )
+
+
+def _query_predicate_from_list_where(
+    where: Mapping[str, Mapping[str, Any]],
+    *,
+    scope: Literal["result", "edge"],
+) -> QueryPredicateSpec:
+    try:
+        return QueryPredicateSpec.model_validate(
+            {f"{scope}.properties.{field}": dict(operators) for field, operators in where.items()}
+        )
+    except ValidationError as exc:
+        raise ConfigError(f"Invalid where predicate: {exc}") from exc
+
+
+def _require_list_entity_type(config: CoreConfig, entity_type: str) -> None:
+    if entity_type not in config.entity_types:
+        raise EntityTypeNotFoundError(
+            entity_type,
+            known_entity_types=sorted(config.entity_types),
+        )
+
+
+def _require_list_relationship_type(config: CoreConfig, relationship_type: str) -> None:
+    if config.get_relationship(relationship_type) is None:
+        raise RelationshipNotFoundError(relationship_type)
+
+
+def _relationship_property_names(
+    config: CoreConfig,
+    relationship_type: str | None,
+) -> set[str]:
+    if relationship_type is not None:
+        schema = config.get_relationship(relationship_type)
+        return set(schema.properties) if schema is not None else set()
+    fields: set[str] = set()
+    for relationship in config.relationships:
+        fields.update(relationship.properties)
+    return fields
+
+
+def _relationship_matches_list_where(
+    config: CoreConfig,
+    graph: EntityGraph,
+    relationship: RelationshipInstance,
+    where: QueryPredicateSpec | None,
+) -> bool:
+    if where is None:
+        return True
+    source = graph.get_entity(relationship.from_type, relationship.from_id)
+    target = graph.get_entity(relationship.to_type, relationship.to_id)
+    if source is None or target is None:
+        return False
+    source = entity_with_identity_properties(config, source)
+    target = entity_with_identity_properties(config, target)
+    segment = QueryPathSegment(
+        relationship_type=relationship.relationship_type,
+        from_type=relationship.from_type,
+        from_id=relationship.from_id,
+        to_type=relationship.to_type,
+        to_id=relationship.to_id,
+        edge_key=relationship.edge_key,
+        properties=dict(relationship.properties),
+        metadata=relationship.metadata,
+    )
+    context = replace(
+        build_predicate_context(
+            entry=source,
+            current=source,
+            candidate=target,
+            segment=segment,
+            path=(segment,),
+            entities=(source, target),
+        ),
+        result=segment,
+    )
+    return evaluate_query_predicates(config, where, context, {})
+
+
+def _relationship_list_payload(relationship: RelationshipInstance) -> dict[str, Any]:
+    metadata = relationship.metadata
+    if not isinstance(metadata, RelationshipMetadata):
+        metadata = RelationshipMetadata.model_validate(metadata)
+    return {
+        "from_type": relationship.from_type,
+        "from_id": relationship.from_id,
+        "to_type": relationship.to_type,
+        "to_id": relationship.to_id,
+        "relationship_type": relationship.relationship_type,
+        "edge_key": relationship.edge_key,
+        "properties": dict(relationship.properties),
+        "metadata": metadata.model_dump(mode="json", exclude_none=True),
+    }
 
 
 def _query_param_hints(

@@ -126,10 +126,12 @@ def test_list_and_sample_handlers_forward_fields_to_client(monkeypatch: pytest.M
         "entities",
         entity_type="Part",
         limit=10,
+        where={"name": {"contains": "Brake"}},
         fields=["name", "category"],
     )
     handlers.handle_sample("inst_123", "Part", fields=["name"])
 
+    assert captured["list"]["where"] == {"name": {"contains": "Brake"}}
     assert captured["list"]["fields"] == ["name", "category"]
     assert captured["sample"]["fields"] == ["name"]
 

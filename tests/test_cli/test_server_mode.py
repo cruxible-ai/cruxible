@@ -4134,6 +4134,57 @@ def test_list_entities_forwards_fields_to_client(
     assert payload["items"][0]["properties"] == {"make": "Honda"}
 
 
+def test_list_entities_forwards_where_to_client(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def list(self, instance_id, **kwargs):
+            captured.update(kwargs)
+            return contracts.ListResult(
+                items=[
+                    {
+                        "entity_type": "Vehicle",
+                        "entity_id": "V-1",
+                        "properties": {"make": "Honda"},
+                    }
+                ],
+                total=1,
+                limit=50,
+                offset=0,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "list",
+            "entities",
+            "--type",
+            "Vehicle",
+            "--where",
+            "make=Honda",
+            "--where",
+            "model:in=Civic,Accord",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["where"] == {
+        "make": {"eq": "Honda"},
+        "model": {"in": ["Civic", "Accord"]},
+    }
+
+
 def test_server_mode_sample_forwards_fields_to_client(
     monkeypatch,
     runner: CliRunner,

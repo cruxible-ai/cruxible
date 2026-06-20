@@ -1484,11 +1484,13 @@ findings.
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--relationship` | no | `` | text | Filter by relationship type. |
+| `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max edges to show. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- Example: `cruxible list edges --relationship work_item_depends_on_work_item --where dependency_basis~schema --json`
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -1507,6 +1509,7 @@ findings.
 | --- | --- | --- | --- | --- |
 | `--type` | yes | `Sentinel.UNSET` | text | Entity type to list. |
 | `--field` | no | `` | text | Property field to include. Repeat to project compact entity payloads. |
+| `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max entities to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -1515,6 +1518,12 @@ findings.
 - Read-only. Without `--field`, returns full entity records. With `--field`,
   returns the same list envelope but trims each entity's `properties` to the
   requested fields while always keeping `entity_type` and `entity_id`.
+- `--where` filters configured entity properties after the caller has selected
+  an entity type. It is bounded predicate filtering, not topic or semantic
+  search. Examples:
+  `cruxible list entities --type WorkItem --where status=active --field title --json`
+  and
+  `cruxible list entities --type WorkItem --where title~query --field status --json`.
 - Field projection reduces payload size after the caller has already selected
   an entity type; it is not topic search.
 
