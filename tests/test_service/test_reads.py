@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import structlog
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
@@ -40,11 +41,15 @@ from cruxible_core.service import (
     service_list,
     service_list_traces,
     service_query,
+    service_query_inline_surface,
     service_reload_config,
     service_sample,
     service_schema,
     service_stats,
 )
+from cruxible_core.service import queries as queries_module
+from cruxible_core.service.queries import _warn_on_dropped_read
+from cruxible_core.service.types import QueryServiceResult
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 STATUS_HISTORY_YAML = """\
@@ -1441,9 +1446,7 @@ class TestList:
         assert in_result.total == 1
         assert in_result.items[0]["relationship_type"] == "replaces"
 
-    def test_edges_where_rejects_unknown_fields(
-        self, populated_instance: CruxibleInstance
-    ) -> None:
+    def test_edges_where_rejects_unknown_fields(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="Unknown where field"):
             service_list(
                 populated_instance,
@@ -1594,3 +1597,180 @@ class TestStats:
     def test_invalid_resource(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="Unknown resource"):
             service_list(populated_instance, "bogus")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# read-pipeline drop detection (diagnostic invariant)
+# ---------------------------------------------------------------------------
+
+
+def _drop_warnings(events: list[dict]) -> list[dict]:
+    return [
+        event
+        for event in events
+        if event.get("event") == "read_pipeline_drop" and event.get("log_level") == "warning"
+    ]
+
+
+def _fake_query_result(total: int, items: list, *, truncation_reasons: list[str] | None = None):
+    return QueryServiceResult(
+        items=items,
+        receipt_id=None,
+        receipt=None,
+        total=total,
+        limit=None,
+        truncated=bool(truncation_reasons),
+        steps_executed=0,
+        truncation_reasons=list(truncation_reasons or []),
+    )
+
+
+class TestReadPipelineDropDetection:
+    """The guard warns loudly when a read drops rows it should have returned."""
+
+    def test_guard_warns_on_total_with_empty_items(self) -> None:
+        with structlog.testing.capture_logs() as events:
+            _warn_on_dropped_read(resource="query:foo", total=8, returned=0)
+        warnings = _drop_warnings(events)
+        assert len(warnings) == 1
+        assert warnings[0]["resource"] == "query:foo"
+        assert warnings[0]["total"] == 8
+        assert warnings[0]["returned"] == 0
+
+    def test_guard_silent_on_total_zero(self) -> None:
+        with structlog.testing.capture_logs() as events:
+            _warn_on_dropped_read(resource="query:foo", total=0, returned=0)
+        assert _drop_warnings(events) == []
+
+    def test_guard_silent_on_normal_result(self) -> None:
+        with structlog.testing.capture_logs() as events:
+            _warn_on_dropped_read(resource="query:foo", total=3, returned=3)
+        assert _drop_warnings(events) == []
+
+    def test_guard_silent_when_offset_past_total(self) -> None:
+        # Paging beyond the end legitimately yields an empty page.
+        with structlog.testing.capture_logs() as events:
+            _warn_on_dropped_read(resource="query:foo", total=5, returned=0, offset=5)
+        assert _drop_warnings(events) == []
+
+    def test_guard_silent_when_truncation_reason_explains_shortfall(self) -> None:
+        with structlog.testing.capture_logs() as events:
+            _warn_on_dropped_read(
+                resource="query:foo",
+                total=8,
+                returned=0,
+                truncation_reasons=["response_limit"],
+            )
+        assert _drop_warnings(events) == []
+
+    def test_query_surface_warns_when_items_dropped(
+        self,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Force the anomaly: a result that reports rows but returns none.
+        monkeypatch.setattr(
+            queries_module,
+            "_evaluate_inline_query_result",
+            lambda *args, **kwargs: _fake_query_result(8, []),
+        )
+        with structlog.testing.capture_logs() as events:
+            result = service_query_inline_surface(
+                populated_instance,
+                {
+                    "name": "brake_parts",
+                    "mode": "collection",
+                    "returns": "Part",
+                    "result_shape": "entity",
+                },
+                {},
+            )
+        assert result.total == 8
+        assert result.items == []
+        warnings = _drop_warnings(events)
+        assert len(warnings) == 1
+        assert warnings[0]["resource"] == "query_inline:brake_parts"
+        assert warnings[0]["total"] == 8
+        assert warnings[0]["returned"] == 0
+
+    def test_query_surface_silent_on_normal_result(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with structlog.testing.capture_logs() as events:
+            result = service_query_inline_surface(
+                populated_instance,
+                {
+                    "name": "brake_parts",
+                    "mode": "collection",
+                    "returns": "Part",
+                    "result_shape": "entity",
+                    "where": {"result.properties.category": {"eq": "brakes"}},
+                },
+                {},
+            )
+        assert result.total == 2
+        assert len(result.items) == 2
+        assert _drop_warnings(events) == []
+
+    def test_query_surface_silent_on_legitimate_empty(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with structlog.testing.capture_logs() as events:
+            result = service_query_inline_surface(
+                populated_instance,
+                {
+                    "name": "no_match",
+                    "mode": "collection",
+                    "returns": "Part",
+                    "result_shape": "entity",
+                    "where": {"result.properties.category": {"eq": "nonexistent"}},
+                },
+                {},
+            )
+        assert result.total == 0
+        assert result.items == []
+        assert _drop_warnings(events) == []
+
+    def test_list_warns_when_items_dropped(
+        self,
+        populated_instance: CruxibleInstance,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cruxible_core.service.types import ListResult
+
+        monkeypatch.setattr(
+            queries_module,
+            "_service_list_entities",
+            lambda *args, **kwargs: ListResult(items=[], total=2),
+        )
+        with structlog.testing.capture_logs() as events:
+            result = service_list(populated_instance, "entities", entity_type="Vehicle")
+        assert result.total == 2
+        assert result.items == []
+        warnings = _drop_warnings(events)
+        assert len(warnings) == 1
+        assert warnings[0]["resource"] == "list:entities"
+        assert warnings[0]["total"] == 2
+        assert warnings[0]["returned"] == 0
+
+    def test_list_silent_on_normal_result(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with structlog.testing.capture_logs() as events:
+            result = service_list(populated_instance, "entities", entity_type="Vehicle")
+        assert result.total == 2
+        assert len(result.items) == 2
+        assert _drop_warnings(events) == []
+
+    def test_list_silent_on_legitimate_empty(
+        self,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        with structlog.testing.capture_logs() as events:
+            result = service_list(populated_instance, "outcomes")
+        assert result.total == 0
+        assert result.items == []
+        assert _drop_warnings(events) == []
