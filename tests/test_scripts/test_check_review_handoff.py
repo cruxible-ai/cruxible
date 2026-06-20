@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from scripts import check_review_handoff as review_handoff_module
 from scripts.check_review_handoff import check_review_handoff
 
 
@@ -214,3 +215,11 @@ def test_missing_review_request_for_head_fails() -> None:
 
     assert result.ok is False
     assert "No ReviewRequest found with change_head 'abc123'" in result.failures
+
+
+def test_parser_defaults_to_project_state_instance_guard(monkeypatch) -> None:
+    monkeypatch.delenv("CRUXIBLE_EXPECTED_CONFIG_NAME", raising=False)
+
+    args = review_handoff_module._build_parser().parse_args([])
+
+    assert args.expected_config_name == "project_state"
