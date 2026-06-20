@@ -153,6 +153,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_clone_snapshot": PermissionMode.ADMIN,
     "cruxible_instance_snapshot": PermissionMode.ADMIN,
     "cruxible_instance_restore": PermissionMode.ADMIN,
+    "cruxible_instance_relocate": PermissionMode.ADMIN,
     "cruxible_state_publish": PermissionMode.ADMIN,
     "cruxible_state_create_overlay": PermissionMode.ADMIN,
 }

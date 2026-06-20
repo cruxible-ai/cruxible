@@ -1118,6 +1118,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.InstanceRestoreResult)
 
+    def relocate_instance(
+        self,
+        instance_id: str,
+        *,
+        to_dir: str,
+        remove_source: bool = False,
+    ) -> contracts.InstanceRelocateResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/instance/relocate",
+            json={"to_dir": to_dir, "remove_source": remove_source},
+        )
+        return self._parse_model(response, contracts.InstanceRelocateResult)
+
     def list_snapshots(
         self,
         instance_id: str,

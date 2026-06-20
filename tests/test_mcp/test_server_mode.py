@@ -435,6 +435,19 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
             assert root_dir == "/srv/clone"
             return contracts.CloneSnapshotResult(instance_id="inst_clone", snapshot=snapshot)
 
+        def relocate_instance(self, instance_id, *, to_dir, remove_source=False):
+            assert instance_id == "inst_123"
+            assert to_dir == "/srv/new"
+            assert remove_source is True
+            return contracts.InstanceRelocateResult(
+                instance_id=instance_id,
+                from_dir="/srv/old",
+                to_dir=to_dir,
+                manifest=manifest,
+                source_removed=remove_source,
+                registry_status="registered",
+            )
+
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
     assert handlers.handle_workflow_test("inst_123", "smoke").passed == 1
@@ -451,6 +464,12 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
     assert (
         handlers.handle_clone_snapshot("inst_123", "snap_1", "/srv/clone").instance_id
         == "inst_clone"
+    )
+    assert (
+        handlers.handle_instance_relocate(
+            "inst_123", "/srv/new", remove_source=True
+        ).to_dir
+        == "/srv/new"
     )
 
 
@@ -609,6 +628,11 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
             handlers.handle_instance_restore,
             ("/tmp/backup.zip", None),
             "cruxible_instance_restore",
+        ),
+        (
+            handlers.handle_instance_relocate,
+            ("inst_123", "/srv/new"),
+            "cruxible_instance_relocate",
         ),
         (
             handlers.handle_clone_snapshot,

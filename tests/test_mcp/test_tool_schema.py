@@ -464,6 +464,17 @@ class TestOutputSchema:
                 {"instance_id", "root_dir", "manifest", "registry_status"},
             ),
             (
+                "cruxible_instance_relocate",
+                {
+                    "instance_id",
+                    "from_dir",
+                    "to_dir",
+                    "manifest",
+                    "source_removed",
+                    "registry_status",
+                },
+            ),
+            (
                 "cruxible_list_snapshots",
                 {"items", "total", "limit", "offset", "truncated"},
             ),

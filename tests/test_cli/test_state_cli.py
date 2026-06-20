@@ -214,3 +214,69 @@ def test_server_mode_instance_snapshot_and_restore(
     assert captured["restore_root_dir"] == "/srv/restored"
     shown = runner.invoke(cli, ["context", "show", "--json"])
     assert json.loads(shown.output)["instance_id"] == "inst_restored"
+
+
+def test_server_mode_instance_relocate(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    runner.invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_old",
+        ],
+    )
+    captured: dict[str, object] = {}
+    manifest = contracts.InstanceBackupManifest(
+        instance_id="inst_old",
+        created_at="2026-03-21T00:00:00Z",
+        cruxible_version="0.2.0",
+        label="relocate",
+        original_config_path="/srv/old/config.yaml",
+        restored_config_path="config.yaml",
+        instance_mode="governed",
+        artifacts={"state.db": "sha256:abc"},
+    )
+
+    class StubClient:
+        def relocate_instance(self, instance_id, *, to_dir, remove_source=False):
+            captured["relocate_instance_id"] = instance_id
+            captured["relocate_to_dir"] = to_dir
+            captured["relocate_remove_source"] = remove_source
+            return contracts.InstanceRelocateResult(
+                instance_id=instance_id,
+                from_dir="/srv/old",
+                to_dir=to_dir,
+                manifest=manifest,
+                source_removed=remove_source,
+                registry_status="registered",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = runner.invoke(
+        cli,
+        ["instance", "relocate", "--to", "/srv/new", "--remove-source"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Relocated instance inst_old" in result.output
+    assert "to=/srv/new" in result.output
+    assert "source_removed=True" in result.output
+    assert captured["relocate_instance_id"] == "inst_old"
+    assert captured["relocate_to_dir"] == "/srv/new"
+    assert captured["relocate_remove_source"] is True
+
+
+def test_local_mode_instance_relocate_requires_server(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: None)
+    result = runner.invoke(cli, ["instance", "relocate", "--to", "/srv/new"])
+    assert result.exit_code != 0
+    assert "server mode" in result.output

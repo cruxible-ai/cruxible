@@ -1634,6 +1634,50 @@ def test_instance_snapshot_and_restore_use_expected_routes():
     ]
 
 
+def test_instance_relocate_uses_expected_route():
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        captured.append((request.url.path, payload))
+        manifest = {
+            "format_version": 1,
+            "instance_id": "inst_123",
+            "created_at": "2026-03-21T00:00:00Z",
+            "cruxible_version": "0.2.0",
+            "label": "relocate",
+            "original_config_path": "/srv/old/config.yaml",
+            "restored_config_path": "config.yaml",
+            "instance_mode": "governed",
+            "artifacts": {"state.db": "sha256:abc"},
+        }
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "inst_123",
+                "from_dir": "/srv/old",
+                "to_dir": "/srv/new",
+                "manifest": manifest,
+                "source_removed": True,
+                "registry_status": "registered",
+            },
+        )
+
+    client = _build_client(handler)
+    relocated = client.relocate_instance("inst_123", to_dir="/srv/new", remove_source=True)
+
+    assert relocated.instance_id == "inst_123"
+    assert relocated.from_dir == "/srv/old"
+    assert relocated.to_dir == "/srv/new"
+    assert relocated.source_removed is True
+    assert captured == [
+        (
+            "/api/v1/inst_123/instance/relocate",
+            {"to_dir": "/srv/new", "remove_source": True},
+        ),
+    ]
+
+
 def test_state_endpoints_use_expected_routes():
     captured: list[tuple[str, str | None]] = []
 

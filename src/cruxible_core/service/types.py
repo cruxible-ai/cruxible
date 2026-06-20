@@ -788,6 +788,17 @@ class InstanceRestoreResult:
 
 
 @dataclass
+class InstanceRelocateResult:
+    instance: InstanceProtocol
+    instance_id: str
+    from_dir: str
+    to_dir: str
+    manifest: InstanceBackupManifest
+    source_removed: bool = False
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
+
+
+@dataclass
 class StatePublishResult:
     manifest: PublishedStateManifest
 

@@ -1480,6 +1480,86 @@ def test_instance_snapshot_and_restore_routes(
     assert stats.status_code == 200
 
 
+def test_instance_relocate_route_repoints_registry(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    original_location = get_registry().get(instance_id).location
+    target = tmp_path / "relocated-governed"
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": False},
+    )
+
+    assert relocated.status_code == 200
+    payload = relocated.json()
+    assert payload["instance_id"] == instance_id
+    assert payload["to_dir"] == str(target)
+    assert payload["source_removed"] is False
+    # Registry now points at the new directory; identity is preserved.
+    record = get_registry().get(instance_id)
+    assert record is not None
+    assert Path(record.location) == target
+    assert Path(record.location) != Path(original_location)
+    # The relocated instance is live and queryable under the same ID.
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+    # The old directory is kept (orphaned, disk-only) when remove_source is False.
+    assert Path(original_location).exists()
+
+
+def test_instance_relocate_route_remove_source_deletes_old_dir(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    original_location = get_registry().get(instance_id).location
+    target = tmp_path / "relocated-removed"
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": True},
+    )
+
+    assert relocated.status_code == 200
+    assert relocated.json()["source_removed"] is True
+    assert not Path(original_location).exists()
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+
+
+def test_instance_relocate_route_rejects_target_of_other_instance(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    instance_id = _init_instance(app_client, server_project)
+    # A second registered instance owns an (empty) target directory. Relocating
+    # the first onto it must be refused so the second is not orphaned.
+    other_id = "inst_other_target"
+    other_dir = tmp_path / "other-instance"
+    other_dir.mkdir()
+    registry = get_registry()
+    registry.create_governed_instance_with_id(other_id)
+    registry.update_governed_instance_location(other_id, other_dir)
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(other_dir), "remove_source": False},
+    )
+
+    assert relocated.status_code == 400
+    assert other_id in relocated.json()["message"]
+    # Neither instance moved: both registry rows are intact.
+    assert Path(registry.get(other_id).location) == other_dir.resolve()
+    record = registry.get(instance_id)
+    assert Path(record.location) != other_dir
+
+
 def test_create_state_overlay_route_accepts_state_ref(
     app_client: TestClient,
     server_project: Path,

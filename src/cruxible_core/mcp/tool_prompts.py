@@ -230,6 +230,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to restore a daemon-backed instance from a same-identity "
         "backup artifact."
     ),
+    "cruxible_instance_relocate": (
+        "Use when you need to move a healthy daemon-backed instance to a new directory "
+        "while preserving its identity; the registry is repointed to the new location."
+    ),
     "cruxible_list_snapshots": ("Use when you need to browse available snapshots for an instance."),
     "cruxible_register_source_artifact": (
         "Use when you need to register a source document so relationship evidence can "

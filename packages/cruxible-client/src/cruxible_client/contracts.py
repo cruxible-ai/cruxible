@@ -912,6 +912,15 @@ class InstanceRestoreResult(BaseModel):
     registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
 
 
+class InstanceRelocateResult(BaseModel):
+    instance_id: str
+    from_dir: str
+    to_dir: str
+    manifest: InstanceBackupManifest
+    source_removed: bool = False
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
+
+
 class PublishedStateManifest(BaseModel):
     format_version: int
     state_id: str

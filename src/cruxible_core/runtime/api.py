@@ -93,6 +93,7 @@ from cruxible_core.service import (
     service_query_surface,
     service_register_source_artifact,
     service_reload_config,
+    service_relocate_instance,
     service_render_wiki,
     service_resolve_group,
     service_restore_instance,
@@ -925,6 +926,91 @@ def restore_instance(
         manifest=contracts.InstanceBackupManifest.model_validate(
             result.manifest.model_dump(mode="json")
         ),
+        registry_status=result.registry_status,
+    )
+
+
+def relocate_instance(
+    instance_id: str,
+    *,
+    to_dir: str,
+    remove_source: bool = False,
+) -> contracts.InstanceRelocateResult:
+    """Move a healthy governed instance to a new directory, preserving identity.
+
+    Orchestrates the daemon-only steps the CLI cannot do alone: snapshot the
+    loaded instance while healthy, restore it at *to_dir*, repoint the registry,
+    and swap the manager entry to the relocated instance object. If the snapshot
+    or restore fails the original instance stays loaded and registered; only on a
+    successful restore is the registry repointed and (optionally) the old
+    directory removed.
+    """
+    check_permission("cruxible_instance_relocate", instance_id=instance_id)
+    registry = get_registry()
+    manager = get_manager()
+
+    record = registry.get(instance_id)
+    if record is not None and record.backend != GOVERNED_DAEMON_BACKEND:
+        raise ConfigError(
+            f"Instance '{instance_id}' is registered with unsupported backend "
+            f"'{record.backend}'"
+        )
+
+    target_root = Path(to_dir).expanduser()
+    validate_root_dir(str(target_root))
+
+    # Refuse to relocate onto the registered location of a DIFFERENT instance.
+    # service_restore_instance only refuses a non-empty target, so without this
+    # check relocating onto another instance's (possibly empty) registered dir
+    # would orphan that instance in the registry.
+    collision = registry.get_governed_instance_by_location(target_root)
+    if collision is not None and collision.instance_id != instance_id:
+        raise ConfigError(
+            f"Relocate target {target_root} is the registered location of instance "
+            f"'{collision.instance_id}'"
+        )
+
+    # Resolve and snapshot the live instance while it is still healthy. A failure
+    # to snapshot/restore raises here with the original instance untouched. The
+    # service never removes the source; that happens below, only after the
+    # registry and manager have been swapped to the relocated instance.
+    instance = manager.get(instance_id)
+    source_root = instance.get_root_path()
+    result = service_relocate_instance(
+        instance,
+        instance_id=instance_id,
+        to_dir=target_root,
+        instance_mode=CruxibleInstance.GOVERNED_MODE,
+    )
+
+    # Restore succeeded: repoint the registry and swap the live manager entry so
+    # the relocated instance object becomes canonical for this ID.
+    new_root = Path(result.to_dir)
+    if record is None:
+        created = registry.create_governed_instance_with_id(instance_id)
+        if Path(created.record.location) != new_root:
+            registry.update_governed_instance_location(instance_id, new_root)
+    else:
+        registry.update_governed_instance_location(instance_id, new_root)
+    manager.register(instance_id, result.instance)
+
+    # Only now, after the registry points at the new location and the manager
+    # serves the relocated instance, is it safe to remove the old directory. A
+    # crash before this point leaves the source as a usable fallback; a failure
+    # here merely orphans the old dir on disk while the relocation is complete.
+    source_removed = False
+    if remove_source and source_root.resolve() != new_root.resolve():
+        shutil.rmtree(source_root, ignore_errors=False)
+        source_removed = True
+
+    return contracts.InstanceRelocateResult(
+        instance_id=result.instance_id,
+        from_dir=result.from_dir,
+        to_dir=result.to_dir,
+        manifest=contracts.InstanceBackupManifest.model_validate(
+            result.manifest.model_dump(mode="json")
+        ),
+        source_removed=source_removed,
         registry_status=result.registry_status,
     )
 

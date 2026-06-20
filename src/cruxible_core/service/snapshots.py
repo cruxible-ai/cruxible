@@ -21,6 +21,7 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
     CloneSnapshotResult,
+    InstanceRelocateResult,
     InstanceRestoreResult,
     InstanceSnapshotResult,
     SnapshotCreateResult,
@@ -221,6 +222,87 @@ def service_restore_instance(
         root_dir=str(root),
         manifest=manifest,
         registry_status=registry_status,
+    )
+
+
+def service_relocate_instance(
+    instance: InstanceProtocol,
+    *,
+    instance_id: str,
+    to_dir: str | Path,
+    instance_mode: str = CruxibleInstance.GOVERNED_MODE,
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered",
+) -> InstanceRelocateResult:
+    """Move a healthy same-identity instance to *to_dir* by snapshot-then-restore.
+
+    Steps, ordered so an abort never leaves the instance unreachable:
+      1. Snapshot the (still-healthy) instance to a throwaway artifact. If this
+         fails, the source is untouched.
+      2. Restore the artifact into ``to_dir`` (atomic ``os.replace`` of a staging
+         dir). If this fails, the source is still untouched and usable.
+
+    This function never removes the source directory: removal is the caller's
+    responsibility and must happen only after the registry has been repointed and
+    the in-process manager slot has been swapped to the relocated instance. That
+    ordering keeps the source as a usable fallback if any of those later steps
+    fail, so ``source_removed`` is always ``False`` in the returned result.
+
+    The source instance stays live and queryable throughout snapshot + restore;
+    the caller atomically overwrites the manager slot with the relocated instance
+    at the end (the source is never dropped from the manager mid-relocate).
+    """
+    if not isinstance(instance, CruxibleInstance):
+        raise ConfigError("Instance relocate currently supports only local filesystem instances")
+
+    source_root = instance.get_root_path()
+    target_root = Path(to_dir).expanduser()
+    resolved_source = source_root.resolve()
+    resolved_target = target_root.resolve()
+    if resolved_target == resolved_source:
+        raise ConfigError(f"Relocate target is the current location: {target_root}")
+    # Reject either direction of containment: a target nested inside the source
+    # (or vice versa) means a later source removal would also delete the restored
+    # instance, and overlapping trees make atomic restore impossible.
+    if resolved_source in resolved_target.parents:
+        raise ConfigError(
+            f"Relocate target {target_root} is nested inside the source {source_root}"
+        )
+    if resolved_target in resolved_source.parents:
+        raise ConfigError(
+            f"Relocate target {target_root} contains the source {source_root}"
+        )
+
+    # 1. Snapshot the healthy instance to a throwaway artifact. Keep it under the
+    #    target's parent so the temp + restore staging share a filesystem.
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="cruxible_instance_relocate_",
+        dir=str(target_root.parent),
+    ) as tmp:
+        artifact = Path(tmp) / "relocate.cruxible.zip"
+        snapshot = service_snapshot_instance(
+            instance,
+            instance_id=instance_id,
+            artifact_path=artifact,
+            label=f"relocate:{source_root}",
+        )
+        # 2. Restore into the new location. Refuses if non-empty / already an
+        #    instance; the source remains untouched on any failure here.
+        restored = service_restore_instance(
+            artifact_path=artifact,
+            root_dir=target_root,
+            instance_mode=instance_mode,
+            registry_status=registry_status,
+        )
+
+    return InstanceRelocateResult(
+        instance=restored.instance,
+        instance_id=restored.instance_id,
+        from_dir=str(source_root),
+        to_dir=restored.root_dir,
+        manifest=snapshot.manifest,
+        source_removed=False,
+        registry_status=restored.registry_status,
     )
 
 

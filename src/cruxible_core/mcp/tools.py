@@ -1113,6 +1113,19 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_instance_restore(artifact_path, root_dir=root_dir)
 
     @_tool
+    def cruxible_instance_relocate(
+        instance_id: str,
+        to_dir: str,
+        remove_source: bool = False,
+    ) -> contracts.InstanceRelocateResult:
+        """Move a healthy daemon-backed instance to a new directory, preserving identity."""
+        return handlers.handle_instance_relocate(
+            instance_id,
+            to_dir,
+            remove_source=remove_source,
+        )
+
+    @_tool
     def cruxible_list_snapshots(
         instance_id: str,
         limit: int | None = None,
