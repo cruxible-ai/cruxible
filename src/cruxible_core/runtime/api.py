@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import asdict
@@ -108,7 +109,7 @@ from cruxible_core.service import (
     service_update_trust_status,
     service_validate,
 )
-from cruxible_core.service.snapshots import read_instance_backup_manifest
+from cruxible_core.service.snapshots import paths_overlap, read_instance_backup_manifest
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
@@ -123,6 +124,8 @@ from cruxible_core.service.types import (
     SharedEvidenceInput,
 )
 from cruxible_core.temporal import format_datetime, utc_now
+
+logger = logging.getLogger(__name__)
 
 WorkflowExecutionContractT = TypeVar(
     "WorkflowExecutionContractT",
@@ -958,17 +961,40 @@ def relocate_instance(
 
     target_root = Path(to_dir).expanduser()
     validate_root_dir(str(target_root))
+    resolved_target = target_root.resolve()
 
-    # Refuse to relocate onto the registered location of a DIFFERENT instance.
-    # service_restore_instance only refuses a non-empty target, so without this
-    # check relocating onto another instance's (possibly empty) registered dir
-    # would orphan that instance in the registry.
-    collision = registry.get_governed_instance_by_location(target_root)
-    if collision is not None and collision.instance_id != instance_id:
-        raise ConfigError(
-            f"Relocate target {target_root} is the registered location of instance "
-            f"'{collision.instance_id}'"
-        )
+    # Refuse a target that collides with ANY other registered instance, not just
+    # an exact location match. A target that equals, is nested inside, or contains
+    # another instance's resolved location creates overlapping managed trees: a
+    # later --remove-source of either instance could delete the other. We check
+    # every governed registry row except the one being relocated.
+    for other in registry.list_governed_instances():
+        if other.instance_id == instance_id:
+            continue
+        other_root = Path(other.location).expanduser().resolve()
+        overlap = paths_overlap(resolved_target, other_root)
+        if overlap == "same":
+            raise ConfigError(
+                f"Relocate target {target_root} is the registered location of instance "
+                f"'{other.instance_id}'"
+            )
+        if overlap == "nested_inside":
+            raise ConfigError(
+                f"Relocate target {target_root} is nested inside the registered location "
+                f"of instance '{other.instance_id}' ({other_root})"
+            )
+        if overlap == "contains":
+            raise ConfigError(
+                f"Relocate target {target_root} contains the registered location of "
+                f"instance '{other.instance_id}' ({other_root})"
+            )
+
+    # Capture the existing workspace_root BEFORE the relocate so we can preserve
+    # it across the registry update. update_governed_instance_location defaults
+    # workspace_root to None and writes it unconditionally, so passing it through
+    # is what keeps server-mode reload / source-artifact path resolution pointing
+    # at the caller's workspace rather than falling back to the daemon root.
+    existing_workspace_root = record.workspace_root if record is not None else None
 
     # Resolve and snapshot the live instance while it is still healthy. A failure
     # to snapshot/restore raises here with the original instance untouched. The
@@ -984,24 +1010,40 @@ def relocate_instance(
     )
 
     # Restore succeeded: repoint the registry and swap the live manager entry so
-    # the relocated instance object becomes canonical for this ID.
+    # the relocated instance object becomes canonical for this ID. Preserve the
+    # workspace_root captured above (newly created rows have none to preserve).
     new_root = Path(result.to_dir)
     if record is None:
         created = registry.create_governed_instance_with_id(instance_id)
         if Path(created.record.location) != new_root:
-            registry.update_governed_instance_location(instance_id, new_root)
+            registry.update_governed_instance_location(
+                instance_id, new_root, workspace_root=existing_workspace_root
+            )
     else:
-        registry.update_governed_instance_location(instance_id, new_root)
+        registry.update_governed_instance_location(
+            instance_id, new_root, workspace_root=existing_workspace_root
+        )
     manager.register(instance_id, result.instance)
 
     # Only now, after the registry points at the new location and the manager
     # serves the relocated instance, is it safe to remove the old directory. A
-    # crash before this point leaves the source as a usable fallback; a failure
-    # here merely orphans the old dir on disk while the relocation is complete.
+    # crash before this point leaves the source as a usable fallback. The
+    # relocation is already logically complete here, so a cleanup failure must
+    # NOT be raised to the client: report source_removed=False and log instead of
+    # propagating, rather than turning a successful relocate into a false failure.
     source_removed = False
     if remove_source and source_root.resolve() != new_root.resolve():
-        shutil.rmtree(source_root, ignore_errors=False)
-        source_removed = True
+        try:
+            shutil.rmtree(source_root, ignore_errors=False)
+            source_removed = True
+        except OSError:
+            logger.warning(
+                "Relocate of instance %s succeeded but removing the old source "
+                "directory %s failed; leaving it on disk (source_removed=False)",
+                instance_id,
+                source_root,
+                exc_info=True,
+            )
 
     return contracts.InstanceRelocateResult(
         instance_id=result.instance_id,

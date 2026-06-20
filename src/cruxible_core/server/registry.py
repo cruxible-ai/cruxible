@@ -138,6 +138,20 @@ class InstanceRegistry:
             resolved_location,
         )
 
+    def list_governed_instances(self) -> list[InstanceRecord]:
+        """Return every registered governed (daemon-backed) instance record."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT instance_id, backend, location, workspace_root, created_at
+                FROM instances
+                WHERE backend = ?
+                ORDER BY instance_id
+                """,
+                (GOVERNED_DAEMON_BACKEND,),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def create_governed_instance(
         self,
         workspace_root: str | Path | None = None,

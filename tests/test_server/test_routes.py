@@ -1560,6 +1560,134 @@ def test_instance_relocate_route_rejects_target_of_other_instance(
     assert Path(record.location) != other_dir
 
 
+def test_instance_relocate_route_preserves_workspace_root(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    # Init records the caller's workspace_root; relocating must NOT null it out,
+    # or server-mode reload / source-artifact path resolution would fall back to
+    # the daemon instance root instead of the caller's workspace.
+    instance_id = _init_instance(app_client, server_project)
+    before = get_registry().get(instance_id)
+    assert before is not None
+    assert before.workspace_root == str(server_project.resolve())
+    target = tmp_path / "relocated-keep-workspace"
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": False},
+    )
+
+    assert relocated.status_code == 200
+    after = get_registry().get(instance_id)
+    assert after is not None
+    # Location repointed, workspace_root unchanged.
+    assert Path(after.location) == target
+    assert after.workspace_root == before.workspace_root
+
+
+def test_instance_relocate_route_cleanup_failure_still_succeeds(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Removal of the old source happens AFTER the registry + manager are switched
+    # to the new location. If that deletion fails the relocation is already
+    # complete, so the API must report success with source_removed=False rather
+    # than raising a false failure.
+    instance_id = _init_instance(app_client, server_project)
+    original_location = get_registry().get(instance_id).location
+    target = tmp_path / "relocated-cleanup-fails"
+
+    # Fail rmtree only for the relocate source-removal call; delegate everything
+    # else (e.g. TemporaryDirectory cleanup) to the real implementation so the
+    # patch isolates the post-switch cleanup path.
+    real_rmtree = shutil.rmtree
+
+    def _boom(path: object, *args: object, **kwargs: object) -> None:
+        if Path(path).resolve() == Path(original_location).resolve():
+            raise OSError("rmtree boom")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("cruxible_core.runtime.api.shutil.rmtree", _boom)
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(target), "remove_source": True},
+    )
+
+    assert relocated.status_code == 200
+    payload = relocated.json()
+    assert payload["source_removed"] is False
+    # Registry + manager point at the new location; the instance is queryable.
+    record = get_registry().get(instance_id)
+    assert Path(record.location) == target
+    assert get_manager().get(instance_id).get_root_path().resolve() == target.resolve()
+    stats = app_client.get(f"/api/v1/{instance_id}/stats")
+    assert stats.status_code == 200
+    # The old directory was left on disk because cleanup failed.
+    assert Path(original_location).exists()
+
+
+def test_instance_relocate_route_rejects_target_inside_other_instance(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    # A target NESTED inside another registered instance's root must be refused:
+    # a later --remove-source of that other instance would delete the relocated
+    # instance too. Exact-match alone would let this through.
+    instance_id = _init_instance(app_client, server_project)
+    other_id = "inst_other_outer"
+    other_dir = tmp_path / "other-instance"
+    other_dir.mkdir()
+    registry = get_registry()
+    registry.create_governed_instance_with_id(other_id)
+    registry.update_governed_instance_location(other_id, other_dir)
+
+    nested_target = other_dir / "nested" / "child"
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(nested_target), "remove_source": False},
+    )
+
+    assert relocated.status_code == 400
+    assert other_id in relocated.json()["message"]
+    # Neither instance moved.
+    assert Path(registry.get(other_id).location) == other_dir.resolve()
+    assert Path(registry.get(instance_id).location) != nested_target
+
+
+def test_instance_relocate_route_rejects_target_containing_other_instance(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    # The mirror case: a target that CONTAINS another registered instance's root
+    # is refused, since restoring into it would overlap the other managed tree.
+    instance_id = _init_instance(app_client, server_project)
+    other_id = "inst_other_inner"
+    container = tmp_path / "container"
+    inner_dir = container / "other-instance"
+    inner_dir.mkdir(parents=True)
+    registry = get_registry()
+    registry.create_governed_instance_with_id(other_id)
+    registry.update_governed_instance_location(other_id, inner_dir)
+
+    relocated = app_client.post(
+        f"/api/v1/{instance_id}/instance/relocate",
+        json={"to_dir": str(container), "remove_source": False},
+    )
+
+    assert relocated.status_code == 400
+    assert other_id in relocated.json()["message"]
+    # Neither instance moved.
+    assert Path(registry.get(other_id).location) == inner_dir.resolve()
+    assert Path(registry.get(instance_id).location) != container
+
+
 def test_create_state_overlay_route_accepts_state_ref(
     app_client: TestClient,
     server_project: Path,
