@@ -144,8 +144,34 @@ def _query_rows_payload(rows: list[Any]) -> list[dict[str, Any]]:
     return payload
 
 
-def _query_item_payloads(items: list[contracts.QueryItem]) -> list[dict[str, Any]]:
-    return [item.model_dump(mode="python") for item in items]
+def _query_result_item_payloads(items: list[Any]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            payload.append(item)
+        elif isinstance(item, ProjectedQueryRow):
+            payload.append(dump_query_row(item, mode="python"))
+        elif hasattr(item, "model_dump"):
+            payload.append(item.model_dump(mode="python"))
+        else:
+            payload.append(dict(item))
+    return payload
+
+
+def _split_query_result_items(
+    result: Any,
+) -> tuple[bool, list[EntityInstance], list[dict[str, Any]]]:
+    payload_rows = _query_result_item_payloads(list(result.items))
+    projected_results = any("values" in item for item in payload_rows)
+    entity_results = (
+        _entities_from_payload(payload_rows)
+        if result.result_shape == "entity" and not projected_results
+        else []
+    )
+    structured_results = (
+        payload_rows if result.result_shape != "entity" or projected_results else []
+    )
+    return projected_results, entity_results, structured_results
 
 
 def _print_structured_query_rows(rows: list[dict[str, Any]]) -> None:
@@ -293,25 +319,7 @@ def _emit_query_command_result(
     count_only: bool,
     output_json: bool,
 ) -> None:
-    results = list(result.items)
-    rows_are_payloads = all(isinstance(row, dict) for row in results)
-    if rows_are_payloads:
-        payload_rows = cast(list[dict[str, Any]], results)
-        projected_results = any("values" in item for item in payload_rows)
-        entity_results = (
-            _entities_from_payload(payload_rows)
-            if result.result_shape == "entity" and not projected_results
-            else []
-        )
-        structured_results = (
-            payload_rows if result.result_shape != "entity" or projected_results else []
-        )
-    else:
-        projected_results = any(isinstance(row, ProjectedQueryRow) for row in results)
-        entity_results = [
-            row for row in results if isinstance(row, EntityInstance) and not projected_results
-        ]
-        structured_results = _query_rows_payload(results)
+    projected_results, entity_results, structured_results = _split_query_result_items(result)
 
     total = result.total
     if output_json:
@@ -428,82 +436,13 @@ def _run_query_command(
                 )
                 _print_query_param_hints(hints)
             raise
-        remote_items = _query_item_payloads(remote_result.items)
-        projected_results = any("values" in item for item in remote_items)
-        entity_results = (
-            _entities_from_payload(remote_items)
-            if remote_result.result_shape == "entity" and not projected_results
-            else []
+        _emit_query_command_result(
+            remote_result,
+            query_name=query_name,
+            limit=limit,
+            count_only=count_only,
+            output_json=output_json,
         )
-        structured_results = (
-            list(remote_items)
-            if remote_result.result_shape != "entity" or projected_results
-            else []
-        )
-        total = remote_result.total
-        if output_json:
-            items = (
-                []
-                if count_only
-                else (
-                    [r.model_dump(mode="python") for r in entity_results]
-                    if remote_result.result_shape == "entity" and not projected_results
-                    else structured_results
-                )
-            )
-            if limit is not None and not count_only:
-                items = items[:limit]
-            _emit_json(
-                {
-                    "items": items,
-                    "total": total,
-                    "limit": remote_result.limit,
-                    "truncated": remote_result.truncated,
-                    "limit_truncated": getattr(remote_result, "limit_truncated", False),
-                    "path_truncated": getattr(remote_result, "path_truncated", False),
-                    "truncation_reasons": list(getattr(remote_result, "truncation_reasons", [])),
-                    "max_paths": getattr(remote_result, "max_paths", None),
-                    "max_paths_per_result": getattr(remote_result, "max_paths_per_result", None),
-                    "total_path_count": getattr(remote_result, "total_path_count", None),
-                    "retained_path_count": getattr(remote_result, "retained_path_count", None),
-                    "steps_executed": remote_result.steps_executed,
-                    "result_shape": remote_result.result_shape,
-                    "dedupe": remote_result.dedupe,
-                    "relationship_state": remote_result.relationship_state,
-                    "receipt_id": remote_result.receipt_id,
-                    "param_hints": (
-                        remote_result.param_hints.model_dump(mode="python")
-                        if remote_result.param_hints
-                        else None
-                    ),
-                    "policy_summary": _policy_summary_payload(
-                        getattr(remote_result, "policy_summary", None)
-                    ),
-                }
-            )
-            return
-        click.echo(f"{total} result(s), {remote_result.steps_executed} step(s) executed.")
-        if count_only:
-            _print_query_param_hints(remote_result.param_hints)
-        elif limit is not None and remote_result.truncated:
-            if remote_result.result_shape == "entity" and not projected_results:
-                console.print(entities_table(entity_results, query_name))
-            else:
-                _print_structured_query_rows(structured_results)
-            visible_count = (
-                len(entity_results)
-                if remote_result.result_shape == "entity"
-                else len(structured_results)
-            )
-            click.echo(f"Showing {visible_count} of {total} results (use --limit to adjust).")
-        elif remote_result.result_shape == "entity" and not projected_results:
-            console.print(entities_table(entity_results, query_name))
-        else:
-            _print_structured_query_rows(structured_results)
-        if total == 0 and not count_only:
-            _print_query_param_hints(remote_result.param_hints)
-        if remote_result.receipt_id:
-            click.echo(f"Receipt: {remote_result.receipt_id}")
         return
 
     instance = CruxibleInstance.load()

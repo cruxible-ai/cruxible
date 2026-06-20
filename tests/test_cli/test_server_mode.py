@@ -748,6 +748,54 @@ def test_query_uses_explicit_decision_record_flag(
     assert captured["decision_record_id"] == "DR-flag"
 
 
+def test_query_run_server_entity_rows_render_client_contract_items(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def query(self, instance_id, query_name, params, limit=None, decision_record_id=None):
+            return contracts.QueryToolResult(
+                items=[
+                    contracts.QueryEntityItem(
+                        entity_type="Part",
+                        entity_id="P-1",
+                        properties={"name": "Brake pad"},
+                        metadata={},
+                    )
+                ],
+                receipt_id="RCP-entity",
+                receipt=None,
+                total=1,
+                truncated=False,
+                steps_executed=1,
+                result_shape="entity",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "run",
+            "parts_for_vehicle",
+            "--param",
+            "vehicle_id=V-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["entity_id"] == "P-1"
+    assert payload["items"][0]["properties"]["name"] == "Brake pad"
+
+
 def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
     captured: dict[str, object] = {}
 
@@ -815,6 +863,128 @@ def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
     }
     assert definition.name == "brake_parts"
     assert json.loads(result.output)["receipt_id"] == "RCP-inline"
+
+
+def test_query_inline_server_entity_rows_render_client_contract_items(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def query_inline(
+            self,
+            instance_id,
+            definition,
+            params,
+            *,
+            limit=None,
+            relationship_state=None,
+            decision_record_id=None,
+        ):
+            return contracts.QueryToolResult(
+                items=[
+                    contracts.QueryEntityItem(
+                        entity_type="Milestone",
+                        entity_id="ms-1",
+                        properties={"title": "Release lock"},
+                        metadata={},
+                    ),
+                    contracts.QueryEntityItem(
+                        entity_type="Milestone",
+                        entity_id="ms-2",
+                        properties={"title": "Release ship"},
+                        metadata={},
+                    ),
+                ],
+                receipt_id="RCP-inline",
+                receipt=None,
+                total=2,
+                limit=50,
+                truncated=False,
+                steps_executed=0,
+                result_shape="entity",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "inline",
+            "--definition-json",
+            (
+                '{"name":"adhoc","mode":"collection","returns":"Milestone",'
+                '"result_shape":"entity","limit":50}'
+            ),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 2
+    assert [item["entity_id"] for item in payload["items"]] == ["ms-1", "ms-2"]
+
+
+def test_query_inline_server_projected_rows_remain_structured(
+    monkeypatch,
+    runner: CliRunner,
+):
+    class StubClient:
+        def query_inline(
+            self,
+            instance_id,
+            definition,
+            params,
+            *,
+            limit=None,
+            relationship_state=None,
+            decision_record_id=None,
+        ):
+            return contracts.QueryToolResult(
+                items=[
+                    contracts.QueryProjectedItem(
+                        values={"entity_id": "ms-1", "title": "Release lock"},
+                    )
+                ],
+                receipt_id="RCP-inline-projected",
+                receipt=None,
+                total=1,
+                limit=50,
+                truncated=False,
+                steps_executed=0,
+                result_shape="entity",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "query",
+            "inline",
+            "--definition-json",
+            (
+                '{"name":"adhoc","mode":"collection","returns":"Milestone",'
+                '"result_shape":"entity","select":{"id":"result.entity_id"}}'
+            ),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["total"] == 1
+    assert payload["items"] == [
+        {"values": {"entity_id": "ms-1", "title": "Release lock"}, "source": None}
+    ]
 
 
 def test_query_inline_rejects_malformed_definition(runner: CliRunner):
