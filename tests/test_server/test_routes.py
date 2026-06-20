@@ -1557,6 +1557,23 @@ def test_permission_denied_returns_structured_403(
     assert response.json()["error_type"] == "PermissionDeniedError"
 
 
+def test_instance_restore_checks_permission_before_reading_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+    client = _make_app_client(tmp_path, monkeypatch)
+    missing_artifact = tmp_path / "missing.cruxible.zip"
+
+    response = client.post(
+        "/api/v1/instances/restore",
+        json={"artifact_path": str(missing_artifact), "root_dir": str(tmp_path / "restored")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_type"] == "PermissionDeniedError"
+
+
 def test_workflow_lock_requires_admin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -255,6 +255,15 @@ def _read_verified_instance_backup(
                     f"Instance backup artifact is missing required file(s): {', '.join(missing)}"
                 )
             manifest = _parse_manifest(archive.read(_INSTANCE_BACKUP_MANIFEST))
+            missing_required_artifacts = sorted(
+                (_INSTANCE_BACKUP_REQUIRED - {_INSTANCE_BACKUP_MANIFEST})
+                - set(manifest.artifacts)
+            )
+            if missing_required_artifacts:
+                raise ConfigError(
+                    "Instance backup manifest is missing required artifact digest(s): "
+                    + ", ".join(missing_required_artifacts)
+                )
             contents = {
                 name: archive.read(name)
                 for name in manifest.artifacts

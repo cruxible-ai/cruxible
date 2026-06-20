@@ -874,6 +874,7 @@ def restore_instance(
     root_dir: str | None = None,
 ) -> contracts.InstanceRestoreResult:
     """Restore a same-identity governed instance from a backup artifact."""
+    check_permission("cruxible_instance_restore", enforce_instance_scope=False)
     manifest = read_instance_backup_manifest(artifact_path)
     check_permission("cruxible_instance_restore", instance_id=manifest.instance_id)
     registry = get_registry()

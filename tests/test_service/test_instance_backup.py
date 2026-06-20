@@ -134,6 +134,29 @@ def test_instance_restore_rejects_digest_mismatch(tmp_path: Path) -> None:
         service_restore_instance(artifact_path=broken, root_dir=tmp_path / "restored")
 
 
+def test_instance_restore_requires_required_manifest_artifact_digests(
+    tmp_path: Path,
+) -> None:
+    source = _instance(tmp_path / "source")
+    artifact = tmp_path / "backup.cruxible.zip"
+    service_snapshot_instance(source, instance_id="inst_backup", artifact_path=artifact)
+    broken = tmp_path / "missing-manifest-artifact.cruxible.zip"
+
+    with zipfile.ZipFile(artifact) as archive, zipfile.ZipFile(broken, "w") as out:
+        manifest = json.loads(archive.read("manifest.json"))
+        manifest["artifacts"].pop("config.yaml")
+        for name in archive.namelist():
+            content = (
+                json.dumps(manifest).encode("utf-8")
+                if name == "manifest.json"
+                else archive.read(name)
+            )
+            out.writestr(name, content)
+
+    with pytest.raises(ConfigError, match="missing required artifact digest"):
+        service_restore_instance(artifact_path=broken, root_dir=tmp_path / "restored")
+
+
 def test_instance_restore_rejects_unsafe_zip_path(tmp_path: Path) -> None:
     artifact = tmp_path / "unsafe.cruxible.zip"
     with zipfile.ZipFile(artifact, "w") as archive:

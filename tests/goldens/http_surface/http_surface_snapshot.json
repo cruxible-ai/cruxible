@@ -2,6 +2,9 @@
   "/api/v1/instances": {
     "POST": "InitResult"
   },
+  "/api/v1/instances/restore": {
+    "POST": "InstanceRestoreResult"
+  },
   "/api/v1/runtime/instances": {
     "POST": "HostedInstanceInitResult"
   },
@@ -92,6 +95,9 @@
   },
   "/api/v1/{instance_id}/inspect/{view}": {
     "GET": "CanonicalViewResult"
+  },
+  "/api/v1/{instance_id}/instance/snapshot": {
+    "POST": "InstanceSnapshotResult"
   },
   "/api/v1/{instance_id}/lint": {
     "POST": "LintResult"
