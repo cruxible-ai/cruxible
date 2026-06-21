@@ -347,6 +347,7 @@ def test_project_state_kit_config_is_dev_project_scoped() -> None:
         "roadmap_item_work_items",
         "work_item_lineage_context",
         "work_item_rollup_context",
+        "work_queue",
     }
     assert set(config.named_queries) == required_queries
     for name in {
