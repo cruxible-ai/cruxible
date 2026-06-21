@@ -453,6 +453,15 @@ def service_apply_workflow(
         if workflow.type != "canonical":
             raise ConfigError(f"Workflow '{workflow_name}' is not canonical and cannot be applied")
 
+        # Drop any in-memory graph cache before the guard re-preview so its
+        # apply digest / head snapshot reflect committed on-disk state. Without
+        # this, a second writer process that committed after the caller's
+        # original preview would be invisible here: the re-preview would
+        # reproduce the original digest from stale cached state, pass the
+        # head/digest/lock guard below, and the apply would silently overwrite
+        # the concurrent write (audit M1, cross-process lost update).
+        instance.invalidate_graph_cache()
+
         preview = execute_workflow(
             instance,
             config,

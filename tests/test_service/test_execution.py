@@ -16,7 +16,10 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember, CandidateSignal
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.service import (
+    BatchDirectWriteInput,
+    EntityWriteInput,
     service_apply_workflow,
+    service_batch_direct_write,
     service_clone_snapshot,
     service_create_snapshot,
     service_find_apply_preview,
@@ -854,6 +857,142 @@ class TestWorkflowExecutionServices:
                 expected_apply_digest=preview.apply_digest or "",
                 expected_head_snapshot_id=preview.head_snapshot_id,
             )
+
+    def test_write_transaction_refreshes_graph_cache_from_disk(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        """Opening the outermost write boundary must drop the in-memory graph
+        cache so the in-transaction re-derivation reflects committed on-disk
+        state, not a stale image populated by an earlier read.
+
+        Regression for audit M1 (cross-process lost update): a stale
+        ``_graph_cache`` on ``write_transaction`` entry let a second writer's
+        committed change go unseen by the in-transaction re-derivation.
+        """
+        service_lock(canonical_workflow_instance)
+
+        # Populate this handle's cache with the empty pre-write graph.
+        cached_before = canonical_workflow_instance.load_graph()
+        assert not cached_before.has_entity("Vendor", "vendor-acme")
+
+        # A second handle on the same state.db commits a vendor out-of-band.
+        # (Direct writes save a graph delta and do not move the head snapshot,
+        # so this is exactly the silent second-writer the M1 fix must catch.)
+        other_handle = CruxibleInstance.load(canonical_workflow_instance.root)
+        service_batch_direct_write(
+            other_handle,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Vendor",
+                        entity_id="vendor-acme",
+                        properties={"vendor_id": "vendor-acme", "name": "Acme"},
+                    )
+                ],
+            ),
+        )
+
+        # Without invalidation, load_graph inside the transaction would return
+        # the stale cached (empty) graph. With the fix, write_transaction entry
+        # drops the cache and the re-derivation reads the committed vendor.
+        with canonical_workflow_instance.write_transaction():
+            in_txn_graph = canonical_workflow_instance.load_graph()
+            assert in_txn_graph.has_entity("Vendor", "vendor-acme")
+
+    def test_write_transaction_only_invalidates_cache_on_outermost_entry(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        """A re-entrant (nested) write_transaction must not clear the cache; only
+        the outermost entry refreshes from disk. This keeps the in-process
+        fast path (a write repopulating the cache) intact across nesting."""
+        service_lock(canonical_workflow_instance)
+
+        with canonical_workflow_instance.write_transaction():
+            # Seed the cache inside the active transaction.
+            canonical_workflow_instance.load_graph()
+            cached = canonical_workflow_instance._graph_cache
+            assert cached is not None
+
+            # Nested entry yields the active UoW and returns before the
+            # invalidation line, so the cache object is preserved.
+            with canonical_workflow_instance.write_transaction():
+                assert canonical_workflow_instance._graph_cache is cached
+
+    def test_service_apply_workflow_rejects_stale_preview_after_concurrent_write(
+        self, canonical_workflow_instance: CruxibleInstance
+    ) -> None:
+        """Audit M1 end-to-end: a canonical apply built against a stale preview
+        must REJECT (digest mismatch) rather than silently overwrite a second
+        writer's committed change.
+
+        Handle A previews ``build_reference`` (populating its graph cache and an
+        apply digest). A second handle then commits a conflicting vendor name
+        out-of-band without moving the head snapshot. With the cache-invalidation
+        fix, A's in-apply re-preview reads the second writer's state, recomputes
+        a different apply digest, and the apply is rejected -- the concurrent
+        write survives. Before the fix the stale cache reproduced the original
+        digest and A silently clobbered the concurrent write.
+        """
+        service_lock(canonical_workflow_instance)
+
+        # Seed vendor-acme so the apply path is an update, then refresh handle A's
+        # cache by reading the post-seed graph.
+        seed = service_run(canonical_workflow_instance, "build_reference", {})
+        service_apply_workflow(
+            canonical_workflow_instance,
+            "build_reference",
+            {},
+            expected_apply_digest=seed.apply_digest or "",
+            expected_head_snapshot_id=seed.head_snapshot_id,
+        )
+        head_after_seed = canonical_workflow_instance.get_head_snapshot_id()
+
+        # Handle A previews the (noop) re-apply; this caches the current graph.
+        preview = service_run(canonical_workflow_instance, "build_reference", {})
+        assert (
+            canonical_workflow_instance.load_graph()
+            .get_entity("Vendor", "vendor-acme")
+            .properties["name"]
+            == "Acme"
+        )
+
+        # A second handle renames the vendor out-of-band (direct write: graph
+        # delta, no head movement).
+        other_handle = CruxibleInstance.load(canonical_workflow_instance.root)
+        service_batch_direct_write(
+            other_handle,
+            BatchDirectWriteInput(
+                entities=[
+                    EntityWriteInput(
+                        entity_type="Vendor",
+                        entity_id="vendor-acme",
+                        properties={"vendor_id": "vendor-acme", "name": "AcmeCorp"},
+                    )
+                ],
+            ),
+        )
+
+        # The head snapshot is unchanged (direct writes do not snapshot), so the
+        # head guard cannot catch this -- only the refreshed-from-disk re-preview
+        # digest can.
+        assert canonical_workflow_instance.get_head_snapshot_id() == head_after_seed
+
+        with pytest.raises(ConfigError, match="digest mismatch"):
+            service_apply_workflow(
+                canonical_workflow_instance,
+                "build_reference",
+                {},
+                expected_apply_digest=preview.apply_digest or "",
+                expected_head_snapshot_id=preview.head_snapshot_id,
+            )
+
+        # The concurrent writer's change survives: a fresh handle still sees the
+        # out-of-band name, proving the stale apply did not clobber it.
+        reloaded = CruxibleInstance.load(canonical_workflow_instance.root)
+        assert (
+            reloaded.load_graph().get_entity("Vendor", "vendor-acme").properties["name"]
+            == "AcmeCorp"
+        )
 
     def test_service_test_supports_expected_error_cases(
         self, workflow_instance: CruxibleInstance

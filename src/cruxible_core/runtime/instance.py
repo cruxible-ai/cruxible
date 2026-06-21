@@ -275,6 +275,16 @@ class CruxibleInstance(InstanceProtocol):
             yield self._active_uow
             return
 
+        # Outermost write boundary: drop any in-memory graph cache so the
+        # in-transaction re-derivation reads committed on-disk state rather than
+        # a stale image. Without this, a second writer process on the same
+        # state.db can let a canonical apply re-preview against stale cached
+        # state, recompute an identical apply_digest, pass the head/digest/lock
+        # guard, and silently overwrite the other process's commit. The commit
+        # path (save_graph / persist_snapshot) repopulates the cache with the
+        # freshly committed graph, so the in-process fast path is preserved.
+        self._graph_cache = None
+
         self._ensure_state_initialized()
         backend = self._storage_backend()
         try:
