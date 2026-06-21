@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
@@ -623,6 +624,193 @@ def test_governed_write_runtime_credential_cannot_graph_write_or_admin(
     )
     assert admin.status_code == 403
     assert admin.json()["context"]["required_mode"] == "ADMIN"
+
+
+def _seed_pending_fit_edge(
+    client: TestClient,
+    instance_id: str,
+    admin_headers: dict[str, str],
+) -> None:
+    """Seed a Part/Vehicle pair with a single pending (non-live) fits edge."""
+    seed = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Part",
+                    "entity_id": "BP-PEND",
+                    "properties": {
+                        "part_number": "BP-PEND",
+                        "name": "Pending Pads",
+                        "category": "brakes",
+                    },
+                },
+                _valid_vehicle_entity("V-PEND"),
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert seed.status_code == 200
+    add = client.post(
+        f"/api/v1/{instance_id}/relationships",
+        json={
+            "relationships": [
+                {
+                    "from_type": "Part",
+                    "from_id": "BP-PEND",
+                    "relationship_type": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-PEND",
+                    "properties": {"verified": True},
+                    "pending": True,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert add.status_code == 200
+
+
+def _fit_review_status(
+    client: TestClient,
+    instance_id: str,
+    headers: dict[str, str],
+) -> str:
+    lookup = client.get(
+        f"/api/v1/{instance_id}/relationships/lookup",
+        params={
+            "from_type": "Part",
+            "from_id": "BP-PEND",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-PEND",
+        },
+        headers=headers,
+    )
+    assert lookup.status_code == 200
+    return lookup.json()["metadata"]["assertion"]["review"]["status"]
+
+
+def test_governed_write_credential_approve_promotes_with_attribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """Under auth, a GOVERNED_WRITE credential may promote a review edge.
+
+    The runtime credential supplies the resolved actor identity, so the
+    review-state promotion is attributed and the actor-guard (audit F3) is
+    satisfied without a request-supplied actor_context.
+    """
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    admin_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+        label="seed-admin",
+    )
+    _seed_pending_fit_edge(client, instance_id, admin_headers)
+    assert _fit_review_status(client, instance_id, admin_headers) == "pending"
+
+    governed_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+        label="governed-reviewer",
+    )
+    approve = client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={
+            "action": "approve",
+            "source": "human",
+            "from_type": "Part",
+            "from_id": "BP-PEND",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-PEND",
+        },
+        headers=governed_headers,
+    )
+    assert approve.status_code == 200
+    assert approve.json()["applied"] is True
+    assert _fit_review_status(client, instance_id, governed_headers) == "approved"
+
+
+def _review_actor_context() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_reviewer",
+        org_id="org_1",
+        operation_id="op_review",
+        timestamp="2026-06-05T12:00:00Z",
+    )
+
+
+class TestReviewPromotionActorGuard:
+    """Unit coverage for the runtime feedback-approve actor guard (audit F3)."""
+
+    def test_auth_on_approve_without_actor_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cruxible_core.errors import AuthenticationError
+        from cruxible_core.runtime.api import _require_review_promotion_actor
+
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+        with pytest.raises(AuthenticationError, match="requires a resolved actor identity"):
+            _require_review_promotion_actor("approve", None)
+
+    def test_auth_on_approve_with_actor_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cruxible_core.runtime.api import _require_review_promotion_actor
+
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+        # Returns without raising when a resolved actor is present.
+        _require_review_promotion_actor("approve", _review_actor_context())
+
+    def test_auth_off_approve_without_actor_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cruxible_core.runtime.api import _require_review_promotion_actor
+
+        monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+        _require_review_promotion_actor("approve", None)
+
+    @pytest.mark.parametrize("action", ["reject", "correct", "flag"])
+    def test_non_promotion_actions_never_gated(
+        self, monkeypatch: pytest.MonkeyPatch, action: str
+    ) -> None:
+        from cruxible_core.runtime.api import _require_review_promotion_actor
+
+        # Even under auth, non-promotion actions never require actor context so
+        # legitimate correct/flag/reject feedback is untouched.
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+        _require_review_promotion_actor(action, None)
+
+
+def test_auth_off_approve_promotes_without_actor_context(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """The actor-guard only fires under a governed (auth-on) runtime.
+
+    With auth off there is no tier boundary or governed identity, so local
+    review-state promotion stays usable without a request-supplied actor_context.
+    """
+    instance_id = _init_instance(app_client, server_project)
+    admin_headers: dict[str, str] = {}
+    _seed_pending_fit_edge(app_client, instance_id, admin_headers)
+
+    approve = app_client.post(
+        f"/api/v1/{instance_id}/feedback",
+        json={
+            "action": "approve",
+            "source": "human",
+            "from_type": "Part",
+            "from_id": "BP-PEND",
+            "relationship_type": "fits",
+            "to_type": "Vehicle",
+            "to_id": "V-PEND",
+        },
+    )
+    assert approve.status_code == 200
+    assert approve.json()["applied"] is True
+    assert _fit_review_status(app_client, instance_id, admin_headers) == "approved"
 
 
 def test_runtime_credential_effective_permission_header_is_enforced(

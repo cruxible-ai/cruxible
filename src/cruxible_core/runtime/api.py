@@ -200,6 +200,36 @@ def _record_actor_operation(actor: GovernedActorContext) -> None:
     set_current_operation_id(actor.operation_id)
 
 
+def _require_review_promotion_actor(
+    action: str,
+    actor: GovernedActorContext | None,
+) -> None:
+    """Reject anonymous review-state promotion under an auth-on governed runtime.
+
+    ``cruxible_feedback`` is a GOVERNED_WRITE tool, but an ``approve`` promotes a
+    relationship's review status to ``approved``/live, which can satisfy a
+    GRAPH_WRITE close-gate precondition (audit F3). When server auth is enabled the
+    promotion must carry a resolved actor identity so a lower tier cannot rubber-stamp
+    a review edge anonymously. When auth is off there is no tier boundary or governed
+    identity to enforce, so unattributed local promotion stays allowed (matching the
+    project-state review-gate stance). Legitimate ``correct``/``flag``/``reject``
+    actions are untouched.
+    """
+    from cruxible_core.feedback.applier import REVIEW_PROMOTION_ACTIONS
+    from cruxible_core.server.config import is_server_auth_enabled
+
+    if action not in REVIEW_PROMOTION_ACTIONS:
+        return
+    if actor is not None:
+        return
+    if is_server_auth_enabled():
+        raise AuthenticationError(
+            f"Feedback action '{action}' promotes a relationship review to approved "
+            "and requires a resolved actor identity (actor_context) under a governed "
+            "runtime"
+        )
+
+
 def _hosted_actor_context(value: Any) -> GovernedActorContext | None:
     credential_actor = _runtime_credential_actor_context()
     if credential_actor is not None:
@@ -1507,6 +1537,7 @@ def feedback(
     """Record feedback on an edge."""
     check_permission("cruxible_feedback", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
+    _require_review_promotion_actor(action, actor)
     instance = get_manager().get(instance_id)
 
     target = RelationshipTargetInput(
@@ -1549,6 +1580,8 @@ def feedback_batch(
     """Record batch edge feedback tied to prior receipts."""
     check_permission("cruxible_feedback_batch", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
+    for item in items:
+        _require_review_promotion_actor(item.action, actor)
     instance = get_manager().get(instance_id)
     result = service_feedback_batch_inputs(
         instance,
@@ -1602,6 +1635,7 @@ def feedback_from_query(
     """Record edge feedback by selecting relationship evidence from a query receipt."""
     check_permission("cruxible_feedback_from_query", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
+    _require_review_promotion_actor(action, actor)
     instance = get_manager().get(instance_id)
     result = service_feedback_from_query_result(
         instance,

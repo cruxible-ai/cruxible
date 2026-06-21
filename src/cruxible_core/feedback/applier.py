@@ -88,6 +88,13 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
     "reject": "rejected",
 }
 
+# Feedback actions that promote a relationship's review status to ``approved``,
+# making a previously non-live (pending/rejected) edge live and able to satisfy a
+# review-mediated close-gate precondition. The governed runtime requires a resolved
+# actor identity for these so a lower (GOVERNED_WRITE) tier cannot promote a review
+# edge anonymously; see ``runtime.api`` for the enforcement point.
+REVIEW_PROMOTION_ACTIONS: frozenset[str] = frozenset({"approve"})
+
 
 def _review_metadata(
     graph: EntityGraph,
