@@ -10,31 +10,47 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
+_WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Keep Docker image tests out of the default local/agent suite."""
-    if _docker_tests_enabled(config):
-        return
-
-    skip_docker = pytest.mark.skip(
-        reason=(
-            "Docker image tests are opt-in; set CRUXIBLE_RUN_DOCKER_TESTS=1 or run with -m docker"
+    """Keep slow, environment-heavy opt-in suites out of the default run."""
+    if not _opt_in_enabled(config, marker="docker", env_var=_DOCKER_TEST_ENV):
+        _skip_marked(
+            items,
+            marker="docker",
+            reason=(
+                "Docker image tests are opt-in; "
+                "set CRUXIBLE_RUN_DOCKER_TESTS=1 or run with -m docker"
+            ),
         )
-    )
+
+    if not _opt_in_enabled(config, marker="wheel", env_var=_WHEEL_TEST_ENV):
+        _skip_marked(
+            items,
+            marker="wheel",
+            reason=(
+                "Wheel install tests are opt-in; "
+                "set CRUXIBLE_RUN_WHEEL_TESTS=1 or run with -m wheel"
+            ),
+        )
+
+
+def _skip_marked(items: list[pytest.Item], *, marker: str, reason: str) -> None:
+    skip_marker = pytest.mark.skip(reason=reason)
     for item in items:
-        if item.get_closest_marker("docker") is not None:
-            item.add_marker(skip_docker)
+        if item.get_closest_marker(marker) is not None:
+            item.add_marker(skip_marker)
 
 
-def _docker_tests_enabled(config: pytest.Config) -> bool:
-    env_value = os.environ.get(_DOCKER_TEST_ENV, "").strip().lower()
+def _opt_in_enabled(config: pytest.Config, *, marker: str, env_var: str) -> bool:
+    env_value = os.environ.get(env_var, "").strip().lower()
     if env_value in _TRUE_ENV_VALUES:
         return True
 
     marker_expression = (getattr(config.option, "markexpr", "") or "").strip()
-    return "docker" in marker_expression and "not docker" not in marker_expression
+    return marker in marker_expression and f"not {marker}" not in marker_expression
 
 
 WORKFLOW_CONFIG_YAML = """\

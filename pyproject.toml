@@ -78,6 +78,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "packages/cruxible-client/src"]
 markers = [
     "docker: requires a working Docker daemon and may build or run container images",
+    "wheel: builds and installs the distribution wheel into a throwaway venv; requires build tooling",
 ]
 
 [tool.ruff]
