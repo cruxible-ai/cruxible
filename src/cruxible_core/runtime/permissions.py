@@ -361,6 +361,47 @@ def check_permission(
         )
 
 
+def require_unscoped_operator(operation: str) -> None:
+    """Require an unscoped operator credential for a daemon-wide operation.
+
+    Some operations act on the whole shared daemon rather than a single instance
+    (re-exec/restart, global server metadata, restore before the target instance
+    is known). On a shared multi-tenant daemon, an *instance-scoped* ADMIN
+    credential — one bound to a single tenant's instance — must not be able to
+    perform these daemon-wide operations: that is a cross-tenant escalation
+    (e.g. one tenant restarting the daemon hosting every tenant, a DoS).
+
+    Authorization rule, expressed against the request-scoped credential binding:
+
+    * No bound scope (``None``) → ALLOW. This covers two legitimate cases that
+      are indistinguishable to the runtime and both safe here:
+        - auth-off / single-tenant local daemon (no credential context at all);
+        - an unscoped operator / bootstrap credential (the bootstrap secret
+          presents with ``instance_scope=None``).
+    * A bound instance scope (any non-``None`` value) → REJECT. Every persisted
+      runtime credential is bound to exactly one instance, so a non-``None`` scope
+      is always an instance-scoped credential reaching for a daemon-wide lever.
+
+    This is intentionally *additive* to :func:`check_permission`: callers still run
+    the ADMIN tier check; this adds the scope-boundary gate that the tier check
+    cannot express because these operations carry no ``instance_id`` to compare.
+
+    Args:
+        operation: Operation label used for the audit log and the denial message.
+
+    Raises:
+        InstanceScopeError: If the request presents an instance-scoped credential.
+    """
+    credential_scope = _request_instance_scope.get()
+    if credential_scope is not None:
+        _log.warning(
+            "daemon_operation_scope_denied",
+            operation=operation,
+            credential_scope=credential_scope,
+        )
+        raise InstanceScopeError(operation, credential_scope)
+
+
 # ---------------------------------------------------------------------------
 # Root directory sandboxing
 # ---------------------------------------------------------------------------

@@ -10,6 +10,14 @@ UI_PATH = "/ui"
 RUNTIME_BOOTSTRAP_CLAIM_PATH = "/{instance_id}/runtime/bootstrap/claim"
 HOSTED_INSTANCE_INIT_PATH = "/runtime/instances"
 
+# Daemon-wide server-operation routes. These act on the whole shared daemon
+# (global metadata, in-place re-exec, restore-before-target-known) rather than a
+# single tenant's instance, so they are authorized for an unscoped operator
+# credential (the runtime bootstrap secret) rather than an instance-scoped one.
+SERVER_INFO_PATH = "/server/info"
+SERVER_RESTART_PATH = "/server/restart"
+INSTANCE_RESTORE_PATH = "/instances/restore"
+
 
 def api_v1_path(path: str) -> str:
     """Return a full API v1 path from a router-relative path."""

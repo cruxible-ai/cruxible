@@ -30,6 +30,7 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import (
     check_permission,
+    require_unscoped_operator,
     validate_root_dir,
 )
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
@@ -696,6 +697,10 @@ def validate(
 def server_info() -> contracts.ServerInfoResult:
     """Return live daemon metadata without requiring an instance."""
     check_permission("cruxible_server_info")
+    # Daemon-wide read of global, cross-tenant metadata: gate behind an unscoped
+    # operator credential so an instance-scoped ADMIN cannot enumerate the shared
+    # daemon's global state. Auth-off/local and bootstrap operators still pass.
+    require_unscoped_operator("cruxible_server_info")
     result = service_server_info()
     return contracts.ServerInfoResult(
         server_required=result.server_required,
@@ -710,6 +715,11 @@ def server_info() -> contracts.ServerInfoResult:
 def server_restart() -> contracts.ServerRestartResult:
     """Schedule an in-place re-exec of the daemon, preserving port/state/env."""
     check_permission("cruxible_server_restart")
+    # Re-exec is daemon-wide: on a shared daemon it restarts every tenant's
+    # instance. Require an unscoped operator credential so an instance-scoped
+    # ADMIN cannot trigger a cross-tenant restart (DoS). Auth-off/local and
+    # bootstrap operators still pass.
+    require_unscoped_operator("cruxible_server_restart")
     from cruxible_core.server.restart import schedule_server_restart
 
     result = service_server_info()
@@ -924,6 +934,14 @@ def restore_instance(
 ) -> contracts.InstanceRestoreResult:
     """Restore a same-identity governed instance from a backup artifact."""
     check_permission("cruxible_instance_restore", enforce_instance_scope=False)
+    # Restore registers a (possibly new) instance into the shared daemon and is
+    # authorized here before the target instance_id is known from the manifest.
+    # That pre-manifest check cannot enforce instance scope, so an instance-scoped
+    # ADMIN would otherwise pass it. Gate it as a daemon-wide operator action:
+    # only an unscoped operator credential (or auth-off/local) may restore. The
+    # post-manifest check below still scope-checks the resolved instance_id, which
+    # is a no-op for the unscoped operator that just passed this gate.
+    require_unscoped_operator("cruxible_instance_restore")
     manifest = read_instance_backup_manifest(artifact_path)
     check_permission("cruxible_instance_restore", instance_id=manifest.instance_id)
     registry = get_registry()

@@ -27,7 +27,10 @@ from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
     HOSTED_INSTANCE_INIT_PATH,
+    INSTANCE_RESTORE_PATH,
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
+    SERVER_INFO_PATH,
+    SERVER_RESTART_PATH,
     VERSION_PATH,
     api_v1_path,
     is_ui_static_path,
@@ -97,6 +100,13 @@ def _unauthorized_request_response(request: Request, message: str = "Unauthorize
 
 _RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
 _HOSTED_INSTANCE_INIT_ROUTE = api_v1_path(HOSTED_INSTANCE_INIT_PATH)
+# (method, route) pairs for the daemon-wide server-operation endpoints that the
+# unscoped runtime bootstrap operator may drive directly with the bootstrap secret.
+_SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", api_v1_path(SERVER_INFO_PATH)),
+    ("POST", api_v1_path(SERVER_RESTART_PATH)),
+    ("POST", api_v1_path(INSTANCE_RESTORE_PATH)),
+)
 
 
 def _is_bootstrap_claim_request(request: Request) -> bool:
@@ -110,6 +120,27 @@ def _is_hosted_instance_init_request(request: Request) -> bool:
     return request.method == "POST" and route_template_matches(
         request.url.path,
         _HOSTED_INSTANCE_INIT_ROUTE,
+    )
+
+
+def _is_server_operation_request(request: Request) -> bool:
+    """Return whether the request targets a daemon-wide server-operation route."""
+    return any(
+        request.method == method and route_template_matches(request.url.path, route)
+        for method, route in _SERVER_OPERATION_ROUTES
+    )
+
+
+def _runtime_bootstrap_operator_context() -> ResolvedAuthContext:
+    """Build the unscoped (``instance_scope=None``) runtime bootstrap operator context."""
+    return ResolvedAuthContext(
+        principal_id="runtime_bootstrap",
+        principal_label="runtime_bootstrap",
+        credential_type="runtime_bootstrap",
+        instance_scope=None,
+        role="admin",
+        effective_permission_mode=PermissionMode.ADMIN,
+        created_by="runtime_bootstrap",
     )
 
 
@@ -161,15 +192,21 @@ async def token_auth_middleware(
             and hmac.compare_digest(bearer_token, bootstrap_secret)
             and not get_runtime_credential_store().bootstrap_secret_claimed(bootstrap_secret)
         ):
-            resolved_context = ResolvedAuthContext(
-                principal_id="runtime_bootstrap",
-                principal_label="runtime_bootstrap",
-                credential_type="runtime_bootstrap",
-                instance_scope=None,
-                role="admin",
-                effective_permission_mode=PermissionMode.ADMIN,
-                created_by="runtime_bootstrap",
-            )
+            resolved_context = _runtime_bootstrap_operator_context()
+        elif (
+            # Daemon-wide server operations (global metadata, in-place re-exec,
+            # restore) are authorized for the unscoped runtime bootstrap operator,
+            # never for an instance-scoped runtime credential. Unlike hosted init,
+            # these are repeatable operator actions, so they are NOT gated on the
+            # one-time bootstrap claim. An instance-scoped credential that presents
+            # its own token still resolves below and is rejected by the runtime's
+            # require_unscoped_operator gate.
+            auth_enabled
+            and _is_server_operation_request(request)
+            and bootstrap_secret
+            and hmac.compare_digest(bearer_token, bootstrap_secret)
+        ):
+            resolved_context = _runtime_bootstrap_operator_context()
         elif auth_enabled:
             runtime_credential = get_runtime_credential_store().authenticate(bearer_token)
             if runtime_credential is not None:

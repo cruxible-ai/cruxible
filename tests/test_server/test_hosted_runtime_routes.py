@@ -18,6 +18,7 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.app import create_app
@@ -28,6 +29,7 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
+from cruxible_core.service.snapshots import service_snapshot_instance
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1319,9 +1321,7 @@ def test_decision_record_routes_persist_credential_derived_actor_context(
         headers=headers,
     )
     assert finalized.status_code == 200
-    assert (
-        finalized.json()["record"]["finalized_actor_context"]["actor_id"] == credential_label
-    )
+    assert finalized.json()["record"]["finalized_actor_context"]["actor_id"] == credential_label
     fetched_final = client.get(
         f"/api/v1/{instance_id}/decision-records/{record['decision_record_id']}",
         headers=headers,
@@ -2136,11 +2136,13 @@ def test_runtime_credential_management_is_instance_scoped(
     assert payload["context"]["credential_scope"] == instance_a
 
 
-def test_runtime_credential_scope_allows_global_read_routes(
+def test_instance_scoped_credential_runs_non_daemon_routes_but_not_server_info(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     server_project: Path,
 ) -> None:
+    """An instance-scoped credential keeps its non-daemon routes but is barred from
+    the daemon-wide global-metadata read (wi-server-op-routes-instance-scope)."""
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, server_project)
     created = get_runtime_credential_store().create_credential(
@@ -2154,6 +2156,7 @@ def test_runtime_credential_scope_allows_global_read_routes(
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     headers = {"Authorization": f"Bearer {created.token}"}
 
+    # Instance-bound routes still work for an instance-scoped credential.
     validate = client.post(
         "/api/v1/validate",
         json={"config_yaml": CAR_PARTS_YAML},
@@ -2162,11 +2165,14 @@ def test_runtime_credential_scope_allows_global_read_routes(
     assert validate.status_code == 200
     assert validate.json()["valid"] is True
 
+    # The daemon-wide global-metadata read is now barred: an instance-scoped
+    # credential must not enumerate the shared daemon's cross-tenant state.
     info = client.get("/api/v1/server/info", headers=headers)
-    assert info.status_code == 200
-    assert info.json()["instance_count"] == 1
-    assert info.json()["auth_enabled"] is True
-    assert info.json()["auth_required"] is True
+    assert info.status_code == 403
+    info_payload = info.json()
+    assert info_payload["error_type"] == "InstanceScopeError"
+    assert info_payload["context"]["instance_id"] == "cruxible_server_info"
+    assert info_payload["context"]["credential_scope"] == instance_id
 
 
 def test_runtime_credential_plaintext_is_only_returned_on_creation(
@@ -2210,3 +2216,229 @@ def test_runtime_credential_plaintext_is_only_returned_on_creation(
     assert token_secret not in persisted_values
     assert row["token_hash"] == created.record.token_hash
     assert row["token_hash"] != created.token
+
+
+# ---------------------------------------------------------------------------
+# Daemon-wide server-operation scope gate (wi-server-op-routes-instance-scope)
+#
+# server_info / server_restart / restore_instance act on the whole shared daemon.
+# An instance-scoped ADMIN must NOT drive them (cross-tenant DoS / metadata leak);
+# only the unscoped runtime bootstrap operator (or auth-off local) may.
+# ---------------------------------------------------------------------------
+
+_BOOTSTRAP_SECRET = "daemon-operator-secret"
+
+
+def _instance_scoped_admin_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    instance_id: str,
+) -> dict[str, str]:
+    created = get_runtime_credential_store().create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", _BOOTSTRAP_SECRET)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    return {"Authorization": f"Bearer {created.token}"}
+
+
+def _operator_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", _BOOTSTRAP_SECRET)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    return {"Authorization": f"Bearer {_BOOTSTRAP_SECRET}"}
+
+
+def _build_restore_artifact(tmp_path: Path, instance_id: str) -> Path:
+    source_root = tmp_path / f"restore-source-{instance_id}"
+    source_root.mkdir()
+    (source_root / "config.yaml").write_text(CAR_PARTS_YAML)
+    source_instance = CruxibleInstance.init(source_root, "config.yaml")
+    artifact = tmp_path / f"{instance_id}.cruxible.zip"
+    service_snapshot_instance(
+        source_instance,
+        instance_id=instance_id,
+        artifact_path=artifact,
+    )
+    return artifact
+
+
+def test_server_info_rejects_instance_scoped_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _instance_scoped_admin_headers(monkeypatch, instance_id=instance_id)
+
+    response = client.get("/api/v1/server/info", headers=headers)
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["error_type"] == "InstanceScopeError"
+    assert payload["context"]["instance_id"] == "cruxible_server_info"
+    assert payload["context"]["credential_scope"] == instance_id
+
+
+def test_server_restart_rejects_instance_scoped_admin_no_reexec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """The cross-tenant restart is closed: an instance-scoped ADMIN cannot re-exec
+    the shared daemon, and the re-exec hook is never armed."""
+    from cruxible_core.server import restart as restart_module
+
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _instance_scoped_admin_headers(monkeypatch, instance_id=instance_id)
+
+    exec_called = False
+
+    def _record() -> None:
+        nonlocal exec_called
+        exec_called = True
+
+    restart_module.set_exec_self(_record)
+    monkeypatch.setattr(restart_module, "_RESTART_DELAY_SECONDS", 0.0)
+    try:
+        response = client.post("/api/v1/server/restart", headers=headers)
+    finally:
+        restart_module.reset_exec_self()
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["error_type"] == "InstanceScopeError"
+    assert payload["context"]["instance_id"] == "cruxible_server_restart"
+    assert payload["context"]["credential_scope"] == instance_id
+    # Critical: the daemon-wide re-exec was never scheduled.
+    assert exec_called is False
+
+
+def test_restore_instance_rejects_instance_scoped_admin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _instance_scoped_admin_headers(monkeypatch, instance_id=instance_id)
+    artifact = _build_restore_artifact(tmp_path, "inst_restoredenied")
+    before_count = get_registry().count_instances()
+
+    response = client.post(
+        "/api/v1/instances/restore",
+        json={
+            "artifact_path": str(artifact),
+            "root_dir": str(tmp_path / "restored-denied"),
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["error_type"] == "InstanceScopeError"
+    assert payload["context"]["instance_id"] == "cruxible_instance_restore"
+    assert payload["context"]["credential_scope"] == instance_id
+    # The first-check fires before the manifest is read, so no instance is created.
+    assert get_registry().count_instances() == before_count
+    assert get_registry().get("inst_restoredenied") is None
+
+
+def test_unscoped_operator_can_run_daemon_server_operations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """The legitimate daemon operator path: the unscoped bootstrap secret authorizes
+    server_info / server_restart / restore on the shared daemon under auth."""
+    from cruxible_core.server import restart as restart_module
+
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    # Force auth_required so server_info reports the shared-daemon posture.
+    get_runtime_credential_store().mark_auth_required("test")
+    headers = _operator_headers(monkeypatch)
+
+    info = client.get("/api/v1/server/info", headers=headers)
+    assert info.status_code == 200
+    assert info.json()["instance_count"] == 1
+    assert info.json()["auth_enabled"] is True
+
+    exec_called = False
+
+    def _record() -> None:
+        nonlocal exec_called
+        exec_called = True
+
+    restart_module.set_exec_self(_record)
+    monkeypatch.setattr(restart_module, "_RESTART_DELAY_SECONDS", 0.0)
+    try:
+        restart = client.post("/api/v1/server/restart", headers=headers)
+        assert restart.status_code == 200
+        assert restart.json()["scheduled"] is True
+    finally:
+        restart_module.reset_exec_self()
+    assert exec_called is True
+
+    artifact = _build_restore_artifact(tmp_path, "inst_operatorrestore")
+    restore = client.post(
+        "/api/v1/instances/restore",
+        json={
+            "artifact_path": str(artifact),
+            "root_dir": str(tmp_path / "operator-restored"),
+        },
+        headers=headers,
+    )
+    assert restore.status_code == 200
+    assert restore.json()["instance_id"] == "inst_operatorrestore"
+    assert get_registry().get(instance_id) is not None  # original instance still present
+
+
+def test_auth_off_local_can_run_daemon_server_operations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    """Single-tenant / auth-off local: no credential context, so the daemon-wide
+    routes keep working with no token (no governed tier boundary locally)."""
+    from cruxible_core.server import restart as restart_module
+
+    client = _make_app_client(tmp_path, monkeypatch)
+    _init_instance(client, server_project)
+
+    info = client.get("/api/v1/server/info")
+    assert info.status_code == 200
+    assert info.json()["auth_enabled"] is False
+
+    exec_called = False
+
+    def _record() -> None:
+        nonlocal exec_called
+        exec_called = True
+
+    restart_module.set_exec_self(_record)
+    monkeypatch.setattr(restart_module, "_RESTART_DELAY_SECONDS", 0.0)
+    try:
+        restart = client.post("/api/v1/server/restart")
+        assert restart.status_code == 200
+        assert restart.json()["scheduled"] is True
+    finally:
+        restart_module.reset_exec_self()
+    assert exec_called is True
+
+    artifact = _build_restore_artifact(tmp_path, "inst_localrestore")
+    restore = client.post(
+        "/api/v1/instances/restore",
+        json={
+            "artifact_path": str(artifact),
+            "root_dir": str(tmp_path / "local-restored"),
+        },
+    )
+    assert restore.status_code == 200
+    assert restore.json()["instance_id"] == "inst_localrestore"
