@@ -689,6 +689,14 @@ class ServerInfoResult(BaseModel):
     auth_required: bool
 
 
+class ServerRestartResult(BaseModel):
+    """Acknowledgement that an in-place daemon re-exec has been scheduled."""
+
+    scheduled: bool
+    version: str
+    state_dir: str
+
+
 class NamedQueryInfoResult(BaseModel):
     name: str
     mode: Literal["collection", "traversal"]

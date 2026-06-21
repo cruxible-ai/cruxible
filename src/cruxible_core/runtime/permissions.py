@@ -165,6 +165,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,
     "cruxible_runtime_credentials": PermissionMode.ADMIN,
+    "cruxible_server_restart": PermissionMode.ADMIN,
 }
 
 PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {

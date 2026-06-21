@@ -18659,6 +18659,69 @@
         "version"
       ]
     },
+    "ServerRestartResult": {
+      "fields": {
+        "scheduled": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "scheduled",
+          "required": true,
+          "schema": {
+            "title": "Scheduled",
+            "type": "boolean"
+          }
+        },
+        "state_dir": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state_dir",
+          "required": true,
+          "schema": {
+            "title": "State Dir",
+            "type": "string"
+          }
+        },
+        "version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": true,
+          "schema": {
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Acknowledgement that an in-place daemon re-exec has been scheduled.",
+        "properties": {
+          "scheduled": {
+            "title": "Scheduled",
+            "type": "boolean"
+          },
+          "state_dir": {
+            "title": "State Dir",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduled",
+          "version",
+          "state_dir"
+        ],
+        "title": "ServerRestartResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "scheduled",
+        "state_dir",
+        "version"
+      ]
+    },
     "SharedEvidenceInput": {
       "fields": {
         "evidence_refs": {

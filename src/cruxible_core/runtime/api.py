@@ -676,6 +676,20 @@ def server_info() -> contracts.ServerInfoResult:
     )
 
 
+def server_restart() -> contracts.ServerRestartResult:
+    """Schedule an in-place re-exec of the daemon, preserving port/state/env."""
+    check_permission("cruxible_server_restart")
+    from cruxible_core.server.restart import schedule_server_restart
+
+    result = service_server_info()
+    schedule_server_restart()
+    return contracts.ServerRestartResult(
+        scheduled=True,
+        version=result.version,
+        state_dir=result.state_dir,
+    )
+
+
 def workflow_lock(
     instance_id: str,
     force: bool = False,

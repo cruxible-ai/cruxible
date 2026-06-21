@@ -294,6 +294,57 @@ def test_server_info_endpoint_returns_live_metadata(
     assert payload["auth_required"] is False
 
 
+def test_server_restart_endpoint_schedules_inplace_reexec(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from cruxible_core.server import restart as restart_module
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+
+    exec_called = threading.Event()
+    restart_module.set_exec_self(exec_called.set)
+    monkeypatch.setattr(restart_module, "_RESTART_DELAY_SECONDS", 0.0)
+    try:
+        response = app_client.post("/api/v1/server/restart")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["scheduled"] is True
+        assert payload["version"]
+        assert payload["state_dir"] == str(get_server_state_dir())
+        # The re-exec is deferred to a background timer so the response flushes first.
+        assert exec_called.wait(timeout=2.0)
+    finally:
+        restart_module.reset_exec_self()
+
+
+def test_server_restart_endpoint_requires_admin(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.server import restart as restart_module
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+    reset_permissions()
+
+    exec_called = False
+
+    def _record() -> None:
+        nonlocal exec_called
+        exec_called = True
+
+    restart_module.set_exec_self(_record)
+    try:
+        response = app_client.post("/api/v1/server/restart")
+        assert response.status_code == 403
+        assert exec_called is False
+    finally:
+        restart_module.reset_exec_self()
+
+
 def test_daemon_auth_defaults_to_disabled_for_local_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

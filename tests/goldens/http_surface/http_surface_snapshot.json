@@ -11,6 +11,9 @@
   "/api/v1/server/info": {
     "GET": "ServerInfoResult"
   },
+  "/api/v1/server/restart": {
+    "POST": "ServerRestartResult"
+  },
   "/api/v1/states/overlays": {
     "POST": "StateOverlayResult"
   },

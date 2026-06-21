@@ -78,3 +78,9 @@ async def claim_runtime_bootstrap(
 async def server_info() -> contracts.ServerInfoResult:
     """Return live daemon metadata for clients and agent skills."""
     return api.server_info()
+
+
+@router.post("/server/restart", response_model=contracts.ServerRestartResult)
+async def server_restart() -> contracts.ServerRestartResult:
+    """Schedule an in-place daemon re-exec, preserving port, state dir, and env."""
+    return api.server_restart()

@@ -210,6 +210,22 @@ class CruxibleClient:
         response = self._client.get("/api/v1/server/info")
         return self._parse_model(response, contracts.ServerInfoResult)
 
+    def server_restart(self) -> contracts.ServerRestartResult:
+        response = self._client.post("/api/v1/server/restart")
+        return self._parse_model(response, contracts.ServerRestartResult)
+
+    def version(self) -> str:
+        """Return the daemon's reported version via the unauthenticated probe.
+
+        Used to confirm a daemon is up (and on which version) after a restart,
+        guarding the dev loop against silent client/server skew.
+        """
+        payload = self._parse_json(self._client.get("/version"))
+        version = payload.get("version")
+        if not isinstance(version, str):
+            raise CoreError("Server /version response missing version string")
+        return version
+
     def create_state_overlay(
         self,
         *,
