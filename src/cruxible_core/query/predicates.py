@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from cruxible_core.errors import QueryExecutionError
+from cruxible_core.errors import ConfigError, QueryExecutionError
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.predicate import (
     PredicateCoercionError,
@@ -20,7 +20,7 @@ from cruxible_core.query.relationship_state import relationship_matches_query_st
 from cruxible_core.query.types import QueryPathSegment
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
     from cruxible_core.config.schema import (
         CoreConfig,
@@ -40,6 +40,60 @@ RELATED_PREDICATE_SCOPES = (
     "entry",
 )
 QUERY_PREDICATE_SCOPES = (*RELATED_PREDICATE_SCOPES, "result")
+
+
+def relationship_property_names(
+    config: CoreConfig,
+    relationship_type: str | None,
+) -> set[str]:
+    """Return configured property names for a relationship type.
+
+    When ``relationship_type`` is ``None`` the union of every configured
+    relationship's properties is returned (used by the ``list edges`` surface
+    when no relationship type is supplied). A reverse-alias name resolves to its
+    canonical relationship so both surfaces agree on the configured schema.
+    """
+    if relationship_type is None:
+        fields: set[str] = set()
+        for relationship in config.relationships:
+            fields.update(relationship.properties)
+        return fields
+    resolved = config.resolve_relationship_reference(relationship_type)
+    if resolved is None:
+        return set()
+    schema, _is_reverse = resolved
+    return set(schema.properties)
+
+
+def iter_edge_where_property_fields(where: QueryPredicateSpec) -> Iterator[str]:
+    """Yield the ``<X>`` of every ``edge.properties.<X>`` path in a where spec."""
+    for path in where.root:
+        parts = path.split(".")
+        if len(parts) >= 3 and parts[0] == "edge" and parts[1] == "properties":
+            yield parts[2]
+
+
+def validate_edge_where_property_fields(
+    config: CoreConfig,
+    relationship_type: str | None,
+    property_names: Iterable[str],
+    *,
+    subject: str,
+) -> None:
+    """Reject edge ``where``/property-filter fields not in the configured schema.
+
+    Shared by the ``service_list("edges")`` surface and the inline
+    relationship-collection query so an unconfigured ``edge.properties.<X>``
+    raises the same :class:`ConfigError` on both. Keeps the two surfaces' read
+    semantics fail-closed and identical for property-name validation.
+    """
+    known_fields = relationship_property_names(config, relationship_type)
+    for field in property_names:
+        if field not in known_fields:
+            known = ", ".join(sorted(known_fields)) or "(none)"
+            raise ConfigError(
+                f"Unknown where field for {subject}: {field}. Known fields: {known}"
+            )
 
 
 @dataclass(frozen=True)

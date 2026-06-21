@@ -1755,6 +1755,11 @@ class TestWorkflowExecutor:
             type="string",
             optional=True,
         )
+        # `status` must be configured on the relationship for the edge `where` to be
+        # accepted under fail-closed validation (parity with service_list).
+        recommended_for = config.get_relationship("recommended_for")
+        assert recommended_for is not None
+        recommended_for.properties["status"] = PropertySchema(type="string", optional=True)
         config.workflows["propose_campaign_recommendations"].steps.insert(
             1,
             WorkflowStepSchema(
@@ -1851,6 +1856,13 @@ class TestWorkflowExecutor:
             type="string",
             optional=True,
         )
+        # `status` must be a CONFIGURED property on `recommended_for` for both read
+        # surfaces to accept the filter under fail-closed validation. The parity
+        # contract is that, given a valid filter, the inline relationship query and
+        # service_list("edges") return identical results.
+        recommended_for = config.get_relationship("recommended_for")
+        assert recommended_for is not None
+        recommended_for.properties["status"] = PropertySchema(type="string", optional=True)
         config.workflows["propose_campaign_recommendations"].steps.insert(
             1,
             WorkflowStepSchema(
@@ -1866,6 +1878,20 @@ class TestWorkflowExecutor:
             ),
         )
         proposal_workflow_instance.save_config(config)
+
+        graph = proposal_workflow_instance.load_graph()
+        for sku, status in (("SKU-123", "human_approved"), ("SKU-456", "pending")):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="recommended_for",
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id=sku,
+                    properties={"status": status},
+                )
+            )
+        proposal_workflow_instance.save_graph(graph)
         write_lock_for_instance(proposal_workflow_instance)
 
         result = execute_workflow(
@@ -1882,8 +1908,81 @@ class TestWorkflowExecutor:
             limit=10,
         )
 
+        # Parity contract: a configured edge filter selects the SAME edges on both
+        # surfaces. The two surfaces serialize rows differently on purpose (the
+        # query row carries traversal context: entry/from_entity/to_entity/includes
+        # and richer metadata) -- that legitimate difference is preserved, so parity
+        # is asserted on the matched-edge identity + edge properties, not the raw
+        # row dicts.
+        def edge_identity(row: dict[str, object]) -> tuple[object, ...]:
+            return (
+                row["relationship_type"],
+                row["from_type"],
+                row["from_id"],
+                row["to_type"],
+                row["to_id"],
+                row["edge_key"],
+                tuple(sorted(row["properties"].items())),  # type: ignore[union-attr]
+            )
+
+        query_rows = result.step_outputs["existing_links"]["results"]
+        assert listed.total == 1
         assert result.step_outputs["existing_links"]["total_results"] == listed.total
-        assert result.step_outputs["existing_links"]["results"] == listed.items
+        assert [edge_identity(row) for row in query_rows] == [
+            edge_identity(item) for item in listed.items
+        ]
+
+    def test_execute_workflow_inline_relationship_query_rejects_unconfigured_edge_property(
+        self, proposal_workflow_instance: CruxibleInstance
+    ) -> None:
+        # Fail-closed parity: an unconfigured edge.properties.<X> in a `where` must be
+        # rejected the same way by BOTH the inline relationship query step and
+        # service_list("edges"). `priority` is not a configured property of
+        # `recommended_for`, so both surfaces raise ConfigError with the same shape.
+        config = proposal_workflow_instance.load_config()
+        config.workflows["propose_campaign_recommendations"].steps.insert(
+            1,
+            WorkflowStepSchema(
+                id="existing_links",
+                query={
+                    "mode": "collection",
+                    "result_shape": "relationship",
+                    "returns": "recommended_for",
+                    "where": {"edge.properties.priority": {"eq": "high"}},
+                    "limit": 10,
+                },
+                **{"as": "existing_links"},
+            ),
+        )
+        proposal_workflow_instance.save_config(config)
+        write_lock_for_instance(proposal_workflow_instance)
+
+        expected_message = (
+            "Unknown where field for relationship type 'recommended_for': priority. "
+            "Known fields: reason"
+        )
+
+        with pytest.raises(ConfigError, match="Unknown where field") as inline_exc:
+            execute_workflow(
+                proposal_workflow_instance,
+                proposal_workflow_instance.load_config(),
+                "propose_campaign_recommendations",
+                {"campaign_id": "CMP-1"},
+            )
+
+        with pytest.raises(ConfigError, match="Unknown where field") as list_exc:
+            service_list(
+                proposal_workflow_instance,
+                "edges",
+                relationship_type="recommended_for",
+                property_filter={"priority": "high"},
+                limit=10,
+            )
+
+        # Same error type AND same message shape on both surfaces.
+        assert type(inline_exc.value) is type(list_exc.value)
+        assert str(inline_exc.value) == expected_message
+        assert str(list_exc.value) == expected_message
 
     def test_execute_workflow_rejects_provider_output_contract(
         self, workflow_instance: CruxibleInstance

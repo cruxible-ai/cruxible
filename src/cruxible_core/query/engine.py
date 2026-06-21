@@ -42,11 +42,13 @@ from cruxible_core.query.predicates import (
     evaluate_query_predicates,
     evaluate_related_predicate,
     is_missing_path,
+    iter_edge_where_property_fields,
     iter_step_relationships,
     query_filter_summary,
     related_edge_exists,
     resolve_path,
     segment_endpoint_entities,
+    validate_edge_where_property_fields,
 )
 from cruxible_core.query.projection import (
     QueryRowContext,
@@ -710,6 +712,17 @@ def _collection_relationship_contexts(
             f"Entryless relationship query '{query_name}' must return canonical "
             f"relationship name '{relationship_schema.name}', not reverse alias "
             f"'{query_schema.returns}'"
+        )
+    if query_schema.where is not None:
+        # Fail-closed parity with service_list("edges"): an edge `where` may only
+        # reference properties configured on the relationship schema. Validated
+        # up front (data-independent) so the same ConfigError is raised whether or
+        # not any stored edge happens to match.
+        validate_edge_where_property_fields(
+            config,
+            relationship_schema.name,
+            iter_edge_where_property_fields(query_schema.where),
+            subject=f"relationship type '{relationship_schema.name}'",
         )
     contexts: list[QueryRowContext] = []
     policy_summary: dict[str, int] = {}

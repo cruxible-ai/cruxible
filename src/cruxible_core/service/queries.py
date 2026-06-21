@@ -30,7 +30,11 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.enums import QueryRelationshipState
-from cruxible_core.query.predicates import build_predicate_context, evaluate_query_predicates
+from cruxible_core.query.predicates import (
+    build_predicate_context,
+    evaluate_query_predicates,
+    validate_edge_where_property_fields,
+)
 from cruxible_core.query.read_surface import (
     get_entity as read_get_entity,
 )
@@ -1097,8 +1101,10 @@ def _compile_entity_list_where(
     normalized = _normalize_list_where(property_filter=property_filter, where=where)
     if not normalized:
         return None
+    subject = f"entity type '{entity_type}'"
+    _validate_list_where_field_syntax(normalized)
     known_fields = set(config.entity_types[entity_type].properties)
-    _validate_list_where_fields(normalized, known_fields, subject=f"entity type '{entity_type}'")
+    _validate_list_where_known_fields(normalized, known_fields, subject=subject)
     return _query_predicate_from_list_where(normalized, scope="result")
 
 
@@ -1112,13 +1118,20 @@ def _compile_edge_list_where(
     normalized = _normalize_list_where(property_filter=property_filter, where=where)
     if not normalized:
         return None
-    known_fields = _relationship_property_names(config, relationship_type)
     subject = (
         f"relationship type '{relationship_type}'"
         if relationship_type is not None
         else "configured relationships"
     )
-    _validate_list_where_fields(normalized, known_fields, subject=subject)
+    _validate_list_where_field_syntax(normalized)
+    # Shared with the inline relationship-collection query (query engine) so an
+    # unconfigured edge property raises the same ConfigError on both surfaces.
+    validate_edge_where_property_fields(
+        config,
+        relationship_type,
+        normalized.keys(),
+        subject=subject,
+    )
     return _query_predicate_from_list_where(normalized, scope="edge")
 
 
@@ -1141,18 +1154,17 @@ def _normalize_list_where(
     return normalized
 
 
-def _validate_list_where_fields(
+def _validate_list_where_field_syntax(
     where: Mapping[str, Mapping[str, Any]],
-    known_fields: set[str],
-    *,
-    subject: str,
 ) -> None:
+    """Validate the list-surface field-name format and operator allowlist.
+
+    Field membership against the configured schema is checked separately so the
+    edge surface can share the engine's :func:`validate_edge_where_property_fields`.
+    """
     for field, operators in where.items():
         if not _LIST_FIELD_RE.fullmatch(field):
             raise ConfigError(f"where field '{field}' must be a bare configured property name")
-        if field not in known_fields:
-            known = ", ".join(sorted(known_fields)) or "(none)"
-            raise ConfigError(f"Unknown where field for {subject}: {field}. Known fields: {known}")
         unsupported = sorted(set(operators) - _LIST_WHERE_OPERATORS)
         if unsupported:
             allowed = ", ".join(sorted(_LIST_WHERE_OPERATORS))
@@ -1160,6 +1172,18 @@ def _validate_list_where_fields(
                 f"Unsupported where operator for field '{field}': {', '.join(unsupported)}. "
                 f"Allowed: {allowed}"
             )
+
+
+def _validate_list_where_known_fields(
+    where: Mapping[str, Mapping[str, Any]],
+    known_fields: set[str],
+    *,
+    subject: str,
+) -> None:
+    for field in where:
+        if field not in known_fields:
+            known = ", ".join(sorted(known_fields)) or "(none)"
+            raise ConfigError(f"Unknown where field for {subject}: {field}. Known fields: {known}")
 
 
 def _query_predicate_from_list_where(
@@ -1186,19 +1210,6 @@ def _require_list_entity_type(config: CoreConfig, entity_type: str) -> None:
 def _require_list_relationship_type(config: CoreConfig, relationship_type: str) -> None:
     if config.get_relationship(relationship_type) is None:
         raise RelationshipNotFoundError(relationship_type)
-
-
-def _relationship_property_names(
-    config: CoreConfig,
-    relationship_type: str | None,
-) -> set[str]:
-    if relationship_type is not None:
-        schema = config.get_relationship(relationship_type)
-        return set(schema.properties) if schema is not None else set()
-    fields: set[str] = set()
-    for relationship in config.relationships:
-        fields.update(relationship.properties)
-    return fields
 
 
 def _relationship_matches_list_where(
