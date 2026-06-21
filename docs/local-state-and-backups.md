@@ -30,6 +30,20 @@ Direct local runtime still creates a `.cruxible/` directory under the workspace.
 That mode is convenient for development, but it is not the recommended agent
 boundary.
 
+## Daemon Logs
+
+In daemon mode, structured server request logs are JSON lines written under the
+server state directory by default:
+
+```text
+${CRUXIBLE_SERVER_STATE_DIR:-~/.cruxible/server}/logs/server.log
+```
+
+Set `CRUXIBLE_SERVER_LOG_PATH` to place that log somewhere else, for example
+under a supervisor-managed log directory. The daemon rotates this file locally
+and treats log sink failures as nonfatal; on the first write failure it emits a
+best-effort warning to stderr so operators know request logs may be dropping.
+
 ## What Lives There
 
 A Cruxible instance can include:

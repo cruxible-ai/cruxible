@@ -18,6 +18,7 @@ from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.server import request_logging as request_logging_module
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import (
     get_runtime_credential_store,
@@ -25,6 +26,7 @@ from cruxible_core.server.credentials import (
 )
 from cruxible_core.server.registry import reset_registry
 from cruxible_core.server.request_logging import (
+    _RotatingFileLogSink,
     configure_request_logging,
     log_runtime_request,
 )
@@ -324,6 +326,65 @@ def _make_request(path: str = "/api/v1/health") -> Request:
         "state": {},
     }
     return Request(scope)
+
+
+def test_configure_request_logging_writes_to_default_durable_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request_log_buffer: io.StringIO,
+) -> None:
+    state_dir = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
+
+    log_path = configure_request_logging()
+    log_runtime_request(
+        _make_request("/api/v1/test-log"),
+        status=204,
+        auth_context=None,
+    )
+
+    assert log_path == (state_dir / "logs" / "server.log").resolve()
+    payload = json.loads(log_path.read_text().splitlines()[-1])
+    assert payload["event"] == "runtime_request"
+    assert payload["method"] == "GET"
+    assert payload["route"] == "/api/v1/test-log"
+    assert payload["status"] == 204
+    assert payload["principal_id"] == "anonymous"
+
+
+def test_rotating_file_log_sink_rotates_when_limit_is_exceeded(tmp_path: Path) -> None:
+    log_path = tmp_path / "server.log"
+    sink = _RotatingFileLogSink(log_path, max_bytes=20, backup_count=1)
+    try:
+        sink.write("first line\n")
+        sink.flush()
+        sink.write("second line exceeds\n")
+        sink.flush()
+    finally:
+        sink.close()
+
+    assert (tmp_path / "server.log.1").read_text() == "first line\n"
+    assert log_path.read_text() == "second line exceeds\n"
+
+
+def test_log_runtime_request_warns_once_when_durable_sink_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    request_log_buffer: io.StringIO,
+) -> None:
+    bad_log_path = tmp_path / "server.log"
+    bad_log_path.mkdir()
+    monkeypatch.setattr(request_logging_module, "_request_log_failure_warned", False)
+
+    configure_request_logging(log_path=bad_log_path)
+    log_runtime_request(_make_request(), status=200, auth_context=None)
+    log_runtime_request(_make_request(), status=200, auth_context=None)
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("Cruxible request log sink failed") == 1
+    assert "runtime request logs may be dropped" in stderr
 
 
 def test_log_runtime_request_swallows_broken_pipe_from_dead_sink(

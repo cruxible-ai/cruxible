@@ -12,6 +12,7 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
+    get_server_log_path,
     is_volatile_state_path,
     validate_server_startup_settings,
     volatile_state_path_warnings,
@@ -115,6 +116,20 @@ def test_get_runtime_bootstrap_secret_strips_whitespace() -> None:
         == "bootstrap-secret"
     )
     assert get_runtime_bootstrap_secret({"CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "   "}) is None
+
+
+def test_server_log_path_defaults_under_state_dir(tmp_path: Path) -> None:
+    state_dir = tmp_path / "server-state"
+
+    assert get_server_log_path({"CRUXIBLE_SERVER_STATE_DIR": str(state_dir)}) == (
+        state_dir / "logs" / "server.log"
+    ).resolve()
+
+
+def test_server_log_path_uses_explicit_override(tmp_path: Path) -> None:
+    log_path = tmp_path / "runtime" / "cruxible.log"
+
+    assert get_server_log_path({"CRUXIBLE_SERVER_LOG_PATH": str(log_path)}) == log_path.resolve()
 
 
 def test_volatile_state_path_detection() -> None:

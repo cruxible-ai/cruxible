@@ -82,6 +82,15 @@ def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
     return (Path.home() / ".cruxible" / "server").resolve()
 
 
+def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the durable server request log path."""
+    env = environ or os.environ
+    raw = env.get("CRUXIBLE_SERVER_LOG_PATH")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (get_server_state_dir(env) / "logs" / "server.log").resolve()
+
+
 def is_volatile_state_path(path: str | Path) -> bool:
     """Return whether *path* resolves under a known volatile temp location."""
     resolved = Path(path).expanduser().resolve()
