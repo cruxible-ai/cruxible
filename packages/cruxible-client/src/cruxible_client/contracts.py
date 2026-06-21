@@ -62,49 +62,94 @@ GovernedActorType = Literal["human_user", "service_account", "system"]
 
 
 class RelationshipInput(BaseModel):
-    from_type: str
-    from_id: str
-    relationship_type: str
-    to_type: str
-    to_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-    pending: bool = False
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
-    evidence_rationale: str | None = None
+    from_type: str = Field(description="Entity type of the source endpoint.")
+    from_id: str = Field(description="Entity id of the source endpoint; must already exist.")
+    relationship_type: str = Field(description="Edge type as declared in the config schema.")
+    to_type: str = Field(description="Entity type of the target endpoint.")
+    to_id: str = Field(description="Entity id of the target endpoint; must already exist.")
+    properties: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Edge properties; keys must be declared by the relationship schema.",
+    )
+    pending: bool = Field(
+        default=False,
+        description="If true, stage the edge as pending review instead of live state.",
+    )
+    evidence_refs: list[EvidenceRef] = Field(
+        default_factory=list,
+        description="External provenance references attached to this edge.",
+    )
+    source_evidence: list[SourceEvidenceInput] = Field(
+        default_factory=list,
+        description="Locators into registered source artifacts backing this edge.",
+    )
+    evidence_rationale: str | None = Field(
+        default=None,
+        description="Free-text explanation of why the attached evidence supports the edge.",
+    )
 
 
 class SharedEvidenceInput(BaseModel):
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef] = Field(
+        default_factory=list,
+        description="External provenance references shared by multiple relationships.",
+    )
+    source_evidence: list[SourceEvidenceInput] = Field(
+        default_factory=list,
+        description="Source-artifact locators shared by multiple relationships.",
+    )
 
 
 class BatchRelationshipInput(RelationshipInput):
-    shared_evidence_keys: list[str] = Field(default_factory=list)
+    shared_evidence_keys: list[str] = Field(
+        default_factory=list,
+        description="Keys into the payload's top-level shared_evidence map to attach here.",
+    )
 
 
 class EntityInput(BaseModel):
-    entity_type: str
-    entity_id: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    entity_type: str = Field(description="Entity type as declared in the config schema.")
+    entity_id: str = Field(description="Unique id for the entity; re-using an id upserts it.")
+    properties: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Entity properties; keys must be declared by the entity schema.",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Free-form non-schema metadata stored alongside the entity.",
+    )
 
 
 class BatchDirectWritePayload(BaseModel):
-    entities: list[EntityInput] = Field(default_factory=list)
-    relationships: list[BatchRelationshipInput] = Field(default_factory=list)
-    shared_evidence: dict[str, SharedEvidenceInput] = Field(default_factory=dict)
+    entities: list[EntityInput] = Field(
+        default_factory=list,
+        description="Entities to add or upsert in this batch.",
+    )
+    relationships: list[BatchRelationshipInput] = Field(
+        default_factory=list,
+        description="Relationships to add or upsert; endpoint entities must exist.",
+    )
+    shared_evidence: dict[str, SharedEvidenceInput] = Field(
+        default_factory=dict,
+        description="Named evidence bundles referenced by relationships via shared_evidence_keys.",
+    )
 
 
 class GovernedActorContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    actor_type: GovernedActorType
-    actor_id: str = Field(min_length=1)
-    org_id: str = Field(min_length=1)
-    operation_id: str = Field(min_length=1)
-    timestamp: str
-    request_id: str | None = None
+    actor_type: GovernedActorType = Field(
+        description="Whether the acting principal is a human_user, service_account, or system."
+    )
+    actor_id: str = Field(min_length=1, description="Stable id of the acting principal.")
+    org_id: str = Field(min_length=1, description="Org/tenant the operation runs under.")
+    operation_id: str = Field(
+        min_length=1, description="Unique id for this operation, stamped into provenance."
+    )
+    timestamp: str = Field(description="ISO-8601 timestamp of when the operation was issued.")
+    request_id: str | None = Field(
+        default=None, description="Optional client request id for correlation."
+    )
 
     @model_validator(mode="after")
     def _validate_nonblank_fields(self) -> GovernedActorContext:
@@ -118,10 +163,12 @@ class GovernedActorContext(BaseModel):
 
 
 class SignalBucketBasis(BaseModel):
-    mode: Literal["score", "enum"]
-    path: str
-    value: str | int | float
-    matched: str
+    mode: Literal["score", "enum"] = Field(
+        description="Whether the signal was bucketed by numeric score or enum match."
+    )
+    path: str = Field(description="Dotted path to the field the basis was read from.")
+    value: str | int | float = Field(description="Raw value observed at the path.")
+    matched: str = Field(description="Bucket/category the value was matched to.")
 
 
 SourceKind = Literal["markdown"]
@@ -131,13 +178,24 @@ DereferenceBodyOrigin = Literal["archive", "local_path"]
 
 
 class EvidenceRef(BaseModel):
-    source: str
-    source_record_id: str
-    artifact_id: str | None = None
-    table: str | None = None
-    row_index: int | None = None
-    label: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    source: str = Field(description="Origin system or dataset of the referenced record.")
+    source_record_id: str = Field(description="Identifier of the record within that source.")
+    artifact_id: str | None = Field(
+        default=None, description="Optional registered source-artifact id."
+    )
+    table: str | None = Field(
+        default=None, description="Optional table name when the source is tabular."
+    )
+    row_index: int | None = Field(
+        default=None, description="Optional zero-based row index within the table."
+    )
+    label: str | None = Field(
+        default=None, description="Optional human-readable label for this reference."
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extra key/values; unknown top-level keys are folded in here.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -164,12 +222,28 @@ class EvidenceRef(BaseModel):
 
 
 class SourceEvidenceInput(BaseModel):
-    source_artifact_id: str
-    chunk_id: str | None = None
-    heading_path: list[str] | None = None
-    block_selector: str | None = None
-    label: str | None = None
-    expected_content_hash: str | None = None
+    source_artifact_id: str = Field(
+        description="Id of the registered source artifact this evidence points into."
+    )
+    chunk_id: str | None = Field(
+        default=None,
+        description="Chunk id within the artifact; provide this or heading_path+block_selector.",
+    )
+    heading_path: list[str] | None = Field(
+        default=None,
+        description="Heading breadcrumb locating the block when no chunk_id is given.",
+    )
+    block_selector: str | None = Field(
+        default=None,
+        description="Block selector (e.g. 'paragraph:1') used with heading_path.",
+    )
+    label: str | None = Field(
+        default=None, description="Optional human-readable label for this locator."
+    )
+    expected_content_hash: str | None = Field(
+        default=None,
+        description="Expected content hash to detect drift when dereferenced later.",
+    )
 
     @model_validator(mode="after")
     def _validate_locator(self) -> SourceEvidenceInput:
@@ -228,34 +302,65 @@ class DereferenceSourceEvidenceResult(BaseModel):
 
 
 class SignalInput(BaseModel):
-    signal_source: str
-    signal: Literal["support", "contradict", "unsure"]
-    evidence: str = ""
-    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
-    basis: SignalBucketBasis | None = None
+    signal_source: str = Field(
+        description="Name of the declared signal source producing this signal."
+    )
+    signal: Literal["support", "contradict", "unsure"] = Field(
+        description="Tri-state stance of the source toward the proposed edge."
+    )
+    evidence: str = Field(default="", description="Free-text evidence or rationale for the signal.")
+    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(
+        default_factory=list,
+        description="External provenance references backing the signal.",
+    )
+    source_evidence: list[SourceEvidenceInput] = Field(
+        default_factory=list,
+        description="Registered source-artifact locators backing the signal.",
+    )
+    basis: SignalBucketBasis | None = Field(
+        default=None,
+        description="Optional structured basis explaining how the signal was bucketed.",
+    )
 
 
 class EdgeTargetInput(BaseModel):
-    from_type: str
-    from_id: str
-    relationship_type: str
-    to_type: str
-    to_id: str
-    edge_key: int | None = None
+    from_type: str = Field(description="Entity type of the edge's source endpoint.")
+    from_id: str = Field(description="Entity id of the edge's source endpoint.")
+    relationship_type: str = Field(description="Edge type identifying the relationship.")
+    to_type: str = Field(description="Entity type of the edge's target endpoint.")
+    to_id: str = Field(description="Entity id of the edge's target endpoint.")
+    edge_key: int | None = Field(
+        default=None,
+        description="Disambiguator when multiple edges share the same endpoints.",
+    )
 
 
 class MemberInput(BaseModel):
-    from_type: str
-    from_id: str
-    to_type: str
-    to_id: str
-    relationship_type: str
-    signals: list[SignalInput] = Field(default_factory=list)
-    properties: dict[str, Any] = Field(default_factory=dict)
-    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput] = Field(default_factory=list)
-    evidence_rationale: str | None = None
+    from_type: str = Field(description="Entity type of the member edge's source endpoint.")
+    from_id: str = Field(description="Entity id of the member edge's source endpoint.")
+    to_type: str = Field(description="Entity type of the member edge's target endpoint.")
+    to_id: str = Field(description="Entity id of the member edge's target endpoint.")
+    relationship_type: str = Field(description="Edge type proposed for this member.")
+    signals: list[SignalInput] = Field(
+        default_factory=list,
+        description="Tri-state signals from declared sources supporting or contradicting the edge.",
+    )
+    properties: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Edge properties to set when the group is approved.",
+    )
+    evidence_refs: list[EvidenceRef | dict[str, Any]] = Field(
+        default_factory=list,
+        description="External provenance references for this member edge.",
+    )
+    source_evidence: list[SourceEvidenceInput] = Field(
+        default_factory=list,
+        description="Registered source-artifact locators for this member edge.",
+    )
+    evidence_rationale: str | None = Field(
+        default=None,
+        description="Free-text explanation of why the evidence supports this member.",
+    )
 
 
 class SuppressedProposalMember(BaseModel):
@@ -272,40 +377,87 @@ class SuppressedProposalMember(BaseModel):
 
 
 class PropertyPairInput(BaseModel):
-    from_property: str
-    to_property: str
+    from_property: str = Field(description="Source-endpoint property to compare.")
+    to_property: str = Field(description="Target-endpoint property to compare against.")
 
 
 class FeedbackBatchItemInput(BaseModel):
-    receipt_id: str
-    action: FeedbackAction
-    target: EdgeTargetInput
-    reason: str = ""
-    reason_code: str | None = None
-    scope_hints: dict[str, Any] = Field(default_factory=dict)
-    corrections: dict[str, Any] | None = None
-    group_override: bool = False
+    receipt_id: str = Field(description="Receipt id the feedback is anchored to.")
+    action: FeedbackAction = Field(
+        description="Adjudication: approve, reject, correct, or flag the edge."
+    )
+    target: EdgeTargetInput = Field(description="Coordinates of the edge being adjudicated.")
+    reason: str = Field(default="", description="Free-text reason for the feedback.")
+    reason_code: str | None = Field(
+        default=None, description="Optional coded reason for analytics/remediation."
+    )
+    scope_hints: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional hints scoping how broadly the feedback should generalize.",
+    )
+    corrections: dict[str, Any] | None = Field(
+        default=None,
+        description="Corrected property values, used with action='correct'.",
+    )
+    group_override: bool = Field(
+        default=False,
+        description="If true, mark the edge assertion as a group-resolve override.",
+    )
 
 
 class FeedbackFromQueryInput(BaseModel):
-    receipt_id: str
-    result_index: int
-    action: FeedbackAction
-    source: FeedbackSource = "human"
-    reason: str = ""
-    reason_code: str | None = None
-    scope_hints: dict[str, Any] | None = None
-    corrections: dict[str, Any] | None = None
-    group_override: bool = False
-    path_index: int | None = None
-    path_alias: str | None = None
+    receipt_id: str = Field(description="Query receipt id whose row is being adjudicated.")
+    result_index: int = Field(description="Zero-based index of the result row in the receipt.")
+    action: FeedbackAction = Field(
+        description="Adjudication: approve, reject, correct, or flag the edge."
+    )
+    source: FeedbackSource = Field(
+        default="human", description="Who produced the feedback: human or agent."
+    )
+    reason: str = Field(default="", description="Free-text reason for the feedback.")
+    reason_code: str | None = Field(
+        default=None, description="Optional coded reason for analytics/remediation."
+    )
+    scope_hints: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional hints scoping how broadly the feedback should generalize.",
+    )
+    corrections: dict[str, Any] | None = Field(
+        default=None,
+        description="Corrected property values, used with action='correct'.",
+    )
+    group_override: bool = Field(
+        default=False,
+        description="If true, mark the edge assertion as a group-resolve override.",
+    )
+    path_index: int | None = Field(
+        default=None,
+        description="For path rows, which path to select within the result.",
+    )
+    path_alias: str | None = Field(
+        default=None,
+        description="For path rows, the segment alias identifying the edge to adjudicate.",
+    )
 
 
 class DecisionPolicyMatchInput(BaseModel):
-    from_match: dict[str, Any] = Field(default_factory=dict, alias="from")
-    to: dict[str, Any] = Field(default_factory=dict)
-    edge: dict[str, Any] = Field(default_factory=dict)
-    context: dict[str, Any] = Field(default_factory=dict)
+    from_match: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="from",
+        description="Property matchers applied to the source endpoint.",
+    )
+    to: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Property matchers applied to the target endpoint.",
+    )
+    edge: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Property matchers applied to the edge itself.",
+    )
+    context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Property matchers applied to the surrounding decision context.",
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -481,23 +633,58 @@ class QueryToolResult(BaseModel):
 
 
 class InlineQueryDefinition(BaseModel):
-    name: str
-    mode: QueryMode
-    description: str | None = None
-    entry_point: str | None = None
-    traversal: list[dict[str, Any]] = Field(default_factory=list)
-    returns: str
-    result_shape: QueryResultShape = "path"
-    dedupe: QueryDedupe | None = None
-    relationship_state: QueryRelationshipState = "live"
-    allow_relationship_state_override: bool = False
-    where: dict[str, Any] | None = None
-    select: dict[str, Any] | None = None
-    order_by: list[dict[str, Any]] = Field(default_factory=list)
-    include: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    limit: int | None = Field(default=None, ge=0)
-    max_paths: int | None = Field(default=None, gt=0)
-    max_paths_per_result: int | None = Field(default=None, gt=0)
+    name: str = Field(description="Name for this one-off query; must be non-empty.")
+    mode: QueryMode = Field(
+        description="'collection' to scan one entity type, 'traversal' to walk relationships."
+    )
+    description: str | None = Field(
+        default=None, description="Optional human-readable description of the query."
+    )
+    entry_point: str | None = Field(
+        default=None,
+        description="Entity type to start from; forbidden in collection mode.",
+    )
+    traversal: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Ordered relationship steps to walk in traversal mode.",
+    )
+    returns: str = Field(description="Alias of the entity/relationship the query returns.")
+    result_shape: QueryResultShape = Field(
+        default="path",
+        description="Row shape to return: entity, path, or relationship.",
+    )
+    dedupe: QueryDedupe | None = Field(
+        default=None,
+        description="Deduplicate rows by entity, path, or none.",
+    )
+    relationship_state: QueryRelationshipState = Field(
+        default="live",
+        description="Edge state to read: live, accepted, pending, or reviewable.",
+    )
+    allow_relationship_state_override: bool = Field(
+        default=False,
+        description="Permit callers to override relationship_state at run time.",
+    )
+    where: dict[str, Any] | None = Field(
+        default=None, description="Filter predicates applied to matched rows."
+    )
+    select: dict[str, Any] | None = Field(
+        default=None, description="Projection of fields to return per row."
+    )
+    order_by: list[dict[str, Any]] = Field(
+        default_factory=list, description="Ordering keys for deterministic paging."
+    )
+    include: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="One-hop side-context relationships to attach per row.",
+    )
+    limit: int | None = Field(default=None, ge=0, description="Maximum rows to return.")
+    max_paths: int | None = Field(
+        default=None, gt=0, description="Cap on total traversal paths explored."
+    )
+    max_paths_per_result: int | None = Field(
+        default=None, gt=0, description="Cap on retained paths per result entity."
+    )
 
     @field_validator("name")
     @classmethod

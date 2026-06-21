@@ -7,7 +7,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 | Mode | Env value | Meaning |
 | --- | --- | --- |
 | READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, and source artifact registration. |
+| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, snapshot creation, and source artifact registration. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, and group resolution/trust updates. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
 
@@ -324,7 +324,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt.
+**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt. First call cruxible_list_queries or cruxible_describe_query when you do not know the query name, required params, result shape, or examples. For traversal queries, params must include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} when the entry point is Vehicle and its primary key is vehicle_id; cruxible_schema shows entity primary keys.
 
 **Arguments:**
 
@@ -351,7 +351,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a one-off bounded graph query without adding it to the config.
+**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config.
 
 **Arguments:**
 
@@ -489,7 +489,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when a person reviewed a specific relationship from a receipt and you need to record support, rejection, or a correction.
+**Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, flagging, or a correction. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
 
 **Arguments:**
 
@@ -524,7 +524,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `GOVERNED_WRITE`
 
-**Purpose:** Use when a query result path identifies the relationship that needs feedback.
+**Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
 
 **Arguments:**
 
@@ -610,7 +610,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Permission:** `READ_ONLY`
 
-**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters.
+**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}.
 
 **Arguments:**
 
@@ -1065,7 +1065,7 @@ error-level finding exists.
 
 **Permission:** `GRAPH_WRITE`
 
-**Purpose:** Use when you need to add or update a small number of explicit relationships and the endpoint entities already exist.
+**Purpose:** Use when you need to add or update a small number of explicit relationships and the endpoint entities already exist. Set pending=true when the edge should enter relationship review state instead of immediately becoming live.
 
 **Arguments:**
 
