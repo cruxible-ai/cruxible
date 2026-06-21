@@ -728,11 +728,15 @@ def _prepare_batch_direct_write(
                 detail={"guard_error": error},
             )
 
-    relationship_guard_errors = relationship_mutation_guard_errors(
-        config,
-        current_graph=current_graph,
-        relationships=[item.validated for item in validated_relationships],
-    )
+    try:
+        relationship_guard_errors = relationship_mutation_guard_errors(
+            instance,
+            config,
+            current_graph=current_graph,
+            relationships=[item.validated for item in validated_relationships],
+        )
+    except DataValidationError as exc:
+        relationship_guard_errors = [str(exc), *exc.errors]
     for error in relationship_guard_errors:
         errors.append(error)
         if builder:
@@ -1232,6 +1236,7 @@ def service_add_relationships(
             )
 
         guard_errors = relationship_mutation_guard_errors(
+            instance,
             config,
             current_graph=graph,
             relationships=[

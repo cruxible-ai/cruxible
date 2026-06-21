@@ -25,7 +25,9 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationship
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.engine import execute_query
+from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 _MISSING = object()
 
@@ -78,6 +80,7 @@ def mutation_guard_errors(
 
 
 def relationship_mutation_guard_errors(
+    instance: InstanceProtocol,
     config: CoreConfig,
     *,
     current_graph: EntityGraph,
@@ -87,25 +90,35 @@ def relationship_mutation_guard_errors(
     if not config.mutation_guards:
         return []
 
+    evidence_guards = [
+        guard
+        for guard in config.mutation_guards
+        if isinstance(guard.condition, EvidenceRequirementGuardCondition)
+    ]
+    if not evidence_guards:
+        return []
+
     errors: list[str] = []
-    for relationship in relationships:
-        for guard in config.mutation_guards:
-            condition = guard.condition
-            if not isinstance(condition, EvidenceRequirementGuardCondition):
-                continue
-            if guard.relationship_type != relationship.relationship.relationship_type:
-                continue
-            evidence = _resulting_relationship_evidence(current_graph, relationship)
-            count = _dereferenceable_source_evidence_count(evidence)
-            if count < condition.min_count:
-                errors.append(
-                    _relationship_evidence_guard_error_message(
-                        guard,
-                        relationship.relationship,
-                        required_count=condition.min_count,
-                        actual_count=count,
+    store = instance.get_source_artifact_store()
+    try:
+        for relationship in relationships:
+            for guard in evidence_guards:
+                condition = guard.condition
+                if guard.relationship_type != relationship.relationship.relationship_type:
+                    continue
+                evidence = _resulting_relationship_evidence(current_graph, relationship)
+                count = _dereferenceable_source_evidence_count(store, evidence)
+                if count < condition.min_count:
+                    errors.append(
+                        _relationship_evidence_guard_error_message(
+                            guard,
+                            relationship.relationship,
+                            required_count=condition.min_count,
+                            actual_count=count,
+                        )
                     )
-                )
+    finally:
+        store.close()
     return errors
 
 
@@ -294,21 +307,50 @@ def _resulting_relationship_evidence(
     return existing.metadata.evidence
 
 
-def _dereferenceable_source_evidence_count(evidence: RelationshipEvidence | None) -> int:
+def _dereferenceable_source_evidence_count(
+    store: SourceArtifactStoreProtocol,
+    evidence: RelationshipEvidence | None,
+) -> int:
     if evidence is None:
         return 0
     count = 0
     for ref in evidence.evidence_refs:
-        if (
-            ref.source == "source_artifact"
-            and ref.artifact_id
-            and ref.source_record_id
-            and ref.metadata.get("chunk_id") == ref.source_record_id
-            and isinstance(ref.metadata.get("content_hash"), str)
-            and ref.metadata["content_hash"].strip()
-        ):
+        if _source_artifact_ref_round_trips(store, ref):
             count += 1
     return count
+
+
+def _source_artifact_ref_round_trips(
+    store: SourceArtifactStoreProtocol,
+    ref: Any,
+) -> bool:
+    if ref.source != "source_artifact" or not ref.artifact_id or not ref.source_record_id:
+        return False
+
+    artifact = store.get_artifact(ref.artifact_id)
+    if artifact is None:
+        return False
+
+    metadata_chunk_id = ref.metadata.get("chunk_id")
+    if metadata_chunk_id is not None and metadata_chunk_id != ref.source_record_id:
+        return False
+
+    content_hash = ref.metadata.get("content_hash")
+    if not isinstance(content_hash, str) or not content_hash.strip():
+        return False
+
+    chunk = store.get_chunk(ref.artifact_id, ref.source_record_id)
+    if chunk is None or chunk.content_hash != content_hash:
+        return False
+
+    artifact_content_hash = ref.metadata.get("artifact_content_hash")
+    if (
+        artifact_content_hash is not None
+        and artifact_content_hash != artifact.content_hash
+    ):
+        return False
+
+    return True
 
 
 def _relationship_evidence_guard_error_message(

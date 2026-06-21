@@ -10,7 +10,7 @@ import pytest
 import cruxible_core.service.state as state_service
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
-from cruxible_core.errors import OwnershipError
+from cruxible_core.errors import OwnershipError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.kits.state_refs import StateCatalogEntry
@@ -48,6 +48,33 @@ relationships:
   - name: cites
     from: Case
     to: Case
+"""
+
+
+GUARDED_STATE_MODEL_YAML = """\
+version: "1.0"
+name: guarded_case_reference
+
+entity_types:
+  Case:
+    properties:
+      case_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+
+relationships:
+  - name: cites
+    from: Case
+    to: Case
+
+mutation_guards:
+  - name: cites_requires_source_evidence
+    relationship_type: cites
+    condition:
+      require_evidence: source_evidence
+    message: "Citation assertions require source evidence."
 """
 
 
@@ -781,6 +808,50 @@ def test_canonical_apply_respects_upstream_ownership(tmp_path: Path) -> None:
     assert rel is not None
     assert rel.properties["reason"] == "watch"
     assert rel.properties["note"] == "still watching"
+
+
+def test_workflow_apply_relationships_enforces_evidence_mutation_guard(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "guarded-model"
+    root.mkdir()
+    (root / "config.yaml").write_text(GUARDED_STATE_MODEL_YAML)
+    instance = CruxibleInstance.init(root, "config.yaml")
+    service_add_entities(
+        instance,
+        [
+            _case("CASE-A", "Alpha"),
+            _case("CASE-B", "Beta"),
+        ],
+    )
+    graph = instance.load_graph()
+    receipt_builder = ReceiptBuilder(query_name="wf", parameters={}, operation_type="workflow")
+
+    with pytest.raises(QueryExecutionError, match="cites_requires_source_evidence"):
+        apply_relationship_set(
+            instance,
+            graph,
+            "wf",
+            "step_edges",
+            {
+                "relationship_type": "cites",
+                "relationships": [
+                    {
+                        "relationship_type": "cites",
+                        "from_type": "Case",
+                        "from_id": "CASE-A",
+                        "to_type": "Case",
+                        "to_id": "CASE-B",
+                        "properties": {},
+                    }
+                ],
+            },
+            receipt_builder,
+            persist_writes=False,
+            parent_id=None,
+        )
+
+    assert not graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "cites")
 
 
 def _case(case_id: str, title: str) -> EntityInstance:

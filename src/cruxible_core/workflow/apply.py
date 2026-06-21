@@ -25,6 +25,7 @@ from cruxible_core.graph.evidence import (
 )
 from cruxible_core.graph.operations import (
     ValidatedEntity,
+    ValidatedRelationship,
     apply_entity,
     apply_relationship,
     validate_entity,
@@ -442,6 +443,14 @@ def apply_relationship_set(
             + "; ".join(errors)
         )
 
+    _enforce_relationship_mutation_guards(
+        instance,
+        config,
+        graph,
+        step_id,
+        validated_relationships,
+    )
+
     source_ref = f"workflow:{workflow_name}:{step_id}"
     for validated in validated_relationships:
         rel = validated.relationship
@@ -547,6 +556,33 @@ def _enforce_entity_mutation_guards(
         proposed_graph=proposed_graph,
         entities=validated_entities,
         actor_context=actor_context,
+    )
+    if guard_errors:
+        raise QueryExecutionError(
+            f"Workflow step '{step_id}' mutation guard validation failed: "
+            + "; ".join(guard_errors)
+        )
+
+
+def _enforce_relationship_mutation_guards(
+    instance: InstanceProtocol,
+    config: CoreConfig,
+    graph: EntityGraph,
+    step_id: str,
+    validated_relationships: list[ValidatedRelationship],
+) -> None:
+    """Reject canonical workflow relationship writes that violate config guards."""
+    if not config.mutation_guards or not validated_relationships:
+        return
+
+    # Deferred import for the same reason as _enforce_entity_mutation_guards.
+    from cruxible_core.service.mutation_guards import relationship_mutation_guard_errors
+
+    guard_errors = relationship_mutation_guard_errors(
+        instance,
+        config,
+        current_graph=graph,
+        relationships=validated_relationships,
     )
     if guard_errors:
         raise QueryExecutionError(

@@ -260,6 +260,24 @@ def matching_instance(tmp_path: Path) -> CruxibleInstance:
 
 
 @pytest.fixture
+def matching_evidence_guard_instance(tmp_path: Path) -> CruxibleInstance:
+    """Proposal-policy instance with an evidence floor on approved fits edges."""
+    (tmp_path / "config.yaml").write_text(
+        MATCHING_CONFIG_YAML
+        + """
+
+mutation_guards:
+  - name: fits_requires_source_evidence
+    relationship_type: fits
+    condition:
+      require_evidence: source_evidence
+    message: "Fitment observations require source evidence."
+"""
+    )
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+@pytest.fixture
 def tuple_identity_instance(tmp_path: Path) -> CruxibleInstance:
     """Instance where fits dedupes pending proposals by relationship tuple."""
     config = MATCHING_CONFIG_YAML.replace(
@@ -1470,6 +1488,45 @@ class TestPendingBuckets:
                 "approve",
                 expected_pending_version=1,
             )
+
+    def test_resolve_group_enforces_relationship_evidence_guard(
+        self,
+        matching_evidence_guard_instance: CruxibleInstance,
+    ) -> None:
+        _seed_fitment_entities(matching_evidence_guard_instance)
+        result = service_propose_group(
+            matching_evidence_guard_instance,
+            "fits",
+            [_member("BP-1001", "V-2024-CIVIC", signals=_all_support_signals())],
+            thesis_facts={"rule_id": "guarded_fit_rule", "rule_version": 1},
+        )
+
+        with pytest.raises(DataValidationError, match="fits_requires_source_evidence"):
+            service_resolve_group(
+                matching_evidence_guard_instance,
+                result.group_id,
+                "approve",
+                expected_pending_version=1,
+            )
+
+        graph = matching_evidence_guard_instance.load_graph()
+        assert (
+            graph.get_relationship(
+                "Part",
+                "BP-1001",
+                "Vehicle",
+                "V-2024-CIVIC",
+                "fits",
+            )
+            is None
+        )
+        group_store = matching_evidence_guard_instance.get_group_store()
+        try:
+            group = group_store.get_group(result.group_id)
+        finally:
+            group_store.close()
+        assert group is not None
+        assert group.status == "pending_review"
 
     def test_rule_version_bump_creates_fresh_bucket_without_prior(
         self, matching_instance: CruxibleInstance
