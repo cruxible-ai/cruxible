@@ -2886,6 +2886,157 @@ def test_feedback_explicit_coordinates_without_receipt_forwards_none(
     assert "Feedback FB-no-receipt applied to graph." in result.output
 
 
+def test_feedback_and_outcome_write_commands_emit_json_in_server_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    feedback_items = tmp_path / "feedback.json"
+    feedback_items.write_text(
+        """[
+  {
+    "receipt_id": "RCP-1",
+    "action": "approve",
+    "target": {
+      "from_type": "Part",
+      "from_id": "BP-1",
+      "relationship_type": "fits",
+      "to_type": "Vehicle",
+      "to_id": "V-1"
+    }
+  }
+]"""
+    )
+
+    class StubClient:
+        def feedback(self, _instance_id, **_kwargs):
+            return contracts.FeedbackResult(
+                feedback_id="FB-json",
+                applied=True,
+                receipt_id="RCP-feedback-json",
+            )
+
+        def feedback_from_query(self, _instance_id, **_kwargs):
+            return contracts.FeedbackResult(
+                feedback_id="FB-query-json",
+                applied=False,
+                receipt_id="RCP-query-json",
+            )
+
+        def feedback_batch(self, _instance_id, *, items, source):
+            assert len(items) == 1
+            assert source == "human"
+            return contracts.FeedbackBatchResult(
+                feedback_ids=["FB-batch-json"],
+                applied_count=1,
+                total=1,
+                receipt_id="RCP-batch-json",
+            )
+
+        def outcome(self, _instance_id, *, receipt_id, outcome, detail):
+            assert receipt_id == "RCP-1"
+            assert outcome == "correct"
+            assert detail == {"checked": True}
+            return contracts.OutcomeResult(outcome_id="OUT-json")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    feedback = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback",
+            "--action",
+            "approve",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--json",
+        ],
+    )
+    assert feedback.exit_code == 0, feedback.output
+    assert json.loads(feedback.output) == {
+        "feedback_id": "FB-json",
+        "applied": True,
+        "receipt_id": "RCP-feedback-json",
+    }
+
+    feedback_from_query = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback-from-query",
+            "--receipt",
+            "RCP-QUERY-1",
+            "--result-index",
+            "0",
+            "--action",
+            "reject",
+            "--json",
+        ],
+    )
+    assert feedback_from_query.exit_code == 0, feedback_from_query.output
+    assert json.loads(feedback_from_query.output) == {
+        "feedback_id": "FB-query-json",
+        "applied": False,
+        "receipt_id": "RCP-query-json",
+    }
+
+    feedback_batch = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "feedback-batch",
+            "--items-file",
+            str(feedback_items),
+            "--json",
+        ],
+    )
+    assert feedback_batch.exit_code == 0, feedback_batch.output
+    assert json.loads(feedback_batch.output) == {
+        "feedback_ids": ["FB-batch-json"],
+        "applied_count": 1,
+        "total": 1,
+        "receipt_id": "RCP-batch-json",
+    }
+
+    outcome = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "outcome",
+            "--receipt",
+            "RCP-1",
+            "--outcome",
+            "correct",
+            "--detail",
+            '{"checked": true}',
+            "--json",
+        ],
+    )
+    assert outcome.exit_code == 0, outcome.output
+    assert json.loads(outcome.output) == {"outcome_id": "OUT-json"}
+
+
 def test_reload_config_uploads_composed_yaml_in_server_mode(
     monkeypatch,
     runner: CliRunner,
@@ -4387,3 +4538,186 @@ def test_local_reads_unchanged_when_server_not_required(
     assert listed.exit_code == 0, listed.output
     names = {item["name"] for item in json.loads(listed.output)["items"]}
     assert "parts_for_vehicle" in names
+
+
+def test_server_mode_feedback_json_emits_payload(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def feedback(self, _instance_id, **_kwargs):
+            return contracts.FeedbackResult(
+                feedback_id="fb-1",
+                applied=True,
+                receipt_id="rcpt-1",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback",
+            "--receipt",
+            "rcpt-0",
+            "--action",
+            "approve",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "BP-1001",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "feedback_id": "fb-1",
+        "applied": True,
+        "receipt_id": "rcpt-1",
+    }
+
+
+def test_server_mode_feedback_from_query_json_emits_payload(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def feedback_from_query(self, _instance_id, **_kwargs):
+            return contracts.FeedbackResult(
+                feedback_id="fb-2",
+                applied=False,
+                receipt_id=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback-from-query",
+            "--receipt",
+            "rcpt-0",
+            "--result-index",
+            "0",
+            "--action",
+            "reject",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "feedback_id": "fb-2",
+        "applied": False,
+        "receipt_id": None,
+    }
+
+
+def test_server_mode_feedback_batch_json_emits_payload(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def feedback_batch(self, _instance_id, **_kwargs):
+            return contracts.FeedbackBatchResult(
+                feedback_ids=["fb-1", "fb-2"],
+                applied_count=1,
+                total=2,
+                receipt_id="rcpt-batch",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    items = json.dumps(
+        [
+            {
+                "receipt_id": "rcpt-0",
+                "action": "approve",
+                "target": {
+                    "from_type": "Part",
+                    "from_id": "BP-1001",
+                    "relationship_type": "fits",
+                    "to_type": "Vehicle",
+                    "to_id": "V-1",
+                },
+            }
+        ]
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback-batch",
+            "--items",
+            items,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "feedback_ids": ["fb-1", "fb-2"],
+        "applied_count": 1,
+        "total": 2,
+        "receipt_id": "rcpt-batch",
+    }
+
+
+def test_server_mode_outcome_json_emits_payload(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def outcome(self, _instance_id, **_kwargs):
+            return contracts.OutcomeResult(outcome_id="out-1")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "outcome",
+            "--receipt",
+            "rcpt-0",
+            "--outcome",
+            "correct",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {"outcome_id": "out-1"}

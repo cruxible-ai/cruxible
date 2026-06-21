@@ -992,6 +992,7 @@ findings.
 | `--corrections` | no | `` | text | JSON object of edge property corrections (for action=correct). |
 | `--source` | no | `human` | choice | Who produced this feedback (default: human). |
 | `--group-override` | no | `False` | boolean | Mark relationship assertion metadata as a group override (edge must exist). |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -1022,6 +1023,7 @@ findings.
 | `--group-override` | no | `False` | boolean | Mark selected edge assertion metadata as a group override (edge must exist). |
 | `--path-index` | no | `` | integer | Zero-based path segment index for path query rows. |
 | `--path-alias` | no | `` | text | Traversal alias for the selected path segment. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Creates normal feedback records and feedback receipts through the existing edge-feedback path.
@@ -1047,6 +1049,7 @@ findings.
 | `--items-file` | no | `` | path | JSON or YAML file with batch feedback items. |
 | `--items` | no | `` | text | Inline JSON array of feedback items. |
 | `--source` | no | `human` | choice | Who produced this feedback batch (default: human). |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -1750,6 +1753,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--receipt` | yes | `Sentinel.UNSET` | text | Receipt ID. |
 | `--outcome` | yes | `Sentinel.UNSET` | choice | Outcome of the decision. |
 | `--detail` | no | `` | text | JSON string with outcome details. |
+| `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.

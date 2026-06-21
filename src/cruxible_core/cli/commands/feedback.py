@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,8 +13,10 @@ import yaml
 from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
+    _emit_json,
     _get_client,
     _require_instance_id,
+    json_option,
 )
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import handle_errors
@@ -41,6 +44,14 @@ def _parse_json_object(raw: str | None, *, option: str) -> dict[str, Any] | None
 
 def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
     return _parse_json_object(corrections, option="--corrections")
+
+
+def _result_payload(result: Any) -> dict[str, Any]:
+    if hasattr(result, "model_dump"):
+        return cast(dict[str, Any], result.model_dump(mode="json"))
+    if is_dataclass(result):
+        return cast(dict[str, Any], asdict(result))
+    return cast(dict[str, Any], dict(result))
 
 
 @click.command("feedback")
@@ -77,6 +88,7 @@ def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
     default=False,
     help="Mark edge assertion metadata as a group override (edge must exist).",
 )
+@json_option
 @handle_errors
 def feedback_cmd(
     receipt_id: str,
@@ -93,6 +105,7 @@ def feedback_cmd(
     corrections: str | None,
     source: str,
     group_override: bool,
+    output_json: bool,
 ) -> None:
     """Submit feedback on a specific edge by explicit relationship coordinates."""
     corrections_dict = _parse_corrections(corrections)
@@ -142,6 +155,10 @@ def feedback_cmd(
         allow_local=False,
         command_name="feedback",
     )
+
+    if output_json:
+        _emit_json(_result_payload(result))
+        return
 
     if result.applied:
         click.echo(f"Feedback {result.feedback_id} applied to graph.")
@@ -196,6 +213,7 @@ def feedback_cmd(
     default=None,
     help="Traversal alias for the selected path segment.",
 )
+@json_option
 @handle_errors
 def feedback_from_query_cmd(
     receipt_id: str,
@@ -209,6 +227,7 @@ def feedback_from_query_cmd(
     group_override: bool,
     path_index: int | None,
     path_alias: str | None,
+    output_json: bool,
 ) -> None:
     """Submit edge feedback by selecting relationship evidence from a query receipt."""
     corrections_dict = _parse_corrections(corrections)
@@ -247,6 +266,10 @@ def feedback_from_query_cmd(
         command_name="feedback-from-query",
     )
 
+    if output_json:
+        _emit_json(_result_payload(result))
+        return
+
     if result.applied:
         click.echo(f"Feedback {result.feedback_id} applied to graph.")
     else:
@@ -269,11 +292,13 @@ def feedback_from_query_cmd(
     default="human",
     help="Who produced this feedback batch (default: human).",
 )
+@json_option
 @handle_errors
 def feedback_batch_cmd(
     items_file: str | None,
     items_json: str | None,
     source: str,
+    output_json: bool,
 ) -> None:
     """Submit a batch of edge feedback with one top-level receipt."""
     if items_file and items_json:
@@ -336,6 +361,10 @@ def feedback_batch_cmd(
         command_name="feedback-batch",
     )
 
+    if output_json:
+        _emit_json(_result_payload(result))
+        return
+
     click.echo(f"Batch feedback recorded for {result.applied_count}/{result.total} item(s).")
     click.echo(f"  Feedback IDs: {', '.join(result.feedback_ids)}")
     if result.receipt_id:
@@ -352,8 +381,14 @@ def feedback_batch_cmd(
     help="Outcome of the decision.",
 )
 @click.option("--detail", default=None, help="JSON string with outcome details.")
+@json_option
 @handle_errors
-def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None:
+def outcome_cmd(
+    receipt_id: str,
+    outcome_value: str,
+    detail: str | None,
+    output_json: bool,
+) -> None:
     """Record the outcome of a decision."""
     try:
         detail_dict = json.loads(detail) if detail else None
@@ -378,6 +413,9 @@ def outcome_cmd(receipt_id: str, outcome_value: str, detail: str | None) -> None
         allow_local=False,
         command_name="outcome",
     )
+    if output_json:
+        _emit_json(_result_payload(result))
+        return
     click.echo(f"Outcome {result.outcome_id} recorded.")
 
 
