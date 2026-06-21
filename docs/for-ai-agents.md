@@ -324,6 +324,20 @@ the handoff authority. Before merge or release, run the review handoff preflight
 against the project-state instance:
 
 ```bash
+cruxible --server-url http://127.0.0.1:8119 --instance-id inst_... \
+  review submit wi-example \
+  --change-repo cruxible-ai/cruxible-core \
+  --change-base <base-commit-sha> \
+  --change-head <exact-reviewed-commit-sha> \
+  --summary-file review-summary.md
+```
+
+The command creates the `ReviewRequest`, links it with
+`review_request_for_work_item`, carries release/milestone context from the
+target work item when present, and prints the mutation receipt. The same
+write can be checked first with `--dry-run`.
+
+```bash
 CRUXIBLE_SERVER_URL=http://127.0.0.1:8119 \
 CRUXIBLE_INSTANCE_ID=inst_... \
 CRUXIBLE_SERVER_BEARER_TOKEN=<read-token-if-authenticated> \

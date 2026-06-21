@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     query: Any
     reload_config_cmd: Any
     render_wiki_cmd: Any
+    review_group: Any
     run_cmd: Any
     sample: Any
     schema: Any
@@ -104,6 +105,7 @@ else:
         schema,
         stats_cmd,
     )
+    from cruxible_core.cli.commands.review import review_group
     from cruxible_core.cli.commands.server import server_group
     from cruxible_core.cli.commands.source_artifacts import source_group
     from cruxible_core.cli.commands.state import state_group
@@ -160,6 +162,7 @@ __all__ = [
     "query",
     "reload_config_cmd",
     "render_wiki_cmd",
+    "review_group",
     "run_cmd",
     "sample",
     "schema",
