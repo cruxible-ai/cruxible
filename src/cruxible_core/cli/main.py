@@ -127,7 +127,10 @@ from cruxible_core.cli.commands import (  # noqa: E402
     get_relationship_cmd,
     group_group,
     init,
+    inspect_entity_cmd,
+    inspect_entity_history_cmd,
     inspect_group,
+    inspect_relationship_lineage_cmd,
     instance_group,
     lint_cmd,
     list_group,
@@ -193,11 +196,14 @@ entity_group = click.Group("entity", help="Entity reads and writes.")
 entity_group.add_command(add_entity_cmd, "add")
 entity_group.add_command(update_entity_cmd, "update")
 entity_group.add_command(get_entity_cmd, "get")
+entity_group.add_command(inspect_entity_cmd, "inspect")
+entity_group.add_command(inspect_entity_history_cmd, "history")
 
 relationship_group = click.Group("relationship", help="Relationship reads and writes.")
 relationship_group.add_command(add_relationship_cmd, "add")
 relationship_group.add_command(update_relationship_cmd, "update")
 relationship_group.add_command(get_relationship_cmd, "get")
+relationship_group.add_command(inspect_relationship_lineage_cmd, "lineage")
 
 cli.add_command(entity_group, "entity")
 cli.add_command(relationship_group, "relationship")

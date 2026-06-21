@@ -29,7 +29,10 @@ if TYPE_CHECKING:
     group_group: Any
     init: Any
     instance_group: Any
+    inspect_entity_cmd: Any
+    inspect_entity_history_cmd: Any
     inspect_group: Any
+    inspect_relationship_lineage_cmd: Any
     lint_cmd: Any
     list_group: Any
     lock_cmd: Any
@@ -91,7 +94,10 @@ else:
         explain,
         get_entity_cmd,
         get_relationship_cmd,
+        inspect_entity_cmd,
+        inspect_entity_history_cmd,
         inspect_group,
+        inspect_relationship_lineage_cmd,
         lint_cmd,
         query,
         sample,
@@ -140,7 +146,10 @@ __all__ = [
     "group_group",
     "init",
     "instance_group",
+    "inspect_entity_cmd",
+    "inspect_entity_history_cmd",
     "inspect_group",
+    "inspect_relationship_lineage_cmd",
     "lint_cmd",
     "list_group",
     "lock_cmd",

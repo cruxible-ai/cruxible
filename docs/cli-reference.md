@@ -132,6 +132,8 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 
 - `cruxible entity add` - Create one entity.
 - `cruxible entity get` - Look up a specific entity by type and ID.
+- `cruxible entity history` - Inspect receipt-derived entity change history for one entity type or entity.
+- `cruxible entity inspect` - Inspect an entity and its immediate neighbors.
 - `cruxible entity update` - Update one existing entity.
 
 **Output And Side Effects:**
@@ -225,6 +227,59 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible entity history
+
+**Usage:** `cruxible entity history [OPTIONS]`
+
+**Purpose:** Inspect receipt-derived entity change history for one entity type or entity.
+
+Noun-first replacement for the deprecated `cruxible inspect entity-history`, which is kept as a hidden alias for one release.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | no | `` | text | Optional entity ID. |
+| `--limit` | no | `50` | integer range |  |
+| `--offset` | no | `0` | integer range |  |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Shows property diffs recorded on mutation receipts for entity writes.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible entity inspect
+
+**Usage:** `cruxible entity inspect [OPTIONS]`
+
+**Purpose:** Inspect an entity and its immediate neighbors.
+
+Noun-first replacement for the deprecated `cruxible inspect entity`, which is kept as a hidden alias for one release.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--type` | yes | `Sentinel.UNSET` | text | Entity type. |
+| `--id` | yes | `Sentinel.UNSET` | text | Entity ID. |
+| `--direction` | no | `both` | choice | Neighbor traversal direction. |
+| `--relationship` | no | `` | text | Optional relationship filter. |
+| `--limit` | no | `` | integer range | Max neighbors to show. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
 ## cruxible relationship
 
 **Usage:** `cruxible relationship [OPTIONS]`
@@ -235,6 +290,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 
 - `cruxible relationship add` - Create one relationship.
 - `cruxible relationship get` - Look up a specific relationship by its endpoints and type.
+- `cruxible relationship lineage` - Inspect a relationship's stored provenance lineage.
 - `cruxible relationship update` - Update one existing relationship.
 
 **Output And Side Effects:**
@@ -363,6 +419,34 @@ cruxible relationship add \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible relationship lineage
+
+**Usage:** `cruxible relationship lineage [OPTIONS]`
+
+**Purpose:** Inspect a relationship's stored provenance lineage.
+
+Noun-first replacement for the deprecated `cruxible inspect relationship-lineage`, which is kept as a hidden alias for one release.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--from-type` | yes | `Sentinel.UNSET` | text | Source entity type. |
+| `--from-id` | yes | `Sentinel.UNSET` | text | Source entity ID. |
+| `--relationship` | yes | `Sentinel.UNSET` | text | Relationship type. |
+| `--to-type` | yes | `Sentinel.UNSET` | text | Target entity type. |
+| `--to-id` | yes | `Sentinel.UNSET` | text | Target entity ID. |
+| `--edge-key` | no | `` | integer | Edge key (multi-edge disambiguation). |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Returns the matching relationship, `_provenance`, linked proposal group/resolution when provenance points to a group, source workflow receipt ID, source trace IDs, and warnings for missing or non-group provenance.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for read operations.
+- Ambiguous relationship tuple without `--edge-key`.
 
 ## cruxible batch-direct-write
 
@@ -1210,13 +1294,13 @@ findings.
 
 **Subcommands:**
 
-- `cruxible inspect entity` - Inspect an entity and its immediate neighbors.
-- `cruxible inspect entity-history` - Inspect receipt-derived entity change history for one entity type or entity.
+- `cruxible inspect entity` - Deprecated alias for `cruxible entity inspect`.
+- `cruxible inspect entity-history` - Deprecated alias for `cruxible entity history`.
 - `cruxible inspect governance` - Show the canonical governance view for the current instance.
 - `cruxible inspect ontology` - Show the canonical ontology view for the current instance config.
 - `cruxible inspect overview` - Show the generated config overview built from canonical views.
 - `cruxible inspect queries` - Show the canonical query view for the current instance config.
-- `cruxible inspect relationship-lineage` - Inspect a relationship's stored provenance lineage.
+- `cruxible inspect relationship-lineage` - Deprecated alias for `cruxible relationship lineage`.
 - `cruxible inspect trace` - Inspect a provider execution trace by ID.
 - `cruxible inspect workflows` - Show the canonical workflow view for the current instance config.
 
@@ -1233,6 +1317,8 @@ findings.
 **Usage:** `cruxible inspect entity [OPTIONS]`
 
 **Purpose:** Inspect an entity and its immediate neighbors.
+
+Deprecated hidden alias for `cruxible entity inspect`; use the noun-first path. Kept for one release.
 
 **Options And Arguments:**
 
@@ -1258,6 +1344,8 @@ findings.
 **Usage:** `cruxible inspect entity-history [OPTIONS]`
 
 **Purpose:** Inspect receipt-derived entity change history for one entity type or entity.
+
+Deprecated hidden alias for `cruxible entity history`; use the noun-first path. Kept for one release.
 
 **Options And Arguments:**
 
@@ -1324,6 +1412,8 @@ findings.
 **Usage:** `cruxible inspect relationship-lineage [OPTIONS]`
 
 **Purpose:** Inspect a relationship's stored provenance lineage.
+
+Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first path. Kept for one release.
 
 **Options And Arguments:**
 

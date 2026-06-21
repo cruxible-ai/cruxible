@@ -3,6 +3,7 @@ inspect, analysis, and lookups."""
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -1251,7 +1252,7 @@ def inspect_overview_cmd(fmt: str, limit: int) -> None:
     click.echo(render_overview_markdown(overview))
 
 
-@inspect_group.command("entity")
+@click.command("inspect")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", required=True, help="Entity ID.")
 @click.option(
@@ -1376,7 +1377,7 @@ def inspect_entity_cmd(
         console.print(inspect_neighbors_table(neighbor_rows))
 
 
-@inspect_group.command("entity-history")
+@click.command("history")
 @click.option("--type", "entity_type", required=True, help="Entity type.")
 @click.option("--id", "entity_id", default=None, help="Optional entity ID.")
 @click.option("--limit", type=click.IntRange(min=1), default=50, show_default=True)
@@ -1436,7 +1437,7 @@ def inspect_trace_cmd(trace_id: str, output_json: bool) -> None:
     click.echo(yaml.safe_dump(payload, sort_keys=False))
 
 
-@inspect_group.command("relationship-lineage")
+@click.command("lineage")
 @click.option("--from-type", required=True, help="Source entity type.")
 @click.option("--from-id", required=True, help="Source entity ID.")
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
@@ -1500,6 +1501,40 @@ def inspect_relationship_lineage_cmd(
         _emit_json(payload)
         return
     click.echo(yaml.safe_dump(payload, sort_keys=False))
+
+
+def _deprecated_alias(command: click.Command, *, name: str, replacement: str) -> click.Command:
+    """Return a hidden clone of ``command`` registered under a legacy name.
+
+    The noun-first commands moved out of the ``inspect`` group; these hidden
+    aliases keep the old ``inspect <verb>`` paths working for one release so the
+    rename is not a hard break.
+    """
+    alias = copy.copy(command)
+    alias.name = name
+    alias.hidden = True
+    alias.help = f"Deprecated alias for `{replacement}`."
+    return alias
+
+
+# Keep the pre-rename ``inspect <verb>`` paths working as hidden aliases.
+inspect_group.add_command(
+    _deprecated_alias(inspect_entity_cmd, name="entity", replacement="entity inspect"),
+)
+inspect_group.add_command(
+    _deprecated_alias(
+        inspect_entity_history_cmd,
+        name="entity-history",
+        replacement="entity history",
+    ),
+)
+inspect_group.add_command(
+    _deprecated_alias(
+        inspect_relationship_lineage_cmd,
+        name="relationship-lineage",
+        replacement="relationship lineage",
+    ),
+)
 
 
 @click.command("get-entity")

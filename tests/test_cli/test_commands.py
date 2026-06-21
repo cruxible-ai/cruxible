@@ -551,12 +551,38 @@ class TestStatsInspectReload:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["inspect", "entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+            ["entity", "inspect", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
         assert "Neighbors: 2" in result.output
         assert "Part:BP-1001" in result.output
         assert "fits" in result.output
+
+    def test_deprecated_inspect_entity_alias_still_runs(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        # The pre-rename `inspect entity` path is kept as a hidden alias.
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+        )
+        assert result.exit_code == 0
+        assert "Neighbors: 2" in result.output
+
+    def test_inspect_aliases_are_hidden_from_group_help(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(cli, ["inspect", "--help"])
+        assert result.exit_code == 0
+        # View renders stay in the inspect group.
+        assert "ontology" in result.output
+        # Renamed resource reads no longer advertise their old paths.
+        assert "entity-history" not in result.output
+        assert "relationship-lineage" not in result.output
 
     def test_inspect_entity_json_includes_metadata(
         self,
@@ -584,8 +610,8 @@ class TestStatsInspectReload:
             runner,
             populated_instance.root,
             [
-                "inspect",
                 "entity",
+                "inspect",
                 "--type",
                 "Vehicle",
                 "--id",
@@ -632,7 +658,7 @@ class TestStatsInspectReload:
         result = _chdir_run(
             runner,
             instance.root,
-            ["inspect", "entity-history", "--type", "Task", "--id", "T-1", "--json"],
+            ["entity", "history", "--type", "Task", "--id", "T-1", "--json"],
         )
 
         assert result.exit_code == 0
@@ -669,7 +695,7 @@ class TestStatsInspectReload:
         result = _chdir_run(
             runner,
             instance.root,
-            ["inspect", "entity-history", "--type", "Task"],
+            ["entity", "history", "--type", "Task"],
         )
 
         assert result.exit_code == 0
@@ -2842,8 +2868,8 @@ class TestGroupGetCLI:
             runner,
             group_instance.root,
             [
-                "inspect",
-                "relationship-lineage",
+                "relationship",
+                "lineage",
                 "--from-type",
                 "Part",
                 "--from-id",
