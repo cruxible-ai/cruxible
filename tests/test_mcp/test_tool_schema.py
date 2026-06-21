@@ -29,6 +29,22 @@ def _get_tool_schemas(server):
 class TestInputSchema:
     """Verify Literal params produce enum constraints."""
 
+    def test_query_tool_description_surfaces_invocation_guidance(self, server):
+        schemas = _get_tool_schemas(server)
+        description = schemas["cruxible_query"].description or ""
+        assert description.startswith("Use when ")
+        assert "cruxible_list_queries" in description
+        assert "cruxible_describe_query" in description
+        assert "entry_point primary-key field" in description
+        assert "cruxible_schema" in description
+
+    def test_feedback_tool_description_surfaces_explicit_coordinate_guidance(self, server):
+        schemas = _get_tool_schemas(server)
+        description = schemas["cruxible_feedback"].description or ""
+        assert description.startswith("Use when ")
+        assert "edge_key" in description
+        assert "receipt_id is optional" in description
+
     def test_feedback_action_enum(self, server):
         schemas = _get_tool_schemas(server)
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]

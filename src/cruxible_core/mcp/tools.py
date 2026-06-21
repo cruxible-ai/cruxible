@@ -26,8 +26,7 @@ def register_tools(server: FastMCP) -> list[str]:
 
     def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
         """Register a tool on the server and track its name."""
-        fn.__doc__ = tool_description(fn.__name__)
-        server.tool()(fn)
+        server.tool(description=tool_description(fn.__name__))(fn)
         registered.append(fn.__name__)
         return fn
 

@@ -56,10 +56,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_query": (
         "Use when you need to run a named query from the active config and receive "
-        "matching items plus a receipt."
+        "matching items plus a receipt. First call cruxible_list_queries or "
+        "cruxible_describe_query when you do not know the query name, required "
+        "params, result shape, or examples. For traversal queries, params must "
+        "include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} "
+        "when the entry point is Vehicle and its primary key is vehicle_id; "
+        "cruxible_schema shows entity primary keys."
     ),
     "cruxible_query_inline": (
-        "Use when you need a one-off bounded graph query without adding it to the config."
+        "Use when you need a one-off bounded graph query without adding it to the "
+        "config. Inline definitions use the configured named-query JSON shape plus "
+        "a required name; promote repeated or workflow-critical queries into config."
     ),
     "cruxible_list_queries": (
         "Use when you need to discover the named queries available in the active config."
@@ -78,15 +85,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to browse execution traces by workflow, provider, or page."
     ),
     "cruxible_feedback": (
-        "Use when a person reviewed a specific relationship from a receipt and you "
-        "need to record support, rejection, or a correction."
+        "Use when a person or reviewer agent adjudicated one explicit relationship "
+        "and you need to record support, rejection, flagging, or a correction. "
+        "Use edge_key only to disambiguate multiple stored edges with the same "
+        "relationship tuple; receipt_id is optional for explicit-coordinate feedback."
     ),
     "cruxible_feedback_batch": (
         "Use when you need to record several relationship feedback decisions from "
         "the same review session."
     ),
     "cruxible_feedback_from_query": (
-        "Use when a query result path identifies the relationship that needs feedback."
+        "Use when a query receipt and result index identify the relationship that "
+        "needs feedback. This path requires receipt_id because the receipt/result "
+        "selection is the target selector."
     ),
     "cruxible_outcome": (
         "Use when you need to record what happened after a decision, query, workflow, "
@@ -94,7 +105,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_list": (
         "Use when you need a paged list of entities, relationships, receipts, feedback, "
-        "or outcomes with optional filters."
+        "or outcomes with optional filters. Use resource_type='entities' with "
+        "entity_type and optional fields to reduce payload size; use where for "
+        "bounded property predicates such as {'status': {'eq': 'active'}}."
     ),
     "cruxible_evaluate": (
         "Use when you need graph quality findings such as orphaned entities, "
@@ -152,7 +165,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_add_relationship": (
         "Use when you need to add or update a small number of explicit relationships "
-        "and the endpoint entities already exist."
+        "and the endpoint entities already exist. Set pending=true when the edge "
+        "should enter relationship review state instead of immediately becoming live."
     ),
     "cruxible_add_entity": (
         "Use when you need to add or update a small number of explicit entities."
