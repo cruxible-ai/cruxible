@@ -90,10 +90,13 @@ _ACTION_PAST: dict[str, RelationshipReviewStatus] = {
 
 # Feedback actions that promote a relationship's review status to ``approved``,
 # making a previously non-live (pending/rejected) edge live and able to satisfy a
-# review-mediated close-gate precondition. The governed runtime requires a resolved
-# actor identity for these so a lower (GOVERNED_WRITE) tier cannot promote a review
-# edge anonymously; see ``runtime.api`` for the enforcement point.
-REVIEW_PROMOTION_ACTIONS: frozenset[str] = frozenset({"approve"})
+# review-mediated close-gate precondition. Both ``approve`` and ``correct`` set the
+# status to ``approved`` (the ``correct`` branch in ``apply_feedback`` below calls
+# ``_review_metadata(..., status="approved")``), so both must carry a resolved actor
+# identity under the governed runtime; otherwise a lower
+# (GOVERNED_WRITE) tier could promote a review edge anonymously via ``correct``.
+# See ``runtime.api`` for the enforcement point.
+REVIEW_PROMOTION_ACTIONS: frozenset[str] = frozenset({"approve", "correct"})
 
 
 def _review_metadata(
