@@ -14,7 +14,7 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
-    stamp_provenance_modified,
+    backfill_provenance_on_touch,
 )
 from cruxible_core.graph.types import RelationshipMetadata
 from cruxible_core.temporal import utc_now
@@ -55,16 +55,26 @@ def _read_provenance(
     return None
 
 
-def _stamp_provenance(
-    prov: RelationshipProvenance,
-    action: str,
-    actor_context: GovernedActorContext | None,
-) -> RelationshipProvenance:
-    """Return provenance stamped for a feedback action."""
-    return stamp_provenance_modified(
-        prov,
-        f"feedback:{action}",
-        actor_context=actor_context,
+def _apply_feedback_provenance(
+    metadata: RelationshipMetadata,
+    prov: RelationshipProvenance | None,
+    feedback: FeedbackRecord,
+) -> RelationshipMetadata:
+    """Stamp the touched edge's provenance, backfilling it when null.
+
+    A null-provenance edge would otherwise stay null forever; touching it via feedback
+    backfills a fresh provenance so the edge becomes auditable.
+    """
+    return metadata.model_copy(
+        update={
+            "provenance": backfill_provenance_on_touch(
+                prov,
+                _SOURCE_PREFIX[feedback.source],
+                f"feedback:{feedback.action}",
+                f"feedback:{feedback.action}",
+                actor_context=feedback.actor_context,
+            ),
+        }
     )
 
 
@@ -146,16 +156,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             actor=actor,
             actor_context=feedback.actor_context,
         )
-        if prov:
-            metadata = metadata.model_copy(
-                update={
-                    "provenance": _stamp_provenance(
-                        prov,
-                        feedback.action,
-                        feedback.actor_context,
-                    )
-                }
-            )
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
         return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,
@@ -178,16 +179,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             actor=actor,
             actor_context=feedback.actor_context,
         )
-        if prov:
-            metadata = metadata.model_copy(
-                update={
-                    "provenance": _stamp_provenance(
-                        prov,
-                        feedback.action,
-                        feedback.actor_context,
-                    )
-                }
-            )
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
         return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,
@@ -211,16 +203,7 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             actor_context=feedback.actor_context,
         )
         prov = _read_provenance(graph, t, t.relationship_type, edge_key)
-        if prov:
-            metadata = metadata.model_copy(
-                update={
-                    "provenance": _stamp_provenance(
-                        prov,
-                        feedback.action,
-                        feedback.actor_context,
-                    )
-                }
-            )
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
         return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,

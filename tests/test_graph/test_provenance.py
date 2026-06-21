@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.provenance import (
     RelationshipProvenance,
+    backfill_provenance_on_touch,
     dump_provenance,
     load_provenance,
     make_provenance,
@@ -117,6 +118,41 @@ def test_stamp_modified_preserves_creation_correlation_fields() -> None:
     assert stamped.created_actor_context is None
     assert stamped.last_modified_actor_context is not None
     assert stamped.last_modified_actor_context.actor_id == "user-1"
+
+
+def test_backfill_on_touch_stamps_existing_provenance() -> None:
+    existing = make_provenance("ingest", "fitments", receipt_id="RCP-create")
+
+    result = backfill_provenance_on_touch(
+        existing, "cli_add", "add_relationship", "cli_add"
+    )
+
+    # Existing provenance is stamped, not replaced: creation fields survive.
+    assert result.source == "ingest"
+    assert result.source_ref == "fitments"
+    assert result.receipt_id == "RCP-create"
+    assert result.last_modified_by == "cli_add"
+    assert result.last_modified_at is not None
+
+
+def test_backfill_on_touch_creates_provenance_when_null() -> None:
+    result = backfill_provenance_on_touch(
+        None,
+        "human",
+        "feedback:approve",
+        "feedback:approve",
+        actor_context=_actor_context(),
+    )
+
+    assert result.source == "human"
+    assert result.source_ref == "feedback:approve"
+    assert result.last_modified_by == "feedback:approve"
+    assert result.last_modified_at is not None
+    assert result.last_modified_actor_context is not None
+    assert result.last_modified_actor_context.actor_id == "user-1"
+    # No creation correlation is fabricated for a backfilled edge.
+    assert result.created_at is None
+    assert result.created_actor_context is None
 
 
 def test_historical_provenance_loads_with_null_correlation_fields() -> None:

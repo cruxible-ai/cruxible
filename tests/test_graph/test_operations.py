@@ -439,6 +439,36 @@ class TestApplyRelationship:
         assert prov.last_modified_by == "cli_add"
         assert prov.last_modified_at is not None
 
+    def test_update_backfills_null_provenance(self, config, graph):
+        """Updating an edge that carries no provenance backfills a fresh one (not sticky null)."""
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
+                properties={"confidence": 0.5},
+            )
+        )
+        assert (
+            graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").metadata.provenance
+            is None
+        )
+
+        validated = validate_relationship(
+            config, graph, "Part", "P1", "fits", "Vehicle", "V1", {"confidence": 0.9}
+        )
+        assert validated.is_update is True
+        apply_relationship(graph, validated, "cli_add", "add_relationship")
+
+        prov = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").metadata.provenance
+        assert prov is not None
+        assert prov.source == "cli_add"
+        assert prov.source_ref == "add_relationship"
+        assert prov.last_modified_by == "cli_add"
+        assert prov.last_modified_at is not None
+
     def test_cli_provenance(self, config, graph):
         """CLI source values are preserved."""
         validated = validate_relationship(

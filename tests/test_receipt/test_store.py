@@ -144,6 +144,27 @@ class TestSQLiteReceiptStore:
         ids = store.get_receipts_for_entity("Part", "P-1")
         assert sample_receipt.receipt_id in ids
 
+    def test_get_receipts_for_entity_indexes_relationship_write_endpoints(
+        self, store: SQLiteReceiptStore
+    ):
+        builder = ReceiptBuilder(operation_type="add_relationship", parameters={})
+        builder.record_relationship_write(
+            from_type="Part",
+            from_id="P-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            relationship="fits",
+            is_update=False,
+        )
+        builder.mark_committed()
+        receipt = builder.build()
+        receipt_id = store.save_receipt(receipt)
+
+        # The reverse lookup must surface the edge-write receipt from BOTH endpoints,
+        # even though the relationship_write node leaves entity_type/entity_id empty.
+        assert store.get_receipts_for_entity("Part", "P-1") == [receipt_id]
+        assert store.get_receipts_for_entity("Vehicle", "V-1") == [receipt_id]
+
     def test_receipt_entity_index_replaces_old_rows(self, store: SQLiteReceiptStore):
         builder = ReceiptBuilder(query_name="q", parameters={})
         builder.record_entity_lookup(entity_type="Vehicle", entity_id="V-1")

@@ -15,7 +15,7 @@ from cruxible_core.provider.trace_payloads import (
     retain_payload,
 )
 from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.receipt.types import Receipt
+from cruxible_core.receipt.types import Receipt, ReceiptNode
 from cruxible_core.temporal import format_datetime
 
 _SCHEMA = """\
@@ -105,20 +105,40 @@ class SQLiteReceiptStore(ReceiptStoreProtocol):
             "DELETE FROM receipt_entities WHERE receipt_id = ?",
             (receipt.receipt_id,),
         )
-        indexed = set()
+        indexed: set[tuple[str, str, str]] = set()
         for node in receipt.nodes:
-            if not node.entity_type or not node.entity_id:
-                continue
-            key = (receipt.receipt_id, node.entity_type, node.entity_id)
-            if key in indexed:
-                continue
-            indexed.add(key)
-            self._conn.execute(
-                "INSERT OR REPLACE INTO receipt_entities (receipt_id, entity_type, entity_id) "
-                "VALUES (?, ?, ?)",
-                key,
-            )
+            for entity_type, entity_id in self._node_index_endpoints(node):
+                key = (receipt.receipt_id, entity_type, entity_id)
+                if key in indexed:
+                    continue
+                indexed.add(key)
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO receipt_entities "
+                    "(receipt_id, entity_type, entity_id) VALUES (?, ?, ?)",
+                    key,
+                )
         return receipt.receipt_id
+
+    @staticmethod
+    def _node_index_endpoints(node: ReceiptNode) -> list[tuple[str, str]]:
+        """Entity (type, id) pairs to index for reverse lookup from a receipt node.
+
+        Most nodes carry the touched entity on entity_type/entity_id. relationship_write
+        nodes instead store both endpoints in detail (the node-level entity fields are
+        empty), so they would otherwise be missed by get_receipts_for_entity even though
+        the edge write touched both endpoints.
+        """
+        endpoints: list[tuple[str, str]] = []
+        if node.entity_type and node.entity_id:
+            endpoints.append((node.entity_type, node.entity_id))
+        if node.node_type == "relationship_write":
+            detail = node.detail
+            for type_key, id_key in (("from_type", "from_id"), ("to_type", "to_id")):
+                end_type = detail.get(type_key)
+                end_id = detail.get(id_key)
+                if isinstance(end_type, str) and end_type and isinstance(end_id, str) and end_id:
+                    endpoints.append((end_type, end_id))
+        return endpoints
 
     def get_receipt(self, receipt_id: str) -> Receipt | None:
         """Load a receipt by ID. Returns None if not found."""

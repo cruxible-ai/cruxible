@@ -411,8 +411,10 @@ class TestApplier:
         assert rel.properties["_provenance"] == {"source": "spoofed"}
         assert rel.properties["_assertion"] == {"review": {"status": "rejected", "source": "human"}}
 
-    def test_no_provenance_no_crash(self, graph: EntityGraph, target: RelationshipInstance):
-        """Feedback on edges without provenance metadata works fine (no crash)."""
+    def test_no_provenance_backfilled_on_touch(
+        self, graph: EntityGraph, target: RelationshipInstance
+    ):
+        """Feedback on a null-provenance edge backfills provenance instead of staying null."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -421,7 +423,12 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert_review_state(rel, status="approved", source="human")
-        assert rel.metadata.provenance is None
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "human"
+        assert prov.source_ref == "feedback:approve"
+        assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_at is not None
 
     def test_ambiguous_target_requires_edge_key(self, graph: EntityGraph):
         graph.add_relationship(

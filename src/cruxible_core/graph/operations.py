@@ -24,8 +24,8 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
+    backfill_provenance_on_touch,
     make_provenance,
-    stamp_provenance_modified,
 )
 from cruxible_core.graph.types import (
     EntityInstance,
@@ -237,17 +237,19 @@ def apply_relationship(
         replace_props = dict(rel.properties)
         if existing_rel:
             metadata = existing_rel.metadata
-            provenance = metadata.provenance
-            if provenance is not None:
-                metadata = metadata.model_copy(
-                    update={
-                        "provenance": stamp_provenance_modified(
-                            provenance,
-                            source,
-                            actor_context=actor_context,
-                        ),
-                    }
-                )
+            # Stamp the modification, backfilling provenance when the existing edge
+            # carries none so a touch makes a previously-null edge auditable.
+            metadata = metadata.model_copy(
+                update={
+                    "provenance": backfill_provenance_on_touch(
+                        metadata.provenance,
+                        source,
+                        source_ref,
+                        source,
+                        actor_context=actor_context,
+                    ),
+                }
+            )
             if incoming_evidence is not None:
                 metadata = metadata.model_copy(update={"evidence": incoming_evidence})
             rel.metadata = metadata

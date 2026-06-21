@@ -103,6 +103,32 @@ def stamp_provenance_modified(
     )
 
 
+def backfill_provenance_on_touch(
+    provenance: RelationshipProvenance | None,
+    source: str,
+    source_ref: str,
+    actor: str,
+    *,
+    actor_context: GovernedActorContext | None = None,
+) -> RelationshipProvenance:
+    """Stamp provenance for an update/feedback touch, backfilling when it is null.
+
+    Edges written before provenance was tracked (or written without it) carry a null
+    provenance that update/feedback paths historically left null forever. When an edge
+    is touched we either stamp the existing provenance's modification fields, or — if it
+    has none — backfill a fresh provenance so the touch makes the edge auditable.
+    """
+    if provenance is not None:
+        return stamp_provenance_modified(provenance, actor, actor_context=actor_context)
+    return RelationshipProvenance(
+        source=source,
+        source_ref=source_ref,
+        last_modified_at=utc_now(),
+        last_modified_by=actor,
+        last_modified_actor_context=actor_context,
+    )
+
+
 def provenance_group_id(provenance: RelationshipProvenance) -> str | None:
     """Extract the candidate group id from group-backed provenance."""
     source_ref = provenance.source_ref
@@ -116,6 +142,7 @@ __all__ = [
     "SOURCE_REF_ADD_RELATIONSHIP",
     "SOURCE_REF_BATCH_DIRECT_WRITE",
     "RelationshipProvenance",
+    "backfill_provenance_on_touch",
     "dump_provenance",
     "load_provenance",
     "make_provenance",
