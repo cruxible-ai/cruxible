@@ -36,7 +36,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:bd2a4aab9db6cb9e427a8257d702a921910fe1b6f6b6f8be063bad9834488ea1",
+        "proposal_logic_digest": "sha256:585a37f2986ee145a1ee2ab9c217693a78db1e3e3de2b3d921c384547889cb3f",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },
@@ -253,7 +253,7 @@
       "origin": {
         "evidence_mode": "workflow_generated",
         "kind": "workflow",
-        "proposal_logic_digest": "sha256:bd2a4aab9db6cb9e427a8257d702a921910fe1b6f6b6f8be063bad9834488ea1",
+        "proposal_logic_digest": "sha256:585a37f2986ee145a1ee2ab9c217693a78db1e3e3de2b3d921c384547889cb3f",
         "step_id": "proposal",
         "workflow_name": "propose_exposure_reconciliation"
       },
@@ -385,6 +385,31 @@
           "truncation_reasons": []
         },
         "step_id": "affected_assessments"
+      },
+      {
+        "alias": "affected_candidates",
+        "counts": {
+          "duplicate_count": 0,
+          "input_count": 245,
+          "output_count": 245
+        },
+        "kind": "dedupe_items",
+        "metadata": {
+          "input_ref": "$steps.affected_assessments.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_2>",
+            "<RECEIPT_3>"
+          ],
+          "source_ref": "$steps.affected_assessments.items",
+          "source_step": "affected_assessments",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.affected_assessments.items",
+        "source_step": "affected_assessments",
+        "step_id": "affected_candidates"
       },
       {
         "alias": "accepted_exposures",
@@ -532,6 +557,11 @@
       "accepted_exposures": {
         "returned_results": 61,
         "total_results": 61
+      },
+      "affected_candidates": {
+        "duplicate_count": 0,
+        "input_count": 245,
+        "output_count": 245
       },
       "asset_products": {
         "returned_results": 50,

@@ -119,9 +119,7 @@ def kev_golden_reports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, An
         ),
         (
             "exposure_reconciliation_workflow",
-            KEV_GOLDEN_DIR
-            / "intermediate_payloads"
-            / "exposure_reconciliation_workflow.json",
+            KEV_GOLDEN_DIR / "intermediate_payloads" / "exposure_reconciliation_workflow.json",
         ),
     ],
 )
@@ -138,9 +136,7 @@ def test_kev_workflow_and_query_coverage_map_is_current() -> None:
     assert {
         name for name, coverage in KEV_NAMED_QUERY_COVERAGE.items() if coverage == "golden"
     } == set(KEV_NAMED_QUERY_GOLDENS)
-    assert {
-        name for name, coverage in KEV_WORKFLOW_COVERAGE.items() if coverage == "golden"
-    } == {
+    assert {name for name, coverage in KEV_WORKFLOW_COVERAGE.items() if coverage == "golden"} == {
         "build_public_kev_reference",
         "build_local_state",
         "propose_asset_products",

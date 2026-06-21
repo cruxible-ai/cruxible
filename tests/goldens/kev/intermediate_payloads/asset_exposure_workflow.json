@@ -115,6 +115,31 @@
         "step_id": "affected_assessments"
       },
       {
+        "alias": "affected_candidates",
+        "counts": {
+          "duplicate_count": 0,
+          "input_count": 245,
+          "output_count": 245
+        },
+        "kind": "dedupe_items",
+        "metadata": {
+          "input_ref": "$steps.affected_assessments.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>"
+          ],
+          "source_ref": "$steps.affected_assessments.items",
+          "source_step": "affected_assessments",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.affected_assessments.items",
+        "source_step": "affected_assessments",
+        "step_id": "affected_candidates"
+      },
+      {
         "alias": "assets",
         "counts": {
           "returned_results": 28,
@@ -140,6 +165,29 @@
           "truncation_reasons": []
         },
         "step_id": "assets"
+      },
+      {
+        "alias": "affected_asset_context",
+        "counts": {
+          "left_count": 245,
+          "matched_left_count": 245,
+          "output_count": 245,
+          "right_count": 28,
+          "skipped_right_count": 0
+        },
+        "kind": "join_items",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>",
+            "<RECEIPT_3>"
+          ],
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "affected_asset_context"
       },
       {
         "alias": "asset_controls",
@@ -194,6 +242,53 @@
           "truncation_reasons": []
         },
         "step_id": "controls"
+      },
+      {
+        "alias": "asset_control_bindings",
+        "counts": {
+          "left_count": 22,
+          "matched_left_count": 22,
+          "output_count": 22,
+          "right_count": 6,
+          "skipped_right_count": 0
+        },
+        "kind": "join_items",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_4>",
+            "<RECEIPT_5>"
+          ],
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "asset_control_bindings"
+      },
+      {
+        "alias": "active_control_bindings",
+        "counts": {
+          "filtered_count": 1,
+          "input_count": 22,
+          "output_count": 21
+        },
+        "kind": "filter_items",
+        "metadata": {
+          "input_ref": "$steps.asset_control_bindings.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_4>",
+            "<RECEIPT_5>"
+          ],
+          "source_ref": "$steps.asset_control_bindings.items",
+          "source_step": "asset_control_bindings",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.asset_control_bindings.items",
+        "source_step": "asset_control_bindings",
+        "step_id": "active_control_bindings"
       },
       {
         "alias": "vulnerability_classifications",
@@ -387,11 +482,35 @@
       }
     ],
     "step_counts": {
+      "active_control_bindings": {
+        "filtered_count": 1,
+        "input_count": 22,
+        "output_count": 21
+      },
+      "affected_asset_context": {
+        "left_count": 245,
+        "matched_left_count": 245,
+        "output_count": 245,
+        "right_count": 28,
+        "skipped_right_count": 0
+      },
+      "affected_candidates": {
+        "duplicate_count": 0,
+        "input_count": 245,
+        "output_count": 245
+      },
       "affected_product_join": {
         "left_count": 50,
         "matched_left_count": 50,
         "output_count": 1034,
         "right_count": 10453,
+        "skipped_right_count": 0
+      },
+      "asset_control_bindings": {
+        "left_count": 22,
+        "matched_left_count": 22,
+        "output_count": 22,
+        "right_count": 6,
         "skipped_right_count": 0
       },
       "asset_controls": {
@@ -4950,7 +5069,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-1",
@@ -4985,7 +5105,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-1",
@@ -5012,7 +5133,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5063,7 +5185,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5106,7 +5229,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5165,7 +5289,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5224,7 +5349,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5283,7 +5409,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           }
         ],
         "items_count": 245,
@@ -7109,14 +7236,13 @@
       "output": {
         "items": [
           {
-            "affected_basis": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
-            "affected_rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
-            "affected_verdict": "support",
             "asset_id": "ASSET-1",
-            "control_basis": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+            "basis": {
+              "affected": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
+              "control": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+              "exposure": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests)."
+            },
             "control_effect": "blocks",
-            "control_exposure_verdict": "contradict",
-            "control_verdict": "support",
             "cve_id": "CVE-2021-41773",
             "evidence_refs": [
               {
@@ -7143,24 +7269,24 @@
               }
             ],
             "evidence_refs_count": 3,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "support",
-            "exposure_basis": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
             "installed_version": "2.4.49",
             "priority": "medium",
             "product_id": "apache-http-server",
-            "rationale": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
-            "status": "mitigated"
+            "status": "mitigated",
+            "verdicts": {
+              "affected": "support",
+              "control": "support",
+              "exploitability": "support"
+            }
           },
           {
-            "affected_basis": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
-            "affected_rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
-            "affected_verdict": "support",
             "asset_id": "ASSET-1",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "prod-web-01 is internet-facing; active controls require review: Edge WAF"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2021-42013",
             "evidence_refs": [
               {
@@ -7188,24 +7314,24 @@
               }
             ],
             "evidence_refs_count": 3,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "support",
-            "exposure_basis": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "installed_version": "2.4.49",
             "priority": "high",
             "product_id": "apache-http-server",
-            "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "support"
+            }
           },
           {
-            "affected_basis": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
-            "affected_rationale": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
-            "affected_verdict": "support",
             "asset_id": "ASSET-1",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "prod-web-01 is internet-facing; active controls require review: Edge WAF"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2024-38475",
             "evidence_refs": [
               {
@@ -7225,24 +7351,24 @@
               }
             ],
             "evidence_refs_count": 2,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "support",
-            "exposure_basis": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
             "installed_version": "2.4.49",
             "priority": "high",
             "product_id": "apache-http-server",
-            "rationale": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "support"
+            }
           },
           {
-            "affected_basis": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_verdict": "support",
             "asset_id": "ASSET-10",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2020-11023",
             "evidence_refs": [
               {
@@ -7286,24 +7412,24 @@
               }
             ],
             "evidence_refs_count": 5,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "unsure",
-            "exposure_basis": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "installed_version": "14.1.1.0.0",
             "priority": "high",
             "product_id": "oracle-weblogic-server",
-            "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "unsure"
+            }
           },
           {
-            "affected_basis": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_verdict": "support",
             "asset_id": "ASSET-10",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2020-14644",
             "evidence_refs": [
               {
@@ -7339,24 +7465,24 @@
               }
             ],
             "evidence_refs_count": 4,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "unsure",
-            "exposure_basis": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "installed_version": "14.1.1.0.0",
             "priority": "high",
             "product_id": "oracle-weblogic-server",
-            "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "unsure"
+            }
           },
           {
-            "affected_basis": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_verdict": "support",
             "asset_id": "ASSET-10",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2020-14750",
             "evidence_refs": [
               {
@@ -7408,24 +7534,24 @@
               }
             ],
             "evidence_refs_count": 6,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "unsure",
-            "exposure_basis": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "installed_version": "14.1.1.0.0",
             "priority": "high",
             "product_id": "oracle-weblogic-server",
-            "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "unsure"
+            }
           },
           {
-            "affected_basis": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_verdict": "support",
             "asset_id": "ASSET-10",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2020-14882",
             "evidence_refs": [
               {
@@ -7477,24 +7603,24 @@
               }
             ],
             "evidence_refs_count": 6,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "unsure",
-            "exposure_basis": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "installed_version": "14.1.1.0.0",
             "priority": "high",
             "product_id": "oracle-weblogic-server",
-            "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "unsure"
+            }
           },
           {
-            "affected_basis": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
-            "affected_verdict": "support",
             "asset_id": "ASSET-10",
-            "control_basis": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+            "basis": {
+              "affected": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
+              "control": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
+              "exposure": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL"
+            },
             "control_effect": "",
-            "control_exposure_verdict": "unsure",
-            "control_verdict": "unsure",
             "cve_id": "CVE-2020-14883",
             "evidence_refs": [
               {
@@ -7546,14 +7672,15 @@
               }
             ],
             "evidence_refs_count": 6,
-            "evidence_source": "qualys",
-            "exploitability_verdict": "unsure",
-            "exposure_basis": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
             "installed_version": "14.1.1.0.0",
             "priority": "high",
             "product_id": "oracle-weblogic-server",
-            "rationale": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
-            "status": "exposed"
+            "status": "exposed",
+            "verdicts": {
+              "affected": "support",
+              "control": "unsure",
+              "exploitability": "unsure"
+            }
           }
         ],
         "items_count": 60,
@@ -8675,7 +8802,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -8757,7 +8884,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -8840,7 +8967,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
@@ -8915,7 +9042,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -9014,7 +9141,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -9105,7 +9232,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -9212,7 +9339,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -9319,7 +9446,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "affected_verdict",
+              "path": "verdicts.affected",
               "value": "support"
             },
             "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -9446,7 +9573,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "support"
             },
             "evidence": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
@@ -9528,7 +9655,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "support"
             },
             "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
@@ -9611,7 +9738,7 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "support"
             },
             "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
@@ -9686,7 +9813,7 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "unsure"
             },
             "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -9785,7 +9912,7 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "unsure"
             },
             "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -9876,7 +10003,7 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "unsure"
             },
             "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -9983,7 +10110,7 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "unsure"
             },
             "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -10090,7 +10217,7 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "exploitability_verdict",
+              "path": "verdicts.exploitability",
               "value": "unsure"
             },
             "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -10217,10 +10344,10 @@
             "basis": {
               "matched": "support",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "support"
             },
-            "evidence": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+            "evidence": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10299,10 +10426,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10382,10 +10509,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10457,10 +10584,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10556,10 +10683,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10647,10 +10774,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10754,10 +10881,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -10861,10 +10988,10 @@
             "basis": {
               "matched": "unsure",
               "mode": "enum",
-              "path": "control_verdict",
+              "path": "verdicts.control",
               "value": "unsure"
             },
-            "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+            "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
             "evidence_refs": [
               {
                 "metadata": {
@@ -11066,7 +11193,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -11102,7 +11229,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "support"
                 },
                 "evidence": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
@@ -11138,10 +11265,10 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "support"
                 },
-                "evidence": "prod-web-01 is internet-facing. Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
+                "evidence": "Approved class-aware control coverage: Edge WAF blocks path_traversal (Validated Edge WAF rule set against replayed path traversal requests).",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -11266,7 +11393,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
@@ -11303,7 +11430,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "support"
                 },
                 "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
@@ -11340,10 +11467,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -11461,7 +11588,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
@@ -11490,7 +11617,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "support"
                 },
                 "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
@@ -11519,10 +11646,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "prod-web-01 is internet-facing; active controls require review: Edge WAF",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -11656,7 +11783,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -11709,7 +11836,7 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "unsure"
                 },
                 "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -11762,10 +11889,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -11915,7 +12042,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -11960,7 +12087,7 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "unsure"
                 },
                 "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -12005,10 +12132,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -12166,7 +12293,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -12227,7 +12354,7 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "unsure"
                 },
                 "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -12288,10 +12415,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -12465,7 +12592,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -12526,7 +12653,7 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "unsure"
                 },
                 "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -12587,10 +12714,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {
@@ -12764,7 +12891,7 @@
                 "basis": {
                   "matched": "support",
                   "mode": "enum",
-                  "path": "affected_verdict",
+                  "path": "verdicts.affected",
                   "value": "support"
                 },
                 "evidence": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
@@ -12825,7 +12952,7 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "exploitability_verdict",
+                  "path": "verdicts.exploitability",
                   "value": "unsure"
                 },
                 "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
@@ -12886,10 +13013,10 @@
                 "basis": {
                   "matched": "unsure",
                   "mode": "enum",
-                  "path": "control_verdict",
+                  "path": "verdicts.control",
                   "value": "unsure"
                 },
-                "evidence": "auth-api-01 is production asset with unsure exploitability; active controls require review: Admin VPN ACL",
+                "evidence": "Active controls require review before claiming mitigation; no approved vulnerability classes were available.",
                 "evidence_refs": [
                   {
                     "metadata": {

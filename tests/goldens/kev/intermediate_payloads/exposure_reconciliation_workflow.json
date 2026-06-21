@@ -109,6 +109,31 @@
         "step_id": "affected_assessments"
       },
       {
+        "alias": "affected_candidates",
+        "counts": {
+          "duplicate_count": 0,
+          "input_count": 245,
+          "output_count": 245
+        },
+        "kind": "dedupe_items",
+        "metadata": {
+          "input_ref": "$steps.affected_assessments.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>",
+            "<RECEIPT_2>"
+          ],
+          "source_ref": "$steps.affected_assessments.items",
+          "source_step": "affected_assessments",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.affected_assessments.items",
+        "source_step": "affected_assessments",
+        "step_id": "affected_candidates"
+      },
+      {
         "alias": "accepted_exposures",
         "counts": {
           "returned_results": 61,
@@ -254,6 +279,11 @@
       "accepted_exposures": {
         "returned_results": 61,
         "total_results": 61
+      },
+      "affected_candidates": {
+        "duplicate_count": 0,
+        "input_count": 245,
+        "output_count": 245
       },
       "asset_products": {
         "returned_results": 50,
@@ -4802,7 +4832,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-1",
@@ -4837,7 +4868,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_exact=2.4.49",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-1",
@@ -4864,7 +4896,8 @@
             "product_id": "apache-http-server",
             "rationale": "Installed version 2.4.49 fits the affected range; version_start_including=2.4.0; version_end_excluding=2.4.60; fixed_version=2.4.60",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -4915,7 +4948,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -4958,7 +4992,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5017,7 +5052,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5076,7 +5112,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           },
           {
             "asset_id": "ASSET-10",
@@ -5135,7 +5172,8 @@
             "product_id": "oracle-weblogic-server",
             "rationale": "Installed version 14.1.1.0.0 fits the affected range; version_exact=14.1.1.0.0",
             "source": "qualys",
-            "verdict": "support"
+            "verdict": "support",
+            "verdict_rank": 2
           }
         ],
         "items_count": 245,
