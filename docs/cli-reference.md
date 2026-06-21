@@ -2078,6 +2078,7 @@ cruxible query inline \
 **Subcommands:**
 
 - `cruxible server info` - Show live daemon metadata such as agent mode and state dir.
+- `cruxible server restart` - Re-exec the live daemon in place, preserving its port, state dir, and env.
 
 **Output And Side Effects:**
 - Command-specific output only.
@@ -2102,6 +2103,31 @@ cruxible query inline \
 **Output And Side Effects:**
 - Prints daemon version, server requirement, auth enabled/required status, state
   directory, and instance count. With `--json`, returns the same fields.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible server restart
+
+**Usage:** `cruxible server restart [OPTIONS]`
+
+**Purpose:** Re-exec the live daemon in place, preserving its port, state dir, and env.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+| `--no-wait` | no | `False` | boolean | Return immediately after scheduling the restart, without confirming the daemon is back. |
+| `--timeout` | no | `30.0` | float | Seconds to wait for the restarted daemon to answer again. |
+
+**Output And Side Effects:**
+- Replaces the daemon's own process image (`os.execv`), preserving port, state
+  directory, and environment, so it picks up code changes without losing its
+  transport or instances. By default waits for the new image to answer and
+  prints the confirmed version; `--no-wait` skips the wait. Requires ADMIN.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -2331,6 +2357,97 @@ cruxible source dereference \
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible instance
+
+**Usage:** `cruxible instance [OPTIONS]`
+
+**Purpose:** Back up and restore exact Cruxible instances.
+
+**Subcommands:**
+
+- `cruxible instance snapshot` - Write a portable same-identity backup artifact for the current instance.
+- `cruxible instance restore` - Restore a same-identity backup artifact.
+- `cruxible instance relocate` - Move the current healthy instance to a new directory, preserving identity.
+
+**Output And Side Effects:**
+- Command-specific output only.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible instance snapshot
+
+**Usage:** `cruxible instance snapshot [OPTIONS] ARTIFACT_PATH`
+
+**Purpose:** Write a portable same-identity backup artifact for the current instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ARTIFACT_PATH` | yes |  | path | Destination path for the backup artifact. |
+| `--label` | no |  | text | Optional human label for the backup artifact. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Writes a portable same-identity backup artifact (including the authoritative
+  state database) for the current instance. Requires ADMIN.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible instance restore
+
+**Usage:** `cruxible instance restore [OPTIONS] ARTIFACT_PATH`
+
+**Purpose:** Restore a same-identity backup artifact.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `ARTIFACT_PATH` | yes |  | path | Backup artifact to restore from. |
+| `--at` | no |  | text | Restore target root directory. |
+| `--activate / --no-activate` | no |  | boolean | Make the restored server instance the active CLI context instance. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Restores a daemon-backed instance from a same-identity backup artifact.
+  Requires ADMIN.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible instance relocate
+
+**Usage:** `cruxible instance relocate [OPTIONS]`
+
+**Purpose:** Move the current healthy instance to a new directory, preserving identity.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--to` | yes |  | text | New root directory for the instance. |
+| `--remove-source / --keep-source` | no | `keep-source` | boolean | Delete the old directory after a successful relocate (default: keep it). |
+| `--activate / --no-activate` | no |  | boolean | Make the relocated server instance the active CLI context instance. |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Moves a healthy daemon-backed instance to a new directory while preserving
+  its identity; the registry is repointed to the new location. Requires ADMIN.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

@@ -88,6 +88,74 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
+## cruxible_instance_snapshot
+
+**Permission:** `ADMIN`
+
+**Purpose:** Use when you need a portable same-identity backup of an instance, including its authoritative state database.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `artifact_path` | yes | string |  |
+| `label` | no | string | null |  |
+
+**Returns:** The backup artifact path and the instance identity it captured.
+
+**Side Effects:** Writes a portable backup artifact to disk; does not mutate instance state.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_instance_restore
+
+**Permission:** `ADMIN`
+
+**Purpose:** Use when you need to restore a daemon-backed instance from a same-identity backup artifact.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `artifact_path` | yes | string |  |
+| `root_dir` | no | string | null |  |
+
+**Returns:** The restored instance id and status.
+
+**Side Effects:** Creates an instance directory from the artifact and registers it with the daemon.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
+## cruxible_instance_relocate
+
+**Permission:** `ADMIN`
+
+**Purpose:** Use when you need to move a healthy daemon-backed instance to a new directory while preserving its identity; the registry is repointed to the new location.
+
+**Arguments:**
+
+| Name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `instance_id` | yes | string |  |
+| `to_dir` | yes | string |  |
+| `remove_source` | no | boolean |  |
+
+**Returns:** The instance id and its new on-disk location.
+
+**Side Effects:** Moves the instance directory and repoints the registry to the new location.
+
+**Common Errors:**
+- Unknown `instance_id` or missing daemon configuration.
+- Permission mode too low for this tool.
+- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
+
 ## cruxible_validate
 
 **Permission:** `READ_ONLY`
