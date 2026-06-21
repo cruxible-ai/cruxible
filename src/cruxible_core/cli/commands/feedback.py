@@ -15,6 +15,7 @@ from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
     _get_client,
+    _guard_local_read_fallback,
     _require_instance_id,
     json_option,
 )
@@ -421,24 +422,39 @@ def outcome_cmd(
 
 @click.command("feedback-profile")
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
+@json_option
 @handle_errors
-def feedback_profile_cmd(relationship_type: str) -> None:
+def feedback_profile_cmd(relationship_type: str, output_json: bool) -> None:
     """Display the configured feedback profile for one relationship type."""
     client = _get_client()
     if client is not None:
         result = client.get_feedback_profile(_require_instance_id(), relationship_type)
         if not result.found:
+            if output_json:
+                _emit_json(None)
+                return
             click.echo("Not found.")
+            return
+        if output_json:
+            _emit_json(result.profile)
             return
         click.echo(yaml.safe_dump(result.profile, sort_keys=False))
         return
 
+    _guard_local_read_fallback()
     instance = CruxibleInstance.load()
     profile = service_get_feedback_profile(instance, relationship_type)
     if profile is None:
+        if output_json:
+            _emit_json(None)
+            return
         click.echo("Not found.")
         return
-    click.echo(yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False))
+    profile_dict = profile.model_dump(mode="json")
+    if output_json:
+        _emit_json(profile_dict)
+        return
+    click.echo(yaml.safe_dump(profile_dict, sort_keys=False))
 
 
 @click.command("outcome-profile")
@@ -457,6 +473,7 @@ def feedback_profile_cmd(relationship_type: str) -> None:
     help="Receipt surface type.",
 )
 @click.option("--surface-name", default=None, help="Receipt surface name.")
+@json_option
 @handle_errors
 def outcome_profile_cmd(
     anchor_type: str,
@@ -464,6 +481,7 @@ def outcome_profile_cmd(
     workflow_name: str | None,
     surface_type: str | None,
     surface_name: str | None,
+    output_json: bool,
 ) -> None:
     """Display the configured outcome profile for one anchor context."""
     client = _get_client()
@@ -477,12 +495,19 @@ def outcome_profile_cmd(
             surface_name=surface_name,
         )
         if not result.found:
+            if output_json:
+                _emit_json(None)
+                return
             click.echo("Not found.")
+            return
+        if output_json:
+            _emit_json({"profile_key": result.profile_key, "profile": result.profile})
             return
         click.echo(f"# profile_key: {result.profile_key}")
         click.echo(yaml.safe_dump(result.profile, sort_keys=False))
         return
 
+    _guard_local_read_fallback()
     instance = CruxibleInstance.load()
     profile_key, profile = service_get_outcome_profile(
         instance,
@@ -493,7 +518,14 @@ def outcome_profile_cmd(
         surface_name=surface_name,
     )
     if profile is None:
+        if output_json:
+            _emit_json(None)
+            return
         click.echo("Not found.")
         return
+    profile_dict = profile.model_dump(mode="json")
+    if output_json:
+        _emit_json({"profile_key": profile_key, "profile": profile_dict})
+        return
     click.echo(f"# profile_key: {profile_key}")
-    click.echo(yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False))
+    click.echo(yaml.safe_dump(profile_dict, sort_keys=False))

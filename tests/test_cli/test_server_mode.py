@@ -4468,6 +4468,8 @@ _READ_INVOCATIONS: list[tuple[str, list[str]]] = [
     ),
     ("analyze-feedback", ["analyze-feedback", "--relationship", "fits"]),
     ("analyze-outcomes", ["analyze-outcomes", "--anchor-type", "receipt"]),
+    ("feedback-profile", ["feedback-profile", "--relationship", "fits"]),
+    ("outcome-profile", ["outcome-profile", "--anchor-type", "receipt"]),
 ]
 
 
@@ -4721,3 +4723,159 @@ def test_server_mode_outcome_json_emits_payload(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload == {"outcome_id": "out-1"}
+
+
+def test_server_mode_feedback_profile_json_emits_profile(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def get_feedback_profile(self, _instance_id, relationship_type):
+            assert relationship_type == "fits"
+            return contracts.FeedbackProfileResult(
+                found=True,
+                relationship_type=relationship_type,
+                profile={"reason_codes": ["wrong_fit"], "require_reason": True},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.feedback._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback-profile",
+            "--relationship",
+            "fits",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {"reason_codes": ["wrong_fit"], "require_reason": True}
+
+
+def test_server_mode_feedback_profile_defaults_to_yaml(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # The profile commands still emit human-readable YAML when --json is omitted.
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def get_feedback_profile(self, _instance_id, relationship_type):
+            return contracts.FeedbackProfileResult(
+                found=True,
+                relationship_type=relationship_type,
+                profile={"require_reason": True},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.feedback._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback-profile",
+            "--relationship",
+            "fits",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "require_reason: true" in result.output
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.output)
+
+
+def test_server_mode_outcome_profile_json_emits_profile_and_key(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # JSON output preserves the profile_key alongside the profile so the key the
+    # human path prints as a comment is not lost in structured output.
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def get_outcome_profile(
+            self,
+            _instance_id,
+            *,
+            anchor_type,
+            relationship_type,
+            workflow_name,
+            surface_type,
+            surface_name,
+        ):
+            assert anchor_type == "receipt"
+            return contracts.OutcomeProfileResult(
+                found=True,
+                profile_key="receipt::*",
+                anchor_type="receipt",
+                profile={"outcomes": ["correct", "incorrect"]},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.feedback._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "outcome-profile",
+            "--anchor-type",
+            "receipt",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "profile_key": "receipt::*",
+        "profile": {"outcomes": ["correct", "incorrect"]},
+    }
+
+
+def test_server_mode_feedback_profile_not_found_json_emits_null(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+
+    class StubClient:
+        def get_feedback_profile(self, _instance_id, relationship_type):
+            return contracts.FeedbackProfileResult(
+                found=False,
+                relationship_type=relationship_type,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands.feedback._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_x",
+            "feedback-profile",
+            "--relationship",
+            "fits",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) is None
