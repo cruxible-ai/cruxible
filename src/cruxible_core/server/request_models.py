@@ -101,14 +101,6 @@ class RenderWikiRequest(BaseModel):
         return self
 
 
-class IngestRequest(BaseModel):
-    mapping_name: str
-    data_csv: str | None = None
-    data_json: str | list[dict[str, Any]] | None = None
-    data_ndjson: str | None = None
-    upload_id: str | None = None
-
-
 class AddEntitiesRequest(BaseModel):
     entities: list[contracts.EntityInput]
     dry_run: bool = False
