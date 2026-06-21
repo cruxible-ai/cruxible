@@ -274,9 +274,9 @@ def test_build_local_state_requires_control_mitigation_effect(tmp_path: Path) ->
         base_path=KEV_REFERENCE_KIT_DIR / "config.yaml",
         overlay_path=KEV_KIT_DIR / "config.yaml",
     )
-    config.artifacts["local_seed_bundle"] = config.artifacts[
-        "local_seed_bundle"
-    ].model_copy(update={"uri": str(tmp_path / "data" / "seed")})
+    config.artifacts["local_seed_bundle"] = config.artifacts["local_seed_bundle"].model_copy(
+        update={"uri": str(tmp_path / "data" / "seed")}
+    )
     save_config(config, config_path)
     write_materialized_kit_metadata(tmp_path)
 
@@ -302,9 +302,7 @@ def test_kev_domain_providers_do_not_own_seed_table_inventory() -> None:
     assert config.providers["normalize_public_kev_reference"].artifact is None
 
     artifact_providers = {
-        name
-        for name, provider in config.providers.items()
-        if provider.artifact is not None
+        name for name, provider in config.providers.items() if provider.artifact is not None
     }
     assert artifact_providers == {"parse_public_kev_bundle", "parse_local_seed_bundle"}
 
@@ -563,6 +561,7 @@ def test_assess_asset_affected_uses_version_ranges() -> None:
             "rationale": payload["items"][0]["rationale"],
             "verdict": "support",
             "evidence_refs": [],
+            "verdict_rank": 2,
         },
         {
             "asset_id": "ASSET-3",
@@ -573,42 +572,70 @@ def test_assess_asset_affected_uses_version_ranges() -> None:
             "rationale": payload["items"][1]["rationale"],
             "verdict": "support",
             "evidence_refs": [],
-        }
+            "verdict_rank": 2,
+        },
+        {
+            "asset_id": "ASSET-3",
+            "cve_id": "CVE-2021-0002",
+            "product_id": "apache__http_server",
+            "installed_version": "2.4.49",
+            "source": "qualys",
+            "rationale": payload["items"][2]["rationale"],
+            "verdict": "unsure",
+            "evidence_refs": [],
+            "verdict_rank": 1,
+        },
     ]
 
 
 def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
     payload = assess_asset_exposure(
         {
-            "affected_edges": [
-                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
-                {"from_id": "ASSET-2", "to_id": "CVE-2021-0001", "properties": {}},
-            ],
-            "assets": [
+            "affected_asset_context": [
                 {
-                    "entity_id": "ASSET-1",
-                    "properties": {
-                        "hostname": "prod-web-01",
-                        "criticality": "critical",
-                        "environment": "production",
-                        "internet_exposed": True,
+                    "affected_item": {
+                        "asset_id": "ASSET-1",
+                        "cve_id": "CVE-2021-0001",
+                    },
+                    "asset_entity": {
+                        "entity_id": "ASSET-1",
+                        "properties": {
+                            "hostname": "prod-web-01",
+                            "criticality": "critical",
+                            "environment": "production",
+                            "internet_exposed": True,
+                        },
                     },
                 },
                 {
-                    "entity_id": "ASSET-2",
-                    "properties": {
-                        "hostname": "dev-app-01",
-                        "criticality": "low",
-                        "environment": "development",
-                        "internet_exposed": False,
+                    "affected_item": {
+                        "asset_id": "ASSET-2",
+                        "cve_id": "CVE-2021-0001",
+                    },
+                    "asset_entity": {
+                        "entity_id": "ASSET-2",
+                        "properties": {
+                            "hostname": "dev-app-01",
+                            "criticality": "low",
+                            "environment": "development",
+                            "internet_exposed": False,
+                        },
                     },
                 },
             ],
-            "asset_control_edges": [{"from_id": "ASSET-1", "to_id": "CTRL-1", "properties": {}}],
-            "controls": [
+            "active_control_bindings": [
                 {
-                    "entity_id": "CTRL-1",
-                    "properties": {"name": "WAF", "status": "active"},
+                    "asset_id": "ASSET-1",
+                    "control_id": "CTRL-1",
+                    "asset_control_edge": {
+                        "from_id": "ASSET-1",
+                        "to_id": "CTRL-1",
+                        "properties": {},
+                    },
+                    "control_entity": {
+                        "entity_id": "CTRL-1",
+                        "properties": {"name": "WAF", "status": "active"},
+                    },
                 }
             ],
         },
@@ -621,19 +648,19 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
             "cve_id": "CVE-2021-0001",
             "status": "exposed",
             "priority": "high",
-            "rationale": payload["items"][0]["rationale"],
             "product_id": "",
             "installed_version": "",
-            "affected_basis": "",
-            "affected_rationale": "",
-            "exposure_basis": payload["items"][0]["exposure_basis"],
-            "control_basis": payload["items"][0]["control_basis"],
-            "evidence_source": "",
+            "basis": {
+                "affected": "",
+                "exposure": payload["items"][0]["basis"]["exposure"],
+                "control": payload["items"][0]["basis"]["control"],
+            },
             "evidence_refs": [],
-            "affected_verdict": "support",
-            "exploitability_verdict": "support",
-            "control_verdict": "unsure",
-            "control_exposure_verdict": "unsure",
+            "verdicts": {
+                "affected": "support",
+                "exploitability": "support",
+                "control": "unsure",
+            },
             "control_effect": "",
         }
     ]
@@ -642,22 +669,24 @@ def test_assess_asset_exposure_derives_posture_and_control_signals() -> None:
 def test_assess_asset_exposure_critical_when_no_active_controls() -> None:
     payload = assess_asset_exposure(
         {
-            "affected_edges": [
-                {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
-            ],
-            "assets": [
+            "affected_asset_context": [
                 {
-                    "entity_id": "ASSET-1",
-                    "properties": {
-                        "hostname": "prod-web-01",
-                        "criticality": "critical",
-                        "environment": "production",
-                        "internet_exposed": True,
+                    "affected_item": {
+                        "asset_id": "ASSET-1",
+                        "cve_id": "CVE-2021-0001",
+                    },
+                    "asset_entity": {
+                        "entity_id": "ASSET-1",
+                        "properties": {
+                            "hostname": "prod-web-01",
+                            "criticality": "critical",
+                            "environment": "production",
+                            "internet_exposed": True,
+                        },
                     },
                 },
             ],
-            "asset_control_edges": [],
-            "controls": [],
+            "active_control_bindings": [],
         },
         _provider_context(None),
     )
@@ -668,19 +697,19 @@ def test_assess_asset_exposure_critical_when_no_active_controls() -> None:
             "cve_id": "CVE-2021-0001",
             "status": "exposed",
             "priority": "critical",
-            "rationale": payload["items"][0]["rationale"],
             "product_id": "",
             "installed_version": "",
-            "affected_basis": "",
-            "affected_rationale": "",
-            "exposure_basis": payload["items"][0]["exposure_basis"],
-            "control_basis": payload["items"][0]["control_basis"],
-            "evidence_source": "",
+            "basis": {
+                "affected": "",
+                "exposure": payload["items"][0]["basis"]["exposure"],
+                "control": payload["items"][0]["basis"]["control"],
+            },
             "evidence_refs": [],
-            "affected_verdict": "support",
-            "exploitability_verdict": "support",
-            "control_verdict": "support",
-            "control_exposure_verdict": "support",
+            "verdicts": {
+                "affected": "support",
+                "exploitability": "support",
+                "control": "support",
+            },
             "control_effect": "",
         }
     ]
@@ -691,51 +720,56 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
     def run_with(effect: str, *, class_match: bool = True) -> dict[str, object]:
         return assess_asset_exposure(
             {
-                "affected_edges": [
-                    {"from_id": "ASSET-1", "to_id": "CVE-2021-0001", "properties": {}},
-                ],
-                "assets": [
+                "affected_asset_context": [
                     {
-                        "entity_id": "ASSET-1",
-                        "properties": {
-                            "hostname": "prod-web-01",
-                            "criticality": "critical",
-                            "environment": "production",
-                            "internet_exposed": True,
+                        "affected_item": {
+                            "asset_id": "ASSET-1",
+                            "cve_id": "CVE-2021-0001",
+                        },
+                        "asset_entity": {
+                            "entity_id": "ASSET-1",
+                            "properties": {
+                                "hostname": "prod-web-01",
+                                "criticality": "critical",
+                                "environment": "production",
+                                "internet_exposed": True,
+                            },
                         },
                     },
                 ],
-                "asset_control_edges": [
+                "active_control_bindings": [
                     {
-                        "from_id": "ASSET-1",
-                        "to_id": "CTRL-1",
-                        "properties": {},
-                        "metadata": {
-                            "evidence": {
+                        "asset_id": "ASSET-1",
+                        "control_id": "CTRL-1",
+                        "asset_control_edge": {
+                            "from_id": "ASSET-1",
+                            "to_id": "CTRL-1",
+                            "properties": {},
+                            "metadata": {
+                                "evidence": {
+                                    "evidence_refs": [
+                                        {
+                                            "source": "control_inventory",
+                                            "source_record_id": "asset-control-1",
+                                        }
+                                    ]
+                                }
+                            },
+                        },
+                        "control_entity": {
+                            "entity_id": "CTRL-1",
+                            "properties": {
+                                "name": "WAF",
+                                "status": "active",
                                 "evidence_refs": [
                                     {
-                                        "source": "control_inventory",
-                                        "source_record_id": "asset-control-1",
+                                        "source": "control_catalog",
+                                        "source_record_id": "CTRL-1",
                                     }
-                                ]
-                            }
+                                ],
+                            },
                         },
-                    }
-                ],
-                "controls": [
-                    {
-                        "entity_id": "CTRL-1",
-                        "properties": {
-                            "name": "WAF",
-                            "status": "active",
-                            "evidence_refs": [
-                                {
-                                    "source": "control_catalog",
-                                    "source_record_id": "CTRL-1",
-                                }
-                            ],
-                        },
-                    }
+                    },
                 ],
                 "vulnerability_classification_edges": [
                     {
@@ -781,9 +815,9 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
     mitigated = run_with("blocks")
     assert mitigated["status"] == "mitigated"
     assert mitigated["priority"] == "medium"
-    assert mitigated["control_verdict"] == "support"
+    assert mitigated["verdicts"]["control"] == "support"
     assert mitigated["control_effect"] == "blocks"
-    assert "WAF blocks path_traversal" in str(mitigated["control_basis"])
+    assert "WAF blocks path_traversal" in str(mitigated["basis"]["control"])
     evidence_sources = {ref["source"] for ref in mitigated["evidence_refs"]}
     assert {
         "control_inventory",
@@ -795,25 +829,25 @@ def test_assess_asset_exposure_uses_class_aware_control_mitigation() -> None:
     compensated = run_with("compensates")
     assert compensated["status"] == "mitigated"
     assert compensated["priority"] == "medium"
-    assert compensated["control_verdict"] == "support"
+    assert compensated["verdicts"]["control"] == "support"
     assert compensated["control_effect"] == "compensates"
 
     reduced = run_with("reduces")
     assert reduced["status"] == "exposed"
     assert reduced["priority"] == "high"
-    assert reduced["control_verdict"] == "support"
+    assert reduced["verdicts"]["control"] == "support"
     assert reduced["control_effect"] == "reduces"
 
     detected = run_with("detects")
     assert detected["status"] == "exposed"
     assert detected["priority"] == "critical"
-    assert detected["control_verdict"] == "support"
+    assert detected["verdicts"]["control"] == "support"
     assert detected["control_effect"] == "detects"
 
     no_match = run_with("blocks", class_match=False)
     assert no_match["status"] == "exposed"
     assert no_match["priority"] == "high"
-    assert no_match["control_verdict"] == "unsure"
+    assert no_match["verdicts"]["control"] == "unsure"
     assert no_match["control_effect"] == ""
 
 
@@ -900,9 +934,7 @@ def test_propose_asset_exposure_mitigated_control_signal_supports_candidate(
 
     assert group is not None
     assert group.review_priority == "review"
-    member = next(
-        item for item in members if item.from_id == asset_id and item.to_id == cve_id
-    )
+    member = next(item for item in members if item.from_id == asset_id and item.to_id == cve_id)
     assert member.properties["status"] == "mitigated"
     assert member.properties["priority"] == "medium"
     signals = {signal.signal_source: signal.signal for signal in member.signals}
@@ -922,9 +954,7 @@ def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
                             "evidence_refs": [
                                 {
                                     "source": "accepted_posture",
-                                    "source_record_id": (
-                                        "ASSET-1:CVE-2021-0001:accepted"
-                                    ),
+                                    "source_record_id": ("ASSET-1:CVE-2021-0001:accepted"),
                                 }
                             ],
                             "rationale": "Previously accepted exposure evidence.",
@@ -956,7 +986,7 @@ def test_assess_exposure_reconciliation_closes_stale_reference_pairs() -> None:
                 {
                     "source": "kev_reference_reconciliation",
                     "source_record_id": "ASSET-1:CVE-2021-0001",
-                }
+                },
             ],
             "rationale": payload["items"][0]["rationale"],
             "verdict": "support",
@@ -1155,9 +1185,7 @@ def test_broad_context_queries_include_reviewable_provenance(
     service_asset = graph.list_edges("service_depends_on_asset")[0]
     asset_id = service_asset["to_id"]
     owner_id = next(
-        edge["to_id"]
-        for edge in graph.list_edges("asset_owned_by")
-        if edge["from_id"] == asset_id
+        edge["to_id"] for edge in graph.list_edges("asset_owned_by") if edge["from_id"] == asset_id
     )
 
     base_posture_properties = {
@@ -1293,12 +1321,8 @@ def test_owner_patch_queue_excludes_remediated_pairs(tmp_path: Path) -> None:
     _approve_workflow_group(instance, "propose_asset_exposure")
 
     graph = instance.load_graph()
-    asset_to_owner = {
-        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
-    }
-    assets_with_services = {
-        edge["to_id"] for edge in graph.list_edges("service_depends_on_asset")
-    }
+    asset_to_owner = {edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")}
+    assets_with_services = {edge["to_id"] for edge in graph.list_edges("service_depends_on_asset")}
     product_to_vendor = {
         edge["from_id"]: edge["to_id"] for edge in graph.list_edges("product_from_vendor")
     }
@@ -1426,9 +1450,7 @@ def test_owner_patch_queue_excludes_non_exposed_posture_rows(tmp_path: Path) -> 
     _approve_workflow_group(instance, "propose_asset_exposure")
 
     graph = instance.load_graph()
-    asset_to_owner = {
-        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
-    }
+    asset_to_owner = {edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")}
     assert asset_to_owner
     asset_id, owner_id = sorted(asset_to_owner.items())[0]
 
@@ -1503,9 +1525,7 @@ def test_owner_patch_queue_excludes_scoped_exception_pairs(tmp_path: Path) -> No
     _approve_workflow_group(instance, "propose_asset_exposure")
 
     graph = instance.load_graph()
-    asset_to_owner = {
-        edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")
-    }
+    asset_to_owner = {edge["from_id"]: edge["to_id"] for edge in graph.list_edges("asset_owned_by")}
     owner_vuln_counts: dict[tuple[str, str], int] = {}
     unique_pair: tuple[str, str, str] | None = None
     for edge in graph.list_edges("asset_vulnerability_posture"):
@@ -1590,9 +1610,7 @@ def test_exposure_reconciliation_no_candidates_completes_without_group(
     assert proposed.receipt.committed is False
     group_store = instance.get_group_store()
     try:
-        groups = group_store.list_groups(
-            relationship_type="asset_remediated_vulnerability"
-        )
+        groups = group_store.list_groups(relationship_type="asset_remediated_vulnerability")
     finally:
         group_store.close()
     assert groups == []

@@ -17,12 +17,45 @@ customize the policy for their own environment.
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from typing import Any
 
 from cruxible_core.provider.payloads import JsonItems, evidence_ref, merge_evidence_refs
 from cruxible_core.provider.types import ProviderContext
 
 from .versioning import _assess_version_membership
+
+DEFAULT_ASSESSMENT_POLICY: dict[str, Any] = {
+    "exploitability": {
+        "direct_exposure_verdict": "support",
+        "reviewable_environments": ["production"],
+        "reviewable_environment_verdict": "unsure",
+        "default_verdict": "contradict",
+    },
+    "priority": {
+        "elevated_exploitability_verdict": "support",
+        "elevated_control_verdict": "support",
+        "elevated_priority_by_criticality": {
+            "critical": "critical",
+            "default": "high",
+        },
+        "high_priority_criticalities": ["critical", "high"],
+        "high_priority": "high",
+        "default_priority": "medium",
+        "mitigated_priority_by_current_priority": {
+            "critical": "medium",
+            "high": "medium",
+            "medium": "low",
+            "low": "low",
+        },
+        "reducing_control_effects": ["reduces"],
+        "priority_order": ["low", "medium", "high", "critical"],
+    },
+    "control_effects": {
+        "rank": ["blocks", "compensates", "reduces", "detects"],
+        "mitigating": ["blocks", "compensates"],
+    },
+}
 
 
 def assess_asset_affected(
@@ -39,16 +72,13 @@ def assess_asset_affected(
     is known fixed, or outside the affected range, is dropped so it does not
     create a noisy asset/vulnerability item.
 
-    If several installed products point to the same asset and CVE, the output
-    keeps one row for that asset/CVE pair. That matches the demo kit's model:
-    the thing to review is the asset's current posture for that vulnerability,
-    not every individual product path. If your environment needs product-by-
-    product posture, this is one of the places to customize.
+    The provider intentionally returns one row for each supported joined product
+    path. The workflow owns pair-level deduplication with ``dedupe_items`` so
+    this function stays focused on version membership instead of collection
+    shaping.
     """
-    joined_product_edges = JsonItems.from_payload(
-        input_payload, key="joined_product_edges"
-    ).items
-    rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    joined_product_edges = JsonItems.from_payload(input_payload, key="joined_product_edges").items
+    rows: list[dict[str, Any]] = []
     for joined_row in joined_product_edges:
         edge = _nested_mapping(joined_row, "asset_product_edge")
         vulnerability_edge = _nested_mapping(joined_row, "vulnerability_product_edge")
@@ -91,13 +121,21 @@ def assess_asset_affected(
                 _evidence_refs(edge),
                 _evidence_refs(vulnerability_edge),
             ),
+            "verdict_rank": _verdict_rank(verdict),
         }
-        key = (asset_id, cve_id)
-        current = rows_by_pair.get(key)
-        if current is None or _verdict_rank(verdict) > _verdict_rank(current["verdict"]):
-            rows_by_pair[key] = row
+        rows.append(row)
 
-    return JsonItems(items=[rows_by_pair[key] for key in sorted(rows_by_pair)]).to_payload()
+    return JsonItems(
+        items=sorted(
+            rows,
+            key=lambda item: (
+                str(item["asset_id"]),
+                str(item["cve_id"]),
+                -int(item["verdict_rank"]),
+                str(item["product_id"]),
+            ),
+        )
+    ).to_payload()
 
 
 def assess_asset_exposure(
@@ -106,8 +144,9 @@ def assess_asset_exposure(
 ) -> dict[str, Any]:
     """Decide whether an affected asset should be treated as exposed.
 
-    This is the main triage decision in the demo kit. It starts with "the asset
-    appears affected by the CVE" and adds business and control context:
+    This is the main triage decision in the demo kit. The workflow supplies
+    affected asset rows joined to their asset record plus active control
+    bindings. This function applies the kit's domain policy:
 
     - internet-facing assets are treated as directly exposed;
     - production assets still matter even when they are not internet-facing;
@@ -120,14 +159,14 @@ def assess_asset_exposure(
     - controls that only ``detect`` preserve useful context but do not claim
       mitigation.
 
-    These are not universal rules. They are the demo kit's starting policy. A
-    user or agent should change this function when their exposure model, control
-    taxonomy, or priority policy differs.
+    These are not universal rules. The workflow passes ``assessment_policy`` so
+    kit authors can change exposure, priority, and control-effect knobs in
+    config. ``DEFAULT_ASSESSMENT_POLICY`` exists for direct provider tests and
+    as a documented fallback when older callers omit the policy payload.
     """
-    affected_items = _affected_items(input_payload)
-    assets = JsonItems.from_payload(input_payload, key="assets").items
-    asset_control_edges = JsonItems.from_payload(input_payload, key="asset_control_edges").items
-    controls = JsonItems.from_payload(input_payload, key="controls").items
+    policy = _assessment_policy(input_payload)
+    affected_asset_context = _affected_asset_context(input_payload)
+    active_control_bindings = _active_control_bindings(input_payload)
     classification_edges = (
         JsonItems.from_payload(input_payload, key="vulnerability_classification_edges").items
         if "vulnerability_classification_edges" in input_payload
@@ -139,41 +178,39 @@ def assess_asset_exposure(
         else []
     )
 
-    assets_by_id = {_entity_id(entity): _entity_properties(entity) for entity in assets}
-    controls_by_id = {_entity_id(entity): _entity_properties(entity) for entity in controls}
     classes_by_vulnerability = _classes_by_vulnerability(classification_edges)
     mitigations_by_control_class = _mitigations_by_control_class(control_mitigation_edges)
     active_controls_by_asset: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for edge in asset_control_edges:
-        asset_id = _edge_from_id(edge)
-        control_id = _edge_to_id(edge)
+    for binding in active_control_bindings:
+        asset_id = _first_non_empty(binding.get("asset_id")) or ""
+        control_id = _first_non_empty(binding.get("control_id")) or ""
         if not asset_id or not control_id:
             continue
-        control = controls_by_id.get(control_id)
-        if control is None or _first_non_empty(control.get("status")) != "active":
-            continue
+        control = _entity_properties(_nested_mapping(binding, "control_entity"))
         active_controls_by_asset[asset_id].append(
             {
                 "control_id": control_id,
                 **control,
                 "evidence_refs": merge_evidence_refs(
-                    _evidence_refs(edge),
+                    _evidence_refs(_nested_mapping(binding, "asset_control_edge")),
+                    _evidence_refs(_nested_mapping(binding, "control_entity")),
                     _evidence_refs(control),
                 ),
             }
         )
 
     rows_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
-    for item in affected_items:
+    for context in affected_asset_context:
+        item = _nested_mapping(context, "affected_item")
+        asset = _entity_properties(_nested_mapping(context, "asset_entity"))
         asset_id = _first_non_empty(item.get("asset_id")) or _edge_from_id(item)
         cve_id = _first_non_empty(item.get("cve_id")) or _edge_to_id(item)
         if not asset_id or not cve_id:
             continue
 
         properties = _edge_properties(item)
-        asset = assets_by_id.get(asset_id, {})
         active_controls = active_controls_by_asset.get(asset_id, [])
-        exploitability_verdict = _derive_exploitability_verdict(asset)
+        exploitability_verdict = _derive_exploitability_verdict(asset, policy)
         if exploitability_verdict == "contradict":
             continue
 
@@ -181,29 +218,36 @@ def assess_asset_exposure(
             active_controls,
             classes_by_vulnerability.get(cve_id, []),
             mitigations_by_control_class,
+            policy,
         )
         control_verdict = str(control_assessment["verdict"])
         status = str(control_assessment["status"])
-        priority = _derive_exposure_priority(asset, exploitability_verdict, control_verdict)
-        priority = _adjust_priority_for_control_effect(priority, control_assessment)
-        rationale = _build_exposure_rationale(
+        priority = _derive_exposure_priority(
+            asset,
+            exploitability_verdict,
+            control_verdict,
+            policy,
+        )
+        priority = _adjust_priority_for_control_effect(priority, control_assessment, policy)
+        exposure_basis = _build_exposure_rationale(
             asset,
             active_controls,
             exploitability_verdict,
             control_assessment,
         )
-        affected_basis = _first_non_empty(
-            item.get("rationale"),
-            properties.get("rationale"),
-            properties.get("affected_basis"),
-        ) or ""
-        exposure_basis = rationale
+        affected_basis = (
+            _first_non_empty(
+                item.get("rationale"),
+                properties.get("rationale"),
+                properties.get("affected_basis"),
+            )
+            or ""
+        )
         rows_by_pair[(asset_id, cve_id)] = {
             "asset_id": asset_id,
             "cve_id": cve_id,
             "status": status,
             "priority": priority,
-            "rationale": rationale,
             "product_id": _first_non_empty(item.get("product_id"), properties.get("product_id"))
             or "",
             "installed_version": _first_non_empty(
@@ -211,22 +255,22 @@ def assess_asset_exposure(
                 properties.get("installed_version"),
             )
             or "",
-            "affected_basis": affected_basis,
-            "affected_rationale": affected_basis,
-            "exposure_basis": exposure_basis,
-            "control_basis": str(control_assessment["basis"]),
-            "evidence_source": _first_non_empty(item.get("source"), properties.get("source"))
-            or "",
+            "basis": {
+                "affected": affected_basis,
+                "exposure": exposure_basis,
+                "control": str(control_assessment["basis"]),
+            },
             "evidence_refs": merge_evidence_refs(
                 _evidence_refs(item),
                 _evidence_refs(properties),
                 control_assessment.get("evidence_refs", []),
             ),
-            "affected_verdict": _first_non_empty(item.get("verdict"), properties.get("verdict"))
-            or "support",
-            "exploitability_verdict": exploitability_verdict,
-            "control_verdict": control_verdict,
-            "control_exposure_verdict": str(control_assessment["exposure_verdict"]),
+            "verdicts": {
+                "affected": _first_non_empty(item.get("verdict"), properties.get("verdict"))
+                or "support",
+                "exploitability": exploitability_verdict,
+                "control": control_verdict,
+            },
             "control_effect": str(control_assessment["effect"]),
         }
 
@@ -341,6 +385,53 @@ def _affected_items(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return raw_items
 
 
+def _affected_asset_context(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items = input_payload.get("affected_asset_context")
+    if raw_items is not None:
+        if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
+            raise ValueError("Expected 'affected_asset_context' to be a list of objects")
+        return raw_items
+
+    assets = JsonItems.from_payload(input_payload, key="assets").items
+    assets_by_id = {_entity_id(entity): entity for entity in assets}
+    context: list[dict[str, Any]] = []
+    for item in _affected_items(input_payload):
+        asset_id = _first_non_empty(item.get("asset_id")) or _edge_from_id(item)
+        if not asset_id or asset_id not in assets_by_id:
+            continue
+        context.append({"affected_item": item, "asset_entity": assets_by_id[asset_id]})
+    return context
+
+
+def _active_control_bindings(input_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items = input_payload.get("active_control_bindings")
+    if raw_items is not None:
+        if not isinstance(raw_items, list) or not all(isinstance(item, dict) for item in raw_items):
+            raise ValueError("Expected 'active_control_bindings' to be a list of objects")
+        return raw_items
+
+    asset_control_edges = JsonItems.from_payload(input_payload, key="asset_control_edges").items
+    controls = JsonItems.from_payload(input_payload, key="controls").items
+    controls_by_id = {_entity_id(entity): entity for entity in controls}
+    bindings: list[dict[str, Any]] = []
+    for edge in asset_control_edges:
+        control_id = _edge_to_id(edge)
+        control_entity = controls_by_id.get(control_id)
+        if control_entity is None:
+            continue
+        if _first_non_empty(_entity_properties(control_entity).get("status")) != "active":
+            continue
+        bindings.append(
+            {
+                "asset_id": _edge_from_id(edge),
+                "control_id": control_id,
+                "asset_control_edge": edge,
+                "control_entity": control_entity,
+            }
+        )
+    return bindings
+
+
 def _edge_from_id(edge: dict[str, Any]) -> str:
     return _first_non_empty(edge.get("from_id")) or ""
 
@@ -450,6 +541,42 @@ def _mitigations_by_control_class(
     }
 
 
+def _assessment_policy(input_payload: dict[str, Any]) -> dict[str, Any]:
+    raw_policy = input_payload.get("assessment_policy")
+    policy = deepcopy(DEFAULT_ASSESSMENT_POLICY)
+    if raw_policy is None:
+        return policy
+    if not isinstance(raw_policy, dict):
+        raise ValueError("Expected 'assessment_policy' to be an object")
+    return _deep_merge(policy, raw_policy)
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _policy_section(policy: dict[str, Any], name: str) -> dict[str, Any]:
+    value = policy.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def _string_mapping(value: Any) -> dict[str, str]:
+    if isinstance(value, dict):
+        return {str(key): str(item) for key, item in value.items()}
+    return {}
+
+
 def _stale_exposure_remediation_type(
     asset_id: str,
     cve_id: str,
@@ -487,7 +614,7 @@ def _stale_exposure_rationale(
     )
 
 
-def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:
+def _derive_exploitability_verdict(asset: dict[str, Any], policy: dict[str, Any]) -> str:
     """Decide whether the asset looks reachable enough to review.
 
     Internet exposure is treated as strong evidence. Production systems remain
@@ -497,20 +624,22 @@ def _derive_exploitability_verdict(asset: dict[str, Any]) -> str:
     """
     internet_exposed = asset.get("internet_exposed")
     environment = _first_non_empty(asset.get("environment")) or ""
-    criticality = _first_non_empty(asset.get("criticality")) or ""
+    exploitability_policy = _policy_section(policy, "exploitability")
     if internet_exposed is True:
-        return "support"
-    if environment == "production" and criticality in {"critical", "high"}:
-        return "unsure"
-    if environment == "production":
-        return "unsure"
-    return "contradict"
+        return str(exploitability_policy.get("direct_exposure_verdict", "support"))
+    reviewable_environments = set(
+        _string_list(exploitability_policy.get("reviewable_environments"))
+    )
+    if environment in reviewable_environments:
+        return str(exploitability_policy.get("reviewable_environment_verdict", "unsure"))
+    return str(exploitability_policy.get("default_verdict", "contradict"))
 
 
 def _derive_exposure_priority(
     asset: dict[str, Any],
     exploitability_verdict: str,
     control_verdict: str,
+    policy: dict[str, Any],
 ) -> str:
     """Choose the first review priority before control effects are applied.
 
@@ -519,18 +648,28 @@ def _derive_exposure_priority(
     production assets also stay high enough for review even when some evidence is
     uncertain. Control coverage may lower the priority later.
     """
+    priority_policy = _policy_section(policy, "priority")
     criticality = _first_non_empty(asset.get("criticality")) or ""
-    if exploitability_verdict == "support" and control_verdict == "support":
-        return "critical" if criticality == "critical" else "high"
-    if criticality in {"critical", "high"}:
-        return "high"
-    return "medium"
+    if exploitability_verdict == str(
+        priority_policy.get("elevated_exploitability_verdict", "support")
+    ) and control_verdict == str(priority_policy.get("elevated_control_verdict", "support")):
+        elevated_priorities = _string_mapping(
+            priority_policy.get("elevated_priority_by_criticality")
+        )
+        return elevated_priorities.get(
+            criticality,
+            elevated_priorities.get("default", "high"),
+        )
+    if criticality in set(_string_list(priority_policy.get("high_priority_criticalities"))):
+        return str(priority_policy.get("high_priority", "high"))
+    return str(priority_policy.get("default_priority", "medium"))
 
 
 def _assess_class_aware_controls(
     active_controls: list[dict[str, Any]],
     vulnerability_classes: list[dict[str, Any]],
     mitigations_by_control_class: dict[tuple[str, str], list[dict[str, Any]]],
+    policy: dict[str, Any],
 ) -> dict[str, Any]:
     """Decide whether the asset's active controls help with this CVE.
 
@@ -581,7 +720,7 @@ def _assess_class_aware_controls(
     matches = sorted(
         matches,
         key=lambda item: (
-            _control_effect_rank(str(item.get("effect", ""))),
+            _control_effect_rank(str(item.get("effect", "")), policy),
             str(item.get("control_name", "")),
             str(item.get("class_id", "")),
         ),
@@ -599,8 +738,7 @@ def _assess_class_aware_controls(
             "exposure_verdict": "unsure",
             "effect": "",
             "basis": (
-                "Active controls require review before claiming mitigation; "
-                f"{class_clause}."
+                f"Active controls require review before claiming mitigation; {class_clause}."
             ),
             "matches": [],
             "evidence_refs": [],
@@ -609,10 +747,9 @@ def _assess_class_aware_controls(
     strongest = matches[0]
     effect = str(strongest.get("effect", ""))
     basis = _class_aware_control_basis(matches)
-    evidence_refs = merge_evidence_refs(
-        *(match.get("evidence_refs", []) for match in matches)
-    )
-    if effect in {"blocks", "compensates"}:
+    evidence_refs = merge_evidence_refs(*(match.get("evidence_refs", []) for match in matches))
+    control_policy = _policy_section(policy, "control_effects")
+    if effect in set(_string_list(control_policy.get("mitigating"))):
         return {
             "status": "mitigated",
             "verdict": "support",
@@ -633,14 +770,13 @@ def _assess_class_aware_controls(
     }
 
 
-def _control_effect_rank(effect: str) -> int:
+def _control_effect_rank(effect: str, policy: dict[str, Any]) -> int:
     """Order control effects from strongest to weakest mitigation."""
-    return {
-        "blocks": 0,
-        "compensates": 1,
-        "reduces": 2,
-        "detects": 3,
-    }.get(effect, 4)
+    ranked_effects = _string_list(_policy_section(policy, "control_effects").get("rank"))
+    try:
+        return ranked_effects.index(effect)
+    except ValueError:
+        return len(ranked_effects)
 
 
 def _class_aware_control_basis(matches: list[dict[str, Any]]) -> str:
@@ -662,6 +798,7 @@ def _class_aware_control_basis(matches: list[dict[str, Any]]) -> str:
 def _adjust_priority_for_control_effect(
     priority: str,
     control_assessment: dict[str, Any],
+    policy: dict[str, Any],
 ) -> str:
     """Lower priority when controls reduce the need for urgent action.
 
@@ -672,21 +809,24 @@ def _adjust_priority_for_control_effect(
     """
     effect = str(control_assessment.get("effect", ""))
     status = str(control_assessment.get("status", ""))
+    priority_policy = _policy_section(policy, "priority")
     if status == "mitigated":
-        return "medium" if priority in {"critical", "high"} else "low"
-    if effect == "reduces":
-        return _lower_priority(priority)
+        mitigated_priorities = _string_mapping(
+            priority_policy.get("mitigated_priority_by_current_priority")
+        )
+        return mitigated_priorities.get(priority, priority)
+    if effect in set(_string_list(priority_policy.get("reducing_control_effects"))):
+        return _lower_priority(priority, policy)
     return priority
 
 
-def _lower_priority(priority: str) -> str:
+def _lower_priority(priority: str, policy: dict[str, Any]) -> str:
     """Move one step down the demo kit's urgency scale."""
-    return {
-        "critical": "high",
-        "high": "medium",
-        "medium": "low",
-        "low": "low",
-    }.get(priority, priority)
+    order = _string_list(_policy_section(policy, "priority").get("priority_order"))
+    if priority not in order:
+        return priority
+    index = order.index(priority)
+    return order[max(index - 1, 0)]
 
 
 def _build_exposure_rationale(
@@ -726,11 +866,7 @@ def _evidence_refs(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(metadata, dict):
         evidence = metadata.get("evidence")
         if isinstance(evidence, dict) and isinstance(evidence.get("evidence_refs"), list):
-            return [
-                dict(ref)
-                for ref in evidence["evidence_refs"]
-                if isinstance(ref, dict)
-            ]
+            return [dict(ref) for ref in evidence["evidence_refs"] if isinstance(ref, dict)]
     refs = payload.get("evidence_refs")
     if isinstance(refs, list):
         return [dict(ref) for ref in refs if isinstance(ref, dict)]

@@ -849,14 +849,15 @@ contracts:
       items: {type: json}
 
   AssetExposureAssessmentInput:
-    description: Transient affected candidates plus asset posture and control context.
+    description: >
+      Transient affected candidates joined to asset posture plus active control
+      bindings and config-owned assessment policy.
     fields:
-      affected_items: {type: json}
-      assets: {type: json}
-      asset_control_edges: {type: json}
-      controls: {type: json}
+      affected_asset_context: {type: json}
+      active_control_bindings: {type: json}
       vulnerability_classification_edges: {type: json, optional: true}
       control_mitigation_edges: {type: json, optional: true}
+      assessment_policy: {type: json}
 
   AssetExposureAssessmentResults:
     description: Candidate asset exposure judgments with exploitability and control signals.
@@ -1379,6 +1380,15 @@ workflows:
         input:
           joined_product_edges: $steps.affected_product_join.items
         as: affected_assessments
+      - id: affected_candidates
+        dedupe_items:
+          items: $steps.affected_assessments.items
+          keys:
+            - $item.asset_id
+            - $item.cve_id
+          strategy: max
+          rank: $item.verdict_rank
+        as: affected_candidates
       - id: assets
         query:
           mode: collection
@@ -1395,6 +1405,16 @@ workflows:
           op: gt
           value: 0
           message: Asset exposure proposal requires local Asset entities.
+      - id: affected_asset_context
+        join_items:
+          left_items: $steps.affected_candidates.items
+          right_items: $steps.assets.results
+          left_key: $item.asset_id
+          right_key: $item.entity_id
+          fields:
+            affected_item: $item.left
+            asset_entity: $item.right
+        as: affected_asset_context
       - id: asset_controls
         query:
           mode: collection
@@ -1413,6 +1433,26 @@ workflows:
       - id: require_complete_controls
         assert_not_truncated:
           step: controls
+      - id: asset_control_bindings
+        join_items:
+          left_items: $steps.asset_controls.results
+          right_items: $steps.controls.results
+          left_key: $item.to_id
+          right_key: $item.entity_id
+          fields:
+            asset_id: $item.left.from_id
+            control_id: $item.left.to_id
+            asset_control_edge: $item.left
+            control_entity: $item.right
+        as: asset_control_bindings
+      - id: active_control_bindings
+        filter_items:
+          items: $steps.asset_control_bindings.items
+          comparisons:
+            - left: $item.control_entity.properties.status
+              op: eq
+              right: active
+        as: active_control_bindings
       - id: vulnerability_classifications
         query:
           mode: collection
@@ -1435,12 +1475,35 @@ workflows:
       - id: assessments
         provider: assess_asset_exposure
         input:
-          affected_items: $steps.affected_assessments.items
-          assets: $steps.assets.results
-          asset_control_edges: $steps.asset_controls.results
-          controls: $steps.controls.results
+          affected_asset_context: $steps.affected_asset_context.items
+          active_control_bindings: $steps.active_control_bindings.items
           vulnerability_classification_edges: $steps.vulnerability_classifications.results
           control_mitigation_edges: $steps.control_mitigations.results
+          assessment_policy:
+            exploitability:
+              direct_exposure_verdict: support
+              reviewable_environments: [production]
+              reviewable_environment_verdict: unsure
+              default_verdict: contradict
+            priority:
+              elevated_exploitability_verdict: support
+              elevated_control_verdict: support
+              elevated_priority_by_criticality:
+                critical: critical
+                default: high
+              high_priority_criticalities: [critical, high]
+              high_priority: high
+              default_priority: medium
+              mitigated_priority_by_current_priority:
+                critical: medium
+                high: medium
+                medium: low
+                low: low
+              reducing_control_effects: [reduces]
+              priority_order: [low, medium, high, critical]
+            control_effects:
+              rank: [blocks, compensates, reduces, detects]
+              mitigating: [blocks, compensates]
         as: assessments
       - id: exposure_summary
         aggregate_items:
@@ -1458,12 +1521,12 @@ workflows:
                 value: $item.cve_id
             direct_exploitability_support:
               count_where:
-                left: $item.exploitability_verdict
+                left: $item.verdicts.exploitability
                 op: eq
                 right: support
             control_signal_support:
               count_where:
-                left: $item.control_verdict
+                left: $item.verdicts.control
                 op: eq
                 right: support
         as: exposure_summary
@@ -1480,12 +1543,12 @@ workflows:
             priority: $item.priority
             product_id: $item.product_id
             installed_version: $item.installed_version
-            affected_basis: $item.affected_basis
-            exposure_basis: $item.exposure_basis
-            control_basis: $item.control_basis
+            affected_basis: $item.basis.affected
+            exposure_basis: $item.basis.exposure
+            control_basis: $item.basis.control
           evidence:
             refs: $item.evidence_refs
-            rationale: $item.rationale
+            rationale: $item.basis.exposure
         as: candidates
       - id: version_signals
         map_signals:
@@ -1493,10 +1556,10 @@ workflows:
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
-          evidence: $item.affected_basis
+          evidence: $item.basis.affected
           evidence_refs: $item.evidence_refs
           enum:
-            path: affected_verdict
+            path: verdicts.affected
             map:
               support: support
               unsure: unsure
@@ -1508,10 +1571,10 @@ workflows:
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
-          evidence: $item.rationale
+          evidence: $item.basis.exposure
           evidence_refs: $item.evidence_refs
           enum:
-            path: exploitability_verdict
+            path: verdicts.exploitability
             map:
               support: support
               unsure: unsure
@@ -1523,10 +1586,10 @@ workflows:
           items: $steps.assessments.items
           from_id: $item.asset_id
           to_id: $item.cve_id
-          evidence: $item.rationale
+          evidence: $item.basis.control
           evidence_refs: $item.evidence_refs
           enum:
-            path: control_verdict
+            path: verdicts.control
             map:
               support: support
               unsure: unsure
@@ -1650,6 +1713,15 @@ workflows:
         input:
           joined_product_edges: $steps.reconciliation_product_join.items
         as: affected_assessments
+      - id: affected_candidates
+        dedupe_items:
+          items: $steps.affected_assessments.items
+          keys:
+            - $item.asset_id
+            - $item.cve_id
+          strategy: max
+          rank: $item.verdict_rank
+        as: affected_candidates
       - id: accepted_exposures
         query:
           mode: collection
@@ -1674,7 +1746,7 @@ workflows:
         provider: assess_exposure_reconciliation
         input:
           accepted_exposure_edges: $steps.accepted_exposures.results
-          affected_items: $steps.affected_assessments.items
+          affected_items: $steps.affected_candidates.items
           asset_product_edges: $steps.asset_products.results
           vulnerability_product_edges: $steps.vulnerability_products.results
           remediated_edges: $steps.remediated_edges.results

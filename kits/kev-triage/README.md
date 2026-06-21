@@ -515,6 +515,12 @@ Provider and workflow payload rows may still carry top-level `evidence_refs`;
 workflow evidence mappings route those refs into relationship metadata when a
 proposal is accepted or deterministic relationships are applied.
 
+The asset exposure workflow keeps mechanical collection work in config:
+product-path deduplication, affected-asset joins, active-control joins, and
+signal projection are workflow steps. `assessment.py` owns only the remaining
+domain judgment, with exposure, priority, and control-effect knobs passed as
+`assessment_policy` in the workflow input.
+
 When an evidence artifact says a host was affected by a CVE, use it to support
 or challenge a governed relationship proposal. For example, cite the report in
 proposal member evidence for `asset_vulnerability_posture`,
