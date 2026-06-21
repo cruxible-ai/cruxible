@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -40,8 +41,16 @@ def service_register_source_artifact(
     label: str | None = None,
     parser_version: str = MARKDOWN_CHUNKS_V1,
     actor_context: GovernedActorContext | None = None,
+    allowed_source_roots: Sequence[str | Path] | None = None,
 ) -> RegisterSourceArtifactResult:
-    """Register a local source document as proposal evidence."""
+    """Register a local source document as proposal evidence.
+
+    The resolved source path must stay within one of *allowed_source_roots*
+    (defaulting to the instance root) and any roots configured via
+    ``CRUXIBLE_ALLOWED_ROOTS``. Containment is default-deny: an absolute
+    ``source_path`` that escapes the allowed roots is rejected even when
+    ``CRUXIBLE_ALLOWED_ROOTS`` is unset.
+    """
     if source_kind != "markdown":
         raise ConfigError(f"Unsupported source_kind '{source_kind}'")
     if source_retention not in ("manifest_only", "archive"):
@@ -49,7 +58,7 @@ def service_register_source_artifact(
     if parser_version != MARKDOWN_CHUNKS_V1:
         raise ConfigError(f"Unsupported parser_version '{parser_version}'")
 
-    path = _resolve_source_path(instance, source_path)
+    path = _resolve_source_path(instance, source_path, allowed_source_roots=allowed_source_roots)
     if not path.is_file():
         raise ConfigError(f"Source artifact path is not a file: {source_path}")
     content = path.read_bytes()
@@ -293,11 +302,86 @@ def _resolve_chunk(
     return matches[0]
 
 
-def _resolve_source_path(instance: InstanceProtocol, source_path: str) -> Path:
+def _resolve_source_path(
+    instance: InstanceProtocol,
+    source_path: str,
+    *,
+    allowed_source_roots: Sequence[str | Path] | None = None,
+) -> Path:
+    """Resolve *source_path* and enforce default-deny workspace containment.
+
+    Both relative and absolute source paths must resolve (after expanding the
+    user home directory and following symlinks) to a location under one of the
+    allowed roots. The allowed roots are *allowed_source_roots* (defaulting to
+    the instance root) plus any roots configured via ``CRUXIBLE_ALLOWED_ROOTS``.
+    """
+    if allowed_source_roots is None:
+        allowed_source_roots = [instance.get_root_path()]
+    return resolve_contained_source_path(source_path, allowed_source_roots=allowed_source_roots)
+
+
+def resolve_contained_source_path(
+    source_path: str,
+    *,
+    allowed_source_roots: Sequence[str | Path],
+) -> Path:
+    """Resolve *source_path* under default-deny containment.
+
+    *source_path* may be absolute or relative. Relative paths are resolved
+    against the first allowed root. The result is resolved (user home expanded,
+    symlinks followed, ``..`` collapsed) and then required to equal or be nested
+    under one of the allowed roots — *allowed_source_roots* plus any
+    ``CRUXIBLE_ALLOWED_ROOTS``. Raises :class:`ConfigError` on escape.
+    """
+    allowed = _allowed_source_roots(allowed_source_roots)
+    base = allowed[0]
+
     raw_path = Path(source_path).expanduser()
-    if raw_path.is_absolute():
-        return raw_path.resolve()
-    return (instance.get_root_path() / raw_path).resolve()
+    candidate = raw_path if raw_path.is_absolute() else (base / raw_path)
+    resolved = candidate.resolve()
+
+    if not _is_within_allowed_roots(resolved, allowed):
+        raise ConfigError("source_path must stay within the registered workspace")
+    return resolved
+
+
+def _allowed_source_roots(roots: Sequence[str | Path]) -> list[Path]:
+    """Resolve the configured allowed roots, augmenting with allowed-roots env."""
+    resolved: list[Path] = [Path(root).expanduser().resolve() for root in roots]
+    for env_root in _env_allowed_roots():
+        if env_root not in resolved:
+            resolved.append(env_root)
+    if not resolved:
+        # Defensive: never fall back to allowing the entire filesystem.
+        raise ConfigError("No allowed source roots configured for path containment")
+    return resolved
+
+
+def _is_within_allowed_roots(resolved: Path, allowed: Sequence[Path]) -> bool:
+    """Return whether *resolved* equals or is nested under an allowed root.
+
+    Comparison is performed on already-resolved paths so that ``..`` traversal,
+    symlink escapes, and prefix-matching siblings (``/srv/data-evil`` vs
+    ``/srv/data``) cannot bypass containment.
+    """
+    return any(root == resolved or root in resolved.parents for root in allowed)
+
+
+def _env_allowed_roots() -> list[Path]:
+    """Parse ``CRUXIBLE_ALLOWED_ROOTS`` into resolved absolute roots."""
+    raw = os.environ.get("CRUXIBLE_ALLOWED_ROOTS")
+    if raw is None:
+        return []
+    roots: list[Path] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        path = Path(entry)
+        if not path.is_absolute():
+            raise ConfigError(f"CRUXIBLE_ALLOWED_ROOTS contains relative path: '{entry}'")
+        roots.append(path.resolve())
+    return roots
 
 
 def _default_original_uri(

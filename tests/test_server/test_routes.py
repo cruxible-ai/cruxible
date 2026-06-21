@@ -1334,6 +1334,179 @@ def test_source_artifact_relative_path_cannot_escape_workspace(
     assert archive_count == 0
 
 
+def _assert_no_source_artifacts(instance_id: str) -> None:
+    instance = get_manager().get(instance_id)
+    with sqlite3.connect(instance.get_instance_dir() / "state.db") as conn:
+        artifact_count = conn.execute("SELECT COUNT(*) FROM source_artifacts").fetchone()[0]
+        chunk_count = conn.execute("SELECT COUNT(*) FROM source_artifact_chunks").fetchone()[0]
+    assert artifact_count == 0
+    assert chunk_count == 0
+
+
+def test_source_artifact_absolute_path_outside_workspace_rejected(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    """Proven exploit: an absolute path outside the workspace must be rejected.
+
+    Previously, with ``CRUXIBLE_ALLOWED_ROOTS`` unset (the default), an absolute
+    ``source_path`` was read as-is, allowing arbitrary local file read (e.g.
+    ``$HOME/.ssh/*``). Containment is now default-deny.
+    """
+    secret_path = tmp_path / "secret.md"
+    secret_path.write_text("# Secret\n\nPrivate key material that must not leak.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": str(secret_path.resolve()),
+            "source_retention": "manifest_only",
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_type"] == "ConfigError"
+    assert "source_path must stay within the registered workspace" in payload["message"]
+    _assert_no_source_artifacts(instance_id)
+
+
+def test_source_artifact_absolute_path_prefix_sibling_rejected(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """A sibling dir whose name shares the workspace prefix must not bypass."""
+    # e.g. workspace = /tmp/.../project, attacker target = /tmp/.../project-evil
+    sibling = server_project.parent / f"{server_project.name}-evil"
+    sibling.mkdir()
+    sneaky_path = sibling / "evidence.md"
+    sneaky_path.write_text("# Sneaky\n\nOutside the workspace by prefix.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": str(sneaky_path.resolve()),
+            "source_retention": "manifest_only",
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_type"] == "ConfigError"
+    assert "source_path must stay within the registered workspace" in payload["message"]
+    _assert_no_source_artifacts(instance_id)
+
+
+def test_source_artifact_symlink_escape_rejected(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+) -> None:
+    """A symlink inside the workspace pointing outside must be rejected.
+
+    Containment resolves symlinks before checking, so the realpath of the
+    escaping link lands outside the workspace and is denied.
+    """
+    secret_path = tmp_path / "outside-secret.md"
+    secret_path.write_text("# Secret\n\nLeak target reached via symlink.\n")
+    link_path = server_project / "link-to-secret.md"
+    link_path.symlink_to(secret_path)
+    instance_id = _init_instance(app_client, server_project)
+
+    # Try both the relative in-workspace link name and its absolute form.
+    for source_path in ("link-to-secret.md", str(link_path)):
+        response = app_client.post(
+            f"/api/v1/{instance_id}/source-artifacts/register",
+            json={
+                "source_path": source_path,
+                "source_retention": "manifest_only",
+            },
+        )
+        assert response.status_code == 400, source_path
+        payload = response.json()
+        assert payload["error_type"] == "ConfigError"
+        assert "source_path must stay within the registered workspace" in payload["message"]
+    _assert_no_source_artifacts(instance_id)
+
+
+def test_source_artifact_absolute_path_inside_workspace_allowed(
+    app_client: TestClient,
+    server_project: Path,
+) -> None:
+    """A legitimate absolute path inside the workspace must still register."""
+    docs_dir = server_project / "docs"
+    docs_dir.mkdir()
+    evidence_path = docs_dir / "evidence.md"
+    evidence_path.write_text("# Evidence\n\nWorkspace-local absolute source.\n")
+    instance_id = _init_instance(app_client, server_project)
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": str(evidence_path.resolve()),
+            "source_retention": "manifest_only",
+        },
+    )
+
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["chunks"]
+    instance = get_manager().get(instance_id)
+    store = instance.get_source_artifact_store()
+    try:
+        artifact = store.get_artifact(payload["source_artifact_id"])
+    finally:
+        store.close()
+    assert artifact is not None
+    assert artifact.local_path == str(evidence_path.resolve())
+
+
+def test_source_artifact_absolute_path_allowed_root_honored(
+    app_client: TestClient,
+    server_project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit CRUXIBLE_ALLOWED_ROOTS entry permits out-of-workspace reads."""
+    allowed_dir = tmp_path / "allowed-evidence"
+    allowed_dir.mkdir()
+    evidence_path = allowed_dir / "evidence.md"
+    evidence_path.write_text("# Allowed\n\nExplicitly permitted source root.\n")
+
+    # Init the instance first; the workspace root must include both the project
+    # and the allowed-evidence dir so daemon lifecycle root_dir validation and
+    # source-path containment both accept the out-of-project read.
+    instance_id = _init_instance(app_client, server_project)
+    monkeypatch.setenv(
+        "CRUXIBLE_ALLOWED_ROOTS",
+        ",".join([str(server_project.resolve()), str(allowed_dir.resolve())]),
+    )
+    reset_permissions()
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/source-artifacts/register",
+        json={
+            "source_path": str(evidence_path.resolve()),
+            "source_retention": "manifest_only",
+        },
+    )
+
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["chunks"]
+    instance = get_manager().get(instance_id)
+    store = instance.get_source_artifact_store()
+    try:
+        artifact = store.get_artifact(payload["source_artifact_id"])
+    finally:
+        store.close()
+    assert artifact is not None
+    assert artifact.local_path == str(evidence_path.resolve())
+
+
 def test_source_artifact_group_propose_rejects_malformed_source_evidence(
     app_client: TestClient,
     server_project: Path,

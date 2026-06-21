@@ -36,6 +36,7 @@ from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service import (
     AnalyzeFeedbackResult,
     AnalyzeOutcomesResult,
+    resolve_contained_source_path,
     service_abandon_decision_record,
     service_add_constraint,
     service_add_decision_policy,
@@ -969,8 +970,7 @@ def relocate_instance(
     record = registry.get(instance_id)
     if record is not None and record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(
-            f"Instance '{instance_id}' is registered with unsupported backend "
-            f"'{record.backend}'"
+            f"Instance '{instance_id}' is registered with unsupported backend '{record.backend}'"
         )
 
     target_root = Path(to_dir).expanduser()
@@ -2383,8 +2383,7 @@ def add_relationships_with_provenance(
         added=result.added,
         updated=result.updated,
         pending_conflicts=[
-            _direct_write_group_interaction_to_contract(item)
-            for item in result.pending_conflicts
+            _direct_write_group_interaction_to_contract(item) for item in result.pending_conflicts
         ],
         updated_group_backed_edges=[
             _direct_write_group_interaction_to_contract(item)
@@ -2508,8 +2507,7 @@ def batch_direct_write(
         validation_warnings=result.validation_warnings,
         evidence_sources_used=result.evidence_sources_used,
         pending_conflicts=[
-            _direct_write_group_interaction_to_contract(item)
-            for item in result.pending_conflicts
+            _direct_write_group_interaction_to_contract(item) for item in result.pending_conflicts
         ],
         updated_group_backed_edges=[
             _direct_write_group_interaction_to_contract(item)
@@ -2816,7 +2814,14 @@ def register_source_artifact(
     label: str | None = None,
     actor_context: Any | None = None,
 ) -> contracts.RegisterSourceArtifactResult:
-    """Register a local source artifact for source-backed proposal evidence."""
+    """Register a local source artifact for source-backed proposal evidence.
+
+    The resolved source path must stay within the registered workspace root (or
+    one of the ``CRUXIBLE_ALLOWED_ROOTS`` if configured). Containment is
+    default-deny: an absolute ``source_path`` that escapes the workspace is
+    rejected even when ``CRUXIBLE_ALLOWED_ROOTS`` is unset, and the check is
+    performed after resolving symlinks and ``..`` traversal.
+    """
     check_permission("cruxible_register_source_artifact", instance_id=instance_id)
     actor = _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
@@ -2826,22 +2831,16 @@ def register_source_artifact(
         if record is not None and record.workspace_root is not None
         else instance.get_root_path()
     ).resolve()
-    requested_path = Path(source_path).expanduser()
-    if requested_path.is_absolute():
-        path = requested_path.resolve()
-        resolved_original_uri = original_uri
-        if resolved_original_uri is None:
-            try:
-                resolved_original_uri = path.relative_to(workspace_root).as_posix()
-            except ValueError:
-                resolved_original_uri = path.name
-    else:
-        path = (workspace_root / requested_path).resolve()
+    # Default-deny containment against the workspace root (and any explicitly
+    # configured allowed roots). Covers both absolute and relative source paths
+    # and resolves symlinks / ``..`` before the check.
+    path = resolve_contained_source_path(source_path, allowed_source_roots=[workspace_root])
+    resolved_original_uri = original_uri
+    if resolved_original_uri is None:
         try:
-            workspace_relative_uri = path.relative_to(workspace_root).as_posix()
-        except ValueError as exc:
-            raise ConfigError("source_path must stay within the registered workspace") from exc
-        resolved_original_uri = original_uri or workspace_relative_uri
+            resolved_original_uri = path.relative_to(workspace_root).as_posix()
+        except ValueError:
+            resolved_original_uri = path.name
     validate_root_dir(str(path))
     result = service_register_source_artifact(
         instance,
@@ -2851,6 +2850,7 @@ def register_source_artifact(
         original_uri=resolved_original_uri,
         label=label,
         actor_context=actor,
+        allowed_source_roots=[workspace_root],
     )
     return contracts.RegisterSourceArtifactResult.model_validate(result.model_dump(mode="json"))
 

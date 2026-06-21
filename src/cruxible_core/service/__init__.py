@@ -99,6 +99,7 @@ from cruxible_core.service.snapshots import (
     service_snapshot_instance,
 )
 from cruxible_core.service.source_artifacts import (
+    resolve_contained_source_path,
     service_dereference_source_evidence,
     service_register_source_artifact,
 )
@@ -314,6 +315,7 @@ __all__ = [
     "service_test",
     "service_create_snapshot",
     "read_instance_backup_manifest",
+    "resolve_contained_source_path",
     "service_dereference_source_evidence",
     "service_clone_snapshot",
     "service_list_snapshots",

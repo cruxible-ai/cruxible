@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.service import (
     GroupMemberInput,
@@ -124,9 +127,7 @@ def test_resolve_evidence_refs_merges_explicit_and_source_refs(
     source_path = tmp_path / "fitment.md"
     source_path.write_text("# Fitment\n\nBP-1001 evidence row.\n")
     registered = service_register_source_artifact(instance, source_path=str(source_path))
-    paragraph = next(
-        chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
-    )
+    paragraph = next(chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1")
 
     refs = resolve_evidence_refs(
         instance,
@@ -234,3 +235,89 @@ def test_source_evidence_resolves_to_stored_group_evidence_refs(
     assert signal_ref.source_record_id == paragraph.chunk_id
     assert signal_ref.label == "catalog row"
     assert signal_ref.metadata["operation_id"] == "op_source"
+
+
+def test_absolute_source_path_outside_instance_root_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proven exploit: absolute path outside the instance root, no allowed-roots."""
+    monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    instance = _instance(project)
+
+    outside = tmp_path / "outside-secret.md"
+    outside.write_text("# Secret\n\nMust not be readable.\n")
+
+    with pytest.raises(ConfigError, match="must stay within the registered workspace"):
+        service_register_source_artifact(instance, source_path=str(outside.resolve()))
+
+
+def test_symlink_escape_from_instance_root_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A symlink inside the instance root resolving outside is rejected."""
+    monkeypatch.delenv("CRUXIBLE_ALLOWED_ROOTS", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    instance = _instance(project)
+
+    outside = tmp_path / "outside-secret.md"
+    outside.write_text("# Secret\n\nReached via symlink.\n")
+    link = project / "link.md"
+    link.symlink_to(outside)
+
+    with pytest.raises(ConfigError, match="must stay within the registered workspace"):
+        service_register_source_artifact(instance, source_path="link.md")
+    with pytest.raises(ConfigError, match="must stay within the registered workspace"):
+        service_register_source_artifact(instance, source_path=str(link))
+
+
+def test_absolute_source_path_inside_instance_root_allowed(tmp_path: Path) -> None:
+    """A legitimate absolute path within the instance root still registers."""
+    project = tmp_path / "project"
+    project.mkdir()
+    instance = _instance(project)
+
+    evidence = project / "evidence.md"
+    evidence.write_text("# Fitment\n\nIn-workspace absolute path.\n")
+
+    registered = service_register_source_artifact(instance, source_path=str(evidence.resolve()))
+    assert registered.chunks
+
+
+def test_explicit_allowed_root_permits_out_of_workspace_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit CRUXIBLE_ALLOWED_ROOTS entry permits out-of-instance reads."""
+    project = tmp_path / "project"
+    project.mkdir()
+    instance = _instance(project)
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    evidence = allowed / "evidence.md"
+    evidence.write_text("# Fitment\n\nExplicitly allowed root.\n")
+
+    monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", str(allowed.resolve()))
+    registered = service_register_source_artifact(instance, source_path=str(evidence.resolve()))
+    assert registered.chunks
+
+
+def test_explicit_allowed_root_rejects_relative_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relative CRUXIBLE_ALLOWED_ROOTS entry is a config error, not a silent allow."""
+    project = tmp_path / "project"
+    project.mkdir()
+    instance = _instance(project)
+    evidence = project / "evidence.md"
+    evidence.write_text("# Fitment\n\nWorkspace evidence.\n")
+
+    monkeypatch.setenv("CRUXIBLE_ALLOWED_ROOTS", "relative/dir")
+    with pytest.raises(ConfigError, match="contains relative path"):
+        service_register_source_artifact(instance, source_path=str(evidence.resolve()))
