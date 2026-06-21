@@ -96,6 +96,7 @@ def render_wiki_cmd(
         click.echo(f"Rendered {len(written)} files into {output_dir}")
         return
 
+    _common._guard_local_read_fallback()
     instance = _common._require_local_instance("render-wiki")
     options = WikiOptions(
         output_dir=output_dir,

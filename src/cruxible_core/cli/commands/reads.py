@@ -448,6 +448,7 @@ def _run_query_command(
         )
         return
 
+    _common._guard_local_read_fallback()
     instance = CruxibleInstance.load()
     response_limit = 1 if count_only and limit is None else limit
     try:
@@ -701,6 +702,7 @@ def query_inline_cmd(
             decision_record_id=resolved_decision_record_id,
         )
     else:
+        _common._guard_local_read_fallback()
         instance = CruxibleInstance.load()
         result = service_query_inline_surface(
             instance,
@@ -1709,6 +1711,7 @@ def analyze_feedback_cmd(
         )
         payload = remote_result.model_dump(mode="json")
     else:
+        _common._guard_local_read_fallback()
         instance = CruxibleInstance.load()
         local_result = service_analyze_feedback(
             instance,
@@ -1820,6 +1823,7 @@ def analyze_outcomes_cmd(
         )
         payload = remote_result.model_dump(mode="json")
     else:
+        _common._guard_local_read_fallback()
         instance = CruxibleInstance.load()
         local_result = service_analyze_outcomes(
             instance,

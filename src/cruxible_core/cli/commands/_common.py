@@ -127,6 +127,17 @@ def _get_client() -> CruxibleClient | None:
     return client
 
 
+def _server_required() -> bool:
+    """Return whether this invocation declared server mode as required.
+
+    Resolved once at the root group (flags/env -> ``require_server``) and stashed
+    on the click context. Reads consult it so they share the writes' transport
+    contract: when the daemon is the declared backend, reads never silently fall
+    back to a local on-disk instance.
+    """
+    return bool(_root_ctx_obj().get("require_server"))
+
+
 def _current_cli_context() -> CliContextState:
     obj = _root_ctx_obj()
     return CliContextState(
@@ -207,6 +218,13 @@ def _dispatch_cli(
         raise click.UsageError(
             f"Local mutation disabled for {command_name or 'this command'}; use server mode."
         )
+    if _server_required():
+        # Server mode is the declared backend, but no client could be resolved.
+        # Refuse the silent on-disk fallback so reads fail the same way writes do
+        # instead of leaking a confusing InstanceNotFoundError/ConfigError.
+        raise click.UsageError(
+            "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
+        )
     return local_call()
 
 
@@ -223,6 +241,19 @@ def _dispatch_cli_instance(
         allow_local=allow_local,
         command_name=command_name,
     )
+
+
+def _guard_local_read_fallback() -> None:
+    """Refuse a local on-disk read fallback when server mode is required.
+
+    Read commands that resolve the client directly (rather than via
+    ``_dispatch_cli``) call this before loading a local instance so every read
+    verb shares one transport contract and one error surface.
+    """
+    if _server_required():
+        raise click.UsageError(
+            "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
+        )
 
 
 def _require_instance_id() -> str:

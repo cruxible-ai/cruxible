@@ -4240,3 +4240,150 @@ def test_server_mode_sample_forwards_fields_to_client(
         "limit": 5,
         "fields": ["name"],
     }
+
+
+# ---- Unified read surface: one transport contract, one error surface ----
+#
+# Reads route through the daemon when a context is active (covered above). The
+# split-brain F2 finding was the *fallback*: when server mode is the declared
+# backend but no client resolves, writes refuse loudly ("Server mode is
+# required") while reads silently dropped to a local on-disk instance and leaked
+# a different InstanceNotFoundError/ConfigError. These tests pin that every read
+# verb now fails the same way as writes do under CRUXIBLE_REQUIRE_SERVER, and
+# that local dev reads (no require-server) are unchanged.
+
+_READ_INVOCATIONS: list[tuple[str, list[str]]] = [
+    ("query run", ["query", "run", "parts_for_vehicle"]),
+    (
+        "query inline",
+        [
+            "query",
+            "inline",
+            "--definition-json",
+            '{"name":"adhoc","mode":"collection","returns":"Part","result_shape":"entity"}',
+        ],
+    ),
+    ("query list", ["query", "list"]),
+    ("query describe", ["query", "describe", "--query", "parts_for_vehicle"]),
+    ("inspect ontology", ["inspect", "ontology"]),
+    ("inspect overview", ["inspect", "overview"]),
+    ("inspect entity", ["entity", "inspect", "--type", "Part", "--id", "P-1"]),
+    ("inspect entity history", ["entity", "history", "--type", "Part"]),
+    (
+        "inspect lineage",
+        [
+            "relationship",
+            "lineage",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "P-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+        ],
+    ),
+    ("list entities", ["list", "entities", "--type", "Part"]),
+    ("list receipts", ["list", "receipts"]),
+    ("list edges", ["list", "edges"]),
+    ("list traces", ["list", "traces"]),
+    ("list feedback", ["list", "feedback"]),
+    ("list outcomes", ["list", "outcomes"]),
+    ("evaluate", ["evaluate"]),
+    ("lint", ["lint"]),
+    ("schema", ["schema"]),
+    ("stats", ["stats"]),
+    ("sample", ["sample", "--type", "Part"]),
+    ("get-entity", ["entity", "get", "--type", "Part", "--id", "P-1"]),
+    (
+        "get-relationship",
+        [
+            "relationship",
+            "get",
+            "--from-type",
+            "Part",
+            "--from-id",
+            "P-1",
+            "--relationship",
+            "fits",
+            "--to-type",
+            "Vehicle",
+            "--to-id",
+            "V-1",
+        ],
+    ),
+    ("analyze-feedback", ["analyze-feedback", "--relationship", "fits"]),
+    ("analyze-outcomes", ["analyze-outcomes", "--anchor-type", "receipt"]),
+]
+
+
+@pytest.mark.parametrize(
+    "label, argv",
+    _READ_INVOCATIONS,
+    ids=[label for label, _ in _READ_INVOCATIONS],
+)
+def test_reads_share_require_server_error_with_no_endpoint(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+    label: str,
+    argv: list[str],
+):
+    # Server mode required, but no endpoint and no client: every read verb must
+    # fail with the same wording as writes/root, not a local-disk error.
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
+    monkeypatch.chdir(tmp_path)  # ensure no ambient .cruxible/ is discoverable
+
+    result = runner.invoke(cli, argv)
+
+    assert result.exit_code == 2, f"{label}: {result.output}"
+    assert "Server mode is required" in result.output, f"{label}: {result.output}"
+    assert "InstanceNotFoundError" not in result.output, f"{label}: {result.output}"
+    assert "Traceback" not in result.output, f"{label}: {result.output}"
+
+
+def test_render_wiki_shares_require_server_error_with_no_endpoint(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # render-wiki has a daemon path and a local fallback; the fallback must honor
+    # require-server too rather than silently reading a local instance.
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["render-wiki", "--output", str(tmp_path / "wiki")])
+
+    assert result.exit_code == 2, result.output
+    assert "Server mode is required" in result.output
+    assert "InstanceNotFoundError" not in result.output
+
+
+def test_local_reads_unchanged_when_server_not_required(
+    monkeypatch,
+    runner: CliRunner,
+    tmp_path: Path,
+):
+    # Local dev mode (no require-server, no endpoint): reads still resolve the
+    # on-disk instance exactly as before. Guard against the require-server check
+    # leaking into the default local path.
+    from cruxible_core.cli.instance import CruxibleInstance
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    (tmp_path / "config.yaml").write_text(CAR_PARTS_YAML)
+    CruxibleInstance.init(tmp_path, "config.yaml")
+    monkeypatch.chdir(tmp_path)
+
+    stats = runner.invoke(cli, ["stats", "--json"])
+    assert stats.exit_code == 0, stats.output
+    assert json.loads(stats.output)["entity_count"] == 0
+
+    listed = runner.invoke(cli, ["query", "list", "--json"])
+    assert listed.exit_code == 0, listed.output
+    names = {item["name"] for item in json.loads(listed.output)["items"]}
+    assert "parts_for_vehicle" in names
