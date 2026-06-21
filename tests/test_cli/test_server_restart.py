@@ -31,7 +31,7 @@ def test_server_restart_requires_server_mode(monkeypatch, runner: CliRunner):
     _patch_client(monkeypatch, None)
     result = runner.invoke(cli, ["server", "restart"])
     assert result.exit_code == 2
-    assert "requires server mode" in result.output
+    assert "Server mode is required" in result.output
 
 
 def test_server_restart_waits_for_daemon_and_reports_version(monkeypatch, runner: CliRunner):

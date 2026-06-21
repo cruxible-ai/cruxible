@@ -10,6 +10,7 @@ from cruxible_client import contracts
 from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
+    _list_envelope,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
@@ -185,7 +186,12 @@ def list_cmd(
     )
     records = [_record_payload(record) for record in cast(Any, result).items]
     if output_json:
-        _emit_json({"items": records})
+        _emit_json(
+            {
+                "items": records,
+                **_list_envelope(result, item_count=len(records), limit=limit, offset=offset),
+            }
+        )
         return
     if not records:
         click.echo("No decision records found.")
@@ -235,7 +241,12 @@ def events_cmd(
     )
     events = [_event_payload(event) for event in cast(Any, result).items]
     if output_json:
-        _emit_json({"items": events})
+        _emit_json(
+            {
+                "items": events,
+                **_list_envelope(result, item_count=len(events), limit=limit, offset=offset),
+            }
+        )
         return
     if not events:
         click.echo("No decision events found.")

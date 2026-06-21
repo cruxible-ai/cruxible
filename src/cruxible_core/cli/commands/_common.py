@@ -34,6 +34,12 @@ console = Console()
 LocalResultT = TypeVar("LocalResultT")
 RemoteResultT = TypeVar("RemoteResultT")
 
+# Single source of truth for the "server mode required" message so every command
+# that refuses a local fallback surfaces identical wording and remediation.
+SERVER_MODE_REQUIRED_MESSAGE = (
+    "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
+)
+
 json_option = click.option(
     "--json",
     "output_json",
@@ -222,9 +228,7 @@ def _dispatch_cli(
         # Server mode is the declared backend, but no client could be resolved.
         # Refuse the silent on-disk fallback so reads fail the same way writes do
         # instead of leaking a confusing InstanceNotFoundError/ConfigError.
-        raise click.UsageError(
-            "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
-        )
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     return local_call()
 
 
@@ -251,9 +255,7 @@ def _guard_local_read_fallback() -> None:
     verb shares one transport contract and one error surface.
     """
     if _server_required():
-        raise click.UsageError(
-            "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
-        )
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
 
 
 def _require_instance_id() -> str:

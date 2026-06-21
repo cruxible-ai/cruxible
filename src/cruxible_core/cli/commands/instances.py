@@ -17,7 +17,6 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_restore_instance, service_snapshot_instance
 
 
@@ -118,6 +117,11 @@ def instance_restore_cmd(
             _print_active_instance_unchanged()
 
 
+def _unreachable_local_relocate() -> contracts.InstanceRelocateResult:
+    """Placeholder local callback for relocate; never invoked (allow_local=False)."""
+    raise AssertionError("instance relocate has no local path")
+
+
 @instance_group.command("relocate")
 @click.option("--to", "to_dir", required=True, help="New root directory for the instance.")
 @click.option(
@@ -139,23 +143,17 @@ def instance_relocate_cmd(
     output_json: bool,
 ) -> None:
     """Move the current healthy instance to a new directory, preserving identity."""
-
-    def _local_unsupported(instance: CruxibleInstance) -> contracts.InstanceRelocateResult:
-        # Unreachable: allow_local=False raises in _dispatch_cli before the local
-        # path runs. A local relocate cannot drop the instance from the daemon's
-        # in-process manager, so server mode is required.
-        raise click.UsageError(
-            "Relocate requires server mode; the daemon must drop and re-register "
-            "the instance from its in-process manager."
-        )
-
+    # No local path: allow_local=False makes _dispatch_cli raise the shared
+    # "local mutation disabled; use server mode" error before this callback can
+    # run. A local relocate could not drop the instance from the daemon's
+    # in-process manager anyway, so server mode is required.
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.relocate_instance(
             instance_id,
             to_dir=to_dir,
             remove_source=remove_source,
         ),
-        _local_unsupported,
+        lambda instance: _unreachable_local_relocate(),
         allow_local=False,
         command_name="instance relocate",
     )

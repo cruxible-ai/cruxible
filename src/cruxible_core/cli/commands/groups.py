@@ -14,6 +14,7 @@ from cruxible_core.cli.commands._common import (
     _dispatch_cli_instance,
     _emit_json,
     _groups_from_payload,
+    _list_envelope,
     _members_from_payload,
     console,
     json_option,
@@ -87,6 +88,7 @@ def _resolution_action_filter(action: str | None) -> ResolutionAction | None:
 @click.option(
     "--signal-source",
     multiple=True,
+    hidden=True,
     help="Deprecated; signal sources are derived from member signals.",
 )
 @handle_errors
@@ -436,10 +438,11 @@ def group_list(
         groups = result.items
         total = result.total
     if output_json:
+        item_dicts = [g.model_dump(mode="python") for g in groups]
         _emit_json(
             {
-                "items": [g.model_dump(mode="python") for g in groups],
-                "total": total,
+                "items": item_dicts,
+                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
             }
         )
         return
@@ -490,10 +493,11 @@ def group_resolutions(
         resolutions = result.items
         total = result.total
     if output_json:
+        item_dicts = [r.model_dump(mode="python") for r in resolutions]
         _emit_json(
             {
-                "items": [r.model_dump(mode="python") for r in resolutions],
-                "total": total,
+                "items": item_dicts,
+                **_list_envelope(result, item_count=len(item_dicts), limit=limit, offset=offset),
             }
         )
         return

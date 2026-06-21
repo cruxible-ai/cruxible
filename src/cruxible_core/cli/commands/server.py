@@ -7,7 +7,11 @@ import time
 import click
 
 from cruxible_client import CruxibleClient
-from cruxible_core.cli.commands._common import _emit_json, _get_client
+from cruxible_core.cli.commands._common import (
+    SERVER_MODE_REQUIRED_MESSAGE,
+    _emit_json,
+    _get_client,
+)
 from cruxible_core.cli.main import handle_errors
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
@@ -46,9 +50,7 @@ def server_info_cmd(output_json: bool) -> None:
     """Show live daemon metadata such as transport policy and state dir."""
     client = _get_client()
     if client is None:
-        raise click.UsageError(
-            "server info requires server mode; set --server-url or --server-socket"
-        )
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     result = client.server_info()
     if output_json:
         _emit_json(result.model_dump(mode="python"))
@@ -87,9 +89,7 @@ def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None
     """
     client = _get_client()
     if client is None:
-        raise click.UsageError(
-            "server restart requires server mode; set --server-url or --server-socket"
-        )
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     result = client.server_restart()
 
     confirmed_version: str | None = None
