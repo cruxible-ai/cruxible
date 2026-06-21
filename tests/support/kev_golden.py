@@ -15,6 +15,8 @@ from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import RelationshipEvidence
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
+from cruxible_core.group.signature import compute_group_signature
+from cruxible_core.group.types import TrustStatus
 from cruxible_core.kits import write_materialized_kit_metadata
 from cruxible_core.service import (
     service_apply_workflow,
@@ -107,6 +109,7 @@ EXPOSURE_RECONCILIATION_STEPS = (
     "remediation_signals",
     "proposal",
 )
+PENDING_POSTURE_BASIS = "Golden fixture pending reviewable posture proof."
 
 
 def assert_or_update_golden(actual: Mapping[str, Any], golden_path: Path) -> None:
@@ -183,11 +186,18 @@ def run_kev_proposal(
         "suppressed": result.suppressed,
         "relationship_type": _relationship_type_from_output(result.output),
         "candidate_count": _safe_int(result.output, "candidate_count"),
-        "member_count": _safe_int(result.output, "candidate_count"),
+        "member_count": 0,
         "query_receipt_ids": result.query_receipt_ids,
         "read_metadata": result.read_metadata,
         "output": _proposal_output_summary(result.output),
     }
+    if result.prior_resolution is not None:
+        report["prior_resolution"] = {
+            "relationship_type": result.prior_resolution.relationship_type,
+            "action": result.prior_resolution.action,
+            "trust_status": result.prior_resolution.trust_status,
+            "confirmed": result.prior_resolution.confirmed,
+        }
     if result.group_id is not None:
         store = instance.get_group_store()
         try:
@@ -208,6 +218,7 @@ def run_kev_proposal(
                 "thesis_facts": group.thesis_facts,
                 "analysis_state": group.analysis_state,
             }
+            report["member_count"] = len(members)
         report["members"] = [
             _member_summary(member)
             for member in sorted(
@@ -222,6 +233,83 @@ def run_kev_proposal(
             )[:12]
         ]
     return normalize_cross_section_value(report)
+
+
+def build_pending_relationship_visibility_cross_section(instance: CruxibleInstance) -> JsonObject:
+    """Prove pending relationship assertions participate only in reviewable/pending reads."""
+    states = {}
+    for relationship_state in ("reviewable", "pending", "live", "accepted"):
+        result = service_query_surface(
+            instance,
+            "asset_vulnerability_postures_requiring_action",
+            {},
+            limit=100,
+            relationship_state=relationship_state,
+        )
+        matches = []
+        for row in result.items:
+            summary = _query_row_summary(row)
+            if summary.get("properties", {}).get("exposure_basis") == PENDING_POSTURE_BASIS:
+                matches.append(summary)
+        states[relationship_state] = {
+            "relationship_state": result.relationship_state,
+            "total_results": result.total,
+            "pending_fixture_matches": matches,
+            "pending_fixture_count": len(matches),
+            "receipt": _query_receipt_summary(result),
+        }
+    return normalize_cross_section_value(
+        {
+            "query": "asset_vulnerability_postures_requiring_action",
+            "pending_marker": PENDING_POSTURE_BASIS,
+            "states": states,
+        }
+    )
+
+
+def build_auto_resolve_branch_cross_section(tmp_path: Path) -> JsonObject:
+    """Exercise KEV proposal branches for trusted auto-resolve and unsure review forcing."""
+    base_instance = build_kev_triage_instance(tmp_path / "base", stage="local")
+    probe_instance = _clone_instance(base_instance, tmp_path / "probe")
+    probe = run_kev_proposal(
+        probe_instance,
+        "propose_vulnerability_classification",
+        _classification_payload(verdict="support"),
+    )
+    thesis_facts = probe["output"]["thesis_facts"]
+
+    support_instance = _clone_instance(base_instance, tmp_path / "support")
+    _seed_prior_resolution_for_workflow(
+        support_instance,
+        relationship_type="vulnerability_classified_as",
+        trust_status="trusted",
+        thesis_facts=thesis_facts,
+    )
+    support = run_kev_proposal(
+        support_instance,
+        "propose_vulnerability_classification",
+        _classification_payload(verdict="support"),
+    )
+
+    unsure_instance = _clone_instance(base_instance, tmp_path / "unsure")
+    _seed_prior_resolution_for_workflow(
+        unsure_instance,
+        relationship_type="vulnerability_classified_as",
+        trust_status="trusted",
+        thesis_facts=thesis_facts,
+    )
+    unsure = run_kev_proposal(
+        unsure_instance,
+        "propose_vulnerability_classification",
+        _classification_payload(verdict="unsure"),
+    )
+
+    return normalize_cross_section_value(
+        {
+            "trusted_all_support": support,
+            "trusted_unsure_always_review": unsure,
+        }
+    )
 
 
 def build_kev_state_cross_section(
@@ -314,6 +402,7 @@ def build_named_query_surface_cross_section(
                 "truncation_reasons": result.truncation_reasons,
                 "result_shape": result.result_shape,
                 "relationship_state": result.relationship_state,
+                "receipt": _query_receipt_summary(result),
                 "results": [_query_row_summary(row) for row in result.items],
             }
         )
@@ -517,6 +606,8 @@ def _add_review_context_edges(instance: CruxibleInstance) -> None:
     target = posture_edges[0]
     asset_id = target["from_id"]
     cve_id = target["to_id"]
+    product_id = str(target.get("properties", {}).get("product_id") or "")
+    installed_version = str(target.get("properties", {}).get("installed_version") or "unknown")
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="asset_remediated_vulnerability",
@@ -569,6 +660,39 @@ def _add_review_context_edges(instance: CruxibleInstance) -> None:
                         }
                     ],
                     rationale="Golden fixture scoped exception context.",
+                ),
+            ),
+        )
+    )
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="asset_vulnerability_posture",
+            from_type="Asset",
+            from_id=asset_id,
+            to_type="Vulnerability",
+            to_id=cve_id,
+            properties={
+                "status": "exposed",
+                "priority": "high",
+                "product_id": product_id,
+                "installed_version": installed_version,
+                "affected_basis": PENDING_POSTURE_BASIS,
+                "exposure_basis": PENDING_POSTURE_BASIS,
+                "control_basis": PENDING_POSTURE_BASIS,
+                "review_due_at": "2026-06-20",
+            },
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="pending", source="agent")
+                ),
+                evidence=RelationshipEvidence(
+                    evidence_refs=[
+                        {
+                            "source": "golden_fixture",
+                            "source_record_id": f"{asset_id}:{cve_id}:pending-posture",
+                        }
+                    ],
+                    rationale=PENDING_POSTURE_BASIS,
                 ),
             ),
         )
@@ -814,6 +938,50 @@ def _first_existing_entity_id(
     return sorted(graph.list_entities(entity_type), key=lambda item: item.entity_id)[0].entity_id
 
 
+def _classification_payload(*, verdict: str) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "cve_id": "CVE-2021-41773",
+                "class_id": "path_traversal",
+                "basis": f"Golden fixture classification branch with {verdict}.",
+                "source": "golden_fixture",
+                "verdict": verdict,
+            }
+        ]
+    }
+
+
+def _clone_instance(instance: CruxibleInstance, root: Path) -> CruxibleInstance:
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(instance.get_root_path(), root)
+    return CruxibleInstance.load(root)
+
+
+def _seed_prior_resolution_for_workflow(
+    instance: CruxibleInstance,
+    *,
+    relationship_type: str,
+    trust_status: TrustStatus,
+    thesis_facts: Mapping[str, Any],
+) -> None:
+    signature = compute_group_signature(relationship_type, thesis_facts)
+    with instance.write_transaction() as uow:
+        uow.groups.save_resolution(
+            relationship_type,
+            signature,
+            "approve",
+            "Golden fixture prior approval.",
+            "Golden fixture trusted prior resolution.",
+            thesis_facts,
+            {"golden_prior": True},
+            "human",
+            trust_status=trust_status,
+            confirmed=True,
+        )
+
+
 def _relationship_type_from_output(output: Any) -> str | None:
     if isinstance(output, Mapping):
         value = output.get("relationship_type")
@@ -926,6 +1094,27 @@ def _query_row_summary(row: Any) -> JsonObject:
     return dict(row) if isinstance(row, Mapping) else {"value": row}
 
 
+def _query_receipt_summary(result: Any) -> JsonObject:
+    receipt = getattr(result, "receipt", None)
+    if receipt is None:
+        return {
+            "present": False,
+            "receipt_id": None,
+            "operation_type": None,
+            "relationship_state_source": None,
+        }
+    return {
+        "present": True,
+        "receipt_id": receipt.receipt_id,
+        "operation_type": receipt.operation_type,
+        "query_name": receipt.query_name,
+        "relationship_state": receipt.execution_options.get("relationship_state"),
+        "relationship_state_source": receipt.execution_options.get("relationship_state_source"),
+        "result_shape": receipt.execution_options.get("result_shape"),
+        "dedupe": receipt.execution_options.get("dedupe"),
+    }
+
+
 def _include_summary(include: Any) -> JsonObject:
     return {
         "alias": getattr(include, "alias", None),
@@ -968,4 +1157,26 @@ def _edge_summary(edge: Any) -> JsonObject:
         "to_id": data.get("to_id"),
         "properties": data.get("properties", {}),
         "review_status": review.get("status") if isinstance(review, Mapping) else None,
+        "assertion": _assertion_summary(assertion),
+    }
+
+
+def _assertion_summary(assertion: Any) -> JsonObject:
+    if not isinstance(assertion, Mapping):
+        return {}
+    review = assertion.get("review", {})
+    lifecycle = assertion.get("lifecycle", {})
+    return {
+        "group_override": assertion.get("group_override", False),
+        "review": {
+            "status": review.get("status") if isinstance(review, Mapping) else None,
+            "source": review.get("source") if isinstance(review, Mapping) else None,
+        },
+        "lifecycle": {
+            "status": lifecycle.get("status") if isinstance(lifecycle, Mapping) else None,
+            "supersedes": lifecycle.get("supersedes") if isinstance(lifecycle, Mapping) else None,
+            "superseded_by": (
+                lifecycle.get("superseded_by") if isinstance(lifecycle, Mapping) else None
+            ),
+        },
     }

@@ -1772,6 +1772,16 @@
           "product_id": "apache-http-server"
         },
         "path_truncated": false,
+        "receipt": {
+          "dedupe": "path",
+          "operation_type": "query",
+          "present": true,
+          "query_name": "product_vulnerabilities",
+          "receipt_id": "<RECEIPT_1>",
+          "relationship_state": "live",
+          "relationship_state_source": "query_config",
+          "result_shape": "path"
+        },
         "relationship_state": "live",
         "result_shape": "path",
         "results": [
@@ -1828,6 +1838,18 @@
             "path": [
               {
                 "alias": "affected_by",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -1928,6 +1950,18 @@
             "path": [
               {
                 "alias": "affected_by",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-42013",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2031,6 +2065,18 @@
             "path": [
               {
                 "alias": "affected_by",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-40438",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2130,6 +2176,18 @@
             "path": [
               {
                 "alias": "affected_by",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2019-0211",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2230,6 +2288,18 @@
             "path": [
               {
                 "alias": "affected_by",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2024-38475",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2292,6 +2362,16 @@
           "vendor_id": "apache"
         },
         "path_truncated": false,
+        "receipt": {
+          "dedupe": "path",
+          "operation_type": "query",
+          "present": true,
+          "query_name": "vendor_products",
+          "receipt_id": "<RECEIPT_2>",
+          "relationship_state": "live",
+          "relationship_state_source": "query_config",
+          "result_shape": "path"
+        },
         "relationship_state": "live",
         "result_shape": "path",
         "results": [
@@ -2331,6 +2411,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-activemq",
                 "from_type": "Product",
                 "properties": {},
@@ -2390,6 +2482,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-activemq-legacy-openwire-module",
                 "from_type": "Product",
                 "properties": {},
@@ -2449,6 +2553,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-airflow",
                 "from_type": "Product",
                 "properties": {},
@@ -2508,6 +2624,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-apisix",
                 "from_type": "Product",
                 "properties": {},
@@ -2567,6 +2695,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-archiva",
                 "from_type": "Product",
                 "properties": {},
@@ -2606,6 +2746,16 @@
           "vendor_id": "apache"
         },
         "path_truncated": false,
+        "receipt": {
+          "dedupe": "path",
+          "operation_type": "query",
+          "present": true,
+          "query_name": "vendor_vulnerabilities",
+          "receipt_id": "<RECEIPT_3>",
+          "relationship_state": "live",
+          "relationship_state_source": "query_config",
+          "result_shape": "path"
+        },
         "relationship_state": "live",
         "result_shape": "path",
         "results": [
@@ -2665,6 +2815,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-http-server",
                 "from_type": "Product",
                 "properties": {},
@@ -2675,6 +2837,18 @@
               },
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2778,6 +2952,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-http-server",
                 "from_type": "Product",
                 "properties": {},
@@ -2788,6 +2974,18 @@
               },
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-42013",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -2894,6 +3092,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-http-server",
                 "from_type": "Product",
                 "properties": {},
@@ -2904,6 +3114,18 @@
               },
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-40438",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3009,6 +3231,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-log4j",
                 "from_type": "Product",
                 "properties": {},
@@ -3019,6 +3253,18 @@
               },
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-44228",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3148,6 +3394,18 @@
             "path": [
               {
                 "alias": "vendor_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "apache-cordova",
                 "from_type": "Product",
                 "properties": {},
@@ -3158,6 +3416,18 @@
               },
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-21315",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3220,6 +3490,16 @@
           "cve_id": "CVE-2021-41773"
         },
         "path_truncated": false,
+        "receipt": {
+          "dedupe": "path",
+          "operation_type": "query",
+          "present": true,
+          "query_name": "vulnerability_products",
+          "receipt_id": "<RECEIPT_4>",
+          "relationship_state": "live",
+          "relationship_state_source": "query_config",
+          "result_shape": "path"
+        },
         "relationship_state": "live",
         "result_shape": "path",
         "results": [
@@ -3283,6 +3563,18 @@
             "path": [
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3382,6 +3674,18 @@
             "path": [
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3484,6 +3788,18 @@
             "path": [
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {
@@ -3579,6 +3895,18 @@
             "path": [
               {
                 "alias": "affected_product",
+                "assertion": {
+                  "group_override": false,
+                  "lifecycle": {
+                    "status": "active",
+                    "superseded_by": null,
+                    "supersedes": null
+                  },
+                  "review": {
+                    "source": "system",
+                    "status": "unreviewed"
+                  }
+                },
                 "from_id": "CVE-2021-41773",
                 "from_type": "Vulnerability",
                 "properties": {

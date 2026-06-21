@@ -19,12 +19,12 @@
         "asset_patch_window": 27,
         "asset_remediated_vulnerability": 1,
         "asset_runs_product": 50,
-        "asset_vulnerability_posture": 60,
+        "asset_vulnerability_posture": 61,
         "control_mitigates_class": 8,
         "service_depends_on_asset": 19,
         "vulnerability_classified_as": 1
       },
-      "relationships_total": 13870
+      "relationships_total": 13871
     },
     "entities": [
       {
@@ -3604,6 +3604,7 @@
         "to_type": "Product"
       },
       {
+        "edge_key": 13808,
         "from_id": "ASSET-1",
         "from_type": "Asset",
         "metadata": {
@@ -3681,6 +3682,48 @@
           "priority": "medium",
           "product_id": "apache-http-server",
           "status": "mitigated"
+        },
+        "relationship_type": "asset_vulnerability_posture",
+        "to_id": "CVE-2021-41773",
+        "to_type": "Vulnerability"
+      },
+      {
+        "edge_key": 13870,
+        "from_id": "ASSET-1",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active"
+            },
+            "review": {
+              "source": "agent",
+              "status": "pending"
+            }
+          },
+          "evidence": {
+            "evidence_refs": [
+              {
+                "source": "golden_fixture",
+                "source_record_id": "ASSET-1:CVE-2021-41773:pending-posture"
+              }
+            ],
+            "rationale": "Golden fixture pending reviewable posture proof.",
+            "source_receipt_ids": [],
+            "source_step_ids": [],
+            "source_trace_ids": []
+          }
+        },
+        "properties": {
+          "affected_basis": "Golden fixture pending reviewable posture proof.",
+          "control_basis": "Golden fixture pending reviewable posture proof.",
+          "exposure_basis": "Golden fixture pending reviewable posture proof.",
+          "installed_version": "2.4.49",
+          "priority": "high",
+          "product_id": "apache-http-server",
+          "review_due_at": "2026-06-20",
+          "status": "exposed"
         },
         "relationship_type": "asset_vulnerability_posture",
         "to_id": "CVE-2021-41773",
@@ -5596,90 +5639,6 @@
         },
         "relationship_type": "asset_vulnerability_posture",
         "to_id": "CVE-2017-9791",
-        "to_type": "Vulnerability"
-      },
-      {
-        "from_id": "ASSET-14",
-        "from_type": "Asset",
-        "metadata": {
-          "assertion": {
-            "group_override": false,
-            "lifecycle": {
-              "status": "active"
-            },
-            "review": {
-              "source": "group",
-              "status": "approved"
-            }
-          },
-          "evidence": {
-            "evidence_refs": [
-              {
-                "metadata": {
-                  "observed_at": "2026-03-18"
-                },
-                "source": "qualys",
-                "source_record_id": "software_inventory.csv:26"
-              },
-              {
-                "metadata": {
-                  "criteria": "cpe:2.3:a:apache:struts:*:*:*:*:*:*:*:*",
-                  "match_criteria_id": "13744BE3-2443-4640-BDB4-722C4D393B65"
-                },
-                "source": "nvd_cpe_match",
-                "source_record_id": "CVE-2017-9805"
-              },
-              {
-                "metadata": {
-                  "criteria": "cpe:2.3:a:apache:struts:*:*:*:*:*:*:*:*",
-                  "match_criteria_id": "6B45E858-E783-4D6E-AFD3-97E9963EB05B"
-                },
-                "source": "nvd_cpe_match",
-                "source_record_id": "CVE-2017-9805"
-              }
-            ],
-            "rationale": "legacy-app-01 is production asset with unsure exploitability and has no active compensating controls",
-            "source_group_id": "<GROUP_2>",
-            "source_receipt_ids": [
-              "<RECEIPT_5>",
-              "<RECEIPT_6>",
-              "<RECEIPT_7>",
-              "<RECEIPT_8>",
-              "<RECEIPT_9>",
-              "<RECEIPT_10>",
-              "<RECEIPT_11>",
-              "<RECEIPT_12>"
-            ],
-            "source_step_ids": [
-              "proposal",
-              "version_signals",
-              "exploitability_signals",
-              "control_signals"
-            ],
-            "source_trace_ids": [
-              "<TRACE_3>",
-              "<TRACE_4>"
-            ]
-          },
-          "provenance": {
-            "created_at": "<TIMESTAMP>",
-            "receipt_id": "<RECEIPT_13>",
-            "resolution_id": "<RESOLUTION_2>",
-            "source": "group_resolve",
-            "source_ref": "group:<GROUP_2>"
-          }
-        },
-        "properties": {
-          "affected_basis": "Installed version 2.3.32 fits the affected range; version_start_including=2.1.2; version_end_excluding=2.3.34; fixed_version=2.3.34",
-          "control_basis": "No active compensating controls were attached to this asset.",
-          "exposure_basis": "legacy-app-01 is production asset with unsure exploitability and has no active compensating controls",
-          "installed_version": "2.3.32",
-          "priority": "medium",
-          "product_id": "apache-struts",
-          "status": "exposed"
-        },
-        "relationship_type": "asset_vulnerability_posture",
-        "to_id": "CVE-2017-9805",
         "to_type": "Vulnerability"
       },
       {
