@@ -14,6 +14,7 @@ from cruxible_core.canonical_views.mermaid import (
 from cruxible_core.canonical_views.mermaid_utils import MermaidLegendItem, render_mermaid_legend
 from cruxible_core.canonical_views.models import (
     GovernanceView,
+    OntologyEnumView,
     OntologyView,
     OverviewView,
     PropertySchemaView,
@@ -87,7 +88,41 @@ def render_ontology_markdown(view: OntologyView) -> str:
             ],
         ),
     ]
+    lines.extend(_render_enum_vocabularies(view.enums))
     return "\n".join(lines)
+
+
+def _render_enum_vocabularies(enums: list[OntologyEnumView]) -> list[str]:
+    """Render the full enum vocabulary block so values need not be sampled.
+
+    Lists every allowed value in declaration order and flags ordered enums, so an
+    agent never has to read the config file to learn the complete vocabulary.
+    """
+    lines = ["", "## Enum Vocabularies", ""]
+    if not enums:
+        lines.append("No configured enums.")
+        return lines
+    lines.append(
+        "Complete allowed values for enum-typed properties. "
+        "Ordered enums list values low to high."
+    )
+    lines.append("")
+    lines.append(
+        _markdown_table(
+            ("Enum", "Ordered", "Values", "Used By", "Description"),
+            [
+                (
+                    f"`{item.name}`",
+                    "low_to_high" if item.ordered else "-",
+                    ", ".join(item.values),
+                    ", ".join(item.used_by) or "-",
+                    item.description.strip() if item.description else "-",
+                )
+                for item in enums
+            ],
+        )
+    )
+    return lines
 
 
 def render_workflow_markdown(view: WorkflowView) -> str:
@@ -520,6 +555,7 @@ def render_overview_markdown(view: OverviewView) -> str:
                 for entity in view.ontology.entity_types
             ],
         ),
+        *_render_enum_vocabularies(view.ontology.enums),
         "",
         "## Relationship Map",
         "",

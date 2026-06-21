@@ -19,6 +19,7 @@ from cruxible_core.canonical_views import (
     GovernanceRelationshipView,
     GovernanceView,
     OntologyEntityView,
+    OntologyEnumView,
     OntologyRelationshipView,
     OntologyView,
     OverviewView,
@@ -205,6 +206,7 @@ def _ontology_view_from_payload(payload: dict[str, Any]) -> OntologyView:
             OntologyRelationshipView(**relationship)
             for relationship in payload.get("relationships", [])
         ],
+        enums=[OntologyEnumView(**enum) for enum in payload.get("enums", [])],
     )
 
 

@@ -8,6 +8,7 @@ from cruxible_core.canonical_views.models import (
     GovernanceRelationshipView,
     GovernanceView,
     OntologyEntityView,
+    OntologyEnumView,
     OntologyRelationshipView,
     OntologyView,
     OverviewView,
@@ -63,7 +64,59 @@ def build_ontology_view(
         governed_relationship_count=governed_count,
         entity_types=entity_views,
         relationships=rel_views,
+        enums=_build_ontology_enum_views(config),
     )
+
+
+def _build_ontology_enum_views(config: CoreConfig) -> list[OntologyEnumView]:
+    """Collect every enum vocabulary an agent might need before writing values.
+
+    Covers shared ``enums:`` entries (referenced through ``enum_ref``) and inline
+    ``enum`` lists declared directly on a property, so reading the config file is
+    unnecessary. Each entry records value order and whether the enum is ordered.
+    """
+    used_by: dict[str, list[str]] = {}
+    inline_enums: dict[str, OntologyEnumView] = {}
+
+    for owner, prop_name, prop in _iter_ontology_properties(config):
+        location = f"{owner}.{prop_name}"
+        if prop.enum_ref is not None:
+            used_by.setdefault(prop.enum_ref, []).append(location)
+        elif prop.enum is not None:
+            inline_enums.setdefault(
+                location,
+                OntologyEnumView(
+                    name=location,
+                    values=[str(value) for value in prop.enum],
+                    ordered=False,
+                    description=None,
+                    used_by=[location],
+                ),
+            )
+
+    shared_enums = [
+        OntologyEnumView(
+            name=name,
+            values=list(enum_schema.values),
+            ordered=enum_schema.ordered == "low_to_high",
+            description=enum_schema.description,
+            used_by=sorted(used_by.get(name, [])),
+        )
+        for name, enum_schema in sorted(config.enums.items())
+    ]
+    return shared_enums + [inline_enums[key] for key in sorted(inline_enums)]
+
+
+def _iter_ontology_properties(config: CoreConfig) -> list[tuple[str, str, Any]]:
+    """Yield (owner, property_name, schema) over entity and relationship properties."""
+    rows: list[tuple[str, str, Any]] = []
+    for entity_name, schema in sorted(config.entity_types.items()):
+        for prop_name, prop in schema.properties.items():
+            rows.append((entity_name, prop_name, prop))
+    for relationship in sorted(config.relationships, key=lambda item: item.name):
+        for prop_name, prop in relationship.properties.items():
+            rows.append((relationship.name, prop_name, prop))
+    return rows
 
 
 def build_workflow_view(config: CoreConfig) -> WorkflowView:

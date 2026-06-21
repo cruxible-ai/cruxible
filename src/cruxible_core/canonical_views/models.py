@@ -27,12 +27,22 @@ class OntologyRelationshipView:
 
 
 @dataclass(frozen=True)
+class OntologyEnumView:
+    name: str
+    values: list[str]
+    ordered: bool
+    description: str | None
+    used_by: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class OntologyView:
     entity_count: int
     relationship_count: int
     governed_relationship_count: int
     entity_types: list[OntologyEntityView] = field(default_factory=list)
     relationships: list[OntologyRelationshipView] = field(default_factory=list)
+    enums: list[OntologyEnumView] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

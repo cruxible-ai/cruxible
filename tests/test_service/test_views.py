@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+from cruxible_core.canonical_views import (
+    build_ontology_view,
+    build_overview_view,
+    build_query_view,
+    build_workflow_view,
+    canonical_view_payload,
+    render_ontology_markdown,
+    render_overview_markdown,
+)
 from cruxible_core.cli.instance import CruxibleInstance
+from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.config.schema import NamedQuerySchema, TraversalStep
 from cruxible_core.service import (
     service_describe_query,
@@ -13,6 +23,52 @@ from cruxible_core.service import (
     service_query,
     service_render_wiki,
 )
+
+ENUM_CONFIG_YAML = """\
+version: "1.0"
+name: enum_fixture
+description: Fixture exercising shared and inline enum vocabularies
+
+enums:
+  priority:
+    values: [low, medium, high, critical]
+    ordered: low_to_high
+  lifecycle_status:
+    description: Work item lifecycle states
+    values: [planned, active, blocked, closed]
+
+entity_types:
+  Task:
+    properties:
+      task_id:
+        type: string
+        primary_key: true
+      priority:
+        type: string
+        enum_ref: priority
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      severity:
+        type: string
+        enum: [trivial, minor, major]
+
+relationships:
+  - name: blocks
+    from: Task
+    to: Task
+    properties:
+      kind:
+        type: string
+        enum_ref: priority
+
+named_queries: {}
+constraints: []
+"""
+
+
+def _enum_config():
+    return load_config_from_string(ENUM_CONFIG_YAML)
 
 
 def test_service_inspect_view_returns_structured_ontology(
@@ -233,3 +289,105 @@ def test_service_export_edges_builds_csv_ready_rows(
     assert all(row["relationship_type"] == "fits" for row in result.rows)
     assert all("properties_json" in row for row in result.rows)
     assert all("metadata_json" in row for row in result.rows)
+
+
+def test_build_ontology_view_collects_shared_and_inline_enums() -> None:
+    view = build_ontology_view(_enum_config())
+
+    enums = {enum.name: enum for enum in view.enums}
+    # Shared enums named by their enums: key.
+    assert enums["priority"].values == ["low", "medium", "high", "critical"]
+    assert enums["priority"].ordered is True
+    assert enums["lifecycle_status"].ordered is False
+    assert enums["lifecycle_status"].description == "Work item lifecycle states"
+    # Inline enums named by their fully-qualified property path.
+    assert enums["Task.severity"].values == ["trivial", "minor", "major"]
+    assert enums["Task.severity"].ordered is False
+
+
+def test_build_ontology_view_enum_used_by_lists_every_reference() -> None:
+    view = build_ontology_view(_enum_config())
+
+    enums = {enum.name: enum for enum in view.enums}
+    # priority is referenced by an entity property and a relationship property.
+    assert enums["priority"].used_by == ["Task.priority", "blocks.kind"]
+    assert enums["lifecycle_status"].used_by == ["Task.status"]
+    assert enums["Task.severity"].used_by == ["Task.severity"]
+
+
+def test_canonical_view_payload_serializes_enum_vocabularies() -> None:
+    payload = canonical_view_payload(build_ontology_view(_enum_config()))
+
+    assert "enums" in payload
+    priority = next(item for item in payload["enums"] if item["name"] == "priority")
+    assert priority == {
+        "name": "priority",
+        "values": ["low", "medium", "high", "critical"],
+        "ordered": True,
+        "description": None,
+        "used_by": ["Task.priority", "blocks.kind"],
+    }
+
+
+def test_render_ontology_markdown_lists_enum_values_and_orderedness() -> None:
+    markdown = render_ontology_markdown(build_ontology_view(_enum_config()))
+
+    assert "## Enum Vocabularies" in markdown
+    # Complete value vocabulary is rendered, not sampled.
+    assert "low, medium, high, critical" in markdown
+    assert "planned, active, blocked, closed" in markdown
+    assert "trivial, minor, major" in markdown
+    # Ordered enums are flagged; unordered enums are not.
+    assert "low_to_high" in markdown
+
+
+def test_render_overview_markdown_includes_enum_vocabularies() -> None:
+    config = _enum_config()
+    overview = build_overview_view(
+        ontology=build_ontology_view(config),
+        workflows=build_workflow_view(config),
+        queries=build_query_view(config, query_infos=[]),
+        governance=_empty_governance_view(),
+    )
+
+    markdown = render_overview_markdown(overview)
+
+    assert "## Enum Vocabularies" in markdown
+    assert "low, medium, high, critical" in markdown
+
+
+def test_render_ontology_markdown_handles_no_enums() -> None:
+    config = load_config_from_string(
+        """\
+version: "1.0"
+name: no_enums
+entity_types:
+  Thing:
+    properties:
+      thing_id:
+        type: string
+        primary_key: true
+relationships: []
+named_queries: {}
+constraints: []
+"""
+    )
+
+    markdown = render_ontology_markdown(build_ontology_view(config))
+
+    assert "## Enum Vocabularies" in markdown
+    assert "No configured enums." in markdown
+
+
+def _empty_governance_view():
+    from cruxible_core.canonical_views import GovernanceView
+
+    return GovernanceView(
+        governed_relationship_count=0,
+        pending_group_count=0,
+        total_pending_groups=0,
+        approved_resolution_count=0,
+        total_resolutions=0,
+        pending_truncated=False,
+        resolutions_truncated=False,
+    )
