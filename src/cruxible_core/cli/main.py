@@ -142,7 +142,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     query,
     reload_config_cmd,
     render_wiki_cmd,
-    review_group,
     run_cmd,
     sample,
     schema,
@@ -177,7 +176,6 @@ cli.add_command(query)
 cli.add_command(render_wiki_cmd, "render-wiki")
 cli.add_command(reload_config_cmd, "reload-config")
 cli.add_command(server_group, "server")
-cli.add_command(review_group, "review")
 cli.add_command(explain)
 cli.add_command(feedback_cmd, "feedback")
 cli.add_command(feedback_batch_cmd, "feedback-batch")
