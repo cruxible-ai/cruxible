@@ -34,6 +34,7 @@ from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
     mutation_guard_errors,
+    relationship_mutation_guard_errors,
 )
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.property_diffs import property_value_changes
@@ -727,6 +728,19 @@ def _prepare_batch_direct_write(
                 detail={"guard_error": error},
             )
 
+    relationship_guard_errors = relationship_mutation_guard_errors(
+        config,
+        current_graph=current_graph,
+        relationships=[item.validated for item in validated_relationships],
+    )
+    for error in relationship_guard_errors:
+        errors.append(error)
+        if builder:
+            builder.record_validation(
+                passed=False,
+                detail={"guard_error": error},
+            )
+
     interactions = _detect_direct_write_group_interactions(
         instance,
         current_graph,
@@ -1215,6 +1229,25 @@ def service_add_relationships(
             raise DataValidationError(
                 f"Relationship validation failed with {len(errors)} error(s)",
                 errors=errors,
+            )
+
+        guard_errors = relationship_mutation_guard_errors(
+            config,
+            current_graph=graph,
+            relationships=[
+                validated for validated, _edge, _pending_flag in prepared_relationships
+            ],
+        )
+        for error in guard_errors:
+            if builder:
+                builder.record_validation(
+                    passed=False,
+                    detail={"guard_error": error},
+                )
+        if guard_errors:
+            raise DataValidationError(
+                f"Mutation guard validation failed with {len(guard_errors)} error(s)",
+                errors=guard_errors,
             )
 
         interactions = _detect_direct_write_group_interactions(

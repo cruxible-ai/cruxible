@@ -1206,31 +1206,80 @@ class ActorIdentityGuardCondition(BaseModel):
         return normalized
 
 
-MutationGuardConditionSchema = NamedQueryResultCountGuardCondition | ActorIdentityGuardCondition
+class EvidenceRequirementGuardCondition(BaseModel):
+    """Evidence floor condition for config-defined relationship mutation guards."""
+
+    require_evidence: Literal["source_evidence"]
+    min_count: int = Field(default=1, ge=1)
+
+    model_config = {"extra": "forbid"}
+
+
+MutationGuardConditionSchema = (
+    NamedQueryResultCountGuardCondition
+    | ActorIdentityGuardCondition
+    | EvidenceRequirementGuardCondition
+)
 
 
 class MutationGuardSchema(BaseModel):
-    """Reject direct entity writes that result in a guarded property value.
+    """Reject direct writes when configured guard conditions are not met.
 
-    Fires on creates and updates alike; updates that re-assert the existing
-    value are not transitions and do not fire.
+    Entity-property guards fire on creates and updates alike; updates that
+    re-assert the existing value are not transitions and do not fire.
+    Relationship evidence guards fire on writes to the configured relationship
+    type and require the resulting relationship evidence to meet the floor.
     """
 
     name: str
-    entity_type: str
-    property: str
-    new_value: Any
+    entity_type: str | None = None
+    property: str | None = None
+    new_value: Any = None
+    relationship_type: str | None = None
     condition: MutationGuardConditionSchema
     message: str | None = None
 
     model_config = {"extra": "forbid"}
 
-    @field_validator("name", "entity_type", "property")
+    @field_validator("name", "entity_type", "property", "relationship_type")
     @classmethod
-    def _non_empty_string(cls, value: str) -> str:
+    def _non_empty_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         if not value.strip():
             raise ValueError("must be a non-empty string")
         return value
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> MutationGuardSchema:
+        if isinstance(self.condition, EvidenceRequirementGuardCondition):
+            if self.relationship_type is None:
+                raise ValueError("relationship evidence guards require relationship_type")
+            forbidden_fields = [
+                field
+                for field in ("entity_type", "property", "new_value")
+                if field in self.model_fields_set
+            ]
+            if forbidden_fields:
+                joined = ", ".join(forbidden_fields)
+                raise ValueError(
+                    "relationship evidence guards may not define "
+                    f"entity-property fields: {joined}"
+                )
+            return self
+
+        missing_fields: list[str] = []
+        for field in ("entity_type", "property"):
+            if field not in self.model_fields_set or getattr(self, field) is None:
+                missing_fields.append(field)
+        if "new_value" not in self.model_fields_set:
+            missing_fields.append("new_value")
+        if missing_fields:
+            joined = ", ".join(missing_fields)
+            raise ValueError(f"entity mutation guards require: {joined}")
+        if self.relationship_type is not None:
+            raise ValueError("entity mutation guards may not define relationship_type")
+        return self
 
 
 # ---------------------------------------------------------------------------

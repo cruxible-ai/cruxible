@@ -21,6 +21,7 @@ from cruxible_core.config.schema import (
     CoreConfig,
     EntityTypeSchema,
     EnumSchema,
+    EvidenceRequirementGuardCondition,
     JsonContentQualityCheck,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
@@ -1664,6 +1665,21 @@ class TestMutationGuardSchema:
         assert isinstance(guard.condition, ActorIdentityGuardCondition)
         assert guard.condition.allowed_actor_ids == ["robert"]
 
+    def test_guard_parses_relationship_evidence_condition(self):
+        guard = MutationGuardSchema(
+            name="fitment_requires_source_evidence",
+            relationship_type="fits",
+            condition=EvidenceRequirementGuardCondition(
+                require_evidence="source_evidence",
+                min_count=2,
+            ),
+            message="Fitment observations require source evidence.",
+        )
+
+        assert guard.relationship_type == "fits"
+        assert isinstance(guard.condition, EvidenceRequirementGuardCondition)
+        assert guard.condition.min_count == 2
+
     def test_guard_actor_identity_condition_requires_allowed_actor_ids(self):
         with pytest.raises(ValidationError, match="List should have at least 1 item"):
             ActorIdentityGuardCondition(allowed_actor_ids=[])
@@ -1679,6 +1695,33 @@ class TestMutationGuardSchema:
     def test_guard_condition_requires_a_limit(self):
         with pytest.raises(ValidationError, match="min_count, max_count, or both"):
             NamedQueryResultCountGuardCondition(query_name="approved_review")
+
+    def test_guard_evidence_condition_requires_positive_min_count(self):
+        with pytest.raises(ValidationError, match="greater than or equal to 1"):
+            EvidenceRequirementGuardCondition(
+                require_evidence="source_evidence",
+                min_count=0,
+            )
+
+    def test_guard_evidence_condition_requires_relationship_type(self):
+        with pytest.raises(ValidationError, match="relationship_type"):
+            MutationGuardSchema(
+                name="missing_relationship",
+                condition=EvidenceRequirementGuardCondition(
+                    require_evidence="source_evidence",
+                ),
+            )
+
+    def test_guard_evidence_condition_rejects_entity_fields(self):
+        with pytest.raises(ValidationError, match="entity-property fields"):
+            MutationGuardSchema(
+                name="mixed_scope",
+                relationship_type="fits",
+                entity_type="Part",
+                condition=EvidenceRequirementGuardCondition(
+                    require_evidence="source_evidence",
+                ),
+            )
 
     def test_guard_rejects_retired_discriminator_fields(self):
         # operation/effect were removed pre-0.2 freeze; they return as

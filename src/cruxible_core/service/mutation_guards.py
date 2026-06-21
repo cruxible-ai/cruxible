@@ -15,14 +15,16 @@ from cruxible_core.config.property_validation import (
 from cruxible_core.config.schema import (
     ActorIdentityGuardCondition,
     CoreConfig,
+    EvidenceRequirementGuardCondition,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
 )
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.operations import ValidatedEntity
-from cruxible_core.graph.types import EntityInstance
+from cruxible_core.graph.evidence import RelationshipEvidence
+from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationship
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.query.engine import execute_query
 
 _MISSING = object()
@@ -75,6 +77,38 @@ def mutation_guard_errors(
     return errors
 
 
+def relationship_mutation_guard_errors(
+    config: CoreConfig,
+    *,
+    current_graph: EntityGraph,
+    relationships: Sequence[ValidatedRelationship],
+) -> list[str]:
+    """Return mutation guard errors for proposed relationship writes."""
+    if not config.mutation_guards:
+        return []
+
+    errors: list[str] = []
+    for relationship in relationships:
+        for guard in config.mutation_guards:
+            condition = guard.condition
+            if not isinstance(condition, EvidenceRequirementGuardCondition):
+                continue
+            if guard.relationship_type != relationship.relationship.relationship_type:
+                continue
+            evidence = _resulting_relationship_evidence(current_graph, relationship)
+            count = _dereferenceable_source_evidence_count(evidence)
+            if count < condition.min_count:
+                errors.append(
+                    _relationship_evidence_guard_error_message(
+                        guard,
+                        relationship.relationship,
+                        required_count=condition.min_count,
+                        actual_count=count,
+                    )
+                )
+    return errors
+
+
 def validate_mutation_guards(
     config: CoreConfig,
     *,
@@ -111,6 +145,8 @@ def _matching_guard_context(
     if guard.property not in entity.properties:
         return None
 
+    assert guard.entity_type is not None
+    assert guard.property is not None
     property_schema = config.entity_types[guard.entity_type].properties[guard.property]
     guarded_value = normalize_value(guard.new_value, property_schema, config)
     old_value = current.properties.get(guard.property, _MISSING) if current else _MISSING
@@ -239,7 +275,59 @@ def _guard_error_message(
     )
 
 
+def _resulting_relationship_evidence(
+    current_graph: EntityGraph,
+    validated: ValidatedRelationship,
+) -> RelationshipEvidence | None:
+    incoming_evidence = validated.relationship.metadata.evidence
+    if incoming_evidence is not None:
+        return incoming_evidence
+    existing = current_graph.get_relationship(
+        validated.relationship.from_type,
+        validated.relationship.from_id,
+        validated.relationship.to_type,
+        validated.relationship.to_id,
+        validated.relationship.relationship_type,
+    )
+    if existing is None:
+        return None
+    return existing.metadata.evidence
+
+
+def _dereferenceable_source_evidence_count(evidence: RelationshipEvidence | None) -> int:
+    if evidence is None:
+        return 0
+    count = 0
+    for ref in evidence.evidence_refs:
+        if (
+            ref.source == "source_artifact"
+            and ref.artifact_id
+            and ref.source_record_id
+            and ref.metadata.get("chunk_id") == ref.source_record_id
+            and isinstance(ref.metadata.get("content_hash"), str)
+            and ref.metadata["content_hash"].strip()
+        ):
+            count += 1
+    return count
+
+
+def _relationship_evidence_guard_error_message(
+    guard: MutationGuardSchema,
+    relationship: RelationshipInstance,
+    *,
+    required_count: int,
+    actual_count: int,
+) -> str:
+    message = guard.message or "relationship evidence requirement failed"
+    return (
+        f"Mutation guard '{guard.name}' rejected relationship write "
+        f"{relationship.relationship_label()}: requires at least "
+        f"{required_count} source_evidence ref(s), found {actual_count}: {message}"
+    )
+
+
 __all__ = [
     "mutation_guard_errors",
+    "relationship_mutation_guard_errors",
     "validate_mutation_guards",
 ]

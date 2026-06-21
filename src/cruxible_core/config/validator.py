@@ -20,6 +20,7 @@ from cruxible_core.config.schema import (
     CardinalityQualityCheck,
     ContractSchema,
     CoreConfig,
+    EvidenceRequirementGuardCondition,
     JsonContentQualityCheck,
     NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
@@ -777,19 +778,32 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
             continue
         seen_names.add(guard.name)
 
-        entity_schema = config.entity_types.get(guard.entity_type)
+        condition = guard.condition
+        if isinstance(condition, EvidenceRequirementGuardCondition):
+            if config.get_relationship(guard.relationship_type or "") is None:
+                errors.append(
+                    f"Mutation guard '{guard.name}': relationship_type "
+                    f"'{guard.relationship_type}' not defined in relationships"
+                )
+            continue
+
+        entity_type = guard.entity_type
+        property_name = guard.property
+        assert entity_type is not None
+        assert property_name is not None
+        entity_schema = config.entity_types.get(entity_type)
         if entity_schema is None:
             errors.append(
                 f"Mutation guard '{guard.name}': entity_type "
-                f"'{guard.entity_type}' not defined in entity_types"
+                f"'{entity_type}' not defined in entity_types"
             )
             continue
 
-        property_schema = entity_schema.properties.get(guard.property)
+        property_schema = entity_schema.properties.get(property_name)
         if property_schema is None:
             errors.append(
-                f"Mutation guard '{guard.name}': property '{guard.property}' "
-                f"not found on entity type '{guard.entity_type}'"
+                f"Mutation guard '{guard.name}': property '{property_name}' "
+                f"not found on entity type '{entity_type}'"
             )
         else:
             try:
@@ -797,10 +811,9 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
             except ValueError as exc:
                 errors.append(
                     f"Mutation guard '{guard.name}': new_value for property "
-                    f"'{guard.property}': {exc}"
+                    f"'{property_name}': {exc}"
                 )
 
-        condition = guard.condition
         if isinstance(condition, NamedQueryResultCountGuardCondition):
             if condition.query_name not in config.named_queries:
                 errors.append(

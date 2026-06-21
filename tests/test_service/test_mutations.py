@@ -248,6 +248,89 @@ def _actor_context(actor_id: str) -> GovernedActorContext:
     )
 
 
+EVIDENCE_GUARD_YAML = """\
+version: "1.0"
+name: evidence_guard_state
+
+entity_types:
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        optional: true
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      model:
+        type: string
+        optional: true
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        optional: true
+  - name: part_selected_for_vehicle
+    from: Part
+    to: Vehicle
+
+mutation_guards:
+  - name: fits_requires_source_evidence
+    relationship_type: fits
+    condition:
+      require_evidence: source_evidence
+    message: "Fitment observations require source evidence."
+"""
+
+
+def _evidence_guard_instance(tmp_path: Path) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(dedent(EVIDENCE_GUARD_YAML))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _seed_guarded_fitment_endpoints(instance: CruxibleInstance) -> None:
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="Part",
+                entity_id="BP-1002",
+                properties={"part_number": "BP-1002", "name": "Brake pads"},
+            ),
+            EntityWriteInput(
+                entity_type="Vehicle",
+                entity_id="V-ACCORD",
+                properties={"vehicle_id": "V-ACCORD", "model": "Accord"},
+            ),
+        ],
+    )
+
+
+def _fitment_source_evidence(instance: CruxibleInstance) -> dict[str, str]:
+    source_path = instance.root / "fitment.md"
+    source_path.write_text("# Fitment\n\nBP-1002 fits Accord.\n")
+    registered = service_register_source_artifact(
+        instance,
+        source_path=str(source_path),
+    )
+    paragraph = next(
+        chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
+    )
+    return {
+        "source_artifact_id": registered.source_artifact_id,
+        "chunk_id": paragraph.chunk_id,
+    }
+
+
 GROUP_WRITE_CONFIG_YAML = """\
 version: "1.0"
 name: direct_write_group_interaction_test
@@ -1880,6 +1963,302 @@ class TestAddRelationships:
         assert evidence_ref.artifact_id == registered.source_artifact_id
         assert evidence_ref.source_record_id == paragraph.chunk_id
         assert evidence_ref.metadata["content_hash"] == paragraph.content_hash
+
+    @pytest.mark.parametrize(
+        "evidence_kwargs",
+        [
+            {"evidence_rationale": "Looks right from context."},
+            {"evidence_refs": [{"source": "catalog", "source_record_id": "row-1"}]},
+        ],
+        ids=["rationale_only", "generic_ref"],
+    )
+    def test_relationship_evidence_guard_rejects_non_source_evidence(
+        self,
+        tmp_path: Path,
+        evidence_kwargs: dict[str, object],
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+
+        with pytest.raises(DataValidationError, match="fits_requires_source_evidence"):
+            service_add_relationship_inputs(
+                instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-ACCORD",
+                        properties={"verified": True},
+                        **evidence_kwargs,
+                    )
+                ],
+                source="test",
+                source_ref="guarded_non_source_evidence",
+            )
+
+        rel = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-ACCORD",
+            "fits",
+        )
+        assert rel is None
+
+    def test_relationship_evidence_guard_accepts_source_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        source_evidence = _fitment_source_evidence(instance)
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                    properties={"verified": True},
+                    source_evidence=[source_evidence],
+                )
+            ],
+            source="test",
+            source_ref="guarded_source_evidence",
+        )
+
+        assert result.added == 1
+        rel = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-ACCORD",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        evidence_ref = rel.metadata.evidence.evidence_refs[0]
+        assert evidence_ref.source == "source_artifact"
+        assert evidence_ref.artifact_id == source_evidence["source_artifact_id"]
+
+    def test_relationship_evidence_guard_allows_unguarded_relationship_without_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="part_selected_for_vehicle",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                )
+            ],
+            source="test",
+            source_ref="unguarded_decision_relationship",
+        )
+
+        assert result.added == 1
+
+    def test_relationship_evidence_guard_dry_run_validates_without_mutating(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        source_evidence = _fitment_source_evidence(instance)
+
+        with pytest.raises(DataValidationError, match="fits_requires_source_evidence"):
+            service_add_relationship_inputs(
+                instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-ACCORD",
+                    )
+                ],
+                source="test",
+                source_ref="guarded_dry_run_failure",
+                dry_run=True,
+            )
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                    source_evidence=[source_evidence],
+                )
+            ],
+            source="test",
+            source_ref="guarded_dry_run_success",
+            dry_run=True,
+        )
+
+        assert result.added == 1
+        assert result.receipt_id is None
+        rel = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-ACCORD",
+            "fits",
+        )
+        assert rel is None
+
+    def test_relationship_evidence_guard_preserves_existing_source_evidence_on_update(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        source_evidence = _fitment_source_evidence(instance)
+        service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                    source_evidence=[source_evidence],
+                )
+            ],
+            source="test",
+            source_ref="initial_source_evidence",
+        )
+
+        result = service_add_relationship_inputs(
+            instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1002",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-ACCORD",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref="preserve_source_evidence",
+        )
+
+        assert result.updated == 1
+        with pytest.raises(DataValidationError, match="fits_requires_source_evidence"):
+            service_add_relationship_inputs(
+                instance,
+                [
+                    RelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-ACCORD",
+                        evidence_refs=[
+                            {"source": "catalog", "source_record_id": "replacement"}
+                        ],
+                    )
+                ],
+                source="test",
+                source_ref="reject_bad_replacement_evidence",
+            )
+
+        rel = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-ACCORD",
+            "fits",
+        )
+        assert rel is not None
+        assert rel.metadata.evidence is not None
+        assert rel.metadata.evidence.evidence_refs[0].source == "source_artifact"
+
+    def test_batch_relationship_evidence_guard_reports_dry_run_errors(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-ACCORD",
+                        evidence_rationale="Looks right from context.",
+                    )
+                ],
+            ),
+            dry_run=True,
+        )
+
+        assert result.valid is False
+        assert any("fits_requires_source_evidence" in error for error in result.validation_errors)
+        rel = instance.load_graph().get_relationship(
+            "Part",
+            "BP-1002",
+            "Vehicle",
+            "V-ACCORD",
+            "fits",
+        )
+        assert rel is None
+
+    def test_batch_relationship_evidence_guard_accepts_shared_source_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        instance = _evidence_guard_instance(tmp_path)
+        _seed_guarded_fitment_endpoints(instance)
+        source_evidence = _fitment_source_evidence(instance)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1002",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-ACCORD",
+                        shared_evidence_keys=["fitment_doc"],
+                    )
+                ],
+                shared_evidence={
+                    "fitment_doc": SharedEvidenceInput(
+                        source_evidence=[source_evidence],
+                    )
+                },
+            ),
+        )
+
+        assert result.valid is True
+        assert result.relationships_added == 1
+        assert result.evidence_sources_used == ["source_artifact"]
 
     def test_update_preserves_or_replaces_relationship_evidence(
         self,

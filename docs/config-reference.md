@@ -973,10 +973,17 @@ does not pass. They are enforced by direct entity writes and batch direct writes
 They are appendable in overlay composition and are not allowed in `kind:
 ontology` configs.
 
-A guard fires on any direct write that **results in** the guarded property
-value — creating an entity with the value and changing an existing entity to
-the value are both covered. Updates that re-assert the value an entity already
-holds are not transitions and do not fire. Every guard field is load-bearing;
+Entity-property guards fire on any direct write that **results in** the guarded
+property value — creating an entity with the value and changing an existing
+entity to the value are both covered. Updates that re-assert the value an entity
+already holds are not transitions and do not fire.
+
+Relationship evidence guards fire on writes to the configured relationship type
+and require the resulting relationship evidence to meet the configured floor.
+Use them for observation-style relationships whose claims must cite
+dereferenceable source material. Decision-style relationships should usually
+declare no evidence floor and rely on ambient attribution: provenance, receipts,
+actor context, and review history. Every guard field is load-bearing;
 discriminator fields (`operation`, `effect`, condition `kind`) deliberately do
 not exist.
 
@@ -1000,6 +1007,13 @@ mutation_guards:
     condition:
       allowed_actor_ids: [authorized-reviewer]
     message: "ReviewRequest approvals require an authorized actor."
+
+  - name: finding_support_requires_source_evidence
+    relationship_type: finding_supports_work_item
+    condition:
+      require_evidence: source_evidence
+      min_count: 1
+    message: "Observation claims require source evidence."
 ```
 
 ### MutationGuardSchema
@@ -1007,10 +1021,11 @@ mutation_guards:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `name` | string | **yes** | — | Unique guard name |
-| `entity_type` | string | **yes** | — | Entity type the write applies to |
-| `property` | string | **yes** | — | Property that must be present in the incoming write |
-| `new_value` | any | **yes** | — | Guarded resulting value after config property normalization |
-| `condition` | NamedQueryResultCountGuardCondition or ActorIdentityGuardCondition | **yes** | — | Condition that must pass |
+| `entity_type` | string | entity guards | — | Entity type the write applies to |
+| `property` | string | entity guards | — | Property that must be present in the incoming write |
+| `new_value` | any | entity guards | — | Guarded resulting value after config property normalization |
+| `relationship_type` | string | relationship evidence guards | — | Relationship type the write applies to |
+| `condition` | NamedQueryResultCountGuardCondition, ActorIdentityGuardCondition, or EvidenceRequirementGuardCondition | **yes** | — | Condition that must pass |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
 
 ### NamedQueryResultCountGuardCondition
@@ -1047,6 +1062,20 @@ Actor identity conditions compare the current write's
 fails the guard. This condition is useful for guarded approval transitions where
 the authority comes from authenticated runtime credential identity or a Cloud
 control-plane supplied actor context.
+
+### EvidenceRequirementGuardCondition
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `require_evidence` | `source_evidence` | **yes** | — | Require dereferenceable source-evidence refs resolved from registered source artifacts |
+| `min_count` | int | no | `1` | Minimum number of source-evidence refs required; must be at least `1` |
+
+Evidence requirement guards are relationship-scoped: they require
+`relationship_type` and must not define `entity_type`, `property`, or
+`new_value`. The guard counts resolved `source_evidence` locators, not free-text
+`evidence_rationale` alone. Generic `evidence_refs` only satisfy the floor when
+they are dereferenceable `source_artifact` refs with chunk identity and content
+hash metadata, as produced by source artifact registration.
 
 For batch direct writes, guards evaluate against the proposed batch graph, so
 valid same-batch entities and relationships can satisfy the named query before

@@ -14,6 +14,7 @@ from cruxible_core.config.schema import (
     DecisionPolicyMatch,
     DecisionPolicySchema,
     EntityTypeSchema,
+    EvidenceRequirementGuardCondition,
     FeedbackProfileSchema,
     FeedbackReasonCodeSchema,
     MutationGuardSchema,
@@ -340,6 +341,21 @@ class TestValidateMutationGuards:
 
         validate_config(config)
 
+    def test_mutation_guard_accepts_relationship_evidence_condition(self):
+        config = _minimal_config(
+            mutation_guards=[
+                MutationGuardSchema(
+                    name="links_requires_source_evidence",
+                    relationship_type="links",
+                    condition=EvidenceRequirementGuardCondition(
+                        require_evidence="source_evidence",
+                    ),
+                )
+            ],
+        )
+
+        validate_config(config)
+
     def test_mutation_guard_rejects_duplicate_names(self):
         config = _minimal_config(
             named_queries={"find_a": self._query()},
@@ -402,6 +418,24 @@ class TestValidateMutationGuards:
             validate_config(config)
 
         assert any("query_name 'find_a'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_unknown_relationship_type(self):
+        config = _minimal_config(
+            mutation_guards=[
+                MutationGuardSchema(
+                    name="missing_relationship_requires_source_evidence",
+                    relationship_type="missing",
+                    condition=EvidenceRequirementGuardCondition(
+                        require_evidence="source_evidence",
+                    ),
+                )
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("relationship_type 'missing'" in e for e in exc_info.value.errors)
 
 
 class TestValidateLoopOneControls:
