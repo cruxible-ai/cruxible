@@ -26,7 +26,7 @@ from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.store import GroupStore
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
-from cruxible_core.query.evaluate import evaluate_graph
+from cruxible_core.query.evaluate import EvaluationFinding, evaluate_graph
 
 
 def _review_metadata(status: str, source: str = "human") -> RelationshipMetadata:
@@ -1733,3 +1733,117 @@ class TestQualityChecks:
         report = evaluate_graph(config, graph)
         co_members = [f for f in report.findings if f.category == "unreviewed_co_member"]
         assert len(co_members) == 0
+
+
+# Script run in subprocesses (under differing PYTHONHASHSEED) to prove that
+# ordering + truncation of evaluate findings is hash-seed independent. Several
+# checks build findings by iterating sets of strings, so the pre-sort input
+# order is hash-seed dependent; the script reproduces that by sourcing finding
+# identifiers from a set, then relies on _filter_and_order_findings to impose a
+# total, deterministic order before truncation.
+_DETERMINISM_SCRIPT = """
+# Import runtime.instance first to settle a pre-existing import cycle that only
+# trips when cruxible_core.query.evaluate is the first module imported in a
+# fresh interpreter (unrelated to this test).
+import cruxible_core.runtime.instance  # noqa: F401
+from cruxible_core.query.evaluate import (
+    EvaluationFinding,
+    _filter_and_order_findings,
+)
+
+# A set of ids: iteration order over this set varies with PYTHONHASHSEED.
+ids = {f"node-{i}" for i in range(50)}
+findings = [
+    EvaluationFinding(
+        category="orphan_entity",
+        severity="warning",
+        message=f"Orphan entity: Part:{node_id}",
+        detail={"entity_type": "Part", "entity_id": node_id},
+    )
+    for node_id in ids
+]
+
+ordered = _filter_and_order_findings(
+    findings, severity_filter=None, category_filter=None
+)
+truncated = ordered[:10]
+print("|".join(f.detail["entity_id"] for f in truncated))
+"""
+
+
+class TestFindingOrderingDeterminism:
+    def test_sort_key_is_total_for_distinct_findings(self):
+        """Findings that share a severity must still get distinct sort keys."""
+        from cruxible_core.query.evaluate import _finding_sort_key
+
+        # All warnings (severity alone is not a total key); some share category.
+        findings = [
+            EvaluationFinding(
+                category="orphan_entity",
+                severity="warning",
+                message=f"Orphan entity: Part:P{i}",
+                detail={"entity_type": "Part", "entity_id": f"P{i}"},
+            )
+            for i in range(20)
+        ] + [
+            EvaluationFinding(
+                category="coverage_gap",
+                severity="warning",
+                message=f"Missing relationship type: rel_{i}",
+                detail={"relationship_type": f"rel_{i}"},
+            )
+            for i in range(20)
+        ]
+
+        keys = [_finding_sort_key(f) for f in findings]
+        # Strictly total: no two distinct findings collide on the sort key.
+        assert len(set(keys)) == len(keys)
+
+    def test_order_independent_of_input_order(self):
+        """Sorting yields the same sequence regardless of pre-sort order."""
+        from cruxible_core.query.evaluate import _filter_and_order_findings
+
+        findings = [
+            EvaluationFinding(
+                category="orphan_entity",
+                severity="warning",
+                message=f"Orphan entity: Part:P{i:02d}",
+                detail={"entity_id": f"P{i:02d}"},
+            )
+            for i in range(30)
+        ]
+        forward = _filter_and_order_findings(
+            findings, severity_filter=None, category_filter=None
+        )
+        reversed_ = _filter_and_order_findings(
+            list(reversed(findings)), severity_filter=None, category_filter=None
+        )
+        assert [f.message for f in forward] == [f.message for f in reversed_]
+
+    def test_truncated_output_stable_across_hash_seeds(self):
+        """End-to-end: identical truncated output under differing PYTHONHASHSEED.
+
+        Without a total tie-break key, the set-derived input order — and thus
+        the [:max_findings] subset — varied across processes. This drives two
+        subprocesses with deliberately different hash seeds and asserts their
+        output is byte-identical.
+        """
+        import os
+        import subprocess
+        import sys
+
+        outputs = []
+        for seed in ("0", "1"):
+            env = dict(os.environ, PYTHONHASHSEED=seed)
+            result = subprocess.run(
+                [sys.executable, "-c", _DETERMINISM_SCRIPT],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=True,
+            )
+            outputs.append(result.stdout.strip())
+
+        assert outputs[0] == outputs[1]
+        # And the truncation actually happened (sanity: 10 ids of 50).
+        assert len(outputs[0].split("|")) == 10

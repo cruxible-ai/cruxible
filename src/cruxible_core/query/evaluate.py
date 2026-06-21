@@ -6,6 +6,7 @@ governed support state, and configured quality rules.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -127,13 +128,32 @@ def evaluate_graph(
     )
 
 
+def _finding_sort_key(finding: EvaluationFinding) -> tuple[int, str, str, str]:
+    """Total ordering key for findings.
+
+    Severity is the primary key, but it is not total (many findings share a
+    severity). Several checks build findings by iterating sets of strings
+    (e.g. ``matched_set`` in unreviewed co-member detection), so without a
+    stable tie-break the order — and therefore the ``[:max_findings]``
+    truncated subset — varies across processes under different
+    ``PYTHONHASHSEED``. Tie-break on category, message, and a canonical
+    serialization of ``detail`` to make the order deterministic.
+    """
+    return (
+        _SEVERITY_ORDER[finding.severity],
+        finding.category,
+        finding.message,
+        json.dumps(finding.detail, sort_keys=True, default=str),
+    )
+
+
 def _filter_and_order_findings(
     findings: list[EvaluationFinding],
     *,
     severity_filter: list[FindingSeverity] | None,
     category_filter: list[FindingCategory] | None,
 ) -> list[EvaluationFinding]:
-    """Apply caller filters, then return findings in severity order."""
+    """Apply caller filters, then return findings in a deterministic order."""
     severity_set = set(severity_filter or [])
     category_set = set(category_filter or [])
     filtered = [
@@ -142,7 +162,7 @@ def _filter_and_order_findings(
         if (not severity_set or finding.severity in severity_set)
         and (not category_set or finding.category in category_set)
     ]
-    return sorted(filtered, key=lambda finding: _SEVERITY_ORDER[finding.severity])
+    return sorted(filtered, key=_finding_sort_key)
 
 
 def _check_orphans(
