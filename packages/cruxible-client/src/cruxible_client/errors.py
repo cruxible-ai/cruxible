@@ -217,6 +217,20 @@ class RuntimeCredentialNotFoundError(CoreError):
         super().__init__(f"Runtime credential '{credential_id}' not found")
 
 
+class ServerUnreachableError(CoreError):
+    """The Cruxible daemon could not be reached over the transport.
+
+    Wraps httpx transport-level failures (connection refused, timeout, DNS)
+    so callers get a friendly single-line message naming the target instead
+    of a raw httpx traceback.
+    """
+
+    def __init__(self, target: str, reason: str) -> None:
+        self.target = target
+        self.reason = reason
+        super().__init__(f"could not reach Cruxible server at {target}: {reason}")
+
+
 class AuthenticationError(CoreError):
     pass
 

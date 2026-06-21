@@ -10,9 +10,49 @@ import httpx
 from pydantic import BaseModel
 
 from cruxible_client import contracts
-from cruxible_client.errors import ConfigError, CoreError, ErrorResponse, response_to_error
+from cruxible_client.errors import (
+    ConfigError,
+    CoreError,
+    ErrorResponse,
+    ServerUnreachableError,
+    response_to_error,
+)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+class _TransportGuard:
+    """Proxy over an httpx.Client that translates transport-level failures.
+
+    Connection refused, timeouts, and DNS errors surface from httpx as
+    ``httpx.TransportError`` subclasses. We re-raise them as
+    ``ServerUnreachableError`` so callers (CLI, agents) get a friendly,
+    single-line message naming the target instead of a raw traceback.
+    """
+
+    def __init__(self, client: httpx.Client, target: str) -> None:
+        self._client = client
+        self._target = target
+
+    def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        request = getattr(self._client, method)
+        try:
+            response: httpx.Response = request(*args, **kwargs)
+        except httpx.TransportError as exc:
+            raise ServerUnreachableError(self._target, str(exc) or exc.__class__.__name__) from exc
+        return response
+
+    def get(self, *args: Any, **kwargs: Any) -> httpx.Response:
+        return self._guard("get", *args, **kwargs)
+
+    def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
+        return self._guard("post", *args, **kwargs)
+
+    def patch(self, *args: Any, **kwargs: Any) -> httpx.Response:
+        return self._guard("patch", *args, **kwargs)
+
+    def close(self) -> None:
+        self._client.close()
 
 
 class CruxibleClient:
@@ -33,14 +73,17 @@ class CruxibleClient:
             headers["Authorization"] = f"Bearer {token}"
 
         if socket_path is not None:
-            self._client = httpx.Client(
+            target = f"unix:{socket_path}"
+            raw_client = httpx.Client(
                 base_url="http://cruxible",
                 headers=headers,
                 transport=httpx.HTTPTransport(uds=socket_path),
             )
         else:
             assert base_url is not None
-            self._client = httpx.Client(base_url=base_url, headers=headers)
+            target = base_url
+            raw_client = httpx.Client(base_url=base_url, headers=headers)
+        self._client = _TransportGuard(raw_client, target)
 
     def close(self) -> None:
         self._client.close()

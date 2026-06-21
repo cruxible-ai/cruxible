@@ -8,8 +8,10 @@ import sys
 from typing import Any
 
 import click
+import httpx
 
 from cruxible_client.errors import CoreError as ClientCoreError
+from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
@@ -39,6 +41,25 @@ def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
     return load_cli_context().instance_id
 
 
+def _active_transport_label(exc: httpx.TransportError) -> str:
+    ctx = click.get_current_context(silent=True)
+    root_obj = {}
+    if ctx is not None:
+        root = ctx.find_root()
+        if isinstance(root.obj, dict):
+            root_obj = root.obj
+    server_url = root_obj.get("server_url")
+    server_socket = root_obj.get("server_socket")
+    if server_url:
+        return str(server_url)
+    if server_socket:
+        return f"unix socket {server_socket}"
+    request = getattr(exc, "request", None)
+    if request is not None:
+        return str(request.url)
+    return "configured Cruxible server"
+
+
 def handle_errors(f: Any) -> Any:
     """Decorator that catches any Cruxible error and prints a friendly message.
 
@@ -50,8 +71,20 @@ def handle_errors(f: Any) -> Any:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return f(*args, **kwargs)
+        except ServerUnreachableError as e:
+            # Transport failures already render as a friendly single line; the
+            # class-name prefix would only add noise, so emit the message as-is.
+            click.secho(f"Error: {e}", fg="red", err=True)
+            sys.exit(1)
         except ClientCoreError as e:
             click.secho(f"Error: {e.__class__.__name__}: {e}", fg="red", err=True)
+            sys.exit(1)
+        except httpx.TransportError as e:
+            click.secho(
+                f"Error: could not reach Cruxible server at {_active_transport_label(e)}: {e}",
+                fg="red",
+                err=True,
+            )
             sys.exit(1)
 
     return wrapper
