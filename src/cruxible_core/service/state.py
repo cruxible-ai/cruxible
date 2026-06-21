@@ -241,6 +241,33 @@ def service_pull_state_apply(
     if conflicts:
         raise ConfigError("Local overlay references entities removed upstream", errors=conflicts)
     merged = EntityGraph.merge_graphs(next_upstream_graph, local_graph)
+    # GUARD EXEMPTION (audit F4 / wi-overlay-merge-guard-pass): this
+    # save_graph materializes upstream+overlay without running entity/
+    # relationship mutation guards, and that is intentional and safe.
+    #
+    # Why guarding here adds no safety:
+    #  * `local_graph` is the overlay's OWN state (types not owned by
+    #    upstream). It is not a fresh write -- it is a re-materialization
+    #    of state that already passed entity + relationship guards when it
+    #    was authored via the guarded write paths (service.mutations
+    #    batch_direct_write/add_*, workflow.apply, group_transitions).
+    #    Entity guards fire only on a value transition (old != new ==
+    #    guarded_value); re-materializing unchanged overlay entities has no
+    #    transition to evaluate, so a guard pass here is a no-op.
+    #  * `next_upstream_graph` is governed/published, snapshot-first state.
+    #    Running guards over it would re-litigate already-governed upstream
+    #    content -- outside this overlay's authority and the wrong layer.
+    #  * There is no write actor at merge time. The pull-apply is a system
+    #    reconciliation; `actor_context` here only labels the pre-pull
+    #    snapshot. Feeding it to an actor-identity guard would mis-attribute
+    #    or spuriously reject valid, previously-authored overlay state.
+    #
+    # The one genuinely novel merge-time risk -- local edges dangling onto
+    # upstream entities removed in the new release -- is already enforced
+    # above by `_find_dangling_reference_conflicts`, which blocks the apply
+    # before this materialization. Revisit if overlay state ever becomes
+    # writable OUTSIDE the guarded write paths, or if a guard kind is added
+    # that evaluates static graph shape rather than per-write transitions.
     instance.save_graph(merged)
 
     updated = UpstreamMetadata(

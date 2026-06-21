@@ -973,6 +973,17 @@ does not pass. They are enforced by direct entity writes and batch direct writes
 They are appendable in overlay composition and are not allowed in `kind:
 ontology` configs.
 
+Guards run on *writes*, not on state reconciliation. The upstream pull-apply on a
+release-backed overlay (`cruxible state pull`) re-materializes the new upstream
+release plus the overlay's existing local state and is deliberately guard-exempt:
+the local side is a re-materialization of state that already passed its guards
+when authored (re-materializing an unchanged value is not a transition and never
+fires a guard), the upstream side is governed/published state that this overlay
+must not re-litigate, and there is no write actor at merge time for actor-identity
+guards to evaluate. The one merge-time risk that is genuinely novel — local edges
+dangling onto upstream entities removed in the new release — is enforced
+separately as a blocking pull conflict before the merge is materialized.
+
 Entity-property guards fire on any direct write that **results in** the guarded
 property value — creating an entity with the value and changing an existing
 entity to the value are both covered. Updates that re-assert the value an entity

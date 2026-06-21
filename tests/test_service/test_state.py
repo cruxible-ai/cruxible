@@ -11,6 +11,7 @@ import cruxible_core.service.state as state_service
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import WorkflowSchema, WorkflowStepSchema, WorkflowTestSchema
 from cruxible_core.errors import OwnershipError, QueryExecutionError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.kits.state_refs import StateCatalogEntry
@@ -29,6 +30,7 @@ from cruxible_core.service import (
     service_test,
 )
 from cruxible_core.snapshot.types import UpstreamMetadata
+from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.apply import apply_entity_set, apply_relationship_set
 
 STATE_MODEL_YAML = """\
@@ -852,6 +854,140 @@ def test_workflow_apply_relationships_enforces_evidence_mutation_guard(
         )
 
     assert not graph.has_relationship("Case", "CASE-A", "Case", "CASE-B", "cites")
+
+
+def test_pull_apply_merge_is_guard_exempt_for_local_overlay_state(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+) -> None:
+    """Pin the audit-F4 exemption: the pull-apply merge does NOT re-run entity
+    guards over the re-materialized local overlay state.
+
+    The overlay declares a local entity type ``Note`` with an actor-identity
+    guard: writing ``Note.status=published`` requires the ``editor`` actor. The
+    note is authored with that actor (the guard passes at write time). A later
+    upstream pull-apply re-materializes the local note onto a fresh upstream
+    baseline WITHOUT any write actor. If ``save_graph(merged)`` naively re-ran
+    entity guards over the merged delta, the actor-identity guard would treat
+    the re-materialized note as a fresh ``status=published`` transition with no
+    actor and reject the apply. This test asserts the apply succeeds and the
+    note survives, proving the merge is guard-exempt. It is load-bearing: adding
+    guard evaluation at the merge site turns the apply red.
+    """
+    root_instance, release_dir = published_release_fixture
+    overlay_root = tmp_path / "cloned-model"
+
+    overlay_instance = service_create_state_overlay(
+        transport_ref=f"file://{release_dir}",
+        root_dir=overlay_root,
+    ).instance
+    # Overlay owns a local `Note` type guarded so status=published requires the
+    # `editor` actor. `Case` stays upstream-owned and is untouched by the guard.
+    (overlay_root / "config.yaml").write_text(
+        "\n".join(
+            [
+                'version: "1.0"',
+                "name: case-law-overlay",
+                "extends: .cruxible/upstream/current/config.yaml",
+                "entity_types:",
+                "  Note:",
+                "    properties:",
+                "      note_id:",
+                "        type: string",
+                "        primary_key: true",
+                "      status:",
+                "        type: string",
+                "relationships: []",
+                "mutation_guards:",
+                "  - name: note_publish_requires_editor",
+                "    entity_type: Note",
+                "    property: status",
+                "    new_value: published",
+                "    condition:",
+                "      allowed_actor_ids: [editor]",
+                '    message: "Notes can only be published by the editor."',
+            ]
+        )
+        + "\n"
+    )
+    service_reload_config(overlay_instance)
+
+    editor = GovernedActorContext(
+        actor_type="human_user",
+        actor_id="editor",
+        org_id="org_1",
+        operation_id="op_publish_note",
+        timestamp=utc_now(),
+    )
+    # Authoring the published note succeeds because the editor actor satisfies
+    # the guard. A non-editor actor would be rejected here (write-path guard).
+    add_result = service_add_entities(
+        overlay_instance,
+        [
+            EntityInstance(
+                entity_type="Note",
+                entity_id="NOTE-1",
+                properties={"note_id": "NOTE-1", "status": "published"},
+            )
+        ],
+        actor_context=editor,
+    )
+    assert add_result.added == 1
+
+    # Sanity: the same write WITHOUT the editor actor is genuinely rejected by
+    # the guard, confirming the guard is live and load-bearing.
+    with pytest.raises(Exception, match="note_publish_requires_editor"):
+        service_add_entities(
+            overlay_instance,
+            [
+                EntityInstance(
+                    entity_type="Note",
+                    entity_id="NOTE-2",
+                    properties={"note_id": "NOTE-2", "status": "published"},
+                )
+            ],
+            actor_context=None,
+        )
+
+    # Publish a new upstream release so there is something to pull-apply.
+    root_graph = root_instance.load_graph()
+    root_graph.add_entity(
+        EntityInstance(
+            entity_type="Case",
+            entity_id="CASE-C",
+            properties={"case_id": "CASE-C", "title": "Gamma"},
+        )
+    )
+    root_instance.save_graph(root_graph)
+    successor_dir = tmp_path / "releases" / "successor"
+    service_publish_state(
+        root_instance,
+        transport_ref=f"file://{successor_dir}",
+        state_id="case-law",
+        release_id="v1.1.0",
+        compatibility="data_only",
+    )
+    _replace_release_dir(successor_dir, release_dir)
+
+    preview = service_pull_state_preview(overlay_instance)
+    assert preview.target_release_id == "v1.1.0"
+    assert preview.conflicts == []
+
+    # The merge re-materializes the published NOTE-1 with NO write actor. This
+    # apply MUST succeed; it would fail if the merge re-ran the actor-identity
+    # guard over the re-materialized local note.
+    applied = service_pull_state_apply(
+        overlay_instance,
+        expected_apply_digest=preview.apply_digest,
+        actor_context=None,
+    )
+    assert applied.release_id == "v1.1.0"
+
+    merged_graph = overlay_instance.load_graph()
+    assert merged_graph.has_entity("Case", "CASE-C")
+    note = merged_graph.get_entity("Note", "NOTE-1")
+    assert note is not None
+    assert note.properties["status"] == "published"
 
 
 def _case(case_id: str, title: str) -> EntityInstance:
