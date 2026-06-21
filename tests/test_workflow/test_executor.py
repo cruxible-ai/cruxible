@@ -26,7 +26,7 @@ from cruxible_core.config.schema import (
     WorkflowSchema,
     WorkflowStepSchema,
 )
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import ConfigError, DataValidationError, QueryExecutionError
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
@@ -2023,6 +2023,46 @@ class TestWorkflowExecutor:
             if node.node_type == "plan_step" and node.detail.get("kind") == "provider"
         ]
         assert any(step.detail.get("status") == "error" for step in provider_steps)
+
+    def test_execute_workflow_preserves_provider_error_subtype(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        """A typed Cruxible error raised by a provider must not be collapsed.
+
+        The provider step previously re-raised every failure as a generic
+        QueryExecutionError, hiding the original subtype. Typed CoreError
+        subclasses (e.g. DataValidationError) are now preserved so callers can
+        still branch on the specific failure category.
+        """
+        config = workflow_instance.load_config()
+        config.providers[
+            "margin_calculator"
+        ].ref = "tests.support.workflow_test_providers.typed_error_provider"
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(DataValidationError, match="malformed upstream data"):
+            execute_workflow(
+                workflow_instance,
+                workflow_instance.load_config(),
+                "evaluate_promo",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
+        # The receipt still records the failure with the preserved subtype.
+        store = workflow_instance.get_receipt_store()
+        try:
+            receipts = store.list_receipts(operation_type="workflow")
+            receipt = store.get_receipt(receipts[0]["receipt_id"])
+        finally:
+            store.close()
+        assert receipt is not None
+        assert receipt.committed is False
+        assert receipt.nodes[0].detail["error_type"] == "DataValidationError"
 
     def test_execute_workflow_validates_matching_contract_out(
         self, workflow_instance: CruxibleInstance

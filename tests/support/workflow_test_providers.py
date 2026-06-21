@@ -90,6 +90,15 @@ def broken_provider(_input_payload: dict[str, Any], _context: ProviderContext) -
     return {"unexpected": "value"}
 
 
+def typed_error_provider(
+    _input_payload: dict[str, Any], _context: ProviderContext
+) -> dict[str, Any]:
+    """Raise a typed Cruxible error to exercise provider error subtype preservation."""
+    from cruxible_core.errors import DataValidationError
+
+    raise DataValidationError("provider rejected malformed upstream data")
+
+
 def reference_bundle_loader(
     _input_payload: dict[str, Any], context: ProviderContext
 ) -> dict[str, Any]:

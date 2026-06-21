@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import ConfigError, QueryExecutionError
+from cruxible_core.errors import ConfigError, CoreError, QueryExecutionError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import PredicateValueType, evaluate_typed_comparison
@@ -345,6 +345,11 @@ def execute_provider_step(
                 "status": status,
             },
         )
+        # Preserve typed Cruxible errors (e.g. DataValidationError, ConfigError,
+        # CustomerCodeExecutionUnsupportedError) so callers can still branch on
+        # the specific failure category; only opaque exceptions are wrapped.
+        if isinstance(exc, CoreError):
+            raise
         raise QueryExecutionError(error_message or "Provider execution failed") from exc
 
     trace = build_trace(

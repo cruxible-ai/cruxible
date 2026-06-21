@@ -30,6 +30,8 @@ from cruxible_core.query.engine import (
     QueryResult,
     _evaluate_constraint,
     _matches_filter,
+    _path_identity,
+    _traversal_state_identity,
     execute_query,
 )
 from cruxible_core.query.evaluate import evaluate_graph
@@ -3306,6 +3308,106 @@ class TestQueryIncludes:
         assert result.receipt is not None
         assert any("include_summary" in node.detail for node in result.receipt.nodes)
 
+    def test_result_anchored_include_summary_dedupes_total_matches_under_dedupe_path(
+        self, config, graph
+    ):
+        """Fix: include_summary.total_matches must not double-count shared anchors.
+
+        Under `dedupe: path`, the same `$result` entity can be reached by several
+        distinct evidence paths. Each row's `$include.*.count` is correct, but the
+        receipt-only `total_matches` summed those counts per-row and over-counted
+        the shared anchor's neighbors. The fix dedupes by resolved anchor identity.
+
+        Diamond: entry BP-1234 -fits-> {V-CIVIC, V-ACCORD} -fitted_parts-> BP-DUAL.
+        BP-DUAL fits both vehicles, so it is reached via two distinct evidence
+        paths (one per vehicle) but is one result entity. Its `$result`-anchored
+        `replaces` include matches 2 parts (BP-1234, BP-9999) on each path;
+        total_matches must report 2 distinct neighbors, not 4.
+        """
+        # BP-DUAL fits both vehicles BP-1234 fits -> reached via two distinct paths.
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="BP-DUAL",
+                properties={"part_number": "BP-DUAL", "name": "Dual Fit Pad", "category": "brakes"},
+            )
+        )
+        for vehicle_id in ("V-CIVIC", "V-ACCORD"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id="BP-DUAL",
+                    to_type="Vehicle",
+                    to_id=vehicle_id,
+                    properties={"verified": True, "confidence": 0.95},
+                )
+            )
+        # Two parts replace BP-DUAL -> include count 2 per row (anchor = BP-DUAL).
+        for replacer in ("BP-1234", "BP-9999"):
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="replaces",
+                    from_type="Part",
+                    from_id=replacer,
+                    to_type="Part",
+                    to_id="BP-DUAL",
+                    properties={"direction": "equivalent", "confidence": 0.8},
+                )
+            )
+
+        config.named_queries["diamond_back_to_part"] = NamedQuerySchema(
+            mode="traversal",
+            entry_point="Part",
+            traversal=[
+                TraversalStep(relationship="fits", direction="outgoing", alias="hop1"),
+                TraversalStep(relationship="fitted_parts", direction="outgoing", alias="hop2"),
+            ],
+            returns="list[Part]",
+            result_shape="path",
+            dedupe="path",
+            include={
+                "replacements": {
+                    "from": "$result",
+                    "relationship": "replaces",
+                    "direction": "incoming",
+                    "many": True,
+                }
+            },
+        )
+
+        result = execute_query(
+            config,
+            graph,
+            "diamond_back_to_part",
+            {"part_number": "BP-1234"},
+        )
+
+        # BP-DUAL is reached by more than one distinct path under dedupe: path.
+        dual_rows = [
+            row
+            for row in result.results
+            if isinstance(row, QueryPathRow) and row.result.entity_id == "BP-DUAL"
+        ]
+        assert len(dual_rows) >= 2, "expected BP-DUAL retained via multiple distinct paths"
+        # Per-row include count stays correct (BP-1234, BP-9999 replace BP-DUAL).
+        for row in dual_rows:
+            assert row.includes["replacements"].count == 2
+
+        assert result.receipt is not None
+        summary = next(
+            spec
+            for node in result.receipt.nodes
+            if "include_summary" in node.detail
+            for spec in node.detail["include_summary"]
+            if spec["alias"] == "replacements"
+        )
+        # rows_evaluated counts every retained row (per-path); total_matches counts
+        # distinct matched neighbors per anchor and must not double-count BP-DUAL's.
+        assert summary["rows_evaluated"] >= 2
+        dual_match_count = 2  # BP-1234, BP-9999 replace BP-DUAL
+        assert summary["total_matches"] == dual_match_count
+
     def test_include_where_can_reference_path_alias(self, config, graph):
         config.named_queries["include_where_path_ref"] = NamedQuerySchema(
             mode="traversal",
@@ -5852,3 +5954,59 @@ class TestRelationshipResults:
                 "bad_fit_edges",
                 {"vehicle_id": "V-CIVIC"},
             )
+
+
+class TestPathIdentityEdgeKeyNoneSafety:
+    """Fix: _path_identity must be sortable across mixed None/int edge_keys.
+
+    Path/relationship queries under `max_paths` sort retained traversal states by
+    `_traversal_state_identity`, which embeds `_path_identity`. A raw `None`
+    edge_key in the sort tuple raised TypeError when compared against an int
+    edge_key between identical endpoints. The encoding mirrors the twin in
+    query.projection.
+    """
+
+    @staticmethod
+    def _segment(edge_key: int | None) -> QueryPathSegment:
+        return QueryPathSegment(
+            relationship_type="fits",
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            edge_key=edge_key,
+        )
+
+    def test_mixed_none_and_int_edge_keys_are_sortable(self):
+        identities = [
+            _path_identity((self._segment(None),)),
+            _path_identity((self._segment(2),)),
+            _path_identity((self._segment(None),)),
+            _path_identity((self._segment(1),)),
+        ]
+        # Must not raise TypeError comparing None against int.
+        ordered = sorted(identities)
+        assert len(ordered) == 4
+        # None-keyed segments encode distinctly and stably from int-keyed ones.
+        assert _path_identity((self._segment(None),)) != _path_identity((self._segment(-1),))
+
+    def test_traversal_state_identity_sorts_with_mixed_edge_keys(self):
+        entry = EntityInstance(entity_type="Part", entity_id="BP-1", properties={})
+        current = EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={})
+        states = [
+            query_engine._TraversalState(
+                entry=entry,
+                current=current,
+                entities=(entry, current),
+                path=(self._segment(None),),
+            ),
+            query_engine._TraversalState(
+                entry=entry,
+                current=current,
+                entities=(entry, current),
+                path=(self._segment(3),),
+            ),
+        ]
+        # Identical endpoints + mixed edge_keys previously raised TypeError here.
+        ordered = sorted(states, key=_traversal_state_identity)
+        assert len(ordered) == 2

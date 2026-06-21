@@ -1628,7 +1628,14 @@ def _dedupe_states(
 
 
 def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...], ...]:
-    """Return a stable graph identity for one evidence path."""
+    """Return a stable graph identity for one evidence path.
+
+    ``edge_key`` may be ``None`` for some segments and an ``int`` for others
+    between identical endpoints. A raw ``None`` in the sort tuple would raise a
+    ``TypeError`` when this identity is used as a sort key (see the path
+    traversal sort under ``max_paths``), so the key is encoded None-safely,
+    mirroring ``query.projection._path_identity``.
+    """
     return tuple(
         (
             segment.relationship_type,
@@ -1636,7 +1643,8 @@ def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...],
             segment.from_id,
             segment.to_type,
             segment.to_id,
-            segment.edge_key,
+            segment.edge_key is None,
+            segment.edge_key if segment.edge_key is not None else -1,
         )
         for segment in path
     )
@@ -1716,6 +1724,15 @@ def _apply_includes(
         }
         for alias, spec in query_schema.include.items()
     }
+    # Under `dedupe: path`, several retained rows can share the same include
+    # anchor (e.g. the same `$result` entity reached by distinct evidence
+    # paths). Each row's `$include.*.count` is independently correct, but a
+    # naive sum over rows double-counts those shared anchors. Track which anchor
+    # identities have already contributed to each alias's `total_matches` so the
+    # summary reflects distinct matched neighbors, not per-row repetitions.
+    counted_anchors: dict[str, set[tuple[str, str]]] = {
+        alias: set() for alias in query_schema.include
+    }
 
     for context in contexts:
         includes: dict[str, QueryIncludeResult] = {}
@@ -1732,7 +1749,12 @@ def _apply_includes(
             )
             summary = summaries[alias]
             summary["rows_evaluated"] += 1
-            summary["total_matches"] += result.count
+            anchor = _resolve_include_anchor(alias, spec.from_, context)
+            anchor_key = (anchor.entity_type, anchor.entity_id) if anchor is not None else None
+            if anchor_key is None or anchor_key not in counted_anchors[alias]:
+                summary["total_matches"] += result.count
+                if anchor_key is not None:
+                    counted_anchors[alias].add(anchor_key)
             if result.exists:
                 summary["rows_with_matches"] += 1
             if result.truncated:

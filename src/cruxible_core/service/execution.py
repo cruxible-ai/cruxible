@@ -38,6 +38,7 @@ from cruxible_core.temporal import utc_now
 from cruxible_core.workflow import (
     build_lock,
     compile_workflow,
+    compute_lock_config_digest,
     compute_lock_digest,
     execute_workflow,
     get_lock_path,
@@ -475,6 +476,14 @@ def service_apply_workflow(
         current_lock_digest = compute_lock_digest(current_lock)
         if preview.receipt.nodes[0].detail.get("lock_digest") != current_lock_digest:
             raise ConfigError("Workflow lock changed; rerun workflow preview before apply")
+
+        # Defense-in-depth: stale-lock rejection only catches config drift that
+        # also moves the lock digest. Verify the live config digest directly so a
+        # config change that left the lock untouched (or a hand-edited lock) is
+        # still rejected before the apply transaction runs.
+        current_config_digest = compute_lock_config_digest(config)
+        if preview.receipt.nodes[0].detail.get("config_digest") != current_config_digest:
+            raise ConfigError("Workflow config changed; rerun workflow preview before apply")
 
         with instance.write_transaction():
             result = execute_workflow(
