@@ -1209,12 +1209,31 @@ def _relationship_matches_list_where(
 ) -> bool:
     if where is None:
         return True
+    # `list edges` is a stored-relationship inspection surface (see
+    # docs/cli-reference.md, docs/mcp-tools.md): a stored edge stays visible even
+    # when an endpoint entity is missing, and the where-is-None path above keeps
+    # it unconditionally. The where predicate is edge-scoped (edge.properties.*),
+    # so endpoint entities are never read by the filter; synthesize placeholders
+    # for any missing endpoint so a missing endpoint never silently drops an edge
+    # that a property filter would otherwise match.
     source = graph.get_entity(relationship.from_type, relationship.from_id)
     target = graph.get_entity(relationship.to_type, relationship.to_id)
-    if source is None or target is None:
-        return False
-    source = entity_with_identity_properties(config, source)
-    target = entity_with_identity_properties(config, target)
+    source = (
+        entity_with_identity_properties(config, source)
+        if source is not None
+        else EntityInstance(
+            entity_type=relationship.from_type,
+            entity_id=relationship.from_id,
+        )
+    )
+    target = (
+        entity_with_identity_properties(config, target)
+        if target is not None
+        else EntityInstance(
+            entity_type=relationship.to_type,
+            entity_id=relationship.to_id,
+        )
+    )
     segment = QueryPathSegment(
         relationship_type=relationship.relationship_type,
         from_type=relationship.from_type,

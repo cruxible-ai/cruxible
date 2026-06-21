@@ -10,7 +10,7 @@ from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
     RelationshipReviewState,
 )
-from cruxible_core.graph.types import RelationshipMetadata
+from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.service import (
     OperationContext,
     service_create_decision_record,
@@ -18,6 +18,10 @@ from cruxible_core.service import (
     service_list_decision_events,
     service_query_inline_surface,
     service_sample,
+)
+from cruxible_core.service.queries import (
+    _compile_edge_list_where,
+    _relationship_matches_list_where,
 )
 
 
@@ -295,3 +299,62 @@ def test_inline_query_rejects_missing_name(
 
     with pytest.raises(ConfigError, match="requires non-empty name"):
         service_query_inline_surface(populated_instance, definition, {})
+
+
+def _dangling_replaces_edge() -> RelationshipInstance:
+    """A stored `replaces` edge whose target Part is absent from the graph."""
+    return RelationshipInstance(
+        relationship_type="replaces",
+        from_type="Part",
+        from_id="BP-1002",
+        to_type="Part",
+        to_id="BP-MISSING",
+        properties={"direction": "upgrade", "confidence": 0.95},
+    )
+
+
+def test_list_edges_keeps_missing_endpoint_edge_with_and_without_where(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """`list edges` treats a missing-endpoint edge identically with/without where.
+
+    `list edges` is a stored-relationship inspection surface, so a stored edge
+    stays visible even when an endpoint entity is missing. The where-is-None path
+    keeps such an edge; pin that the where-set path keeps it too (no silent
+    contract difference) when the edge properties satisfy the filter.
+    """
+    config = populated_instance.load_config()
+    graph = populated_instance.load_graph()
+    edge = _dangling_replaces_edge()
+    assert graph.get_entity(edge.to_type, edge.to_id) is None
+
+    without_where = _relationship_matches_list_where(config, graph, edge, None)
+
+    matching_where = _compile_edge_list_where(
+        config,
+        "replaces",
+        property_filter=None,
+        where={"direction": {"eq": "upgrade"}},
+    )
+    with_matching_where = _relationship_matches_list_where(config, graph, edge, matching_where)
+
+    assert without_where is True
+    assert with_matching_where == without_where
+
+
+def test_list_edges_missing_endpoint_edge_still_filtered_by_edge_properties(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A missing endpoint never bypasses the edge-property predicate itself."""
+    config = populated_instance.load_config()
+    graph = populated_instance.load_graph()
+    edge = _dangling_replaces_edge()
+
+    non_matching_where = _compile_edge_list_where(
+        config,
+        "replaces",
+        property_filter=None,
+        where={"direction": {"eq": "downgrade"}},
+    )
+
+    assert _relationship_matches_list_where(config, graph, edge, non_matching_where) is False
