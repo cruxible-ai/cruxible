@@ -374,8 +374,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -494,8 +494,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -614,8 +614,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -734,8 +734,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -854,8 +854,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -974,8 +974,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -1094,8 +1094,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -1214,8 +1214,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_1>"
                 }
               },
               "evidence": {
@@ -2568,8 +2568,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -2834,8 +2834,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -3099,8 +3099,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -3364,8 +3364,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -3642,8 +3642,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -3909,8 +3909,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -4207,8 +4207,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -4507,8 +4507,8 @@
                     "actor_context": null,
                     "source": "group",
                     "status": "approved",
-                    "updated_at": null,
-                    "updated_by": null
+                    "updated_at": "<TIMESTAMP>",
+                    "updated_by": "group:<GROUP_1>"
                   }
                 },
                 "evidence": {
@@ -5394,8 +5394,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -5546,8 +5546,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -5700,8 +5700,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -5845,8 +5845,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -6014,8 +6014,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -6175,8 +6175,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {
@@ -6352,8 +6352,8 @@
                   "actor_context": null,
                   "source": "group",
                   "status": "approved",
-                  "updated_at": null,
-                  "updated_by": null
+                  "updated_at": "<TIMESTAMP>",
+                  "updated_by": "group:<GROUP_2>"
                 }
               },
               "evidence": {

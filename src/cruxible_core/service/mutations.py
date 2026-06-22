@@ -185,9 +185,7 @@ def _detect_direct_write_group_interactions(
         for relationship in relationships:
             tuples_by_type[relationship.relationship_type].append(relationship.identity_tuple())
 
-        pending_by_type: dict[
-            str, dict[tuple[str, str, str, str, str], CandidateGroup]
-        ] = {}
+        pending_by_type: dict[str, dict[tuple[str, str, str, str, str], CandidateGroup]] = {}
         for relationship_type, tuples in tuples_by_type.items():
             pending_by_type[relationship_type] = store.find_pending_groups_for_tuples(
                 relationship_type,
@@ -372,11 +370,7 @@ def _merge_direct_write_conflict_state(
     conflicted_member_identities = member_identities.intersection(records_by_identity)
     member_count = len(member_identities) if member_identities else group.member_count
     conflicted_member_count = len(conflicted_member_identities)
-    coverage = (
-        "full"
-        if member_count > 0 and conflicted_member_count >= member_count
-        else "partial"
-    )
+    coverage = "full" if member_count > 0 and conflicted_member_count >= member_count else "partial"
     last_receipt_id = new_records[-1].get("receipt_id") if new_records else None
     summary = {
         "conflicted_member_count": conflicted_member_count,
@@ -827,6 +821,7 @@ def service_batch_direct_write(
             "shared_evidence_count": len(payload.shared_evidence),
             "source": source,
         },
+        actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
         prepared = _prepare_batch_direct_write(
@@ -987,6 +982,7 @@ def service_add_entities(
         "add_entity",
         {"count": len(entities)},
         enabled=_create_receipt and not dry_run,
+        actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
         errors: list[str] = []
@@ -1117,8 +1113,7 @@ def service_add_relationship_inputs(
 ) -> AddRelationshipResult:
     """Normalize relationship write inputs, then add or update graph relationships."""
     normalized = [
-        _relationship_from_input(instance, relationship)
-        for relationship in relationships
+        _relationship_from_input(instance, relationship) for relationship in relationships
     ]
     return service_add_relationships(
         instance,
@@ -1162,6 +1157,7 @@ def service_add_relationships(
         "add_relationship",
         {"count": len(relationships), "source": source},
         enabled=_create_receipt and not dry_run,
+        actor_context=actor_context,
     ) as ctx:
         builder = ctx.builder
         errors: list[str] = []
@@ -1239,9 +1235,7 @@ def service_add_relationships(
             instance,
             config,
             current_graph=graph,
-            relationships=[
-                validated for validated, _edge, _pending_flag in prepared_relationships
-            ],
+            relationships=[validated for validated, _edge, _pending_flag in prepared_relationships],
         )
         for error in guard_errors:
             if builder:

@@ -11,6 +11,7 @@ from typing import Any, Protocol
 import structlog
 
 from cruxible_core.errors import CoreError, MutationError
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
@@ -119,10 +120,22 @@ def mutation_receipt(
     *,
     store: Closeable | None = None,
     enabled: bool = True,
+    actor_context: GovernedActorContext | None = None,
 ) -> Iterator[MutationReceiptContext]:
-    """Wrap local governed mutation execution with receipt persistence and tagging."""
+    """Wrap local governed mutation execution with receipt persistence and tagging.
+
+    ``actor_context`` is the token-derived actor identity for the operation; it is
+    preserved onto the built receipt where available and left null on auth-off
+    local paths (no actor context is fabricated).
+    """
     builder = (
-        ReceiptBuilder(operation_type=operation_type, parameters=parameters) if enabled else None
+        ReceiptBuilder(
+            operation_type=operation_type,
+            parameters=parameters,
+            actor_context=actor_context,
+        )
+        if enabled
+        else None
     )
     retention = _resolve_mutation_payload_retention(instance) if builder is not None else "metadata"
     ctx = MutationReceiptContext(builder=builder)

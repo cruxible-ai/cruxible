@@ -148,6 +148,7 @@ def resolve_group_transition(
             "expected_pending_version": expected_pending_version,
             "stamp_existing": stamp_existing,
         },
+        actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -235,6 +236,7 @@ def update_trust_status_transition(
             "trust_status": trust_status,
             "reason": reason,
         },
+        actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None

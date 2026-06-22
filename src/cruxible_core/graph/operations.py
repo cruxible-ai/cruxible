@@ -183,10 +183,25 @@ def apply_entity(graph: EntityGraph, validated: ValidatedEntity) -> None:
         graph.add_entity(validated.entity)
 
 
-def _initial_assertion(source: str) -> RelationshipAssertion:
+def _initial_assertion(
+    source: str,
+    source_ref: str,
+    actor_context: GovernedActorContext | None,
+) -> RelationshipAssertion:
     if source == "group_resolve":
+        # A group-resolved edge is born approved-by-group. Stamp the resolving
+        # actor identity onto the review state where it is available, mirroring
+        # the blessing of pre-existing edges (see _blessed_metadata_for_existing)
+        # so newly written and pre-existing group members carry the same actor
+        # context. actor_context stays None on the auth-off local path.
         return RelationshipAssertion(
-            review=RelationshipReviewState(status="approved", source="group")
+            review=RelationshipReviewState(
+                status="approved",
+                source="group",
+                updated_at=utc_now(),
+                updated_by=source_ref,
+                actor_context=actor_context,
+            )
         )
     return RelationshipAssertion()
 
@@ -272,7 +287,11 @@ def apply_relationship(
                 resolution_id=resolution_id,
                 actor_context=actor_context,
             ),
-            assertion=_pending_assertion(actor_context) if pending else _initial_assertion(source),
+            assertion=(
+                _pending_assertion(actor_context)
+                if pending
+                else _initial_assertion(source, source_ref, actor_context)
+            ),
             evidence=incoming_evidence,
         )
         graph.add_relationship(rel)

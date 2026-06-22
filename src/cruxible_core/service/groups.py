@@ -183,6 +183,7 @@ def _clear_pending_group(
     prior_resolution: GroupResolution | None,
     suppressed_members: list[SuppressedProposalMember],
     policy_summary: dict[str, int],
+    actor_context: GovernedActorContext | None = None,
 ) -> ProposeGroupResult:
     with mutation_receipt(
         instance,
@@ -192,6 +193,7 @@ def _clear_pending_group(
             "signature": signature,
             "final_version_before_clear": pending_group.pending_version,
         },
+        actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -263,6 +265,7 @@ def _rewrite_pending_group(
             "prior_version": pending_group.pending_version,
             "new_version": group.pending_version,
         },
+        actor_context=metadata.proposed_actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -328,6 +331,7 @@ def _create_group_or_rewrite_concurrent(
             "member_count": len(pending_members),
             "member_tuples": relationship_tuples_summary(pending_members),
         },
+        actor_context=metadata.proposed_actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -744,6 +748,7 @@ def service_propose_group(
                 prior_resolution=prior,
                 suppressed_members=suppressed_members,
                 policy_summary=policy_summary,
+                actor_context=metadata.proposed_actor_context,
             )
 
         review_priority = review_priority_for_members(

@@ -299,6 +299,11 @@ class TestApproveBasic:
         assert rel.metadata.provenance.created_actor_context.actor_id == "usr_resolver"
         assert rel.metadata.assertion.review.status == "approved"
         assert rel.metadata.assertion.review.source == "group"
+        # The newly group-resolved edge's review stamp also carries the resolving
+        # actor identity (mirrors the blessing of pre-existing group members).
+        assert rel.metadata.assertion.review.updated_by == f"group:{group_id}"
+        assert rel.metadata.assertion.review.actor_context is not None
+        assert rel.metadata.assertion.review.actor_context.actor_id == "usr_resolver"
         assert rel.metadata.assertion.lifecycle.status == "active"
         store = instance.get_group_store()
         try:

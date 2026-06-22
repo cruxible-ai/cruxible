@@ -1092,6 +1092,7 @@ def service_feedback(
         instance,
         "feedback",
         receipt_parameters,
+        actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None
@@ -1189,6 +1190,7 @@ def service_feedback_batch(
         instance,
         "feedback_batch",
         {"count": len(items), "source": source},
+        actor_context=actor_context,
     ) as ctx:
         assert ctx.builder is not None
         assert ctx.uow is not None

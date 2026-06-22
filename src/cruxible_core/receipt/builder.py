@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.mutation_payloads import (
     DEFAULT_MUTATION_PAYLOAD_INLINE_BYTES,
@@ -37,6 +38,7 @@ class ReceiptBuilder:
         workflow_mode: WorkflowReceiptMode | None = None,
         execution_options: dict[str, Any] | None = None,
         root_detail: dict[str, Any] | None = None,
+        actor_context: GovernedActorContext | None = None,
     ) -> None:
         # Pre-allocated so write paths can stamp the creating receipt id into
         # relationship provenance within the same transaction that persists
@@ -49,6 +51,10 @@ class ReceiptBuilder:
         self._operation_type = operation_type
         self._head_snapshot_id = head_snapshot_id
         self._workflow_mode = workflow_mode
+        # Token-derived actor identity for this operation, preserved onto the
+        # built receipt where available. None on auth-off/local paths -- we do
+        # not fabricate an actor context.
+        self._actor_context = actor_context
         self._nodes: list[ReceiptNode] = []
         self._edges: list[EvidenceEdge] = []
         self._counter = 0
@@ -349,4 +355,5 @@ class ReceiptBuilder:
             head_snapshot_id=self._head_snapshot_id,
             workflow_mode=self._workflow_mode,
             committed=self._committed,
+            actor_context=self._actor_context,
         )

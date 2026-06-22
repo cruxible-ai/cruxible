@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.temporal import utc_now
@@ -120,5 +121,14 @@ class Receipt(BaseModel):
         description=(
             "Whether the operation reached its Cruxible durability boundary. "
             "For read-only operations this is normally false and does not indicate failure."
+        ),
+    )
+    actor_context: GovernedActorContext | None = Field(
+        default=None,
+        description=(
+            "Token-derived actor identity for the operation that produced this "
+            "receipt, when available (hosted/governed writes carry it; auth-off "
+            "local writes leave it null). Receipts predating this field load with "
+            "a null actor_context and remain valid."
         ),
     )
