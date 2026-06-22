@@ -10,6 +10,11 @@ import time
 from typing import Any
 
 from cruxible_core.primitives import new_id
+from cruxible_core.receipt.mutation_payloads import (
+    DEFAULT_MUTATION_PAYLOAD_INLINE_BYTES,
+    MutationPayloadRetention,
+    retain_mutation_payload,
+)
 from cruxible_core.receipt.types import (
     EdgeType,
     EvidenceEdge,
@@ -204,6 +209,53 @@ class ReceiptBuilder:
     def mark_committed(self) -> None:
         """Mark the operation as having reached its durable state boundary."""
         self._committed = True
+
+    def apply_mutation_payload_retention(
+        self,
+        *,
+        retention: MutationPayloadRetention = "metadata",
+        inline_byte_limit: int = DEFAULT_MUTATION_PAYLOAD_INLINE_BYTES,
+    ) -> None:
+        """Stamp payload_digest + byte_count on the root mutation node.
+
+        The mutation payload is the receipt ``parameters`` dict. Every retention
+        mode stamps the content-addressed ``payload_digest`` and ``byte_count``
+        onto the node's ``payload_metadata`` -- this is the core 0.2 value and is
+        always applied. No-op for non-mutation receipts.
+
+        Body handling is deliberately conservative to preserve the existing
+        mutation-node contract (consumers read the full payload out of
+        ``detail["parameters"]``): the inline body is only shed -- replaced with
+        the mode's preview/omitted marker -- when the payload genuinely exceeds
+        ``inline_byte_limit``. Small payloads (the common case) keep their full
+        inline body under every mode, so the digest is added without dropping
+        anything callers depend on.
+
+        Scope note (wi-mutation-payload-retention): content-addressed full-body
+        STORAGE/retrieval for large sharded payloads is a post-0.2 follow-up. For
+        now a large payload under ``metadata``/``preview`` is summarised inline
+        (digest still lets the dropped body be matched against an external copy),
+        and ``full`` always retains the complete body inline.
+        """
+        if self._operation_type in ("query", "workflow"):
+            return
+        root = self._nodes[0]
+        if root.node_type != "mutation":
+            return
+        retained_payload, metadata = retain_mutation_payload(
+            self._parameters,
+            retention=retention,
+            inline_byte_limit=inline_byte_limit,
+        )
+        root.payload_metadata = metadata
+        # Only swap the inline body when the mode actually shed it (real
+        # truncation). For inline-retained payloads the existing full body is
+        # preserved verbatim so legacy consumers and goldens are unaffected.
+        if metadata.truncated:
+            root.detail = {
+                "operation_type": self._operation_type,
+                "parameters": retained_payload,
+            }
 
     def record_validation(
         self,

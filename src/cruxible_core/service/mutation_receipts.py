@@ -15,6 +15,7 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.receipt.builder import ReceiptBuilder
+from cruxible_core.receipt.mutation_payloads import MutationPayloadRetention
 from cruxible_core.receipt.types import OperationType, Receipt
 
 logger = structlog.get_logger()
@@ -42,6 +43,26 @@ class MutationReceiptContext:
 
     def set_result(self, result: SupportsReceiptId) -> None:
         self.result = result
+
+
+def _resolve_mutation_payload_retention(
+    instance: InstanceProtocol,
+) -> MutationPayloadRetention:
+    """Read the configured mutation-payload retention mode, defaulting safely."""
+    try:
+        return instance.load_config().runtime.mutation_payloads
+    except Exception:
+        logger.warning("Failed to read mutation_payloads retention; using metadata", exc_info=True)
+        return "metadata"
+
+
+def _build_retained_receipt(
+    builder: ReceiptBuilder,
+    retention: MutationPayloadRetention,
+) -> Receipt:
+    """Stamp payload retention on the mutation node, then build the receipt."""
+    builder.apply_mutation_payload_retention(retention=retention)
+    return builder.build()
 
 
 def _persist_receipt(instance: InstanceProtocol, receipt: Receipt) -> bool:
@@ -103,6 +124,7 @@ def mutation_receipt(
     builder = (
         ReceiptBuilder(operation_type=operation_type, parameters=parameters) if enabled else None
     )
+    retention = _resolve_mutation_payload_retention(instance) if builder is not None else "metadata"
     ctx = MutationReceiptContext(builder=builder)
     exc_to_tag: CoreError | None = None
     tx_manager: Any | None = None
@@ -119,7 +141,7 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = builder.build()
+            receipt = _build_retained_receipt(builder, retention)
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise
@@ -130,14 +152,14 @@ def mutation_receipt(
         tx_closed = True
         instance.invalidate_graph_cache()
         if builder is not None:
-            receipt = builder.build()
+            receipt = _build_retained_receipt(builder, retention)
             if _persist_receipt(instance, receipt):
                 exc_to_tag.mutation_receipt_id = receipt.receipt_id
         raise wrapped from exc
     else:
         if builder is not None and ctx.result is not None:
             builder.mark_committed()
-            receipt = builder.build()
+            receipt = _build_retained_receipt(builder, retention)
             try:
                 assert uow is not None
                 uow.receipts.save_receipt(receipt)

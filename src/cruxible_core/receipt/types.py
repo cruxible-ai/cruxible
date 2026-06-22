@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from cruxible_core.primitives import new_id
+from cruxible_core.receipt.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
@@ -74,6 +75,14 @@ class ReceiptNode(BaseModel):
     entity_id: str | None = None
     relationship: str | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
+    payload_metadata: MutationPayloadMetadata | None = Field(
+        default=None,
+        description=(
+            "Retention metadata (content-addressed payload_digest + byte_count) "
+            "for the mutation payload, stamped on the root mutation node. Unset "
+            "for non-mutation nodes."
+        ),
+    )
     timestamp: datetime = Field(default_factory=utc_now)
 
 

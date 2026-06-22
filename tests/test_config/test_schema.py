@@ -2350,6 +2350,22 @@ class TestCoreConfig:
         with pytest.raises(ValidationError, match="Input should be"):
             RuntimeConfigSchema(trace_payloads="external")
 
+    def test_runtime_mutation_payload_retention_defaults_to_metadata(self):
+        runtime = RuntimeConfigSchema()
+        assert runtime.mutation_payloads == "metadata"
+
+    @pytest.mark.parametrize("retention", ["full", "preview", "metadata"])
+    def test_runtime_mutation_payload_retention_accepts_supported_values(
+        self,
+        retention: str,
+    ):
+        runtime = RuntimeConfigSchema(mutation_payloads=retention)
+        assert runtime.mutation_payloads == retention
+
+    def test_runtime_mutation_payload_retention_rejects_unknown_value(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            RuntimeConfigSchema(mutation_payloads="external")
+
     def test_get_relationship(self):
         config = CoreConfig(
             name="test",

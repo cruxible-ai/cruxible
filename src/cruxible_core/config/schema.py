@@ -50,6 +50,7 @@ _OUTCOME_PATH_PATTERN = (
 WorkflowType = Literal["utility", "canonical", "decision_support", "proposal"]
 QueryMode = Literal["collection", "traversal"]
 TracePayloadRetention = Literal["full", "preview", "metadata"]
+MutationPayloadRetention = Literal["full", "preview", "metadata"]
 PropertyType = Literal[
     "string",
     "int",
@@ -1975,6 +1976,7 @@ class RuntimeConfigSchema(BaseModel):
     """Runtime behavior options for local execution and audit capture."""
 
     trace_payloads: TracePayloadRetention = "preview"
+    mutation_payloads: MutationPayloadRetention = "metadata"
 
     model_config = {"extra": "forbid"}
 
