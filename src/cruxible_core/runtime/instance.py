@@ -527,6 +527,11 @@ class CruxibleInstance(InstanceProtocol):
 
         graph_data = json.loads(graph_bytes.decode("utf-8"))
         graph = EntityGraph.from_dict(graph_data)
+        # The snapshot bundle is graph+config+lock with NO receipts: any
+        # receipt_id a cloned edge carries points at a receipt in the source
+        # instance that does not exist here. Clear those dangling pointers and
+        # stamp clone origin so no edge in the clone references a phantom receipt.
+        graph.relabel_clone_receipts()
 
         lock_bytes = artifacts.get(LOCK_FILE_NAME)
         if lock_bytes is not None:

@@ -358,6 +358,88 @@ def test_clone_from_snapshot_imports_snapshot_export_to_sql(
     assert clone.load_graph().get_entity("Part", "BP-1") is not None
 
 
+def _edge_with_receipt(receipt_id: str) -> RelationshipInstance:
+    return RelationshipInstance(
+        relationship_type="fits",
+        from_type="Part",
+        from_id="BP-1",
+        to_type="Vehicle",
+        to_id="V-1",
+        metadata=RelationshipMetadata(
+            provenance=RelationshipProvenance(
+                source="workflow_apply",
+                source_ref="workflow:canonical-fitment",
+                receipt_id=receipt_id,
+            )
+        ),
+    )
+
+
+def _clone_has_no_dangling_receipt(clone: CruxibleInstance) -> None:
+    """Assert the audit invariant: every edge receipt_id resolves or is null."""
+    store = clone.get_receipt_store()
+    try:
+        for rel in clone.load_graph().iter_relationships():
+            provenance = rel.metadata.provenance
+            if provenance is None or provenance.receipt_id is None:
+                continue
+            assert store.get_receipt(provenance.receipt_id) is not None, (
+                f"dangling receipt_id {provenance.receipt_id} on {rel.relationship_label()}"
+            )
+    finally:
+        store.close()
+
+
+def test_clone_from_snapshot_clears_dangling_receipt_and_stamps_clone_origin(
+    initialized_instance: CruxibleInstance,
+    tmp_path: Path,
+) -> None:
+    receipt = ReceiptBuilder(operation_type="add_relationship", parameters={"n": 1}).build()
+    graph = EntityGraph()
+    graph.add_entity(_vehicle())
+    graph.add_entity(_part())
+    graph.add_relationship(_edge_with_receipt(receipt.receipt_id))
+    with initialized_instance.write_transaction() as uow:
+        uow.receipts.save_receipt(receipt)
+        uow.graph.save_graph(graph)
+
+    # The source edge resolves to a real local receipt before cloning.
+    _clone_has_no_dangling_receipt(initialized_instance)
+    source_edge = initialized_instance.load_graph().get_relationship(
+        "Part", "BP-1", "Vehicle", "V-1", "fits"
+    )
+    assert source_edge is not None
+    assert source_edge.metadata.provenance is not None
+    assert source_edge.metadata.provenance.receipt_id == receipt.receipt_id
+
+    snapshot = initialized_instance.create_snapshot(label="clone-source")
+    clone, _ = CruxibleInstance.clone_from_snapshot(
+        initialized_instance,
+        snapshot.snapshot_id,
+        tmp_path / "clone",
+    )
+
+    cloned_edge = clone.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+    assert cloned_edge is not None
+    provenance = cloned_edge.metadata.provenance
+    assert provenance is not None
+    # Dangling receipt pointer is cleared; clone origin is stamped honestly.
+    assert provenance.receipt_id is None
+    assert provenance.clone_origin == "upstream-snapshot"
+    # Original authoring history is preserved, including the cleared receipt id.
+    assert provenance.source == "workflow_apply"
+    assert provenance.source_ref == "workflow:canonical-fitment"
+    assert getattr(provenance, "cloned_receipt_id", None) == receipt.receipt_id
+    # The receipt itself was NOT shipped in the bundle.
+    clone_store = clone.get_receipt_store()
+    try:
+        assert clone_store.get_receipt(receipt.receipt_id) is None
+    finally:
+        clone_store.close()
+    # Invariant: no edge in the clone references a receipt that is not present.
+    _clone_has_no_dangling_receipt(clone)
+
+
 def test_after_commit_failure_does_not_run_rollback_callbacks_after_db_commit(
     initialized_instance: CruxibleInstance,
 ) -> None:

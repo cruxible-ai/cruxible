@@ -5,14 +5,22 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
+    CLONE_ORIGIN_UPSTREAM_SNAPSHOT,
     RelationshipProvenance,
     backfill_provenance_on_touch,
     dump_provenance,
     load_provenance,
     make_provenance,
     provenance_group_id,
+    relabel_provenance_for_clone,
     stamp_provenance_modified,
+)
+from cruxible_core.graph.types import (
+    EntityInstance,
+    RelationshipInstance,
+    RelationshipMetadata,
 )
 
 
@@ -153,6 +161,88 @@ def test_backfill_on_touch_creates_provenance_when_null() -> None:
     # No creation correlation is fabricated for a backfilled edge.
     assert result.created_at is None
     assert result.created_actor_context is None
+
+
+def test_relabel_for_clone_clears_correlation_and_stamps_origin() -> None:
+    provenance = make_provenance(
+        "workflow_apply",
+        "workflow:canonical-fitment",
+        receipt_id="RCP-source",
+        resolution_id="RES-source",
+    )
+
+    relabeled = relabel_provenance_for_clone(provenance)
+
+    assert relabeled is not None
+    # Dangling write-time correlation is cleared.
+    assert relabeled.receipt_id is None
+    assert relabeled.resolution_id is None
+    # Clone origin is stamped, preserving the cleared receipt for traceability.
+    assert relabeled.clone_origin == CLONE_ORIGIN_UPSTREAM_SNAPSHOT
+    dumped = dump_provenance(relabeled)
+    assert dumped["clone_origin"] == "upstream-snapshot"
+    assert dumped["cloned_receipt_id"] == "RCP-source"
+    assert "receipt_id" not in dumped
+    assert "resolution_id" not in dumped
+    # Authoring history is preserved.
+    assert relabeled.source == "workflow_apply"
+    assert relabeled.source_ref == "workflow:canonical-fitment"
+
+
+def test_relabel_for_clone_is_noop_for_clean_provenance() -> None:
+    # Legacy/null-receipt edges (and already-relabeled clone edges) are untouched.
+    legacy = load_provenance({"source": "workflow_apply", "source_ref": "workflow:apply"})
+    assert legacy is not None
+    assert relabel_provenance_for_clone(legacy) is legacy
+    assert relabel_provenance_for_clone(None) is None
+
+
+def test_relabel_for_clone_supports_custom_origin() -> None:
+    provenance = make_provenance("group_resolve", "group:GRP-1", receipt_id="RCP-1")
+
+    relabeled = relabel_provenance_for_clone(provenance, origin="custom-origin")
+
+    assert relabeled is not None
+    assert relabeled.clone_origin == "custom-origin"
+
+
+def _fits_edge(receipt_id: str | None) -> RelationshipInstance:
+    provenance = (
+        RelationshipProvenance(source="workflow_apply", receipt_id=receipt_id)
+        if receipt_id is not None
+        else RelationshipProvenance(source="workflow_apply")
+    )
+    return RelationshipInstance(
+        relationship_type="fits",
+        from_type="Part",
+        from_id="BP-1",
+        to_type="Vehicle",
+        to_id="V-1",
+        metadata=RelationshipMetadata(provenance=provenance),
+    )
+
+
+def test_graph_relabel_clone_receipts_clears_only_dangling_edges() -> None:
+    graph = EntityGraph()
+    graph.add_entity(EntityInstance(entity_type="Part", entity_id="BP-1"))
+    graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1"))
+    graph.add_relationship(_fits_edge("RCP-dangling"))
+    graph.add_relationship(_fits_edge(None))  # legacy null-receipt edge
+
+    relabeled = graph.relabel_clone_receipts()
+
+    assert relabeled == 1  # only the receipt-bearing edge is touched
+    receipt_ids = []
+    clone_origins = []
+    for rel in graph.iter_relationships():
+        assert rel.metadata.provenance is not None
+        receipt_ids.append(rel.metadata.provenance.receipt_id)
+        clone_origins.append(rel.metadata.provenance.clone_origin)
+    # No edge retains a receipt_id; the relabeled edge records clone origin.
+    assert receipt_ids == [None, None]
+    assert CLONE_ORIGIN_UPSTREAM_SNAPSHOT in clone_origins
+    # Re-running is a no-op (idempotent): nothing left to relabel.
+    assert graph.relabel_clone_receipts() == 0
 
 
 def test_historical_provenance_loads_with_null_correlation_fields() -> None:

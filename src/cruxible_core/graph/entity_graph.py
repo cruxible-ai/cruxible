@@ -17,6 +17,10 @@ from typing import Any
 
 import networkx as nx
 
+from cruxible_core.graph.provenance import (
+    CLONE_ORIGIN_UPSTREAM_SNAPSHOT,
+    relabel_provenance_for_clone,
+)
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
@@ -349,6 +353,36 @@ class EntityGraph:
         edge_data["properties"] = dict(properties)
         edge_data["metadata"] = _metadata_dict(metadata)
         return True
+
+    def relabel_clone_receipts(
+        self,
+        *,
+        origin: str = CLONE_ORIGIN_UPSTREAM_SNAPSHOT,
+    ) -> int:
+        """Clear dangling receipt correlation on every edge, stamping clone origin.
+
+        Call this when materializing a graph from a snapshot/clone/state-pull
+        bundle (graph+config+lock, no receipts). Every edge whose provenance still
+        carries a ``receipt_id``/``resolution_id`` points at an artifact that does
+        not exist in this instance; this nulls those ids and records ``origin`` on
+        the provenance so no edge is left with a phantom receipt pointer. Edges
+        that are already clean (legacy/null or previously relabeled) are untouched.
+
+        Returns the number of edges relabeled.
+        """
+        relabeled = 0
+        for _u, _v, _key, edge_data in self._graph.edges(keys=True, data=True):
+            metadata = _relationship_metadata(edge_data)
+            relabeled_provenance = relabel_provenance_for_clone(
+                metadata.provenance,
+                origin=origin,
+            )
+            if relabeled_provenance is metadata.provenance:
+                continue
+            metadata.provenance = relabeled_provenance
+            edge_data["metadata"] = _metadata_dict(metadata)
+            relabeled += 1
+        return relabeled
 
     def update_entity_properties(
         self,

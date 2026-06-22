@@ -87,6 +87,25 @@ decision records, feedback, outcomes, locks, configs, and kit metadata.
 
 Use snapshots to reason about state. Use backups to recover the deployment.
 
+### Edge receipts across snapshots and clones
+
+Each relationship records a `receipt_id` in its provenance pointing at the
+receipt that authored it. The invariant is that a non-null `receipt_id` always
+resolves to a receipt present in the same instance; a null `receipt_id` is
+accepted, immutable history. Two cases produce a null `receipt_id`, and neither
+is backfilled:
+
+- **Legacy edges** created before per-edge receipts existed carry a null
+  `receipt_id` because no receipt was ever written for them.
+- **Cloned, snapshot-restored, and pulled-overlay edges** have their `receipt_id`
+  cleared on materialization. A snapshot/clone/state-pull bundle is
+  graph+config+lock with no receipts, so the original `receipt_id` would point at
+  a receipt that lives only in the source instance. On materialization Cruxible
+  nulls that dangling pointer and stamps `clone_origin: upstream-snapshot` on the
+  provenance (preserving the original id under `cloned_receipt_id` for
+  traceability), so the edge is honestly labeled as clone-origin rather than
+  referencing a phantom receipt.
+
 `cruxible instance snapshot` writes a portable same-identity backup artifact for
 the active instance. The artifact includes the SQLite state database, active
 config, instance metadata, optional workflow lock, and a manifest with content

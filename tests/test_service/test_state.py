@@ -215,6 +215,86 @@ def test_publish_overlay_and_pull_apply_preserves_overlay_overlay(
     assert status.upstream.release_id == "v1.1.0"
 
 
+def test_pull_apply_clears_dangling_upstream_receipt_and_stamps_clone_origin(
+    published_release_fixture: tuple[CruxibleInstance, Path],
+    tmp_path: Path,
+) -> None:
+    root_instance, release_dir = published_release_fixture
+    overlay_root = tmp_path / "cloned-model"
+    overlay_instance = service_create_state_overlay(
+        transport_ref=f"file://{release_dir}",
+        root_dir=overlay_root,
+    ).instance
+    _write_overlay_config(overlay_root)
+    service_reload_config(overlay_instance)
+
+    # Author an UPSTREAM edge whose receipt resolves only in the root instance.
+    upstream_add = service_add_relationships(
+        root_instance,
+        [
+            RelationshipInstance(
+                from_type="Case",
+                from_id="CASE-A",
+                relationship_type="cites",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+        source="test",
+        source_ref="upstream-author",
+    )
+    assert upstream_add.added == 1
+    upstream_edge = root_instance.load_graph().get_relationship(
+        "Case", "CASE-A", "Case", "CASE-B", "cites"
+    )
+    assert upstream_edge is not None
+    assert upstream_edge.metadata.provenance is not None
+    upstream_receipt_id = upstream_edge.metadata.provenance.receipt_id
+    assert upstream_receipt_id is not None
+
+    successor_dir = tmp_path / "releases" / "successor"
+    service_publish_state(
+        root_instance,
+        transport_ref=f"file://{successor_dir}",
+        state_id="case-law",
+        release_id="v1.1.0",
+        compatibility="data_only",
+    )
+    _replace_release_dir(successor_dir, release_dir)
+
+    preview = service_pull_state_preview(overlay_instance)
+    applied = service_pull_state_apply(
+        overlay_instance,
+        expected_apply_digest=preview.apply_digest,
+    )
+    assert applied.release_id == "v1.1.0"
+
+    merged_graph = overlay_instance.load_graph()
+    pulled_edge = merged_graph.get_relationship("Case", "CASE-A", "Case", "CASE-B", "cites")
+    assert pulled_edge is not None
+    provenance = pulled_edge.metadata.provenance
+    assert provenance is not None
+    # The upstream receipt lives only in the root instance -- not shipped in the
+    # bundle -- so the pulled edge's pointer is cleared and clone origin stamped.
+    assert provenance.receipt_id is None
+    assert provenance.clone_origin == "upstream-snapshot"
+    assert getattr(provenance, "cloned_receipt_id", None) == upstream_receipt_id
+
+    # Invariant: no edge in the overlay references a receipt that is not present.
+    overlay_store = overlay_instance.get_receipt_store()
+    try:
+        assert overlay_store.get_receipt(upstream_receipt_id) is None
+        for rel in merged_graph.iter_relationships():
+            rel_provenance = rel.metadata.provenance
+            if rel_provenance is None or rel_provenance.receipt_id is None:
+                continue
+            assert overlay_store.get_receipt(rel_provenance.receipt_id) is not None, (
+                f"dangling receipt_id {rel_provenance.receipt_id} on {rel.relationship_label()}"
+            )
+    finally:
+        overlay_store.close()
+
+
 def test_overlay_state_ref_specific_release_tracks_latest_ref(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,

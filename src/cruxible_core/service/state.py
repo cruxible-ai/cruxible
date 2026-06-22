@@ -233,6 +233,12 @@ def service_pull_state_apply(
     current_graph = instance.load_graph()
     local_graph = _extract_local_overlay_graph(current_graph, upstream)
     next_upstream_graph = _load_graph_from_bundle(upstream_dir)
+    # The upstream bundle is graph+config+lock with NO receipts: any receipt_id
+    # on an upstream edge points at a receipt in the publishing instance that is
+    # absent here. Clear those dangling pointers and stamp clone origin before the
+    # merge so no upstream-origin edge in this overlay references a phantom
+    # receipt. Local overlay edges keep their receipt_id -- it resolves locally.
+    next_upstream_graph.relabel_clone_receipts()
     conflicts = _find_dangling_reference_conflicts(
         local_graph,
         next_upstream_graph,
