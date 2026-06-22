@@ -154,8 +154,8 @@ longer count as current.
 Use the kit's existing read surfaces to inspect a thread:
 
 ```
-cruxible query --query recent_state_notes
-cruxible query --query state_note_context --param note_id=<note_id>
+cruxible query run recent_state_notes
+cruxible query run state_note_context --param note_id=<note_id>
 ```
 
 `recent_state_notes` already projects `supersedes_count` and
