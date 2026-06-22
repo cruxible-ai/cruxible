@@ -1436,6 +1436,7 @@ mutation_guards:
     property: status
     new_value: closed
     condition:
+      type: query
       query_name: approved_reviews_for_work_item
       params:
         work_item_id: "$entity.entity_id"

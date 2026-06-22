@@ -1094,6 +1094,7 @@ mutation_guards:
     property: status
     new_value: approved
     condition:
+      type: actor
       allowed_actor_ids: [authorized-reviewer]
     message: >-
       ReviewRequest approvals require the authenticated reviewer actor. Use the
@@ -1105,6 +1106,7 @@ mutation_guards:
     property: status
     new_value: closed
     condition:
+      type: query
       query_name: approved_reviews_for_work_item
       params:
         work_item_id: "$entity.entity_id"

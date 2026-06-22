@@ -11,6 +11,8 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     ContractSchema,
     CoreConfig,
+    CoWriteGuardCondition,
+    CoWriteRequirement,
     DecisionPolicyMatch,
     DecisionPolicySchema,
     EntityTypeSchema,
@@ -308,6 +310,7 @@ class TestValidateMutationGuards:
             property="status",
             new_value="closed",
             condition=NamedQueryResultCountGuardCondition(
+                type="query",
                 query_name="find_a",
                 params={"id": "$entity.entity_id"},
                 min_count=1,
@@ -335,7 +338,11 @@ class TestValidateMutationGuards:
     def test_mutation_guard_accepts_actor_identity_condition(self):
         config = _minimal_config(
             mutation_guards=[
-                self._guard(condition=ActorIdentityGuardCondition(allowed_actor_ids=["robert"]))
+                self._guard(
+                    condition=ActorIdentityGuardCondition(
+                        type="actor", allowed_actor_ids=["robert"]
+                    )
+                )
             ],
         )
 
@@ -348,6 +355,7 @@ class TestValidateMutationGuards:
                     name="links_requires_source_evidence",
                     relationship_type="links",
                     condition=EvidenceRequirementGuardCondition(
+                        type="evidence",
                         require_evidence="source_evidence",
                     ),
                 )
@@ -355,6 +363,113 @@ class TestValidateMutationGuards:
         )
 
         validate_config(config)
+
+    def test_mutation_guard_accepts_co_write_condition(self):
+        config = _minimal_config(
+            mutation_guards=[
+                self._guard(
+                    condition=CoWriteGuardCondition(
+                        type="co_write",
+                        requires=CoWriteRequirement(
+                            entity_type="B",
+                            via_relationship="links",
+                        ),
+                    )
+                )
+            ],
+        )
+
+        validate_config(config)
+
+    def test_mutation_guard_rejects_co_write_unknown_required_entity(self):
+        config = _minimal_config(
+            mutation_guards=[
+                self._guard(
+                    condition=CoWriteGuardCondition(
+                        type="co_write",
+                        requires=CoWriteRequirement(
+                            entity_type="Missing",
+                            via_relationship="links",
+                        ),
+                    )
+                )
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("requires.entity_type 'Missing'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_co_write_unknown_relationship(self):
+        config = _minimal_config(
+            mutation_guards=[
+                self._guard(
+                    condition=CoWriteGuardCondition(
+                        type="co_write",
+                        requires=CoWriteRequirement(
+                            entity_type="B",
+                            via_relationship="missing",
+                        ),
+                    )
+                )
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("requires.via_relationship 'missing'" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_co_write_relationship_not_connecting_entities(self):
+        # `b_self` goes B -> B; a guard on A requiring B via b_self can never link
+        # the guarded A entity (A is not an endpoint of b_self).
+        config = _minimal_config(
+            relationships=[
+                RelationshipSchema(name="links", from_entity="A", to_entity="B"),
+                RelationshipSchema(name="b_self", from_entity="B", to_entity="B"),
+            ],
+            mutation_guards=[
+                self._guard(
+                    entity_type="A",
+                    condition=CoWriteGuardCondition(
+                        type="co_write",
+                        requires=CoWriteRequirement(
+                            entity_type="B",
+                            via_relationship="b_self",
+                        ),
+                    ),
+                )
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any("must connect guarded entity" in e for e in exc_info.value.errors)
+
+    def test_mutation_guard_rejects_co_write_kind_without_kind_property(self):
+        config = _minimal_config(
+            mutation_guards=[
+                self._guard(
+                    condition=CoWriteGuardCondition(
+                        type="co_write",
+                        requires=CoWriteRequirement(
+                            entity_type="B",
+                            via_relationship="links",
+                            kind="approval",
+                        ),
+                    )
+                )
+            ],
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_config(config)
+
+        assert any(
+            "requires.kind filter needs a 'kind' property" in e for e in exc_info.value.errors
+        )
 
     def test_mutation_guard_rejects_duplicate_names(self):
         config = _minimal_config(
@@ -426,6 +541,7 @@ class TestValidateMutationGuards:
                     name="missing_relationship_requires_source_evidence",
                     relationship_type="missing",
                     condition=EvidenceRequirementGuardCondition(
+                        type="evidence",
                         require_evidence="source_evidence",
                     ),
                 )
@@ -906,9 +1022,7 @@ class TestValidateWorkflowExecution:
 
     @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
     @pytest.mark.parametrize("evidence_field", ["refs", "rationale"])
-    def test_evidence_mapping_rejects_unknown_step_alias(
-        self, step_kind: str, evidence_field: str
-    ):
+    def test_evidence_mapping_rejects_unknown_step_alias(self, step_kind: str, evidence_field: str):
         config = self._evidence_workflow_config(
             step_kind=step_kind,
             evidence={evidence_field: "$steps.missing.items"},
@@ -918,15 +1032,12 @@ class TestValidateWorkflowExecution:
             validate_config(config)
 
         assert any(
-            "unknown or future step alias 'missing'" in error
-            for error in exc_info.value.errors
+            "unknown or future step alias 'missing'" in error for error in exc_info.value.errors
         )
 
     @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
     @pytest.mark.parametrize("evidence_field", ["refs", "rationale"])
-    def test_evidence_mapping_rejects_future_step_alias(
-        self, step_kind: str, evidence_field: str
-    ):
+    def test_evidence_mapping_rejects_future_step_alias(self, step_kind: str, evidence_field: str):
         config = self._evidence_workflow_config(
             step_kind=step_kind,
             evidence={evidence_field: "$steps.future.items"},
@@ -937,8 +1048,7 @@ class TestValidateWorkflowExecution:
             validate_config(config)
 
         assert any(
-            "unknown or future step alias 'future'" in error
-            for error in exc_info.value.errors
+            "unknown or future step alias 'future'" in error for error in exc_info.value.errors
         )
 
     @pytest.mark.parametrize("step_kind", ["make_candidates", "make_relationships"])
@@ -967,8 +1077,7 @@ class TestValidateWorkflowExecution:
             validate_config(config)
 
         assert any(
-            "unknown or future step alias 'future'" in error
-            for error in exc_info.value.errors
+            "unknown or future step alias 'future'" in error for error in exc_info.value.errors
         )
 
     def test_inline_entity_query_rejects_unknown_entity_type(self):
@@ -1068,13 +1177,12 @@ class TestValidateWorkflowExecution:
                     ],
                     returns="proposal",
                 )
-            }
+            },
         )
         with pytest.raises(ConfigError) as exc_info:
             validate_config(config)
         assert any(
-            "map_signals signal_source 'missing'" in error
-            and "proposal_policy.signals" in error
+            "map_signals signal_source 'missing'" in error and "proposal_policy.signals" in error
             for error in exc_info.value.errors
         )
 

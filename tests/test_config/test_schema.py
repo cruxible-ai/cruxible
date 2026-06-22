@@ -19,6 +19,8 @@ from cruxible_core.config.schema import (
     ConstraintSchema,
     ContractSchema,
     CoreConfig,
+    CoWriteGuardCondition,
+    CoWriteRequirement,
     EntityTypeSchema,
     EnumSchema,
     EvidenceRequirementGuardCondition,
@@ -192,9 +194,7 @@ class TestStructuredPredicateSpec:
 
     def test_rejects_non_string_contains_predicate_value(self):
         with pytest.raises(ValidationError, match="requires a string value"):
-            StructuredPredicateSpec.model_validate(
-                {"payload.properties.title": {"contains": 1}}
-            )
+            StructuredPredicateSpec.model_validate({"payload.properties.title": {"contains": 1}})
 
 
 class TestEnumSchema:
@@ -1096,14 +1096,10 @@ class TestNamedQuerySchema:
                 name="relationship-return-validation",
                 entity_types={
                     "Vehicle": EntityTypeSchema(
-                        properties={
-                            "vehicle_id": PropertySchema(type="string", primary_key=True)
-                        }
+                        properties={"vehicle_id": PropertySchema(type="string", primary_key=True)}
                     ),
                     "Part": EntityTypeSchema(
-                        properties={
-                            "part_number": PropertySchema(type="string", primary_key=True)
-                        }
+                        properties={"part_number": PropertySchema(type="string", primary_key=True)}
                     ),
                 },
                 relationships=[
@@ -1129,14 +1125,10 @@ class TestNamedQuerySchema:
                 name="related-predicate-validation",
                 entity_types={
                     "Vehicle": EntityTypeSchema(
-                        properties={
-                            "vehicle_id": PropertySchema(type="string", primary_key=True)
-                        }
+                        properties={"vehicle_id": PropertySchema(type="string", primary_key=True)}
                     ),
                     "Part": EntityTypeSchema(
-                        properties={
-                            "part_number": PropertySchema(type="string", primary_key=True)
-                        }
+                        properties={"part_number": PropertySchema(type="string", primary_key=True)}
                     ),
                 },
                 relationships=[
@@ -1322,9 +1314,7 @@ class TestCoreConfigQueryValidation:
                     "ordered": NamedQuerySchema(
                         mode="traversal",
                         entry_point="Vehicle",
-                        traversal=[
-                            TraversalStep(relationship="fits", direction="incoming")
-                        ],
+                        traversal=[TraversalStep(relationship="fits", direction="incoming")],
                         returns="list[Part]",
                         order_by=[
                             {
@@ -1356,9 +1346,7 @@ class TestCoreConfigQueryValidation:
                     "ordered": NamedQuerySchema(
                         mode="traversal",
                         entry_point="Vehicle",
-                        traversal=[
-                            TraversalStep(relationship="fits", direction="incoming")
-                        ],
+                        traversal=[TraversalStep(relationship="fits", direction="incoming")],
                         returns="list[Part]",
                         include={
                             "side": {
@@ -1642,6 +1630,7 @@ class TestMutationGuardSchema:
             property="status",
             new_value="closed",
             condition=NamedQueryResultCountGuardCondition(
+                type="query",
                 query_name="approved_review",
                 params={"work_item_id": "$entity.entity_id"},
                 min_count=1,
@@ -1658,7 +1647,7 @@ class TestMutationGuardSchema:
             entity_type="ReviewRequest",
             property="status",
             new_value="approved",
-            condition=ActorIdentityGuardCondition(allowed_actor_ids=[" robert "]),
+            condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=[" robert "]),
             message="Authorized approver required.",
         )
 
@@ -1670,6 +1659,7 @@ class TestMutationGuardSchema:
             name="fitment_requires_source_evidence",
             relationship_type="fits",
             condition=EvidenceRequirementGuardCondition(
+                type="evidence",
                 require_evidence="source_evidence",
                 min_count=2,
             ),
@@ -1680,25 +1670,74 @@ class TestMutationGuardSchema:
         assert isinstance(guard.condition, EvidenceRequirementGuardCondition)
         assert guard.condition.min_count == 2
 
+    def test_guard_parses_co_write_condition(self):
+        guard = MutationGuardSchema(
+            name="closed_requires_co_written_review",
+            entity_type="WorkItem",
+            property="status",
+            new_value="closed",
+            condition=CoWriteGuardCondition(
+                type="co_write",
+                requires=CoWriteRequirement(
+                    entity_type="Review",
+                    via_relationship="review_for_work_item",
+                ),
+            ),
+            message="A co-written review is required to close.",
+        )
+
+        assert isinstance(guard.condition, CoWriteGuardCondition)
+        assert guard.condition.requires.entity_type == "Review"
+        assert guard.condition.requires.via_relationship == "review_for_work_item"
+        assert guard.condition.requires.kind is None
+
+    def test_guard_parses_list_new_value(self):
+        guard = MutationGuardSchema(
+            name="terminal_status_requires_review",
+            entity_type="ReviewRequest",
+            property="status",
+            new_value=["changes_requested", "approved", "withdrawn"],
+            condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert"]),
+            message="Terminal transitions require an authorized actor.",
+        )
+
+        assert guard.new_value == ["changes_requested", "approved", "withdrawn"]
+
+    def test_guard_condition_requires_type_discriminator(self):
+        with pytest.raises(ValidationError, match="discriminator"):
+            MutationGuardSchema.model_validate(
+                {
+                    "name": "missing_type",
+                    "entity_type": "WorkItem",
+                    "property": "status",
+                    "new_value": "closed",
+                    "condition": {
+                        "query_name": "approved_review",
+                        "min_count": 1,
+                    },
+                }
+            )
+
     def test_guard_actor_identity_condition_requires_allowed_actor_ids(self):
         with pytest.raises(ValidationError, match="List should have at least 1 item"):
-            ActorIdentityGuardCondition(allowed_actor_ids=[])
+            ActorIdentityGuardCondition(type="actor", allowed_actor_ids=[])
 
     def test_guard_actor_identity_condition_rejects_blank_actor_id(self):
         with pytest.raises(ValidationError, match="non-empty"):
-            ActorIdentityGuardCondition(allowed_actor_ids=[" "])
+            ActorIdentityGuardCondition(type="actor", allowed_actor_ids=[" "])
 
     def test_guard_actor_identity_condition_rejects_duplicate_actor_id(self):
         with pytest.raises(ValidationError, match="duplicate allowed_actor_ids"):
-            ActorIdentityGuardCondition(allowed_actor_ids=["robert", " robert "])
+            ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert", " robert "])
 
     def test_guard_condition_requires_a_limit(self):
         with pytest.raises(ValidationError, match="min_count, max_count, or both"):
-            NamedQueryResultCountGuardCondition(query_name="approved_review")
+            NamedQueryResultCountGuardCondition(type="query", query_name="approved_review")
 
     def test_guard_evidence_condition_requires_positive_min_count(self):
         with pytest.raises(ValidationError, match="greater than or equal to 1"):
             EvidenceRequirementGuardCondition(
+                type="evidence",
                 require_evidence="source_evidence",
                 min_count=0,
             )
@@ -1708,6 +1747,7 @@ class TestMutationGuardSchema:
             MutationGuardSchema(
                 name="missing_relationship",
                 condition=EvidenceRequirementGuardCondition(
+                    type="evidence",
                     require_evidence="source_evidence",
                 ),
             )
@@ -1719,13 +1759,14 @@ class TestMutationGuardSchema:
                 relationship_type="fits",
                 entity_type="Part",
                 condition=EvidenceRequirementGuardCondition(
+                    type="evidence",
                     require_evidence="source_evidence",
                 ),
             )
 
     def test_guard_rejects_retired_discriminator_fields(self):
-        # operation/effect were removed pre-0.2 freeze; they return as
-        # optional fields only when a second variant actually exists.
+        # operation/effect were removed pre-0.2 freeze; they remain rejected as
+        # extras on the guard even though the condition now carries a `type`.
         for extra in ({"operation": "entity_update"}, {"effect": "reject"}):
             with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
                 MutationGuardSchema(
@@ -1734,6 +1775,7 @@ class TestMutationGuardSchema:
                     property="status",
                     new_value="closed",
                     condition=NamedQueryResultCountGuardCondition(
+                        type="query",
                         query_name="approved_review",
                         min_count=1,
                     ),
@@ -1743,6 +1785,7 @@ class TestMutationGuardSchema:
     def test_guard_condition_rejects_retired_kind_field(self):
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             NamedQueryResultCountGuardCondition(
+                type="query",
                 kind="named_query_result_count",
                 query_name="approved_review",
                 min_count=1,

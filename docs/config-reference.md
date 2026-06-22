@@ -994,9 +994,12 @@ and require the resulting relationship evidence to meet the configured floor.
 Use them for observation-style relationships whose claims must cite
 dereferenceable source material. Decision-style relationships should usually
 declare no evidence floor and rely on ambient attribution: provenance, receipts,
-actor context, and review history. Every guard field is load-bearing;
-discriminator fields (`operation`, `effect`, condition `kind`) deliberately do
-not exist.
+actor context, and review history. Every guard field is load-bearing.
+
+The `condition` is a **discriminated union** keyed by an explicit `condition.type`
+field — one of `query`, `actor`, `co_write`, or `evidence`. The type is required;
+guard shape is never inferred from which keys are present. The guard-level
+`operation` / `effect` discriminator fields deliberately do not exist.
 
 ```yaml
 mutation_guards:
@@ -1005,6 +1008,7 @@ mutation_guards:
     property: status
     new_value: closed
     condition:
+      type: query
       query_name: approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
@@ -1016,12 +1020,26 @@ mutation_guards:
     property: status
     new_value: approved
     condition:
+      type: actor
       allowed_actor_ids: [authorized-reviewer]
     message: "ReviewRequest approvals require an authorized actor."
+
+  - name: work_item_closed_requires_co_written_review
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: co_write
+      requires:
+        entity_type: ReviewRequest
+        via_relationship: review_request_for_work_item
+        kind: approval        # optional: filter the co-written entity's `kind` property
+    message: "Closing requires a review created in the same write."
 
   - name: finding_support_requires_source_evidence
     relationship_type: finding_supports_work_item
     condition:
+      type: evidence
       require_evidence: source_evidence
       min_count: 1
     message: "Observation claims require source evidence."
@@ -1034,15 +1052,25 @@ mutation_guards:
 | `name` | string | **yes** | — | Unique guard name |
 | `entity_type` | string | entity guards | — | Entity type the write applies to |
 | `property` | string | entity guards | — | Property that must be present in the incoming write |
-| `new_value` | any | entity guards | — | Guarded resulting value after config property normalization |
+| `new_value` | any or list | entity guards | — | Guarded resulting value(s) after config property normalization. A scalar guards one value; a list guards several (the guard fires when the write results in any listed value) |
 | `relationship_type` | string | relationship evidence guards | — | Relationship type the write applies to |
-| `condition` | NamedQueryResultCountGuardCondition, ActorIdentityGuardCondition, or EvidenceRequirementGuardCondition | **yes** | — | Condition that must pass |
+| `condition` | discriminated union on `type` | **yes** | — | Condition that must pass (see types below) |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
 
-### NamedQueryResultCountGuardCondition
+The `condition.type` discriminator selects the condition variant:
+
+| `type` | Condition | Applies to |
+|--------|-----------|------------|
+| `query` | NamedQueryResultCountGuardCondition | entity guards |
+| `actor` | ActorIdentityGuardCondition | entity guards |
+| `co_write` | CoWriteGuardCondition | entity guards |
+| `evidence` | EvidenceRequirementGuardCondition | relationship guards |
+
+### NamedQueryResultCountGuardCondition (`type: query`)
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `type` | `query` | **yes** | — | Condition discriminator |
 | `query_name` | string | **yes** | — | Named query to execute against the proposed graph state |
 | `params` | dict | no | `{}` | Query params; values may reference write context |
 | `min_count` | int | conditional | `null` | Minimum result count; at least one of `min_count` or `max_count` is required |
@@ -1062,10 +1090,11 @@ and `$current.properties.<name>` cannot resolve, so a guard using `$current`
 refs fails closed on creation. Prior-state refs therefore make a guard
 transition-only in practice.
 
-### ActorIdentityGuardCondition
+### ActorIdentityGuardCondition (`type: actor`)
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `type` | `actor` | **yes** | — | Condition discriminator |
 | `allowed_actor_ids` | list[string] | **yes** | — | Actor ids allowed to perform the guarded transition |
 
 Actor identity conditions compare the current write's
@@ -1074,10 +1103,38 @@ fails the guard. This condition is useful for guarded approval transitions where
 the authority comes from authenticated runtime credential identity or a Cloud
 control-plane supplied actor context.
 
-### EvidenceRequirementGuardCondition
+### CoWriteGuardCondition (`type: co_write`)
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `type` | `co_write` | **yes** | — | Condition discriminator |
+| `requires` | CoWriteRequirement | **yes** | — | The entity that must be co-created in the same write |
+
+#### CoWriteRequirement
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `entity_type` | string | **yes** | — | Entity type that THIS write must create |
+| `via_relationship` | string | **yes** | — | Relationship that must link the created entity to the guarded `$entity` |
+| `kind` | string | no | `null` | When set, the co-written entity's `kind` property must equal this value |
+
+Co-write conditions pass only when the **current write delta** both creates an
+entity of `requires.entity_type` (optionally `kind`-filtered) AND creates a
+`requires.via_relationship` edge linking it to the guarded `$entity`. "Created in
+THIS write" means present in the write delta — a stale pre-existing linked entity
+or a pre-existing edge does not satisfy the requirement; the entity and its
+linking edge must both be new in this write. The required edge may attach the
+co-written entity to `$entity` in either direction; the relationship's configured
+endpoints determine the valid direction. Because the entity and edge must arrive
+together, co-write conditions are satisfiable through the batch direct-write path
+(which writes entities and edges in one delta) but not through entity-only writes
+or step-by-step workflow apply, where they fail closed.
+
+### EvidenceRequirementGuardCondition (`type: evidence`)
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | `evidence` | **yes** | — | Condition discriminator |
 | `require_evidence` | `source_evidence` | **yes** | — | Require dereferenceable source-evidence refs resolved from registered source artifacts |
 | `min_count` | int | no | `1` | Minimum number of source-evidence refs required; must be at least `1` |
 

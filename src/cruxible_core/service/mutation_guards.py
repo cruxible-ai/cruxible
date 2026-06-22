@@ -15,6 +15,7 @@ from cruxible_core.config.property_validation import (
 from cruxible_core.config.schema import (
     ActorIdentityGuardCondition,
     CoreConfig,
+    CoWriteGuardCondition,
     EvidenceRequirementGuardCondition,
     MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
@@ -40,6 +41,45 @@ class _GuardEntityContext:
     new_value: Any
 
 
+@dataclass(frozen=True)
+class GuardWriteDelta:
+    """Entities and edges newly created in the current unit-of-work write.
+
+    Only the ``co_write`` condition reads this; ``actor``/``query``/``evidence``
+    conditions ignore it. "Created in THIS write" means present here, not merely
+    reachable in the proposed graph — a stale pre-existing linked entity does not
+    satisfy a co-write requirement. Created entities are keyed by identity so a
+    ``kind`` property filter can read the co-written entity's properties.
+    """
+
+    created_entities: Mapping[tuple[str, str], EntityInstance]
+    created_edges: frozenset[tuple[str, str, str, str, str]]
+
+    @classmethod
+    def empty(cls) -> GuardWriteDelta:
+        return cls(created_entities={}, created_edges=frozenset())
+
+
+def build_guard_write_delta(
+    entities: Sequence[ValidatedEntity],
+    relationships: Sequence[ValidatedRelationship] = (),
+) -> GuardWriteDelta:
+    """Build the guard write delta from this UOW's validated creates.
+
+    Only newly-created entities/edges (``is_update`` is False) are included;
+    updates re-assert existing state and are not part of the create delta.
+    """
+    created_entities = {
+        (item.entity.entity_type, item.entity.entity_id): item.entity
+        for item in entities
+        if not item.is_update
+    }
+    created_edges = frozenset(
+        item.relationship.identity_tuple() for item in relationships if not item.is_update
+    )
+    return GuardWriteDelta(created_entities=created_entities, created_edges=created_edges)
+
+
 def mutation_guard_errors(
     config: CoreConfig,
     *,
@@ -47,11 +87,13 @@ def mutation_guard_errors(
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
     actor_context: GovernedActorContext | None = None,
+    write_delta: GuardWriteDelta | None = None,
 ) -> list[str]:
     """Return mutation guard errors for proposed entity writes (creates and updates)."""
     if not config.mutation_guards:
         return []
 
+    delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
     errors: list[str] = []
     for entity in entities:
         current = current_graph.get_entity(
@@ -74,6 +116,7 @@ def mutation_guard_errors(
                 proposed_graph,
                 context,
                 actor_context=actor_context,
+                write_delta=delta,
             ):
                 errors.append(_guard_error_message(guard, entity.entity, context))
     return errors
@@ -129,6 +172,7 @@ def validate_mutation_guards(
     proposed_graph: EntityGraph,
     entities: Sequence[ValidatedEntity],
     actor_context: GovernedActorContext | None = None,
+    write_delta: GuardWriteDelta | None = None,
 ) -> None:
     """Raise DataValidationError when any proposed entity write violates a guard."""
     errors = mutation_guard_errors(
@@ -137,6 +181,7 @@ def validate_mutation_guards(
         proposed_graph=proposed_graph,
         entities=entities,
         actor_context=actor_context,
+        write_delta=write_delta,
     )
     if errors:
         raise DataValidationError(
@@ -161,10 +206,13 @@ def _matching_guard_context(
     assert guard.entity_type is not None
     assert guard.property is not None
     property_schema = config.entity_types[guard.entity_type].properties[guard.property]
-    guarded_value = normalize_value(guard.new_value, property_schema, config)
+    guarded_values = [
+        normalize_value(value, property_schema, config)
+        for value in _guarded_value_list(guard.new_value)
+    ]
     old_value = current.properties.get(guard.property, _MISSING) if current else _MISSING
     new_value = proposed.properties.get(guard.property, _MISSING)
-    if new_value != guarded_value:
+    if new_value not in guarded_values:
         return None
     if old_value == new_value:
         return None
@@ -176,12 +224,20 @@ def _matching_guard_context(
     )
 
 
+def _guarded_value_list(new_value: Any) -> list[Any]:
+    """Return the guarded values as a list; a scalar ``new_value`` yields one."""
+    if isinstance(new_value, list):
+        return list(new_value)
+    return [new_value]
+
+
 def _guard_condition_passes(
     config: CoreConfig,
     guard: MutationGuardSchema,
     graph: EntityGraph,
     context: _GuardEntityContext,
     actor_context: GovernedActorContext | None = None,
+    write_delta: GuardWriteDelta | None = None,
 ) -> bool:
     condition = guard.condition
     if isinstance(condition, NamedQueryResultCountGuardCondition):
@@ -195,7 +251,73 @@ def _guard_condition_passes(
         return True
     if isinstance(condition, ActorIdentityGuardCondition):
         return actor_context is not None and actor_context.actor_id in condition.allowed_actor_ids
+    if isinstance(condition, CoWriteGuardCondition):
+        delta = write_delta if write_delta is not None else GuardWriteDelta.empty()
+        return _co_write_condition_passes(condition, context, delta, config)
     return False
+
+
+def _co_write_condition_passes(
+    condition: CoWriteGuardCondition,
+    context: _GuardEntityContext,
+    write_delta: GuardWriteDelta,
+    config: CoreConfig,
+) -> bool:
+    """Pass only when THIS write co-creates the required linked entity.
+
+    The required entity (``requires.entity_type``, optionally filtered by its
+    ``kind`` property) AND the linking edge (``requires.via_relationship``
+    between it and the guarded ``$entity``) must both be present in the write
+    delta. A stale pre-existing linked entity or edge does not satisfy the
+    requirement: only the delta — never the proposed graph — is consulted here.
+    """
+    requires = condition.requires
+    guarded_key = (context.proposed.entity_type, context.proposed.entity_id)
+
+    for from_type, from_id, to_type, to_id, relationship_type in write_delta.created_edges:
+        if relationship_type != requires.via_relationship:
+            continue
+        # The linking edge must touch the guarded $entity on one endpoint and a
+        # co-written required entity on the other.
+        if guarded_key == (from_type, from_id):
+            other_key = (to_type, to_id)
+        elif guarded_key == (to_type, to_id):
+            other_key = (from_type, from_id)
+        else:
+            continue
+        if other_key[0] != requires.entity_type:
+            continue
+        created = write_delta.created_entities.get(other_key)
+        if created is None:
+            continue
+        if requires.kind is not None and not _co_write_kind_matches(config, requires.kind, created):
+            continue
+        return True
+    return False
+
+
+def _co_write_kind_matches(
+    config: CoreConfig,
+    required_kind: str,
+    created: EntityInstance,
+) -> bool:
+    """Return whether the co-written entity's ``kind`` property matches the filter."""
+    actual = created.properties.get("kind", _MISSING)
+    if actual is _MISSING:
+        return False
+    property_schema = (
+        config.entity_types[created.entity_type].properties.get("kind")
+        if created.entity_type in config.entity_types
+        else None
+    )
+    expected: Any = required_kind
+    if property_schema is not None:
+        try:
+            expected = normalize_value(required_kind, property_schema, config)
+            actual = normalize_value(actual, property_schema, config)
+        except ValueError:
+            return False
+    return bool(actual == expected)
 
 
 def _resolve_guard_params(
@@ -369,6 +491,8 @@ def _relationship_evidence_guard_error_message(
 
 
 __all__ = [
+    "GuardWriteDelta",
+    "build_guard_write_delta",
     "mutation_guard_errors",
     "relationship_mutation_guard_errors",
     "validate_mutation_guards",

@@ -20,8 +20,10 @@ from cruxible_core.config.schema import (
     CardinalityQualityCheck,
     ContractSchema,
     CoreConfig,
+    CoWriteGuardCondition,
     EvidenceRequirementGuardCondition,
     JsonContentQualityCheck,
+    MutationGuardSchema,
     NamedQueryResultCountGuardCondition,
     NamedQueryResultCountQualityCheck,
     PropertyQualityCheck,
@@ -806,13 +808,15 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                 f"not found on entity type '{entity_type}'"
             )
         else:
-            try:
-                normalize_value(guard.new_value, property_schema, config)
-            except ValueError as exc:
-                errors.append(
-                    f"Mutation guard '{guard.name}': new_value for property "
-                    f"'{property_name}': {exc}"
-                )
+            new_values = guard.new_value if isinstance(guard.new_value, list) else [guard.new_value]
+            for value in new_values:
+                try:
+                    normalize_value(value, property_schema, config)
+                except ValueError as exc:
+                    errors.append(
+                        f"Mutation guard '{guard.name}': new_value for property "
+                        f"'{property_name}': {exc}"
+                    )
 
         if isinstance(condition, NamedQueryResultCountGuardCondition):
             if condition.query_name not in config.named_queries:
@@ -820,6 +824,44 @@ def _validate_mutation_guards(config: CoreConfig, errors: list[str]) -> None:
                     f"Mutation guard '{guard.name}': query_name "
                     f"'{condition.query_name}' not defined in named_queries"
                 )
+        elif isinstance(condition, CoWriteGuardCondition):
+            _validate_co_write_condition(config, guard, condition, errors)
+
+
+def _validate_co_write_condition(
+    config: CoreConfig,
+    guard: MutationGuardSchema,
+    condition: CoWriteGuardCondition,
+    errors: list[str],
+) -> None:
+    """Validate co_write condition cross-references against the config."""
+    requires = condition.requires
+    required_entity = config.entity_types.get(requires.entity_type)
+    if required_entity is None:
+        errors.append(
+            f"Mutation guard '{guard.name}': co_write requires.entity_type "
+            f"'{requires.entity_type}' not defined in entity_types"
+        )
+    elif requires.kind is not None and "kind" not in required_entity.properties:
+        errors.append(
+            f"Mutation guard '{guard.name}': co_write requires.kind filter needs a "
+            f"'kind' property on entity type '{requires.entity_type}'"
+        )
+
+    relationship = config.get_relationship(requires.via_relationship)
+    if relationship is None:
+        errors.append(
+            f"Mutation guard '{guard.name}': co_write requires.via_relationship "
+            f"'{requires.via_relationship}' not defined in relationships"
+        )
+    elif required_entity is not None and guard.entity_type is not None:
+        endpoints = {relationship.from_entity, relationship.to_entity}
+        if requires.entity_type not in endpoints or guard.entity_type not in endpoints:
+            errors.append(
+                f"Mutation guard '{guard.name}': co_write requires.via_relationship "
+                f"'{requires.via_relationship}' must connect guarded entity "
+                f"'{guard.entity_type}' and required entity '{requires.entity_type}'"
+            )
 
 
 def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:

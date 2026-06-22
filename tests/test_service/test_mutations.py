@@ -195,6 +195,7 @@ mutation_guards:
     property: status
     new_value: closed
     condition:
+      type: query
       query_name: approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
@@ -205,6 +206,7 @@ mutation_guards:
     property: status
     new_value: active
     condition:
+      type: query
       query_name: trusted_batch_approved_review_for_work_item
       params:
         work_item_id: "$entity.entity_id"
@@ -226,6 +228,7 @@ def _actor_guarded_instance(tmp_path: Path) -> CruxibleInstance:
     property: status
     new_value: approved
     condition:
+      type: actor
       allowed_actor_ids: [robert]
     message: "Review approvals require an authorized actor."
 """
@@ -246,6 +249,66 @@ def _actor_context(actor_id: str) -> GovernedActorContext:
         operation_id=f"op_{actor_id}",
         timestamp=utc_now(),
     )
+
+
+CO_WRITE_GUARD_YAML = """\
+version: "1.0"
+name: co_write_guard_state
+
+enums:
+  lifecycle_status:
+    values: [planned, active, closed]
+
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      title:
+        type: string
+        optional: true
+  Review:
+    properties:
+      review_id:
+        type: string
+        primary_key: true
+      kind:
+        type: string
+        optional: true
+
+relationships:
+  - name: review_approves_work_item
+    from: Review
+    to: WorkItem
+
+mutation_guards:
+  - name: work_item_closed_requires_co_written_review
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: co_write
+      requires:
+        entity_type: Review
+        via_relationship: review_approves_work_item
+    message: "Closing requires a co-written review."
+"""
+
+
+def _co_write_guarded_instance(tmp_path: Path, *, kind: str | None = None) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config_text = CO_WRITE_GUARD_YAML
+    if kind is not None:
+        config_text = config_text.replace(
+            "        via_relationship: review_approves_work_item\n",
+            (f"        via_relationship: review_approves_work_item\n        kind: {kind}\n"),
+        )
+    (tmp_path / "config.yaml").write_text(dedent(config_text))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
 
 
 EVIDENCE_GUARD_YAML = """\
@@ -286,6 +349,7 @@ mutation_guards:
   - name: fits_requires_source_evidence
     relationship_type: fits
     condition:
+      type: evidence
       require_evidence: source_evidence
     message: "Fitment observations require source evidence."
 """
@@ -340,9 +404,7 @@ def _fitment_source_evidence(
         instance,
         source_path=str(source_path),
     )
-    paragraph = next(
-        chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1"
-    )
+    paragraph = next(chunk for chunk in registered.chunks if chunk.block_selector == "paragraph:1")
     return {
         "source_artifact_id": registered.source_artifact_id,
         "chunk_id": paragraph.chunk_id,
@@ -1224,6 +1286,7 @@ class TestEntityMutationGuards:
                 property: status
                 new_value: closed
                 condition:
+                  type: query
                   query_name: approved_review_for_work_item
                   params:
                     work_item_id: "$current.properties.work_item_id"
@@ -1248,6 +1311,197 @@ class TestEntityMutationGuards:
             )
 
         assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
+
+
+class TestCoWriteMutationGuard:
+    """co_write guards reject a guarded transition unless THIS write co-creates
+    the required linked entity in the same write delta."""
+
+    @staticmethod
+    def _work_item(entity_id: str = "wi-1", status: str = "closed") -> EntityWriteInput:
+        return EntityWriteInput(
+            entity_type="WorkItem",
+            entity_id=entity_id,
+            properties={"work_item_id": entity_id, "status": status},
+        )
+
+    @staticmethod
+    def _review(entity_id: str = "rev-1", *, kind: str | None = None) -> EntityWriteInput:
+        props: dict[str, object] = {"review_id": entity_id}
+        if kind is not None:
+            props["kind"] = kind
+        return EntityWriteInput(
+            entity_type="Review",
+            entity_id=entity_id,
+            properties=props,
+        )
+
+    @staticmethod
+    def _link(review_id: str = "rev-1", work_item_id: str = "wi-1") -> BatchRelationshipWriteInput:
+        return BatchRelationshipWriteInput(
+            from_type="Review",
+            from_id=review_id,
+            relationship_type="review_approves_work_item",
+            to_type="WorkItem",
+            to_id=work_item_id,
+        )
+
+    def test_rejects_when_no_co_written_required_entity(self, tmp_path: Path) -> None:
+        instance = _co_write_guarded_instance(tmp_path)
+
+        with pytest.raises(DataValidationError, match="Closing requires a co-written review"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(entities=[self._work_item()]),
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-1") is None
+
+    def test_passes_with_required_entity_in_same_batch(self, tmp_path: Path) -> None:
+        instance = _co_write_guarded_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[self._work_item(), self._review()],
+                relationships=[self._link()],
+            ),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("WorkItem", "wi-1")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_stale_pre_existing_linked_entity_does_not_satisfy(self, tmp_path: Path) -> None:
+        # The review + link are written in a PRIOR write; the later guarded
+        # close must still be rejected because nothing is co-created this write.
+        instance = _co_write_guarded_instance(tmp_path)
+
+        seed = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[self._work_item(status="planned"), self._review()],
+                relationships=[self._link()],
+            ),
+        )
+        assert seed.valid is True
+
+        with pytest.raises(DataValidationError, match="Closing requires a co-written review"):
+            service_add_entity_inputs(
+                instance,
+                [self._work_item(status="closed")],
+            )
+
+        entity = instance.load_graph().get_entity("WorkItem", "wi-1")
+        assert entity is not None
+        # The stale link must NOT have let the close through.
+        assert entity.properties["status"] == "planned"
+
+    def test_non_trigger_new_value_does_not_fire(self, tmp_path: Path) -> None:
+        instance = _co_write_guarded_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[self._work_item(status="active")],
+            ),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("WorkItem", "wi-1")
+        assert entity is not None
+        assert entity.properties["status"] == "active"
+
+    def test_link_to_pre_existing_review_does_not_satisfy(self, tmp_path: Path) -> None:
+        # Review pre-exists; this write co-creates only the linking edge, not the
+        # required entity. The required ENTITY must be created in this write.
+        instance = _co_write_guarded_instance(tmp_path)
+        seed = service_add_entity_inputs(instance, [self._review()])
+        assert seed.added == 1
+
+        with pytest.raises(DataValidationError, match="Closing requires a co-written review"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[self._work_item()],
+                    relationships=[self._link()],
+                ),
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-1") is None
+
+    def test_kind_filter_respected(self, tmp_path: Path) -> None:
+        instance = _co_write_guarded_instance(tmp_path, kind="approval")
+
+        # Wrong kind: rejected.
+        with pytest.raises(DataValidationError, match="Closing requires a co-written review"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[self._work_item(), self._review(kind="comment")],
+                    relationships=[self._link()],
+                ),
+            )
+        assert instance.load_graph().get_entity("WorkItem", "wi-1") is None
+
+        # Matching kind: passes.
+        accepted = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    self._work_item(entity_id="wi-2"),
+                    self._review(entity_id="rev-2", kind="approval"),
+                ],
+                relationships=[self._link(review_id="rev-2", work_item_id="wi-2")],
+            ),
+        )
+        assert accepted.valid is True
+        entity = instance.load_graph().get_entity("WorkItem", "wi-2")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_list_new_value_fires_on_each_listed_value(self, tmp_path: Path) -> None:
+        config_text = CO_WRITE_GUARD_YAML.replace(
+            "    new_value: closed\n",
+            "    new_value: [closed, active]\n",
+        )
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "config.yaml").write_text(dedent(config_text))
+        instance = CruxibleInstance.init(tmp_path, "config.yaml")
+
+        for status, wi_id in (("closed", "wi-closed"), ("active", "wi-active")):
+            # Each listed value triggers the guard: bare transition rejected.
+            with pytest.raises(DataValidationError, match="Closing requires a co-written review"):
+                service_batch_direct_write(
+                    instance,
+                    BatchDirectWriteInput(
+                        entities=[self._work_item(entity_id=wi_id, status=status)]
+                    ),
+                )
+
+            # And is allowed only with the co-written review.
+            review_id = f"rev-{wi_id}"
+            accepted = service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        self._work_item(entity_id=wi_id, status=status),
+                        self._review(entity_id=review_id),
+                    ],
+                    relationships=[self._link(review_id=review_id, work_item_id=wi_id)],
+                ),
+            )
+            assert accepted.valid is True, f"{status} should pass with a co-written review"
+
+        # A value NOT in the list does not fire.
+        unguarded = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[self._work_item(entity_id="wi-planned", status="planned")]
+            ),
+        )
+        assert unguarded.valid is True
 
 
 class TestBatchDirectWrite:
@@ -1546,8 +1800,7 @@ class TestDirectWriteGroupInteractions:
             if detail.get("pending_conflicts")
         )
         assert any(
-            detail.get("direct_write_group_annotations", [{}])[0].get("group_id")
-            == group_id
+            detail.get("direct_write_group_annotations", [{}])[0].get("group_id") == group_id
             for detail in validation_details
             if detail.get("direct_write_group_annotations")
         )
@@ -1580,8 +1833,7 @@ class TestDirectWriteGroupInteractions:
         assert dry_run.updated_group_backed_edges == []
         assert _direct_write_conflicts(instance, group_id) == []
         assert (
-            instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-            is None
+            instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits") is None
         )
 
         applied = service_batch_direct_write(instance, payload)
@@ -2282,9 +2534,7 @@ class TestAddRelationships:
                         relationship_type="fits",
                         to_type="Vehicle",
                         to_id="V-ACCORD",
-                        evidence_refs=[
-                            {"source": "catalog", "source_record_id": "replacement"}
-                        ],
+                        evidence_refs=[{"source": "catalog", "source_record_id": "replacement"}],
                     )
                 ],
                 source="test",

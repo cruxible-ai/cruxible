@@ -33,6 +33,7 @@ from cruxible_core.group.types import CandidateGroup
 from cruxible_core.instance_protocol import GroupStoreProtocol, InstanceProtocol
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
+    build_guard_write_delta,
     mutation_guard_errors,
     relationship_mutation_guard_errors,
 )
@@ -711,6 +712,10 @@ def _prepare_batch_direct_write(
             proposed_graph=proposed_guard_graph,
             entities=validated_entities,
             actor_context=actor_context,
+            write_delta=build_guard_write_delta(
+                validated_entities,
+                [item.validated for item in validated_relationships],
+            ),
         )
     except DataValidationError as exc:
         guard_errors = [str(exc), *exc.errors]
@@ -1039,6 +1044,7 @@ def service_add_entities(
                 proposed_graph=graph,
                 entities=pending,
                 actor_context=actor_context,
+                write_delta=build_guard_write_delta(pending),
             )
         except DataValidationError as exc:
             guard_errors = [str(exc), *exc.errors]

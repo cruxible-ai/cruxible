@@ -1169,6 +1169,7 @@ QualityCheckSchema = Annotated[
 class NamedQueryResultCountGuardCondition(BaseModel):
     """Named-query result count condition for config-defined mutation guards."""
 
+    type: Literal["query"]
     query_name: str
     params: dict[str, Any] = Field(default_factory=dict)
     min_count: int | None = None
@@ -1187,6 +1188,7 @@ class NamedQueryResultCountGuardCondition(BaseModel):
 class ActorIdentityGuardCondition(BaseModel):
     """Actor identity allow-list condition for config-defined mutation guards."""
 
+    type: Literal["actor"]
     allowed_actor_ids: list[str] = Field(min_length=1)
 
     model_config = {"extra": "forbid"}
@@ -1207,20 +1209,60 @@ class ActorIdentityGuardCondition(BaseModel):
         return normalized
 
 
+class CoWriteRequirement(BaseModel):
+    """Required co-written entity for a ``co_write`` mutation guard condition."""
+
+    entity_type: str
+    via_relationship: str
+    kind: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("entity_type", "via_relationship", "kind")
+    @classmethod
+    def _non_empty_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.strip():
+            raise ValueError("must be a non-empty string")
+        return value
+
+
+class CoWriteGuardCondition(BaseModel):
+    """Same-write co-creation condition for config-defined mutation guards.
+
+    The guarded transition is rejected unless THIS write also creates an entity
+    of ``requires.entity_type`` (optionally filtered by the ``kind`` property)
+    linked to the guarded ``$entity`` via ``requires.via_relationship``. The
+    required entity and the linking edge must both be created in the same write
+    delta; a stale pre-existing linked entity does not satisfy the condition.
+    """
+
+    type: Literal["co_write"]
+    requires: CoWriteRequirement
+
+    model_config = {"extra": "forbid"}
+
+
 class EvidenceRequirementGuardCondition(BaseModel):
     """Evidence floor condition for config-defined relationship mutation guards."""
 
+    type: Literal["evidence"]
     require_evidence: Literal["source_evidence"]
     min_count: int = Field(default=1, ge=1)
 
     model_config = {"extra": "forbid"}
 
 
-MutationGuardConditionSchema = (
-    NamedQueryResultCountGuardCondition
-    | ActorIdentityGuardCondition
-    | EvidenceRequirementGuardCondition
-)
+MutationGuardConditionSchema = Annotated[
+    (
+        NamedQueryResultCountGuardCondition
+        | ActorIdentityGuardCondition
+        | CoWriteGuardCondition
+        | EvidenceRequirementGuardCondition
+    ),
+    Field(discriminator="type"),
+]
 
 
 class MutationGuardSchema(BaseModel):

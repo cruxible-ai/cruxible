@@ -75,6 +75,7 @@ mutation_guards:
   - name: cites_requires_source_evidence
     relationship_type: cites
     condition:
+      type: evidence
       require_evidence: source_evidence
     message: "Citation assertions require source evidence."
 """
@@ -1066,6 +1067,7 @@ def test_pull_apply_merge_is_guard_exempt_for_local_overlay_state(
                 "    property: status",
                 "    new_value: published",
                 "    condition:",
+                "      type: actor",
                 "      allowed_actor_ids: [editor]",
                 '    message: "Notes can only be published by the editor."',
             ]

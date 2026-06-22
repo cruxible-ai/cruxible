@@ -270,6 +270,7 @@ mutation_guards:
   - name: fits_requires_source_evidence
     relationship_type: fits
     condition:
+      type: evidence
       require_evidence: source_evidence
     message: "Fitment observations require source evidence."
 """
