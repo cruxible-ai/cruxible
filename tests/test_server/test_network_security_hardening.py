@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -42,6 +43,10 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 _LEAKY_TABLE = "graph_entities"
 _LEAKY_COLUMN = "graph_entities.entity_id"
 _LEAKY_SQLITE_MESSAGE = f"UNIQUE constraint failed: {_LEAKY_COLUMN}"
+
+# A pre-serialized JSON validate-request body, used to exercise an explicit
+# Content-Type with a charset parameter without relying on the client to set it.
+CAR_PARTS_YAML_JSON_BODY = json.dumps({"config_yaml": CAR_PARTS_YAML})
 
 
 def _make_client(
@@ -289,6 +294,191 @@ def test_referer_fallback_rejects_cross_origin_when_origin_absent(
     )
     assert response.status_code == 403
     assert response.json()["error_type"] == "OriginNotAllowedError"
+
+
+def test_no_origin_state_change_with_non_json_body_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed: a state-changing request with NO Origin and a non-JSON body is 403.
+
+    Without this, a cross-site *simple-request* POST (no Origin, ``text/plain`` /
+    form / multipart body) would skip the Origin gate entirely and reach a future
+    raw-body route at loopback-ADMIN. The whole mutating surface binds JSON today,
+    but the gate itself must not depend on that holding forever.
+    """
+    client = _make_client(tmp_path, monkeypatch)
+    for content_type in (
+        "text/plain",
+        "application/x-www-form-urlencoded",
+        "multipart/form-data; boundary=x",
+    ):
+        response = client.post(
+            "/api/v1/validate",
+            content=b"config_yaml: {}",
+            headers={"Content-Type": content_type},
+        )
+        assert response.status_code == 403, content_type
+        assert response.json()["error_type"] == "OriginNotAllowedError"
+
+
+def test_no_origin_state_change_with_missing_content_type_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A state-changing no-Origin request with NO Content-Type is also rejected."""
+    client = _make_client(tmp_path, monkeypatch)
+    # Send a raw body but strip the Content-Type header entirely.
+    response = client.post(
+        "/api/v1/validate",
+        content=b"anything",
+        headers={"Content-Type": ""},
+    )
+    assert response.status_code == 403
+    assert response.json()["error_type"] == "OriginNotAllowedError"
+
+
+def test_no_origin_state_change_with_json_body_passes_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal CLI/SDK request (no Origin, application/json) still clears the gate.
+
+    It must reach the handler / normal validation, i.e. NOT be blocked as a
+    forbidden origin. Charset parameters on the media type must not matter.
+    """
+    client = _make_client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/v1/validate",
+        json={"config_yaml": CAR_PARTS_YAML},
+    )
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+
+    # Explicit charset parameter on the JSON media type must still pass.
+    response = client.post(
+        "/api/v1/validate",
+        content=CAR_PARTS_YAML_JSON_BODY,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+
+
+def test_allowed_origin_with_non_json_body_passes_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An allowed (loopback) Origin bypasses the no-Origin JSON requirement.
+
+    The fail-closed rule applies only when no allowed Origin is present; a
+    same-origin UI request with a loopback Origin must pass regardless of body
+    content type (it is then rejected/accepted by normal body validation, never
+    as a forbidden origin).
+    """
+    client = _make_client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/v1/validate",
+        content=b"config_yaml: {}",
+        headers={
+            "Origin": "http://127.0.0.1:8100",
+            "Content-Type": "text/plain",
+        },
+    )
+    # Not blocked by the Origin gate (would be 403/OriginNotAllowedError); it
+    # falls through to FastAPI body validation instead.
+    assert response.status_code != 403
+    assert response.json().get("error_type") != "OriginNotAllowedError"
+
+
+def test_no_origin_get_with_non_json_is_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET is not state-changing, so the no-Origin content-type rule never applies."""
+    client = _make_client(tmp_path, monkeypatch)
+    response = client.get("/version")
+    assert response.status_code == 200
+    assert "version" in response.json()
+
+
+# ── (b) #5: catch-all must not leak str(exc) for unexpected exceptions ────────
+
+
+def test_unhandled_exception_returns_generic_500_without_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_structlog: io.StringIO,
+) -> None:
+    """An unexpected non-domain exception must yield a generic 500 with no detail.
+
+    A non-``sqlite3`` exception type whose message embeds internal detail (here a
+    RuntimeError carrying SQL-shaped text) bypasses the sqlite3.* handlers and
+    hits the catch-all. The client body must be generic; the real detail must be
+    logged server-side.
+    """
+    client = _make_client(tmp_path, monkeypatch, raise_server_exceptions=False)
+    instance_id = _init_instance(client, tmp_path / "project")
+
+    leaky_detail = "no such column: secret_internal_col in graph_entities"
+
+    def _raise_unexpected(*args: object, **kwargs: object) -> object:
+        raise RuntimeError(leaky_detail)
+
+    monkeypatch.setattr(api, "add_entities", _raise_unexpected)
+
+    response = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [
+                {
+                    "entity_type": "Vehicle",
+                    "entity_id": "V-3",
+                    "properties": {
+                        "vehicle_id": "V-3",
+                        "year": 2024,
+                        "make": "Honda",
+                        "model": "Civic",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["message"] == "internal server error"
+    assert body["error_type"] == "InternalServerError"
+    # The raw exception message (and its internal detail) never reaches the client.
+    assert leaky_detail not in response.text
+    assert "secret_internal_col" not in response.text
+    assert "RuntimeError" not in response.text
+
+    # The real detail IS logged server-side for operator diagnosis.
+    logs = capture_structlog.getvalue()
+    assert "unhandled_server_error" in logs
+    assert leaky_detail in logs
+    assert "RuntimeError" in logs
+
+
+def test_domain_error_message_still_round_trips(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: a domain error keeps its intended, safe client message.
+
+    Domain errors subclass CoreError and are served by the dedicated CoreError
+    handler, so genericizing the catch-all must not affect them. ConfigError's
+    detailed validation message must still reach the client verbatim.
+    """
+    client = _make_client(tmp_path, monkeypatch)
+    response = client.post("/api/v1/validate", json={"config_yaml": "entity_types: {}\n"})
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_type"] == "ConfigError"
+    # The intended, user-facing message is preserved (not genericized away).
+    assert body["message"] != "internal server error"
+    assert body["errors"]  # the structured per-error detail survives too
 
 
 def test_is_origin_allowed_unit_policy() -> None:

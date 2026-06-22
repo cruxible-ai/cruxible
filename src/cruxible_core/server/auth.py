@@ -53,6 +53,52 @@ _REQUEST_CONTEXT: contextvars.ContextVar[Request | None] = contextvars.ContextVa
 
 EFFECTIVE_PERMISSION_MODE_HEADER = "X-Cruxible-Effective-Permission-Mode"
 
+# Methods that mutate state. A cross-site browser write must clear the Origin
+# gate; the no-Origin fail-closed rule below applies only to these.
+_STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# The one body media type that is NOT a CORS "simple request" content type, so a
+# cross-site POST carrying it always triggers a browser preflight (which a
+# malicious page cannot satisfy against the loopback daemon). Simple-request
+# types (text/plain, application/x-www-form-urlencoded, multipart/form-data) can
+# be sent cross-site with NO preflight and NO Origin in some legacy paths, so a
+# state-changing request that carries a *body* and lacks an allowed Origin must
+# carry exactly this type.
+_JSON_MEDIA_TYPE = "application/json"
+
+
+def _request_media_type(request: Request) -> str:
+    """Return the lower-cased Content-Type *media type*, stripped of parameters.
+
+    A real header may be e.g. ``application/json; charset=utf-8``; only the media
+    type is significant for the simple-request check, so parameters and case are
+    discarded.
+    """
+    content_type = request.headers.get("Content-Type", "")
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _request_has_body(request: Request) -> bool:
+    """Return whether the request carries a request body.
+
+    True when ``Content-Length`` is a positive integer or the body is chunked
+    (``Transfer-Encoding`` present). A bodyless action POST (e.g. ``/revoke``)
+    from a CLI client sends ``Content-Length: 0`` and no ``Content-Type`` and is
+    NOT a simple-request body-smuggling vector, so it is not subject to the JSON
+    requirement. Anything that actually carries bytes must be JSON (below).
+    """
+    if request.headers.get("Transfer-Encoding"):
+        return True
+    raw_length = request.headers.get("Content-Length")
+    if raw_length is None:
+        return False
+    try:
+        return int(raw_length) > 0
+    except ValueError:
+        # An unparseable Content-Length is suspect; treat as "has body" so the
+        # JSON requirement applies (fail closed).
+        return True
+
 
 @dataclass(frozen=True)
 class ResolvedAuthContext:
@@ -200,6 +246,27 @@ async def token_auth_middleware(
     # fallback when Origin is absent, since referrer-policy can suppress it.
     origin = request.headers.get("Origin") or request.headers.get("Referer")
     if origin is not None and not is_origin_allowed(origin):
+        return _forbidden_origin_response(request)
+    # Fail CLOSED for state-changing methods that carry a BODY but present NO
+    # allowed Origin/Referer. `is_origin_allowed(None)` is True, so a missing
+    # Origin reaches here as "allowed"; without this guard a cross-site
+    # *simple-request* POST (no Origin, text/plain or form/multipart body) would
+    # sail through at loopback-ADMIN. The whole mutating surface today binds a
+    # JSON body, but a future raw/form route must not silently re-open that hole.
+    # A bodied request must use the JSON media type (a non-CORS-simple content
+    # type that forces a browser preflight). Constraints this preserves:
+    #   - CLI/SDK clients send application/json with no Origin -> pass.
+    #   - Bodyless action POSTs (/revoke, /rotate, restart) send no body and no
+    #     Content-Type -> not a body-smuggling vector, pass.
+    #   - An allowed (loopback/allowlisted) Origin passes regardless of body type
+    #     (handled by the check above).
+    #   - GET/HEAD/OPTIONS are unaffected.
+    if (
+        request.method in _STATE_CHANGING_METHODS
+        and origin is None
+        and _request_has_body(request)
+        and _request_media_type(request) != _JSON_MEDIA_TYPE
+    ):
         return _forbidden_origin_response(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)

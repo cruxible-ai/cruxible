@@ -126,8 +126,28 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Genuine fallthrough only: every Cruxible domain error subclasses
+        # CoreError (dedicated handler above, preserves its intended message),
+        # RequestValidationError and the sqlite3 error families also have their
+        # own handlers. So `exc` here is an UNEXPECTED exception whose raw
+        # str(exc) may embed sqlite SQL, file paths, or other internal detail
+        # (e.g. a RuntimeError/ValueError wrapping sqlite text that escaped the
+        # sqlite3.* handlers). Returning a generic body keeps that detail off the
+        # wire; the real exception is logged server-side for diagnosis. See
+        # wi-daemon-network-security-hardening (#5).
         request.state.error_type = exc.__class__.__name__
-        body = ErrorResponse(error_type=exc.__class__.__name__, message=str(exc))
+        _log.error(
+            "unhandled_server_error",
+            route=request.url.path,
+            method=request.method,
+            error_type=exc.__class__.__name__,
+            detail=str(exc),
+            exc_info=exc,
+        )
+        body = ErrorResponse(
+            error_type="InternalServerError",
+            message="internal server error",
+        )
         return JSONResponse(status_code=500, content=body.model_dump(mode="json"))
 
     @app.get("/health")
