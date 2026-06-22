@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
+from urllib.parse import urlsplit
 
 from cruxible_core.errors import ConfigError
 
@@ -162,6 +163,87 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def get_origin_allowlist(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """Return the configured extra browser-origin allowlist.
+
+    ``CRUXIBLE_ORIGIN_ALLOWLIST`` is a comma-separated list of origins (e.g.
+    ``https://console.example.com``) permitted to drive the HTTP API from a
+    browser, in addition to the always-allowed loopback origins. Entries are
+    normalized to ``scheme://host[:port]`` (path/query/fragment stripped) and
+    lowercased on scheme+host.
+    """
+    env = environ or os.environ
+    raw = env.get("CRUXIBLE_ORIGIN_ALLOWLIST", "")
+    allowlist: list[str] = []
+    for entry in raw.split(","):
+        normalized = _normalize_origin(entry)
+        if normalized is not None:
+            allowlist.append(normalized)
+    return tuple(allowlist)
+
+
+def _normalize_origin(origin: str | None) -> str | None:
+    """Normalize an Origin/Referer value to ``scheme://host[:port]`` or ``None``.
+
+    Returns ``None`` for empty or unparseable values and for the literal
+    ``"null"`` origin (opaque origins from sandboxed iframes / ``file://`` /
+    data URIs), which must never be treated as allowlisted.
+    """
+    if origin is None:
+        return None
+    candidate = origin.strip()
+    if not candidate or candidate.lower() == "null":
+        return None
+    split = urlsplit(candidate)
+    if not split.scheme or not split.hostname:
+        return None
+    scheme = split.scheme.lower()
+    host = split.hostname.lower()
+    # urlsplit lowercases nothing but the scheme is case-insensitive; host is too.
+    netloc = f"[{host}]" if ":" in host else host
+    if split.port is not None:
+        netloc = f"{netloc}:{split.port}"
+    return f"{scheme}://{netloc}"
+
+
+def _origin_host(origin: str) -> str | None:
+    """Return the lowercased hostname of a normalized origin, if parseable."""
+    split = urlsplit(origin)
+    if not split.hostname:
+        return None
+    return split.hostname.lower()
+
+
+def is_origin_allowed(origin: str | None, environ: Mapping[str, str] | None = None) -> bool:
+    """Return whether a browser-supplied ``Origin`` may drive the HTTP API.
+
+    Programmatic clients (CLI/SDK/curl) send no ``Origin`` header; only browsers
+    attach one. The allowlist therefore exists to block the DNS-rebinding /
+    malicious-webpage-hits-localhost threat without affecting non-browser clients.
+
+    Policy:
+
+    * No origin (``None``/empty) → ALLOW. A missing ``Origin`` is a non-browser
+      (or same-origin navigation) request; rejecting it would break every CLI/SDK
+      client.
+    * Loopback origin (``localhost``/``127.0.0.1``/``[::1]``, any port/scheme) →
+      ALLOW. This keeps the daemon-served same-origin UI and local dev working.
+    * An origin in ``CRUXIBLE_ORIGIN_ALLOWLIST`` → ALLOW.
+    * Anything else (a real cross-origin browser request) → REJECT.
+    """
+    if origin is None or not origin.strip():
+        # Absent (or empty) Origin: a non-browser / same-origin navigation request.
+        return True
+    normalized = _normalize_origin(origin)
+    if normalized is None:
+        # Present but unparseable / opaque ("null") origin from a browser: reject.
+        return False
+    host = _origin_host(normalized)
+    if host is not None and _is_loopback_host(host):
+        return True
+    return normalized in get_origin_allowlist(environ)
+
+
 def validate_server_startup_settings(
     environ: Mapping[str, str] | None = None,
     *,
@@ -180,11 +262,7 @@ def validate_server_startup_settings(
             "state dir previously required auth. Set CRUXIBLE_SERVER_AUTH=true."
         )
 
-    if (
-        auth_enabled
-        and bootstrap_secret is None
-        and not runtime_credentials_available
-    ):
+    if auth_enabled and bootstrap_secret is None and not runtime_credentials_available:
         raise ConfigError(
             "CRUXIBLE_SERVER_AUTH=true requires CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
             "or stored runtime credentials."

@@ -19,6 +19,7 @@ from cruxible_core.runtime.permissions import (
 )
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
+    is_origin_allowed,
     is_server_auth_enabled,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
@@ -98,6 +99,30 @@ def _unauthorized_request_response(request: Request, message: str = "Unauthorize
     return response
 
 
+def _forbidden_origin_response(request: Request) -> JSONResponse:
+    """Reject a browser cross-origin request to the HTTP API.
+
+    A normal CLI/SDK client sends no ``Origin`` header; only a browser does. A
+    cross-origin ``Origin`` that is neither loopback nor explicitly allowlisted is
+    a DNS-rebinding / malicious-webpage-hits-localhost attempt, so it is refused
+    before any handler runs. See wi-daemon-network-security-hardening (#4).
+    """
+    response = JSONResponse(
+        status_code=403,
+        content=ErrorResponse(
+            error_type="OriginNotAllowedError",
+            message="Cross-origin browser requests are not allowed",
+        ).model_dump(mode="json"),
+    )
+    log_runtime_request(
+        request,
+        status=response.status_code,
+        auth_context=None,
+        error_type="OriginNotAllowedError",
+    )
+    return response
+
+
 _RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
 _HOSTED_INSTANCE_INIT_ROUTE = api_v1_path(HOSTED_INSTANCE_INIT_PATH)
 # (method, route) pairs for the daemon-wide server-operation endpoints that the
@@ -167,6 +192,15 @@ async def token_auth_middleware(
     """Resolve auth context and request-scoped permission mode for incoming requests."""
     if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
         return await call_next(request)
+    # Reject browser-originated cross-origin API requests before any handler runs.
+    # Programmatic clients send no Origin; this closes DNS-rebinding / malicious
+    # webpage attacks against the loopback daemon without breaking CLI/SDK clients.
+    # Browsers always attach Origin to cross-origin and to every non-GET request
+    # (so the whole mutating surface is covered); Referer is consulted only as a
+    # fallback when Origin is absent, since referrer-policy can suppress it.
+    origin = request.headers.get("Origin") or request.headers.get("Referer")
+    if origin is not None and not is_origin_allowed(origin):
+        return _forbidden_origin_response(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
 

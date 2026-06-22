@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -45,6 +47,15 @@ from cruxible_core.server.routes.workflows import router as workflows_router
 
 UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
 
+_log = structlog.get_logger("cruxible.server.app")
+
+# Generic, schema-free client message for any database error. The real sqlite
+# detail (e.g. "UNIQUE constraint failed: graph_entities.entity_id") names live
+# tables and columns and must never reach the client; it is logged server-side
+# instead. See wi-daemon-network-security-hardening (#5).
+_DB_CONSTRAINT_MESSAGE = "database constraint violation"
+_DB_ERROR_MESSAGE = "database error"
+
 
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
@@ -72,6 +83,46 @@ def create_app() -> FastAPI:
             errors=errors,
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(sqlite3.IntegrityError)
+    async def integrity_error_handler(
+        request: Request, exc: sqlite3.IntegrityError
+    ) -> JSONResponse:
+        # An unhandled sqlite IntegrityError (UNIQUE/FOREIGN KEY/CHECK/NOT NULL)
+        # otherwise surfaces through the catch-all handler below, echoing the raw
+        # message (e.g. "UNIQUE constraint failed: <table.col>") and leaking the
+        # internal schema. Return a generic 409 and log the real detail only on
+        # the server. See wi-daemon-network-security-hardening (#5).
+        request.state.error_type = exc.__class__.__name__
+        _log.warning(
+            "database_integrity_error",
+            route=request.url.path,
+            method=request.method,
+            detail=str(exc),
+        )
+        body = ErrorResponse(
+            error_type="ConstraintViolationError",
+            message=_DB_CONSTRAINT_MESSAGE,
+        )
+        return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(sqlite3.DatabaseError)
+    async def database_error_handler(request: Request, exc: sqlite3.DatabaseError) -> JSONResponse:
+        # Any other low-level sqlite error (OperationalError, etc.) may also carry
+        # SQL fragments / schema names. Keep the client message generic and log
+        # the detail server-side.
+        request.state.error_type = exc.__class__.__name__
+        _log.error(
+            "database_error",
+            route=request.url.path,
+            method=request.method,
+            detail=str(exc),
+        )
+        body = ErrorResponse(
+            error_type="MutationError",
+            message=_DB_ERROR_MESSAGE,
+        )
+        return JSONResponse(status_code=500, content=body.model_dump(mode="json"))
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -121,8 +172,7 @@ def main() -> None:
         credential_store.mark_auth_required("server_startup_auth_enabled")
     for warning in volatile_state_path_warnings(
         instance_locations=[
-            (record.instance_id, record.location)
-            for record in registry.list_instances()
+            (record.instance_id, record.location) for record in registry.list_instances()
         ],
     ):
         print(f"Warning: {warning}", file=sys.stderr)

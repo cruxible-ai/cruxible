@@ -194,6 +194,17 @@ _request_instance_scope: contextvars.ContextVar[str | None] = contextvars.Contex
 # ---------------------------------------------------------------------------
 
 
+def _default_read_only_opt_in() -> bool:
+    """Return whether the unauth default should be READ_ONLY instead of ADMIN.
+
+    Opt-in via ``CRUXIBLE_DEFAULT_READ_ONLY`` (off by default to preserve the
+    local-UX ADMIN default). Only consulted when ``CRUXIBLE_MODE`` is unset; an
+    explicit ``CRUXIBLE_MODE`` always wins.
+    """
+    raw = os.environ.get("CRUXIBLE_DEFAULT_READ_ONLY")
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def validate_allowed_roots() -> list[Path] | None:
     """Parse and validate ``CRUXIBLE_ALLOWED_ROOTS`` at startup.
 
@@ -234,7 +245,26 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     else:
         raw = os.environ.get("CRUXIBLE_MODE")
         if raw is None:
-            _cached_mode = PermissionMode.ADMIN
+            # Default when CRUXIBLE_MODE is unset.
+            #
+            # The unauthenticated default deliberately stays ADMIN (audit #4):
+            # every local `cruxible` write, dogfooding session, and demo runs
+            # auth-off and relies on ADMIN by default. Flipping the default to
+            # READ_ONLY would break local writes out of the box — an adoption
+            # regression the project is explicitly optimizing against.
+            #
+            # The real browser-originated threat (a malicious webpage / DNS
+            # rebinding hitting the loopback daemon) is closed at the HTTP edge by
+            # the Origin allowlist in server.auth, NOT by lowering this default;
+            # programmatic CLI/SDK clients are unaffected by that gate.
+            #
+            # Operators who want a least-privilege default WITHOUT setting
+            # CRUXIBLE_MODE explicitly can opt in via CRUXIBLE_DEFAULT_READ_ONLY;
+            # it defaults off so the local-UX default remains ADMIN.
+            if _default_read_only_opt_in():
+                _cached_mode = PermissionMode.READ_ONLY
+            else:
+                _cached_mode = PermissionMode.ADMIN
         else:
             resolved = _MODE_NAMES.get(raw.lower())
             if resolved is None:
