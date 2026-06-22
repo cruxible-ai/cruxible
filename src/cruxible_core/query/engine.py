@@ -633,7 +633,16 @@ def _collection_entity_id_eq_filter(where: Any, params: dict[str, Any]) -> Any:
     operators = where.root.get("result.entity_id")
     if not isinstance(operators, dict) or "eq" not in operators:
         return _NO_COLLECTION_PUSHDOWN
-    return _resolve_collection_pushdown_expected(operators["eq"], params)
+    expected = _resolve_collection_pushdown_expected(operators["eq"], params)
+    if expected is _NO_COLLECTION_PUSHDOWN:
+        return _NO_COLLECTION_PUSHDOWN
+    # entity_id is stored as an identity string, so raw == only matches the typed
+    # predicate when the expected value is itself a plain string. A non-string
+    # expected (e.g. int) would be type-coerced by the typed matcher, so pushing
+    # it down here could silently drop candidates the predicate would include.
+    if not _pushdown_value_eq_is_sound(expected):
+        return _NO_COLLECTION_PUSHDOWN
+    return expected
 
 
 def _collection_entity_primary_key_eq_filter(
@@ -647,7 +656,14 @@ def _collection_entity_primary_key_eq_filter(
         operators = where.root.get(f"result.properties.{property_name}")
         if not isinstance(operators, dict) or "eq" not in operators:
             continue
-        return _resolve_collection_pushdown_expected(operators["eq"], params)
+        if not _pushdown_property_eq_is_sound(config, entity_type, property_name):
+            continue
+        expected = _resolve_collection_pushdown_expected(operators["eq"], params)
+        if expected is _NO_COLLECTION_PUSHDOWN:
+            continue
+        if not _pushdown_value_eq_is_sound(expected):
+            continue
+        return expected
     return _NO_COLLECTION_PUSHDOWN
 
 
@@ -667,11 +683,57 @@ def _collection_entity_property_eq_filter(
             continue
         if "." in property_name or not isinstance(operators, dict) or "eq" not in operators:
             continue
+        if not _pushdown_property_eq_is_sound(config, entity_type, property_name):
+            continue
         expected = _resolve_collection_pushdown_expected(operators["eq"], params)
         if expected is _NO_COLLECTION_PUSHDOWN:
             continue
+        if not _pushdown_value_eq_is_sound(expected):
+            continue
         property_filter[property_name] = expected
     return property_filter
+
+
+def _pushdown_property_eq_is_sound(
+    config: CoreConfig,
+    entity_type: str,
+    property_name: str,
+) -> bool:
+    """Return whether a raw ``==`` eq-filter pushdown is sound for a property.
+
+    The collection-query pushdown (``EntityGraph.list_entities`` property_filter)
+    compares stored values with a raw Python ``==``. The typed predicate matcher,
+    by contrast, coerces operands by declared/inferred type before comparing
+    (see :func:`resolve_query_predicate_value_type`). The pushdown therefore
+    *must* be a superset of the typed match — it may never drop a candidate the
+    predicate would keep.
+
+    Raw ``==`` is provably equivalent to the typed compare only when the property
+    is declared with ``string`` type: stored values are then always strings, so
+    :func:`infer_predicate_value_type` returns ``None`` (no coercion) for any
+    string expected value. Any numeric/bool/date/datetime/json declaration — or
+    an undeclared property — can hold values the typed matcher would coerce, so
+    the pushdown is disabled and the typed matcher does the work.
+    """
+    entity_schema = config.entity_types.get(entity_type)
+    if entity_schema is None:
+        return False
+    prop = entity_schema.properties.get(property_name)
+    if prop is None:
+        return False
+    return prop.type == "string"
+
+
+def _pushdown_value_eq_is_sound(expected: Any) -> bool:
+    """Return whether a resolved eq expected value is safe to push down raw.
+
+    Only plain strings are safe: a non-string expected (int/float/bool/date/...)
+    forces the typed matcher into a coercing comparison via
+    :func:`infer_predicate_value_type`, which can match stored values that a raw
+    ``==`` against the non-string literal would reject. ``bool`` is a ``str``
+    subclass-free ``int`` here, so excluding non-``str`` covers it.
+    """
+    return isinstance(expected, str)
 
 
 def _entity_primary_key_properties(config: CoreConfig, entity_type: str) -> set[str]:

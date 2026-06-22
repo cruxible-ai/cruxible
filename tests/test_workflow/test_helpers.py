@@ -516,6 +516,8 @@ class TestProviderRegistry:
 
 class TestWorkflowRefs:
     def test_preview_value_only_resolves_input_refs(self) -> None:
+        # A $steps ref to a KNOWN prior step is a valid execution-time-deferred
+        # ref, so the literal placeholder is preserved in the preview.
         value = {
             "sku": "$input.sku",
             "nested": ["$input.dates[1]", "$steps.lift.predicted_lift_pct"],
@@ -524,12 +526,46 @@ class TestWorkflowRefs:
         preview = preview_value(
             value,
             {"sku": "SKU-123", "dates": ["2026-03-01", "2026-03-07"]},
+            step_aliases=["lift"],
         )
 
         assert preview == {
             "sku": "SKU-123",
             "nested": ["2026-03-07", "$steps.lift.predicted_lift_pct"],
         }
+
+    def test_preview_value_fails_closed_on_unknown_steps_alias(self) -> None:
+        # F-013: a $steps ref to a step that is NOT a known prior step cannot be
+        # resolved; emitting the literal placeholder would silently mislead the
+        # caller about what the plan will send. Fail closed.
+        with pytest.raises(ConfigError, match="does not name a known prior step"):
+            preview_value(
+                {"nested": ["$input.sku", "$steps.missing.predicted_lift_pct"]},
+                {"sku": "SKU-123"},
+                step_aliases=["lift"],
+            )
+
+    def test_preview_value_fails_closed_on_steps_ref_without_known_aliases(self) -> None:
+        # With no known prior steps, every $steps ref is unresolvable.
+        with pytest.raises(ConfigError, match="does not name a known prior step"):
+            preview_value({"x": "$steps.lift.value"}, {})
+
+    def test_preview_value_fails_closed_on_item_ref(self) -> None:
+        # $item is never resolvable in a query/provider step preview.
+        with pytest.raises(ConfigError, match="'\\$item' references are only available"):
+            preview_value({"sku": "$item.product_sku"}, {}, step_aliases=["lift"])
+
+    def test_preview_value_fails_closed_on_bare_steps_and_item(self) -> None:
+        with pytest.raises(ConfigError, match="does not name a known prior step"):
+            preview_value("$steps", {})
+        with pytest.raises(ConfigError, match="'\\$item' references are only available"):
+            preview_value("$item", {})
+
+    def test_preview_value_passes_plain_literals_through(self) -> None:
+        # Soundness: only $steps/$item refs are gated; plain strings (even ones
+        # starting with $ that are not step/item refs) pass through unchanged.
+        assert preview_value("plain", {}) == "plain"
+        assert preview_value("$other.thing", {}) == "$other.thing"
 
     def test_resolve_value_supports_nested_step_paths_and_indices(self) -> None:
         resolved = resolve_value(

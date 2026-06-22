@@ -23,11 +23,11 @@ from cruxible_core.graph.provenance import (
 from cruxible_core.graph.types import (
     RelationshipMetadata,
     make_node_id,
-    relationship_is_live,
     split_node_id,
 )
 from cruxible_core.predicate import evaluate_typed_comparison
 from cruxible_core.query.engine import execute_query
+from cruxible_core.query.relationship_state import relationship_matches_query_state
 
 if TYPE_CHECKING:
     from cruxible_core.group.types import CandidateMember
@@ -343,7 +343,7 @@ def _check_governed_support_relationships(
             )
             continue
 
-        if not relationship_is_live(metadata):
+        if not relationship_matches_query_state(metadata, "live"):
             continue
 
         if group_store is None:
@@ -544,7 +544,7 @@ def _check_unreviewed_co_members(
         for rel in graph.iter_relationships(r_rel.name):
             if rel.to_type != r_rel.to_entity:
                 continue
-            if not relationship_is_live(rel.metadata):
+            if not relationship_matches_query_state(rel.metadata, "live"):
                 continue
             matched_set.add(make_node_id(rel.to_type, rel.to_id))
 
@@ -568,7 +568,7 @@ def _check_unreviewed_co_members(
 
                 for intermediary, _out_edge_props, out_edge_metadata, _ in outgoing:
                     # Skip non-live outgoing S edges.
-                    if not relationship_is_live(out_edge_metadata):
+                    if not relationship_matches_query_state(out_edge_metadata, "live"):
                         continue
 
                     intermediary_node_id = make_node_id(
@@ -601,7 +601,7 @@ def _check_unreviewed_co_members(
 
                     for co_member, _in_edge_props, in_edge_metadata, _ in cached:
                         # Skip non-live incoming S edges.
-                        if not relationship_is_live(in_edge_metadata):
+                        if not relationship_matches_query_state(in_edge_metadata, "live"):
                             continue
 
                         # Defensive: skip malformed edges

@@ -313,6 +313,131 @@ def _dangling_replaces_edge() -> RelationshipInstance:
     )
 
 
+def _set_fits_review(
+    instance: CruxibleInstance,
+    *,
+    from_id: str,
+    to_id: str,
+    status: str,
+) -> None:
+    graph = instance.load_graph()
+    graph.update_relationship_state(
+        "Part",
+        from_id,
+        "Vehicle",
+        to_id,
+        "fits",
+        metadata=RelationshipMetadata(
+            assertion=RelationshipAssertion(review=RelationshipReviewState(status=status))
+        ),
+    )
+    instance.save_graph(graph)
+
+
+def _engine_fits_pairs(instance: CruxibleInstance, relationship_state: str) -> set[tuple[str, str]]:
+    result = service_query_inline_surface(
+        instance,
+        {
+            "name": "fits_by_state",
+            "mode": "collection",
+            "returns": "fits",
+            "result_shape": "relationship",
+            "allow_relationship_state_override": True,
+        },
+        {},
+        relationship_state=relationship_state,
+    )
+    return {(row.from_id, row.to_id) for row in result.items}
+
+
+def _service_list_fits_pairs(
+    instance: CruxibleInstance, relationship_state: str | None
+) -> set[tuple[str, str]]:
+    result = service_list(
+        instance,
+        "edges",
+        relationship_type="fits",
+        relationship_state=relationship_state,
+    )
+    return {(item["from_id"], item["to_id"]) for item in result.items}
+
+
+@pytest.mark.parametrize("relationship_state", ["accepted", "pending", "live"])
+def test_list_edges_relationship_state_matches_engine_visibility(
+    populated_instance: CruxibleInstance,
+    relationship_state: str,
+) -> None:
+    """F-011: the `list edges` service surface and the query engine apply the
+    SAME shared relationship-state filter, so a filtered edge view agrees
+    exactly across the two read surfaces."""
+    _set_fits_review(
+        populated_instance,
+        from_id="BP-1001",
+        to_id="V-2024-CIVIC-EX",
+        status="approved",
+    )
+    _set_fits_review(
+        populated_instance,
+        from_id="BP-1001",
+        to_id="V-2024-ACCORD-SPORT",
+        status="pending",
+    )
+    # BP-1002 -> V-2024-CIVIC-EX is left in its default ("unreviewed", live) state.
+
+    engine_pairs = _engine_fits_pairs(populated_instance, relationship_state)
+    service_pairs = _service_list_fits_pairs(populated_instance, relationship_state)
+
+    assert service_pairs == engine_pairs
+    # Sanity: the chosen state actually discriminates between the edges.
+    if relationship_state == "accepted":
+        assert service_pairs == {("BP-1001", "V-2024-CIVIC-EX")}
+    elif relationship_state == "pending":
+        assert service_pairs == {("BP-1001", "V-2024-ACCORD-SPORT")}
+    else:  # live: approved + unreviewed, never pending
+        assert service_pairs == {
+            ("BP-1001", "V-2024-CIVIC-EX"),
+            ("BP-1002", "V-2024-CIVIC-EX"),
+        }
+
+
+def test_list_edges_default_state_keeps_full_inspection_view(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """F-011: with no relationship_state, `list edges` keeps the stored-edge
+    inspection contract — every stored edge is returned regardless of review
+    state (including a pending edge the filtered/live view hides)."""
+    _set_fits_review(
+        populated_instance,
+        from_id="BP-1001",
+        to_id="V-2024-ACCORD-SPORT",
+        status="pending",
+    )
+
+    all_pairs = _service_list_fits_pairs(populated_instance, None)
+
+    assert all_pairs == {
+        ("BP-1001", "V-2024-CIVIC-EX"),
+        ("BP-1001", "V-2024-ACCORD-SPORT"),
+        ("BP-1002", "V-2024-CIVIC-EX"),
+    }
+    # The pending edge is present here but hidden by the live-state filter.
+    assert ("BP-1001", "V-2024-ACCORD-SPORT") not in _service_list_fits_pairs(
+        populated_instance, "live"
+    )
+
+
+def test_list_edges_rejects_relationship_state_for_non_edges(
+    populated_instance: CruxibleInstance,
+) -> None:
+    with pytest.raises(ConfigError, match="relationship_state is only supported for edges"):
+        service_list(
+            populated_instance,
+            "entities",
+            entity_type="Part",
+            relationship_state="live",
+        )
+
+
 def test_list_edges_keeps_missing_endpoint_edge_with_and_without_where(
     populated_instance: CruxibleInstance,
 ) -> None:

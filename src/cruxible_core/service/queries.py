@@ -58,6 +58,7 @@ from cruxible_core.query.read_surface import (
 from cruxible_core.query.read_surface import (
     sample_entities as read_sample_entities,
 )
+from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryPathSegment, dump_query_row
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.decisions import record_decision_event_for_context
@@ -920,12 +921,20 @@ def service_list(
     receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
     where: Mapping[str, Mapping[str, Any]] | None = None,
+    relationship_state: QueryRelationshipState | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ListResult:
-    """List entities, edges, receipts, feedback, or outcomes."""
+    """List entities, edges, receipts, feedback, or outcomes.
+
+    ``relationship_state`` (edges only) selects edge visibility through the same
+    shared :func:`relationship_matches_query_state` filter the query engine uses,
+    so a filtered ``list edges`` view agrees exactly with traversal/include
+    visibility. ``None`` (the default) keeps the stored-edge inspection contract:
+    every stored edge is returned regardless of review/lifecycle state.
+    """
     _VALID_RESOURCES = ("entities", "edges", "receipts", "feedback", "outcomes")
     if resource not in _VALID_RESOURCES:
         raise ConfigError(f"Unknown resource '{resource}'. Use: {', '.join(_VALID_RESOURCES)}")
@@ -936,6 +945,8 @@ def service_list(
         raise ConfigError("where is only supported for entities and edges")
     if property_filter is not None and where is not None:
         raise ConfigError("property_filter and where are mutually exclusive")
+    if relationship_state is not None and resource != "edges":
+        raise ConfigError("relationship_state is only supported for edges")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
 
@@ -957,6 +968,7 @@ def service_list(
             relationship_type=relationship_type,
             property_filter=property_filter,
             where=where,
+            relationship_state=relationship_state,
             limit=limit,
             offset=offset,
         )
@@ -1057,6 +1069,7 @@ def _service_list_edges(
     relationship_type: str | None,
     property_filter: Mapping[str, Any] | None,
     where: Mapping[str, Mapping[str, Any]] | None,
+    relationship_state: QueryRelationshipState | None,
     limit: int,
     offset: int,
 ) -> ListResult:
@@ -1077,6 +1090,14 @@ def _service_list_edges(
         _relationship_list_payload(relationship)
         for name in relationship_types
         for relationship in graph.iter_relationships(name)
+        # Route review/lifecycle visibility through the single shared filter so a
+        # filtered `list edges` view agrees with engine traversal/include paths;
+        # `relationship_state is None` preserves the stored-edge inspection
+        # contract (every stored edge is returned).
+        if (
+            relationship_state is None
+            or relationship_matches_query_state(relationship.metadata, relationship_state)
+        )
         if _relationship_matches_list_where(config, graph, relationship, query_where)
     ]
     relationships = sorted(relationships, key=relationship_sort_key)

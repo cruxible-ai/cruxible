@@ -79,6 +79,57 @@ class TestWorkflowCompiler:
                 },
             )
 
+    def test_compile_workflow_preview_preserves_valid_prior_step_refs(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        # F-013: a provider input preview resolves $input refs but preserves the
+        # literal for $steps refs that target a KNOWN prior step (their value is
+        # only produced at execution time). The compiler must thread the prior
+        # step aliases so these valid forward refs are not mis-flagged.
+        write_lock_for_instance(workflow_instance)
+        config = workflow_instance.load_config()
+
+        plan = compile_workflow(
+            config,
+            build_lock(config),
+            "evaluate_promo",
+            {
+                "sku": "SKU-123",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+        )
+
+        lift_step = next(step for step in plan.steps if step.step_id == "lift")
+        # $input refs are resolved...
+        assert lift_step.input_preview["start_date"] == "2026-03-01"
+        assert lift_step.input_preview["end_date"] == "2026-03-07"
+        # ...while the valid $steps.context ref is preserved as a literal.
+        assert lift_step.input_preview["sku"] == "$steps.context.results[0].entity_id"
+
+    def test_compile_workflow_preview_fails_closed_on_unknown_step_ref(
+        self, workflow_instance: CruxibleInstance
+    ) -> None:
+        # F-013: a provider input that references a step alias which is not a
+        # known prior step is unresolvable; the preview must fail closed rather
+        # than emit the misleading literal placeholder.
+        config = workflow_instance.load_config()
+        config.workflows["evaluate_promo"].steps[1].input["sku"] = "$steps.missing.value"
+        workflow_instance.save_config(config)
+        write_lock_for_instance(workflow_instance)
+
+        with pytest.raises(ConfigError, match="does not name a known prior step"):
+            compile_workflow(
+                workflow_instance.load_config(),
+                build_lock(workflow_instance.load_config()),
+                "evaluate_promo",
+                {
+                    "sku": "SKU-123",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+            )
+
     def test_compile_workflow_carries_query_step_options(
         self, workflow_instance: CruxibleInstance
     ) -> None:

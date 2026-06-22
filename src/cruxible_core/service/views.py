@@ -17,6 +17,7 @@ from cruxible_core.canonical_views import (
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.instance_protocol import InstanceProtocol
+from cruxible_core.query.relationship_state import relationship_review_is_rejected
 from cruxible_core.receipt import serializer
 from cruxible_core.service.groups import service_list_groups, service_list_resolutions
 from cruxible_core.service.queries import (
@@ -209,12 +210,8 @@ def service_export_edges(
     graph = instance.load_graph()
     rows: list[dict[str, object]] = []
     for edge in graph.iter_edges(relationship_type=relationship_type):
-        if exclude_rejected:
-            if (
-                edge.get("metadata", {}).get("assertion", {}).get("review", {}).get("status")
-                == "rejected"
-            ):
-                continue
+        if exclude_rejected and relationship_review_is_rejected(edge.get("metadata", {})):
+            continue
         rows.append(
             {
                 "from_type": edge["from_type"],

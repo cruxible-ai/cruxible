@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,23 @@ def load_lock(path: Path) -> WorkflowLock:
     return WorkflowLock.model_validate(raw)
 
 
+def _prior_step_aliases_by_index(steps: Sequence[Any]) -> list[frozenset[str]]:
+    """Return, per step index, the set of aliases declared by earlier steps.
+
+    Used to tell ``preview_value`` which ``$steps.<alias>`` references are valid
+    (execution-time-deferred) versus genuinely unresolvable, so the preview can
+    fail closed on unknown step aliases without breaking valid forward refs.
+    """
+    per_index: list[frozenset[str]] = []
+    seen: set[str] = set()
+    for step in steps:
+        per_index.append(frozenset(seen))
+        alias = getattr(step, "as_", None)
+        if alias is not None:
+            seen.add(alias)
+    return per_index
+
+
 def compile_workflow(
     config: CoreConfig,
     lock: WorkflowLock,
@@ -188,7 +206,14 @@ def compile_workflow(
     )
 
     compiled_steps: list[CompiledPlanStep] = []
-    for step in workflow.steps:
+    # Aliases of steps that appear before each step index. A `$steps.<alias>`
+    # ref in a step's preview is a valid (execution-time-deferred) reference
+    # only when <alias> names one of these prior steps; preview_value fails
+    # closed otherwise. Any step kind (query/provider/transform/...) may declare
+    # an alias and be referenced downstream, so all prior aliases are tracked.
+    prior_aliases_by_index = _prior_step_aliases_by_index(workflow.steps)
+    for step_index, step in enumerate(workflow.steps):
+        prior_step_aliases = prior_aliases_by_index[step_index]
         if step.query is not None:
             if isinstance(step.query, str) and step.query not in config.named_queries:
                 raise ConfigError(
@@ -204,7 +229,9 @@ def compile_workflow(
                     query_name=query_name,
                     inline_query=None if isinstance(step.query, str) else step.query,
                     params_template=step.params,
-                    params_preview=preview_value(step.params, normalized_input),
+                    params_preview=preview_value(
+                        step.params, normalized_input, step_aliases=prior_step_aliases
+                    ),
                     relationship_state_template=step.relationship_state,
                     include_source=step.include_source,
                 )
@@ -266,7 +293,9 @@ def compile_workflow(
                         lock.artifacts[locked.artifact].digest if locked.artifact else None
                     ),
                     input_template=step.input,
-                    input_preview=preview_value(step.input, normalized_input),
+                    input_preview=preview_value(
+                        step.input, normalized_input, step_aliases=prior_step_aliases
+                    ),
                 )
             )
             continue

@@ -3,22 +3,79 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
-from cruxible_core.errors import QueryExecutionError
+from cruxible_core.errors import ConfigError, QueryExecutionError
 
 _SEGMENT_RE = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
 
 
-def preview_value(value: Any, input_payload: dict[str, Any]) -> Any:
-    """Resolve only $input refs for plan preview output."""
-    if isinstance(value, str) and value.startswith("$input."):
-        return _extract_path(input_payload, value[len("$input.") :], value)
+def preview_value(
+    value: Any,
+    input_payload: dict[str, Any],
+    *,
+    step_aliases: Iterable[str] = (),
+) -> Any:
+    """Resolve only $input refs for plan preview output, failing closed.
+
+    ``$input`` refs are resolved against ``input_payload``. A ``$steps.<alias>``
+    ref to a *known prior step* (``step_aliases``) cannot be resolved at preview
+    time — its value is only produced at execution — so the literal placeholder
+    is preserved (the documented preview behavior for forward step references).
+
+    Every other reference shape is **unresolvable** and fails closed with a
+    clear :class:`ConfigError` rather than leaking the literal placeholder, which
+    would silently misrepresent what the plan will send:
+
+    * ``$item`` / ``$item.<...>`` — per-item payloads do not exist in a
+      query/provider step preview;
+    * bare ``$steps`` or ``$steps.<unknown>`` — no such step output exists.
+    """
+    known_aliases = frozenset(step_aliases)
+    return _preview_value(value, input_payload, known_aliases)
+
+
+def _preview_value(
+    value: Any,
+    input_payload: dict[str, Any],
+    known_aliases: frozenset[str],
+) -> Any:
+    if isinstance(value, str):
+        if value.startswith("$input."):
+            return _extract_path(input_payload, value[len("$input.") :], value)
+        if _is_resolvable_step_ref(value, known_aliases):
+            return value
+        _reject_unresolvable_preview_ref(value)
+        return value
     if isinstance(value, dict):
-        return {k: preview_value(v, input_payload) for k, v in value.items()}
+        return {k: _preview_value(v, input_payload, known_aliases) for k, v in value.items()}
     if isinstance(value, list):
-        return [preview_value(v, input_payload) for v in value]
+        return [_preview_value(v, input_payload, known_aliases) for v in value]
     return value
+
+
+def _is_resolvable_step_ref(value: str, known_aliases: frozenset[str]) -> bool:
+    """Return whether a ``$steps.<alias>`` ref targets a known prior step."""
+    if not value.startswith("$steps."):
+        return False
+    alias = value[len("$steps.") :].split(".", 1)[0].split("[", 1)[0]
+    return bool(alias) and alias in known_aliases
+
+
+def _reject_unresolvable_preview_ref(value: str) -> None:
+    """Raise if a preview value is a ref that can't be resolved at preview time."""
+    if value == "$item" or value.startswith("$item."):
+        raise ConfigError(
+            f"Workflow plan preview cannot resolve runtime reference '{value}': "
+            "'$item' references are only available during per-item execution, "
+            "not in a plan preview."
+        )
+    if value == "$steps" or value.startswith("$steps."):
+        raise ConfigError(
+            f"Workflow plan preview cannot resolve runtime reference '{value}': "
+            "it does not name a known prior step output."
+        )
 
 
 def resolve_value(

@@ -547,6 +547,116 @@ class TestExecuteQuery:
         assert _terminal_ids(result.results) == ["BP-1234"]
         assert recording_graph.list_entity_calls == [("Part", {"brand": "StopTech"})]
 
+    def test_pushdown_does_not_drop_numeric_candidate_for_string_eq(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        # F-012: `year` is declared `int`. A string eq value ("2024") is coerced
+        # to a number by the typed predicate matcher (it matches stored 2024),
+        # but a raw `==` pushdown ("2024" == 2024 is False) would silently drop
+        # every matching vehicle. The pushdown must stay a superset of the typed
+        # match, so it must not push down a non-string-declared property.
+        class RecordingGraph(EntityGraph):
+            def __init__(self, source: EntityGraph) -> None:
+                super().__init__()
+                self._graph = source._graph
+                self._entities_by_type = source._entities_by_type
+                self._edge_counter = source._edge_counter
+                self.list_entity_calls: list[tuple[str, dict[str, object] | None]] = []
+
+            def list_entities(
+                self,
+                entity_type: str,
+                property_filter: dict[str, object] | None = None,
+            ) -> list[EntityInstance]:
+                self.list_entity_calls.append((entity_type, property_filter))
+                return super().list_entities(entity_type, property_filter=property_filter)
+
+        recording_graph = RecordingGraph(graph)
+        config.named_queries["vehicles_by_year"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Vehicle",
+            where={"result.properties.year": {"eq": "2024"}},
+        )
+
+        result = execute_query(config, recording_graph, "vehicles_by_year", {})
+
+        # The typed matcher coerces "2024" -> 2024 and keeps both 2024 vehicles.
+        assert sorted(_terminal_ids(result.results)) == ["V-ACCORD", "V-CIVIC"]
+        # And the (unsound) property pushdown was NOT used for the int property.
+        assert recording_graph.list_entity_calls == [("Vehicle", None)]
+
+    def test_pushdown_does_not_drop_int_property_for_int_eq(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        # F-012: even an int eq value against an int property must not push down,
+        # because list_entities' raw `==` cannot be proven equivalent to the
+        # typed numeric compare for arbitrary stored values (e.g. stored "2024"
+        # string vs filter int). The int-typed property is therefore scanned.
+        class RecordingGraph(EntityGraph):
+            def __init__(self, source: EntityGraph) -> None:
+                super().__init__()
+                self._graph = source._graph
+                self._entities_by_type = source._entities_by_type
+                self._edge_counter = source._edge_counter
+                self.list_entity_calls: list[tuple[str, dict[str, object] | None]] = []
+
+            def list_entities(
+                self,
+                entity_type: str,
+                property_filter: dict[str, object] | None = None,
+            ) -> list[EntityInstance]:
+                self.list_entity_calls.append((entity_type, property_filter))
+                return super().list_entities(entity_type, property_filter=property_filter)
+
+        recording_graph = RecordingGraph(graph)
+        config.named_queries["vehicles_by_year_int"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Vehicle",
+            where={"result.properties.year": {"eq": 2024}},
+        )
+
+        result = execute_query(config, recording_graph, "vehicles_by_year_int", {})
+
+        assert sorted(_terminal_ids(result.results)) == ["V-ACCORD", "V-CIVIC"]
+        assert recording_graph.list_entity_calls == [("Vehicle", None)]
+
+    def test_pushdown_still_used_for_declared_string_property(
+        self, config: CoreConfig, graph: EntityGraph
+    ):
+        # F-012 soundness must not over-disable: a declared `string` property
+        # with a plain-string eq value is still safe to push down (raw `==`
+        # equals the typed compare), so the optimization is preserved.
+        class RecordingGraph(EntityGraph):
+            def __init__(self, source: EntityGraph) -> None:
+                super().__init__()
+                self._graph = source._graph
+                self._entities_by_type = source._entities_by_type
+                self._edge_counter = source._edge_counter
+                self.list_entity_calls: list[tuple[str, dict[str, object] | None]] = []
+
+            def list_entities(
+                self,
+                entity_type: str,
+                property_filter: dict[str, object] | None = None,
+            ) -> list[EntityInstance]:
+                self.list_entity_calls.append((entity_type, property_filter))
+                return super().list_entities(entity_type, property_filter=property_filter)
+
+        recording_graph = RecordingGraph(graph)
+        config.named_queries["brake_category_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+            where={"result.properties.category": {"eq": "brakes"}},
+        )
+
+        result = execute_query(config, recording_graph, "brake_category_parts", {})
+
+        assert sorted(_terminal_ids(result.results)) == ["BP-1234", "BP-5678", "BP-9999"]
+        assert recording_graph.list_entity_calls == [("Part", {"category": "brakes"})]
+
     def test_entryless_relationship_collection_returns_relationships_in_order(
         self, config: CoreConfig, graph: EntityGraph
     ):
