@@ -35,6 +35,13 @@ class QueryIncludeResult(BaseModel):
     limit: int | None = None
     truncated: bool = False
     items: list[QueryIncludeItem] = Field(default_factory=list)
+    # Stable identities of every matched neighbor (pre-`limit` truncation), used
+    # only to compute the include summary's distinct `total_matches`. Excluded
+    # from serialization so it never reaches query output, projections, or
+    # golden receipts.
+    match_identities: tuple[tuple[Any, ...], ...] = Field(
+        default_factory=tuple, exclude=True, repr=False
+    )
 
 
 class QueryPathRow(BaseModel):

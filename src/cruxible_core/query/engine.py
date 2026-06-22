@@ -1789,10 +1789,16 @@ def _apply_includes(
     # Under `dedupe: path`, several retained rows can share the same include
     # anchor (e.g. the same `$result` entity reached by distinct evidence
     # paths). Each row's `$include.*.count` is independently correct, but a
-    # naive sum over rows double-counts those shared anchors. Track which anchor
-    # identities have already contributed to each alias's `total_matches` so the
-    # summary reflects distinct matched neighbors, not per-row repetitions.
-    counted_anchors: dict[str, set[tuple[str, str]]] = {
+    # naive sum over rows double-counts those shared anchors. An anchor-only
+    # dedupe key, however, *under*-counts when the include `where`/`where_related`
+    # predicates reference `$entry.*`: the same anchor reached under two
+    # different entry rows can legitimately match different neighbors, so
+    # collapsing on anchor alone drops the matches found under the later entry.
+    # Track the set of distinct matched-neighbor identities per alias instead.
+    # Identical matches (same anchor, same edges) collapse to one; genuinely
+    # different matches (entry-sensitive includes) each contribute. This is
+    # exact regardless of whether the include depends on entry scope.
+    counted_matches: dict[str, set[tuple[Any, ...]]] = {
         alias: set() for alias in query_schema.include
     }
 
@@ -1811,12 +1817,11 @@ def _apply_includes(
             )
             summary = summaries[alias]
             summary["rows_evaluated"] += 1
-            anchor = _resolve_include_anchor(alias, spec.from_, context)
-            anchor_key = (anchor.entity_type, anchor.entity_id) if anchor is not None else None
-            if anchor_key is None or anchor_key not in counted_anchors[alias]:
-                summary["total_matches"] += result.count
-                if anchor_key is not None:
-                    counted_anchors[alias].add(anchor_key)
+            seen = counted_matches[alias]
+            for identity in result.match_identities:
+                if identity not in seen:
+                    seen.add(identity)
+                    summary["total_matches"] += 1
             if result.exists:
                 summary["rows_with_matches"] += 1
             if result.truncated:
@@ -1931,6 +1936,10 @@ def _evaluate_include(
             "or narrow the include predicates"
         )
     returned_items = ordered_items[: spec.limit] if spec.limit is not None else ordered_items
+    # Carry the identities of *all* matched neighbors (before `limit`
+    # truncation) so the include summary can count distinct matches even when
+    # the displayed `items` are truncated.
+    match_identities = tuple(_include_match_identity(item) for item in ordered_items)
     return QueryIncludeResult(
         alias=alias,
         many=spec.many,
@@ -1939,6 +1948,32 @@ def _evaluate_include(
         limit=spec.limit,
         truncated=spec.limit is not None and count > spec.limit,
         items=returned_items,
+        match_identities=match_identities,
+    )
+
+
+def _include_match_identity(item: QueryIncludeItem) -> tuple[Any, ...]:
+    """Stable identity of one matched include neighbor.
+
+    Combines the matched edge identity (including ``edge_key`` so parallel
+    multigraph edges stay distinct) with the resolved source/target endpoints.
+    Two include matches share an identity iff they are the same relationship
+    between the same entities -- so identical matches reached via different
+    rows collapse, while genuinely different matches (e.g. surfaced by an
+    entry-sensitive include `where`) each count once.
+    """
+    edge = item.edge
+    return (
+        edge.relationship_type,
+        edge.from_type,
+        edge.from_id,
+        edge.to_type,
+        edge.to_id,
+        edge.edge_key,
+        item.source.entity_type,
+        item.source.entity_id,
+        item.target.entity_type,
+        item.target.entity_id,
     )
 
 

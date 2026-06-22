@@ -3518,6 +3518,164 @@ class TestQueryIncludes:
         dual_match_count = 2  # BP-1234, BP-9999 replace BP-DUAL
         assert summary["total_matches"] == dual_match_count
 
+    def _summary_for(self, result, alias):
+        assert result.receipt is not None
+        return next(
+            spec
+            for node in result.receipt.nodes
+            if "include_summary" in node.detail
+            for spec in node.detail["include_summary"]
+            if spec["alias"] == alias
+        )
+
+    def _add_shared_anchor_fixture(self, config, graph):
+        """Two parts fit one shared vehicle; an include anchored on that vehicle.
+
+        A relationship-collection query over `fits` yields one row per edge, so
+        each row's `entry` is the *source part* while `result` is the shared
+        target vehicle V-SHARED. The same anchor (V-SHARED) is therefore
+        evaluated under two DIFFERENT entries within a single execution -- the
+        exact shape in which an entry-sensitive include `where` can legitimately
+        match different neighbors per row.
+        """
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-SHARED",
+                properties={"vehicle_id": "V-SHARED", "year": 2024, "make": "Honda", "model": "X"},
+            )
+        )
+        for part_id, brand in (("BP-ALPHA", "Alpha"), ("BP-BETA", "Beta")):
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Part",
+                    entity_id=part_id,
+                    properties={
+                        "part_number": part_id,
+                        "name": f"{brand} Pad",
+                        "category": "brakes",
+                        "brand": brand,
+                    },
+                )
+            )
+            # Each part fits V-SHARED -> two `fits` edges -> two rows, distinct
+            # entries (the parts), shared `$result` anchor (V-SHARED).
+            graph.add_relationship(
+                RelationshipInstance(
+                    relationship_type="fits",
+                    from_type="Part",
+                    from_id=part_id,
+                    to_type="Vehicle",
+                    to_id="V-SHARED",
+                    properties={"verified": True, "confidence": 0.9},
+                )
+            )
+
+    def test_entry_sensitive_include_summary_counts_distinct_matches_per_entry(self, config, graph):
+        """Regression (codex F-001): include `total_matches` must not collapse the
+        same anchor reached under two different entries when the include `where`
+        references `$entry.*`.
+
+        Relationship-collection over `fits`: rows (BP-ALPHA -> V-SHARED) and
+        (BP-BETA -> V-SHARED). The include is anchored on `$result` (V-SHARED)
+        and lists its fitted parts, but the entry-scoped `where` keeps only the
+        fitted part whose brand equals the *entry part's* brand:
+          - under entry BP-ALPHA -> matches {BP-ALPHA}
+          - under entry BP-BETA  -> matches {BP-BETA}
+        Two genuinely distinct matched neighbors for the one shared anchor. An
+        anchor-only dedup key skips the second row entirely (under-count -> 1);
+        counting distinct matched-neighbor identities reports 2.
+        """
+        self._add_shared_anchor_fixture(config, graph)
+        config.named_queries["fits_with_brand_matched_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            # Restrict rows to the shared anchor so the summary isolates it.
+            where={"target.entity_id": {"eq": "V-SHARED"}},
+            include={
+                "brand_matched_parts": {
+                    "from": "$result",
+                    "relationship": "fitted_parts",
+                    "direction": "outgoing",
+                    "many": True,
+                    # Entry-scoped: matched neighbors depend on which entry row
+                    # we arrived under, so the SAME anchor yields DIFFERENT
+                    # include matches per entry. (For `fitted_parts` anchored on
+                    # the vehicle, the fitted Part is the canonical `source`.)
+                    "where": {"source.properties.brand": {"eq": "$entry.properties.brand"}},
+                }
+            },
+        )
+
+        result = execute_query(config, graph, "fits_with_brand_matched_parts", {})
+
+        shared_rows = [
+            row
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow) and row.to_id == "V-SHARED"
+        ]
+        assert len(shared_rows) == 2, "expected V-SHARED reached under both entry parts"
+        matched_by_entry = {
+            row.entry.entity_id: [
+                item.source.entity_id for item in row.includes["brand_matched_parts"].items
+            ]
+            for row in shared_rows
+        }
+        assert matched_by_entry == {
+            "BP-ALPHA": ["BP-ALPHA"],
+            "BP-BETA": ["BP-BETA"],
+        }
+
+        summary = self._summary_for(result, "brand_matched_parts")
+        # Both entries evaluated the anchor V-SHARED, but they surfaced DIFFERENT
+        # matched neighbors. total_matches must count both, not collapse to one.
+        assert summary["rows_evaluated"] == 2
+        assert summary["total_matches"] == 2
+
+    def test_non_entry_sensitive_include_summary_still_dedupes_shared_anchor(self, config, graph):
+        """Companion to the entry-sensitive case (no over-count regression): when
+        the include does NOT vary by entry, the SAME anchor reached under two
+        entries surfaces the SAME matched neighbors, so identical matches must
+        still collapse -- two distinct neighbors counted once each, not four.
+        """
+        self._add_shared_anchor_fixture(config, graph)
+        config.named_queries["fits_with_all_fitted_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="relationship",
+            returns="fits",
+            # Restrict rows to the shared anchor so the summary isolates it.
+            where={"target.entity_id": {"eq": "V-SHARED"}},
+            include={
+                "fitted": {
+                    # No entry-scoped predicate: every entry row sees the same
+                    # two fitted parts of V-SHARED.
+                    "from": "$result",
+                    "relationship": "fitted_parts",
+                    "direction": "outgoing",
+                    "many": True,
+                }
+            },
+        )
+
+        result = execute_query(config, graph, "fits_with_all_fitted_parts", {})
+
+        shared_rows = [
+            row
+            for row in result.results
+            if isinstance(row, QueryRelationshipRow) and row.to_id == "V-SHARED"
+        ]
+        assert len(shared_rows) == 2
+        for row in shared_rows:
+            # Each row independently sees both fitted parts of V-SHARED.
+            assert row.includes["fitted"].count == 2
+
+        summary = self._summary_for(result, "fitted")
+        # Two entries reach V-SHARED with identical matches; the two matched
+        # neighbors must be counted once each (2), not summed per-row (4).
+        assert summary["rows_evaluated"] == 2
+        assert summary["total_matches"] == 2
+
     def test_include_where_can_reference_path_alias(self, config, graph):
         config.named_queries["include_where_path_ref"] = NamedQuerySchema(
             mode="traversal",
