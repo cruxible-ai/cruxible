@@ -1,8 +1,8 @@
 # Hosted Runtime Image
 
 The hosted runtime image packages `cruxible-core[server]` for private runtime
-containers. It starts `cruxible-server` as a non-root `cruxible` user and stores
-mutable server state under `/var/lib/cruxible/server`.
+containers. It starts the daemon (`cruxible server start`) as a non-root
+`cruxible` user and stores mutable server state under `/var/lib/cruxible/server`.
 
 Build with any Docker-compatible backend. OrbStack works for local development:
 

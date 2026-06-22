@@ -2,7 +2,8 @@
 
 Get from install to a governed kit-backed state model in a few minutes.
 
-The recommended `0.2` shape is a local `cruxible-server` daemon. The daemon
+The recommended `0.2` shape is a local Cruxible daemon, launched with
+`cruxible server start`. The daemon
 owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
 through Cruxible surfaces.
 
@@ -15,7 +16,7 @@ through Cruxible surfaces.
 
 ```bash
 pip install "cruxible-core[server,mcp]"
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
 Use a durable state directory such as `~/.cruxible/server` or
@@ -29,7 +30,7 @@ it with:
 ```bash
 CRUXIBLE_SERVER_AUTH=true
 CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
 Claim the bootstrap secret to create an admin runtime credential, then use that

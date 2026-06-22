@@ -85,9 +85,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
     @app.exception_handler(StorageIntegrityError)
-    async def integrity_error_handler(
-        request: Request, exc: StorageIntegrityError
-    ) -> JSONResponse:
+    async def integrity_error_handler(request: Request, exc: StorageIntegrityError) -> JSONResponse:
         # An unhandled sqlite IntegrityError (UNIQUE/FOREIGN KEY/CHECK/NOT NULL)
         # otherwise surfaces through the catch-all handler below, echoing the raw
         # message (e.g. "UNIQUE constraint failed: <table.col>") and leaking the
@@ -178,8 +176,33 @@ def create_app() -> FastAPI:
     return app
 
 
-def main() -> None:
-    """Run the Cruxible server using UDS or host/port transport."""
+def run_server(
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    state_dir: str | None = None,
+    socket_path: str | None = None,
+) -> None:
+    """Launch the Cruxible daemon over UDS or host/port transport.
+
+    This is the single daemon-launch path, invoked by ``cruxible server start``.
+    Explicit arguments override the corresponding environment variables
+    (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_SERVER_STATE_DIR`` /
+    ``CRUXIBLE_SERVER_SOCKET``); when an argument is ``None`` the env default is
+    used. Overrides are applied to ``os.environ`` before any config is resolved
+    so the registry, credential store, and startup validation all observe the
+    same effective settings, and so an in-place re-exec (``cruxible server
+    restart``) reproduces them via ``sys.argv``.
+    """
+    if host is not None:
+        os.environ["CRUXIBLE_HOST"] = host
+    if port is not None:
+        os.environ["CRUXIBLE_PORT"] = str(port)
+    if state_dir is not None:
+        os.environ["CRUXIBLE_SERVER_STATE_DIR"] = state_dir
+    if socket_path is not None:
+        os.environ["CRUXIBLE_SERVER_SOCKET"] = socket_path
+
     credential_store = get_runtime_credential_store()
     registry = get_registry()
     runtime_credentials_available = credential_store.has_active_credentials()
@@ -203,14 +226,14 @@ def main() -> None:
     init_permissions()
     app = create_app()
 
-    socket_path = os.environ.get("CRUXIBLE_SERVER_SOCKET")
-    if socket_path:
-        socket_file = Path(socket_path)
+    resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
+    if resolved_socket:
+        socket_file = Path(resolved_socket)
         socket_file.parent.mkdir(parents=True, exist_ok=True)
         socket_file.unlink(missing_ok=True)
         uvicorn.run(app, uds=str(socket_file))
         return
 
-    host = os.environ.get("CRUXIBLE_HOST", "127.0.0.1")
-    port = int(os.environ.get("CRUXIBLE_PORT", "8100"))
-    uvicorn.run(app, host=host, port=port)
+    resolved_host = os.environ.get("CRUXIBLE_HOST", "127.0.0.1")
+    resolved_port = int(os.environ.get("CRUXIBLE_PORT", "8100"))
+    uvicorn.run(app, host=resolved_host, port=resolved_port)

@@ -77,7 +77,7 @@ sudo -u cruxd env \
   CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=127.0.0.1 \
   CRUXIBLE_PORT=8100 \
-  /opt/cruxible-core/bin/cruxible-server
+  /opt/cruxible-core/bin/cruxible server start
 ```
 
 Notes:
@@ -141,7 +141,7 @@ env \
   CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
   CRUXIBLE_HOST=0.0.0.0 \
   CRUXIBLE_PORT=8100 \
-  /opt/cruxible-core/bin/cruxible-server
+  /opt/cruxible-core/bin/cruxible server start
 ```
 
 Agent host:

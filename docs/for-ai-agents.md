@@ -5,8 +5,8 @@ agent supplies interpretation and planning. Cruxible supplies deterministic
 execution, governed state transitions, receipts, traces, review groups, and
 query surfaces.
 
-For `0.2`, prefer a local `cruxible-server` daemon. MCP should be a structured
-adapter over the daemon, not the place where workflow policy lives.
+For `0.2`, prefer a local Cruxible daemon (`cruxible server start`). MCP should be
+a structured adapter over the daemon, not the place where workflow policy lives.
 
 ## Runtime Boundary
 

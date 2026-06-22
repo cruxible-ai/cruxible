@@ -146,7 +146,7 @@ portability story is:
 
 Local OSS isolation is a practical boundary, not a hard sandbox:
 
-- run `cruxible-server` as the runtime owner
+- run the daemon (`cruxible server start`) as the runtime owner
 - keep `CRUXIBLE_SERVER_STATE_DIR` outside the repo and agent workspace
 - install `cruxible-client` in the agent environment
 - expose MCP or HTTP, not the state directory

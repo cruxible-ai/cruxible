@@ -258,7 +258,7 @@ def validate_server_startup_settings(
 
     if auth_required and not auth_enabled:
         raise ConfigError(
-            "Refusing to start cruxible-server without auth because this server "
+            "Refusing to start the Cruxible daemon without auth because this server "
             "state dir previously required auth. Set CRUXIBLE_SERVER_AUTH=true."
         )
 
@@ -274,7 +274,7 @@ def validate_server_startup_settings(
     host = env.get("CRUXIBLE_HOST", "127.0.0.1")
     if not _is_loopback_host(host) and not auth_enabled:
         raise ConfigError(
-            "Refusing to bind cruxible-server to a non-loopback host without auth. "
+            "Refusing to bind the Cruxible daemon to a non-loopback host without auth. "
             "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
             "or stored runtime credentials, "
             "or bind CRUXIBLE_HOST to 127.0.0.1/localhost."

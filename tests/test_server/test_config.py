@@ -121,9 +121,10 @@ def test_get_runtime_bootstrap_secret_strips_whitespace() -> None:
 def test_server_log_path_defaults_under_state_dir(tmp_path: Path) -> None:
     state_dir = tmp_path / "server-state"
 
-    assert get_server_log_path({"CRUXIBLE_SERVER_STATE_DIR": str(state_dir)}) == (
-        state_dir / "logs" / "server.log"
-    ).resolve()
+    assert (
+        get_server_log_path({"CRUXIBLE_SERVER_STATE_DIR": str(state_dir)})
+        == (state_dir / "logs" / "server.log").resolve()
+    )
 
 
 def test_server_log_path_uses_explicit_override(tmp_path: Path) -> None:
@@ -152,7 +153,7 @@ def test_volatile_state_path_warnings_include_state_dir_and_instances() -> None:
     assert "Instance inst_tmp is registered under a volatile temp path" in warnings[1]
 
 
-def test_main_fails_before_uvicorn_for_public_bind_without_auth(
+def test_run_server_fails_before_uvicorn_for_public_bind_without_auth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -164,12 +165,12 @@ def test_main_fails_before_uvicorn_for_public_bind_without_auth(
 
     try:
         with pytest.raises(ConfigError, match="non-loopback host without auth"):
-            server_app.main()
+            server_app.run_server()
     finally:
         reset_runtime_credential_store()
 
 
-def test_main_reaches_uvicorn_for_valid_public_bind(
+def test_run_server_reaches_uvicorn_for_valid_public_bind(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -189,7 +190,7 @@ def test_main_reaches_uvicorn_for_valid_public_bind(
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
     try:
-        server_app.main()
+        server_app.run_server()
     finally:
         reset_runtime_credential_store()
 
@@ -197,7 +198,7 @@ def test_main_reaches_uvicorn_for_valid_public_bind(
     assert called["port"] == 8123
 
 
-def test_main_warns_for_volatile_state_dir_and_instance_location(
+def test_run_server_warns_for_volatile_state_dir_and_instance_location(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -221,7 +222,7 @@ def test_main_warns_for_volatile_state_dir_and_instance_location(
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
     try:
-        server_app.main()
+        server_app.run_server()
     finally:
         reset_registry()
         reset_runtime_credential_store()
@@ -236,7 +237,7 @@ def test_main_warns_for_volatile_state_dir_and_instance_location(
     assert called["port"] == 8126
 
 
-def test_main_reaches_uvicorn_with_stored_runtime_credentials(
+def test_run_server_reaches_uvicorn_with_stored_runtime_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -264,7 +265,7 @@ def test_main_reaches_uvicorn_with_stored_runtime_credentials(
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
     try:
-        server_app.main()
+        server_app.run_server()
     finally:
         reset_registry()
         reset_runtime_credential_store()
@@ -273,7 +274,7 @@ def test_main_reaches_uvicorn_with_stored_runtime_credentials(
     assert called["port"] == 8124
 
 
-def test_main_fails_when_runtime_credentials_exist_but_auth_is_disabled(
+def test_run_server_fails_when_runtime_credentials_exist_but_auth_is_disabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -294,13 +295,13 @@ def test_main_fails_when_runtime_credentials_exist_but_auth_is_disabled(
 
     try:
         with pytest.raises(ConfigError, match="previously required auth"):
-            server_app.main()
+            server_app.run_server()
     finally:
         reset_registry()
         reset_runtime_credential_store()
 
 
-def test_main_reaches_uvicorn_with_runtime_bootstrap_secret(
+def test_run_server_reaches_uvicorn_with_runtime_bootstrap_secret(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -320,7 +321,7 @@ def test_main_reaches_uvicorn_with_runtime_bootstrap_secret(
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
     try:
-        server_app.main()
+        server_app.run_server()
     finally:
         reset_runtime_credential_store()
 

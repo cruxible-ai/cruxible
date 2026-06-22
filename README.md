@@ -315,7 +315,7 @@ history.
 
 ```bash
 pip install "cruxible-core[server,mcp]"
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible-server
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
 The daemon is local-only by default and binds to `127.0.0.1:8100`. For a simple

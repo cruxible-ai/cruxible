@@ -57,7 +57,8 @@ dev = [
 [project.scripts]
 cruxible = "cruxible_core.cli.main:cli"
 cruxible-mcp = "cruxible_core.mcp.server:main"
-cruxible-server = "cruxible_core.server.app:main"
+# The daemon launches only via `cruxible server start`; there is no separate
+# `cruxible-server` console-script (removed in wi-server-cli-verb-consistency).
 
 [project.urls]
 Homepage = "https://github.com/cruxible-ai/cruxible-core"

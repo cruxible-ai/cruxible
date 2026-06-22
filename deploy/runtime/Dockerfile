@@ -46,4 +46,4 @@ USER cruxible
 EXPOSE 8100
 
 ENTRYPOINT ["cruxible-runtime-entrypoint"]
-CMD ["cruxible-server"]
+CMD ["cruxible", "server", "start"]

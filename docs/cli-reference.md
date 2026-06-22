@@ -2077,12 +2077,21 @@ cruxible query inline \
 
 **Usage:** `cruxible server [OPTIONS]`
 
-**Purpose:** Inspect live daemon state.
+**Purpose:** Launch and inspect the Cruxible daemon.
 
 **Subcommands:**
 
-- `cruxible server info` - Show live daemon metadata such as agent mode and state dir.
+- `cruxible server start` - Launch the Cruxible daemon in the foreground (the only daemon launch path).
+- `cruxible server status` - Report a running daemon's version, state dir, transport, and instances.
+- `cruxible server info` - Show live daemon metadata such as auth mode and state dir.
 - `cruxible server restart` - Re-exec the live daemon in place, preserving its port, state dir, and env.
+
+**Client Vs Launch:**
+- `start` LAUNCHES the daemon; it takes no `--server-url` and becomes the
+  long-running daemon process.
+- `status`, `info`, and `restart` are CLIENT RPCs against an already-running
+  daemon: they need a transport (`--server-url` / `--server-socket` or the
+  matching env vars) and fail with a clear message when no daemon is reachable.
 
 **Output And Side Effects:**
 - Command-specific output only.
@@ -2091,6 +2100,60 @@ cruxible query inline \
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible server start
+
+**Usage:** `cruxible server start [OPTIONS]`
+
+**Purpose:** Launch the Cruxible daemon in the foreground.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--host` | no | `CRUXIBLE_HOST` or `127.0.0.1` | text | Bind host. Ignored when `--socket` is set. |
+| `--port` | no | `CRUXIBLE_PORT` or `8100` | integer | Bind port. Ignored when `--socket` is set. |
+| `--state-dir` | no | `CRUXIBLE_SERVER_STATE_DIR` or `~/.cruxible/server` | text | Server-owned state directory. |
+| `--socket` | no | `CRUXIBLE_SERVER_SOCKET` | text | Listen on this Unix socket path instead of host/port. |
+
+**Output And Side Effects:**
+- This process becomes the long-running daemon (it is not a client of an
+  existing one, so it takes no `--server-url`). Flags override the matching
+  environment variables (`CRUXIBLE_HOST`, `CRUXIBLE_PORT`,
+  `CRUXIBLE_SERVER_STATE_DIR`, `CRUXIBLE_SERVER_SOCKET`); unset flags fall back to
+  the env value or the built-in default. Use a durable `--state-dir`; Cruxible
+  warns at startup when the state path resolves under a volatile temp location.
+  Stop with Ctrl-C. `cruxible server start --help` prints help and exits without
+  serving.
+
+**Common Errors:**
+- Binding a non-loopback host without `CRUXIBLE_SERVER_AUTH=true` is refused.
+- A state dir that previously required auth is refused unless auth is re-enabled.
+- The `server` extra (`pip install "cruxible-core[server]"`) is required to launch.
+
+## cruxible server status
+
+**Usage:** `cruxible server status [OPTIONS]`
+
+**Purpose:** Report a running daemon's version, state dir, transport, and instances.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- A CLIENT command: queries an already-running daemon over the configured
+  transport (`--server-url` / `--server-socket` or the matching env vars) and
+  prints whether it is reachable, plus its version, state directory, configured
+  transport, instance count, and auth status. With `--json`, returns the same
+  fields plus `transport`.
+
+**Common Errors:**
+- No transport configured, or the daemon is down: fails with a clear message
+  (no hang) pointing at `cruxible server start` / `--server-url`.
+- Permission mode too low to read cross-tenant daemon metadata.
 
 ## cruxible server info
 

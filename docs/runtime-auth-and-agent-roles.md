@@ -34,7 +34,7 @@ Start the daemon with auth enabled and a one-time bootstrap secret:
 CRUXIBLE_SERVER_AUTH=true
 CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=<one-time-secret>
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" \
-  cruxible-server
+  cruxible server start
 ```
 
 The first trusted operator claims the bootstrap secret for the target instance:

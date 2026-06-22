@@ -1,4 +1,17 @@
-"""CLI commands for live daemon status and diagnostics."""
+"""CLI commands for launching and inspecting the Cruxible daemon.
+
+This group holds both the daemon-launch verb and the client RPCs:
+
+* ``start`` LAUNCHES the daemon in the foreground. It takes no ``--server-url``;
+  it is the process that becomes the daemon. ``--host`` / ``--port`` /
+  ``--state-dir`` mirror ``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` /
+  ``CRUXIBLE_SERVER_STATE_DIR`` (env vars are honored as defaults).
+* ``status`` / ``info`` / ``restart`` are CLIENT RPCs that talk to an
+  already-running daemon. They require a transport (``--server-url`` /
+  ``--server-socket``, or the ``CRUXIBLE_SERVER_URL`` / ``CRUXIBLE_SERVER_SOCKET``
+  env vars, or a remembered CLI context) and fail with a clear message when no
+  daemon is reachable.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +24,32 @@ from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
     _get_client,
+    _root_ctx_obj,
 )
 from cruxible_core.cli.main import handle_errors
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
+
+# Client RPCs (status/info/restart) need a reachable daemon; surface a single,
+# actionable line instead of a hang or an opaque transport traceback when the
+# daemon is down or no transport is configured.
+_DAEMON_REQUIRED_HINT = (
+    "Start one with `cruxible server start`, or point `--server-url` / "
+    "`CRUXIBLE_SERVER_URL` at a running daemon."
+)
+
+
+def _client_transport_label() -> str:
+    """Describe the transport the active client RPC is talking to."""
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if server_url:
+        return str(server_url)
+    if server_socket:
+        return f"unix socket {server_socket}"
+    return "configured Cruxible server"
 
 
 def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
@@ -40,7 +74,82 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
 
 @click.group("server")
 def server_group() -> None:
-    """Inspect live daemon state."""
+    """Launch and inspect the Cruxible daemon."""
+
+
+@server_group.command("start")
+@click.option(
+    "--host",
+    default=None,
+    help="Bind host (default: CRUXIBLE_HOST or 127.0.0.1). Ignored when --socket is set.",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=None,
+    help="Bind port (default: CRUXIBLE_PORT or 8100). Ignored when --socket is set.",
+)
+@click.option(
+    "--state-dir",
+    default=None,
+    help="Server-owned state directory (default: CRUXIBLE_SERVER_STATE_DIR or ~/.cruxible/server).",
+)
+@click.option(
+    "--socket",
+    "socket_path",
+    default=None,
+    help="Listen on this Unix socket path instead of host/port (default: CRUXIBLE_SERVER_SOCKET).",
+)
+@handle_errors
+def server_start_cmd(
+    host: str | None,
+    port: int | None,
+    state_dir: str | None,
+    socket_path: str | None,
+) -> None:
+    """Launch the Cruxible daemon in the foreground.
+
+    This becomes the long-running daemon process; it is NOT a client of an
+    existing one, so it takes no `--server-url`. Flags override the matching
+    environment variables (`CRUXIBLE_HOST`, `CRUXIBLE_PORT`,
+    `CRUXIBLE_SERVER_STATE_DIR`, `CRUXIBLE_SERVER_SOCKET`); unset flags fall back
+    to the env value or the built-in default. Use a durable `--state-dir` (e.g.
+    `~/.cruxible/server`), not a volatile temp path. Stop with Ctrl-C.
+    """
+    # Imported lazily so `cruxible server start --help` (and the rest of the CLI)
+    # never pays the uvicorn/server import cost, and so the optional `server`
+    # extra is only required when actually launching.
+    from cruxible_core.server.app import run_server
+
+    run_server(host=host, port=port, state_dir=state_dir, socket_path=socket_path)
+
+
+@server_group.command("status")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@handle_errors
+def server_status_cmd(output_json: bool) -> None:
+    """Report a running daemon's version, state dir, transport, and instances.
+
+    A CLIENT command: it queries an already-running daemon over the configured
+    transport (`--server-url` / `--server-socket` or the matching env vars). If
+    no daemon is reachable it fails with a clear message rather than hanging.
+    """
+    client = _get_client()
+    if client is None:
+        raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
+    result = client.server_info()
+    transport = _client_transport_label()
+    if output_json:
+        payload = result.model_dump(mode="python")
+        payload["transport"] = transport
+        _emit_json(payload)
+        return
+    click.echo(f"Daemon: reachable ({transport})")
+    click.echo(f"Version: {result.version}")
+    click.echo(f"State dir: {result.state_dir}")
+    click.echo(f"Instances: {result.instance_count}")
+    click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
+    click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
 
 
 @server_group.command("info")

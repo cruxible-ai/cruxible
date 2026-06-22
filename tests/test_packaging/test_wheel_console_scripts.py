@@ -31,11 +31,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.wheel
 
-# Aliases that are runnable with only the base install. The MCP / server scripts
-# import optional dependencies (the ``mcp`` and ``server`` extras), so they are
-# exercised at the import-resolution level rather than invoked, both because the
-# extras are optional and because they start long-lived daemons rather than
-# responding to ``--help``.
+# Aliases that are runnable with only the base install. The ``cruxible-mcp``
+# script imports optional dependencies (the ``mcp`` extra) and starts a
+# long-lived daemon, so it is exercised at the import-resolution level rather
+# than invoked. The Cruxible daemon launches via ``cruxible server start`` (a
+# subcommand of the runnable ``cruxible`` CLI), not a console-script of its own.
 _BASE_RUNNABLE_ALIASES = ("cruxible",)
 
 
@@ -149,12 +149,16 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_pyproject_declares_expected_aliases() -> None:
-    """Guard against silent removal/rename of the public console scripts."""
+    """Guard against silent removal/rename of the public console scripts.
+
+    There is deliberately no ``cruxible-server`` script: the daemon launches only
+    via ``cruxible server start`` (wi-server-cli-verb-consistency). This assertion
+    pins that — a re-added ``cruxible-server`` entry point would fail here.
+    """
     scripts = _declared_scripts()
     assert scripts == {
         "cruxible": "cruxible_core.cli.main:cli",
         "cruxible-mcp": "cruxible_core.mcp.server:main",
-        "cruxible-server": "cruxible_core.server.app:main",
     }
 
 
@@ -168,8 +172,9 @@ def test_installed_wheel_exposes_all_declared_scripts(installed_venv: Path) -> N
 def test_installed_entry_point_targets_resolve(installed_venv: Path) -> None:
     """Each declared ``module:attr`` entry-point target imports and is callable.
 
-    This covers ``cruxible-server`` / ``cruxible-mcp`` without launching their
-    daemons (they start long-lived servers rather than honoring ``--help``).
+    This covers ``cruxible-mcp`` without launching its daemon (it starts a
+    long-lived server rather than honoring ``--help``). The Cruxible daemon has
+    no console-script of its own — it launches via ``cruxible server start``.
     """
     python = _venv_bin(installed_venv) / "python"
     checker = (
