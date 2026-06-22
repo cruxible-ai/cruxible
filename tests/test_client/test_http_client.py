@@ -1236,6 +1236,95 @@ def test_relationship_lookup_omits_none_edge_key_query_param():
     }
 
 
+def test_get_relationship_preserves_provenance_and_evidence_with_newer_metadata():
+    """Regression: a version-skewed client must NOT silently null audit data.
+
+    ``GetRelationshipResult.metadata`` is a free-form ``dict[str, Any]`` pass-through,
+    so a newer server's relationship metadata -- populated provenance
+    (source/source_ref/created_at) and evidence, alongside metadata keys the client
+    predates -- must survive parsing AND round-trip unchanged. Unknown sibling keys
+    must never cause the known provenance/evidence blocks to be dropped or nulled.
+
+    Root-cause history (wi-provenance-null-investigation): the original bug lived in a
+    client whose contract model parsed provenance/evidence into TYPED sub-fields that
+    nulled out when newer keys appeared. This checkout's model keeps metadata as an
+    opaque dict, so it is already tolerant -- this test pins that behavior so a future
+    refactor to typed sub-fields can't silently reintroduce the audit-data loss.
+    """
+
+    server_metadata = {
+        "provenance": {
+            "source": "manual",
+            "source_ref": "add_relationship",
+            "created_at": "2026-06-11T00:00:00Z",
+            # Newer provenance keys an older client would not recognize:
+            "created_actor_context": {
+                "actor_type": "human_user",
+                "actor_id": "u1",
+                "org_id": "o1",
+                "operation_id": "op1",
+                "timestamp": "2026-06-11T00:00:00Z",
+            },
+            "future_provenance_field": "NEWER",
+        },
+        "assertion": {"review_state": "accepted"},
+        "evidence": {
+            "refs": [{"source": "doc", "source_record_id": "section"}],
+            "rationale": "Observed in docs.",
+            "future_evidence_field": "NEWER",
+        },
+        # A brand-new sibling metadata block the client has never heard of:
+        "future_metadata_block": {"foo": "bar"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/relationships/lookup")
+        return httpx.Response(
+            200,
+            json={
+                "found": True,
+                "from_type": "Part",
+                "from_id": "BP-1",
+                "relationship_type": "fits",
+                "to_type": "Vehicle",
+                "to_id": "V-1",
+                "edge_key": 0,
+                "properties": {"verified": True},
+                "metadata": server_metadata,
+            },
+        )
+
+    client = _build_client(handler)
+    result = client.get_relationship(
+        "inst_123",
+        from_type="Part",
+        from_id="BP-1",
+        relationship_type="fits",
+        to_type="Vehicle",
+        to_id="V-1",
+        edge_key=0,
+    )
+
+    # Known audit blocks survive parsing, with their core fields intact.
+    provenance = result.metadata["provenance"]
+    assert provenance["source"] == "manual"
+    assert provenance["source_ref"] == "add_relationship"
+    assert provenance["created_at"] == "2026-06-11T00:00:00Z"
+    evidence = result.metadata["evidence"]
+    assert evidence["rationale"] == "Observed in docs."
+    assert evidence["refs"] == [{"source": "doc", "source_record_id": "section"}]
+
+    # Unknown/newer keys must be preserved, never dropped -- and their presence must
+    # not have nulled the known blocks above.
+    assert provenance["future_provenance_field"] == "NEWER"
+    assert evidence["future_evidence_field"] == "NEWER"
+    assert result.metadata["future_metadata_block"] == {"foo": "bar"}
+
+    # The whole metadata block round-trips byte-for-byte through the contract model:
+    # nothing the server sent is lost on the client read path.
+    assert result.model_dump(mode="json")["metadata"] == server_metadata
+
+
 def test_optional_get_query_params_omit_none_and_preserve_falsey_values():
     captured: dict[str, dict[str, str]] = {}
 
