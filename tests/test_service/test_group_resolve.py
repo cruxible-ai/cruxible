@@ -432,6 +432,136 @@ class TestPerMemberValidation:
 
 
 # ---------------------------------------------------------------------------
+# Explained skips + stamp-existing (wi-resolve-skip-transparency)
+# ---------------------------------------------------------------------------
+
+
+def _add_direct_edge(instance: CruxibleInstance) -> None:
+    """Seed an unreviewed, null-provenance direct-added BP-1->V-1 edge."""
+    graph = instance.load_graph()
+    graph.add_relationship(
+        RelationshipInstance(
+            relationship_type="fits",
+            from_type="Part",
+            from_id="BP-1",
+            to_type="Vehicle",
+            to_id="V-1",
+            properties={"verified": True},
+        )
+    )
+    instance.save_graph(graph)
+
+
+class TestSkipExplanationAndStamp:
+    def test_skip_existing_is_explained(self, instance: CruxibleInstance) -> None:
+        """A skipped pre-existing member names the existing edge — not a bare count."""
+        _add_direct_edge(instance)
+        # Baseline: the direct-added edge is unreviewed with null provenance.
+        graph = instance.load_graph()
+        before = graph.get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert before is not None
+        assert before.metadata.assertion.review.status == "unreviewed"
+        assert before.metadata.provenance is None
+
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+
+        assert result.edges_skipped == 1
+        assert result.edges_stamped == 0
+        assert len(result.skipped_members) == 1
+        skip = result.skipped_members[0]
+        assert skip["skip_kind"] == "existing_edge"
+        assert skip["from_id"] == "BP-1"
+        assert skip["to_id"] == "V-1"
+        # Reason explains WHY and names the existing edge tuple.
+        assert "already live" in skip["reason"]
+        assert "Part:BP-1" in skip["reason"]
+        assert "fits" in skip["reason"]
+        assert "Vehicle:V-1" in skip["reason"]
+        # Default (no stamp): the surviving edge is untouched.
+        assert skip["stamped"] == "false"
+        after = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert after is not None
+        assert after.metadata.assertion.review.status == "unreviewed"
+        assert after.metadata.provenance is None
+
+    def test_validation_failure_skip_is_explained(self, instance: CruxibleInstance) -> None:
+        """A member skipped for failed validation is explained too (good member still created)."""
+        bad_member = CandidateMember(
+            from_type="Part",
+            from_id="NONEXISTENT",
+            to_type="Vehicle",
+            to_id="V-1",
+            relationship_type="fits",
+            signals=[CandidateSignal(signal_source="check_v1", signal="support")],
+        )
+        group_id = _propose(instance, [_member("BP-1", "V-1"), bad_member])
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        assert result.edges_created == 1
+        assert result.edges_skipped == 1
+        assert len(result.skipped_members) == 1
+        skip = result.skipped_members[0]
+        assert skip["skip_kind"] == "validation_failed"
+        assert skip["from_id"] == "NONEXISTENT"
+        assert "validation" in skip["reason"]
+
+    def test_stamp_existing_blesses_direct_added_edge(self, instance: CruxibleInstance) -> None:
+        """--stamp-existing turns an unreviewed direct-add into a governed, attributed edge."""
+        _add_direct_edge(instance)
+        actor = _actor()
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts={"style": "casual"},
+            actor_context=actor,
+        )
+        result = service_resolve_group(
+            instance,
+            proposed.group_id,
+            "approve",
+            expected_pending_version=1,
+            actor_context=actor,
+            stamp_existing=True,
+        )
+
+        assert result.edges_created == 0  # tuple already live
+        assert result.edges_skipped == 1
+        assert result.edges_stamped == 1
+        assert result.skipped_members[0]["stamped"] == "true"
+
+        rel = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        # Blessed review status + source.
+        assert rel.metadata.assertion.review.status == "approved"
+        assert rel.metadata.assertion.review.source == "group"
+        # Blessed provenance: source=group, resolution_id + receipt_id set (not null).
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.source == "group_resolve"
+        assert rel.metadata.provenance.source_ref == f"group:{proposed.group_id}"
+        assert rel.metadata.provenance.resolution_id == result.resolution_id
+        assert rel.metadata.provenance.resolution_id is not None
+        assert rel.metadata.provenance.receipt_id == result.receipt_id
+        assert rel.metadata.provenance.receipt_id is not None
+        # Domain properties of the surviving edge are preserved.
+        assert rel.properties.get("verified") is True
+
+    def test_stamp_existing_default_off_leaves_edge_unreviewed(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """Without the flag, behavior is unchanged: skip-but-explained, edge untouched."""
+        _add_direct_edge(instance)
+        group_id = _propose(instance, [_member("BP-1", "V-1")])
+        result = service_resolve_group(instance, group_id, "approve", expected_pending_version=1)
+        assert result.edges_stamped == 0
+        rel = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        assert rel.metadata.assertion.review.status == "unreviewed"
+        assert rel.metadata.provenance is None
+
+
+# ---------------------------------------------------------------------------
 # Reject tests
 # ---------------------------------------------------------------------------
 

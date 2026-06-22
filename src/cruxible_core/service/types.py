@@ -886,6 +886,13 @@ class ResolveGroupResult:
     edges_skipped: int
     resolution_id: str | None = None
     receipt_id: str | None = None
+    # Per-member explanations for every skipped member (existing-edge or
+    # validation-failure), each carrying the member identity, a ``skip_kind``
+    # and a human-readable ``reason`` so a bare count is never the only signal.
+    skipped_members: list[dict[str, str]] = field(default_factory=list)
+    # Count of pre-existing edges blessed with the group's review status and
+    # provenance when ``stamp_existing`` was requested (0 otherwise).
+    edges_stamped: int = 0
 
 
 @dataclass

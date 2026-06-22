@@ -827,6 +827,7 @@ def service_resolve_group(
     resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
+    stamp_existing: bool = False,
 ) -> ResolveGroupResult:
     """Resolve a candidate group — approve creates edges, reject records decision."""
     return resolve_group_transition(
@@ -837,6 +838,7 @@ def service_resolve_group(
         resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
         actor_context=actor_context,
+        stamp_existing=stamp_existing,
     )
 
 

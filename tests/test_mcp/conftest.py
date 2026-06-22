@@ -528,6 +528,7 @@ class GovernedLocalClient:
         rationale: str = "",
         resolved_by: str = "human",
         expected_pending_version: int = 1,
+        stamp_existing: bool = False,
     ):
         return api.resolve_group(
             instance_id,
@@ -536,6 +537,7 @@ class GovernedLocalClient:
             rationale=rationale,
             resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
+            stamp_existing=stamp_existing,
         )
 
     def update_trust_status(

@@ -247,6 +247,15 @@ def group_propose(
     type=int,
     help="Pending version the reviewer saw when deciding.",
 )
+@click.option(
+    "--stamp-existing",
+    is_flag=True,
+    default=False,
+    help=(
+        "On approve, bless each surviving pre-existing edge (member tuple already "
+        "live) with this group's review status + provenance instead of skipping it."
+    ),
+)
 @json_option
 @handle_errors
 def group_resolve(
@@ -255,6 +264,7 @@ def group_resolve(
     rationale: str,
     source: str,
     expected_pending_version: int,
+    stamp_existing: bool,
     output_json: bool,
 ) -> None:
     """Resolve a candidate group (approve or reject)."""
@@ -266,6 +276,7 @@ def group_resolve(
             rationale=rationale,
             resolved_by=cast(contracts.GroupResolvedBy, source),
             expected_pending_version=expected_pending_version,
+            stamp_existing=stamp_existing,
         ),
         lambda instance: service_resolve_group(
             instance,
@@ -274,6 +285,7 @@ def group_resolve(
             rationale=rationale,
             resolved_by=source,  # type: ignore[arg-type]
             expected_pending_version=expected_pending_version,
+            stamp_existing=stamp_existing,
         ),
         allow_local=False,
         command_name="group resolve",
@@ -286,6 +298,8 @@ def group_resolve(
                 "action": result.action,
                 "edges_created": result.edges_created,
                 "edges_skipped": result.edges_skipped,
+                "edges_stamped": result.edges_stamped,
+                "skipped_members": result.skipped_members,
                 "resolution_id": result.resolution_id,
                 "receipt_id": result.receipt_id,
             }
@@ -297,6 +311,13 @@ def group_resolve(
         click.echo(f"  Edges created: {result.edges_created}")
         if result.edges_skipped:
             click.echo(f"  Edges skipped: {result.edges_skipped}")
+            for skip in result.skipped_members:
+                reason = skip.get("reason", "skipped")
+                stamped = skip.get("stamped") == "true"
+                suffix = " (stamped with group review)" if stamped else ""
+                click.echo(f"    - {reason}{suffix}")
+        if result.edges_stamped:
+            click.echo(f"  Existing edges stamped: {result.edges_stamped}")
     if result.resolution_id:
         click.echo(f"  Resolution: {result.resolution_id}")
     if result.receipt_id:

@@ -961,13 +961,16 @@ def register_tools(server: FastMCP) -> list[str]:
         expected_pending_version: int,
         rationale: str = "",
         resolved_by: contracts.GroupResolvedBy = "human",
+        stamp_existing: bool = False,
     ) -> contracts.ResolveGroupToolResult:
         """Resolve a candidate group by approving or rejecting it.
 
-        Approve creates edges in the graph for valid members (skipping members
-        whose edges already exist). Reject records the resolution without
-        graph mutation. Both persist the resolution for audit and future
-        auto-resolve precedent.
+        Approve creates edges in the graph for valid members. Members whose
+        tuple is already live are skipped with an explanation in
+        ``skipped_members``; pass ``stamp_existing=True`` to instead bless each
+        surviving pre-existing edge with this group's review status and
+        provenance. Reject records the resolution without graph mutation. Both
+        persist the resolution for audit and future auto-resolve precedent.
         """
         return handlers.handle_resolve_group(
             instance_id,
@@ -976,6 +979,7 @@ def register_tools(server: FastMCP) -> list[str]:
             rationale=rationale,
             resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
+            stamp_existing=stamp_existing,
         )
 
     @_tool

@@ -13,6 +13,7 @@ from cruxible_core.errors import (
     GroupNotFoundError,
 )
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -24,6 +25,7 @@ from cruxible_core.graph.operations import (
     apply_relationship,
     validate_relationship,
 )
+from cruxible_core.graph.provenance import make_provenance, stamp_provenance_modified
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 from cruxible_core.group.types import (
     CandidateGroup,
@@ -38,6 +40,7 @@ from cruxible_core.service.mutation_guards import relationship_mutation_guard_er
 from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
 from cruxible_core.service.types import ResolveGroupResult, UpdateTrustStatusResult
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
+from cruxible_core.temporal import utc_now
 
 
 @dataclass(frozen=True)
@@ -52,9 +55,47 @@ class _ApprovalValidation:
     valid_inputs: list[ValidatedRelationship]
     edges_skipped: int
     skipped_existing: list[dict[str, str]]
+    skipped_members: list[dict[str, str]]
     applied_tuples: list[dict[str, str]]
     validation_failures: int
     validation_errors: list[str]
+
+
+def _skip_entry(
+    relationship: RelationshipInstance,
+    *,
+    reason: str,
+    skip_kind: str,
+) -> dict[str, str]:
+    """Build an explained skip record for the resolution result/receipt."""
+    return {
+        **relationship.identity_payload(),
+        "skip_kind": skip_kind,
+        "reason": reason,
+    }
+
+
+def _identity_only(payload: dict[str, str]) -> tuple[str, str, str, str, str]:
+    return (
+        payload["from_type"],
+        payload["from_id"],
+        payload["to_type"],
+        payload["to_id"],
+        payload["relationship_type"],
+    )
+
+
+def _annotate_stamped_skips(
+    skipped_members: list[dict[str, str]],
+    stamped_tuples: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Mark each skip with whether stamp-existing blessed its surviving edge."""
+    stamped_keys = {_identity_only(entry) for entry in stamped_tuples}
+    annotated: list[dict[str, str]] = []
+    for entry in skipped_members:
+        blessed = _identity_only(entry) in stamped_keys
+        annotated.append({**entry, "stamped": "true" if blessed else "false"})
+    return annotated
 
 
 _VALID_RESOLVE_ACTIONS = ("approve", "reject")
@@ -86,6 +127,7 @@ def resolve_group_transition(
     resolved_by: Literal["human", "agent"] = "human",
     expected_pending_version: int | None = None,
     actor_context: GovernedActorContext | None = None,
+    stamp_existing: bool = False,
 ) -> ResolveGroupResult:
     """Resolve a candidate group through one mutation receipt/UOW boundary."""
     validate_resolve_request(
@@ -104,6 +146,7 @@ def resolve_group_transition(
             "group_id": group_id,
             "action": action,
             "expected_pending_version": expected_pending_version,
+            "stamp_existing": stamp_existing,
         },
     ) as ctx:
         assert ctx.builder is not None
@@ -133,6 +176,7 @@ def resolve_group_transition(
                 actor_context=actor_context,
                 is_retry=target.is_retry,
                 builder=ctx.builder,
+                stamp_existing=stamp_existing,
             )
         ctx.set_result(resolved)
 
@@ -317,6 +361,7 @@ def _validate_approval_members(
     valid_inputs: list[ValidatedRelationship] = []
     edges_skipped = 0
     skipped_existing: list[dict[str, str]] = []
+    skipped_members: list[dict[str, str]] = []
     applied_tuples: list[dict[str, str]] = []
     validation_failures = 0
     validation_errors: list[str] = []
@@ -331,6 +376,9 @@ def _validate_approval_members(
             relationship_type=relationship.relationship_type,
         )
         if count > 0:
+            reason = (
+                f"member tuple already live (existing edge {relationship.relationship_label()})"
+            )
             builder.record_validation(
                 passed=False,
                 detail={
@@ -340,6 +388,9 @@ def _validate_approval_members(
             )
             edges_skipped += 1
             skipped_existing.append(relationship.identity_payload())
+            skipped_members.append(
+                _skip_entry(relationship, reason=reason, skip_kind="existing_edge")
+            )
             continue
 
         try:
@@ -354,6 +405,7 @@ def _validate_approval_members(
                 relationship.properties,
             )
         except DataValidationError as exc:
+            detail = "; ".join(exc.errors) if exc.errors else str(exc)
             builder.record_validation(
                 passed=False,
                 detail={
@@ -363,8 +415,14 @@ def _validate_approval_members(
             )
             edges_skipped += 1
             validation_failures += 1
-            detail = "; ".join(exc.errors) if exc.errors else str(exc)
             validation_errors.append(f"{relationship.relationship_label()}: {detail}")
+            skipped_members.append(
+                _skip_entry(
+                    relationship,
+                    reason=f"member failed validation ({detail})",
+                    skip_kind="validation_failed",
+                )
+            )
             continue
 
         builder.record_validation(
@@ -381,6 +439,7 @@ def _validate_approval_members(
         valid_inputs=valid_inputs,
         edges_skipped=edges_skipped,
         skipped_existing=skipped_existing,
+        skipped_members=skipped_members,
         applied_tuples=applied_tuples,
         validation_failures=validation_failures,
         validation_errors=validation_errors,
@@ -503,6 +562,124 @@ def _apply_resolved_relationships(
     return sum(1 for validated in relationships if not validated.is_update)
 
 
+def _blessed_metadata_for_existing(
+    existing: RelationshipInstance,
+    *,
+    group_id: str,
+    receipt_id: str | None,
+    resolution_id: str | None,
+    actor_context: GovernedActorContext | None,
+) -> RelationshipMetadata:
+    """Build metadata that blesses a pre-existing edge with the group's review.
+
+    Mirrors the creation-time stamp ``apply_relationship`` gives a freshly
+    group-resolved edge (review approved/source=group, provenance source
+    ``group_resolve``/``group:<id>`` with the resolution correlation), but applied
+    as a modification to a surviving direct-added edge: creation history on the
+    provenance is preserved when present (only ``last_modified_*`` and the
+    resolution/receipt correlation are stamped); a null-provenance direct-add is
+    backfilled with fresh group provenance so it becomes auditable.
+    """
+    metadata = existing.metadata
+    now = utc_now()
+    source_ref = f"group:{group_id}"
+    if metadata.provenance is None:
+        provenance = make_provenance(
+            "group_resolve",
+            source_ref,
+            receipt_id=receipt_id,
+            resolution_id=resolution_id,
+            actor_context=actor_context,
+        )
+    else:
+        provenance = stamp_provenance_modified(
+            metadata.provenance,
+            "group_resolve",
+            actor_context=actor_context,
+        ).model_copy(
+            update={
+                "resolution_id": resolution_id,
+                "receipt_id": receipt_id,
+            }
+        )
+    review = RelationshipReviewState(
+        status="approved",
+        source="group",
+        updated_at=now,
+        updated_by=source_ref,
+        actor_context=actor_context,
+    )
+    assertion = metadata.assertion.model_copy(update={"review": review})
+    return metadata.model_copy(update={"provenance": provenance, "assertion": assertion})
+
+
+def _stamp_existing_edges(
+    *,
+    instance: InstanceProtocol,
+    graph: EntityGraph,
+    group_id: str,
+    skipped_existing: list[dict[str, str]],
+    uow: UnitOfWorkProtocol,
+    receipt_id: str | None,
+    resolution_id: str | None,
+    actor_context: GovernedActorContext | None,
+) -> list[dict[str, str]]:
+    """Bless each surviving direct-added edge with the group's review/provenance.
+
+    Returns the identity payloads of the edges that were actually stamped so the
+    caller can mark them in the resolution result.
+    """
+    stamped: list[dict[str, str]] = []
+    touched_relationships: list[RelationshipInstance] = []
+    for identity in skipped_existing:
+        existing = graph.get_relationship(
+            identity["from_type"],
+            identity["from_id"],
+            identity["to_type"],
+            identity["to_id"],
+            identity["relationship_type"],
+        )
+        if existing is None:
+            continue
+        blessed = _blessed_metadata_for_existing(
+            existing,
+            group_id=group_id,
+            receipt_id=receipt_id,
+            resolution_id=resolution_id,
+            actor_context=actor_context,
+        )
+        graph.replace_relationship_state(
+            existing.from_type,
+            existing.from_id,
+            existing.to_type,
+            existing.to_id,
+            existing.relationship_type,
+            properties=dict(existing.properties),
+            metadata=blessed,
+            edge_key=existing.edge_key,
+        )
+        refreshed = graph.get_relationship(
+            existing.from_type,
+            existing.from_id,
+            existing.to_type,
+            existing.to_id,
+            existing.relationship_type,
+        )
+        if refreshed is not None:
+            touched_relationships.append(refreshed)
+        stamped.append(dict(identity))
+
+    if touched_relationships:
+        save_graph_for_mutation(
+            instance,
+            graph,
+            entities=[],
+            relationships=touched_relationships,
+            uow=uow,
+        )
+    return stamped
+
+
 def _revalidated_trust_status(
     *,
     group_store: GroupStoreProtocol,
@@ -547,6 +724,7 @@ def _approve_group(
     actor_context: GovernedActorContext | None,
     is_retry: bool,
     builder: ReceiptBuilder,
+    stamp_existing: bool = False,
 ) -> ResolveGroupResult:
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
@@ -597,6 +775,22 @@ def _approve_group(
         resolution_id=resolution_id,
         actor_context=actor_context,
     )
+    stamped_tuples: list[dict[str, str]] = []
+    if stamp_existing and validation.skipped_existing:
+        stamped_tuples = _stamp_existing_edges(
+            instance=instance,
+            graph=graph,
+            group_id=group.group_id,
+            skipped_existing=validation.skipped_existing,
+            uow=uow,
+            receipt_id=builder.receipt_id,
+            resolution_id=resolution_id,
+            actor_context=actor_context,
+        )
+    skipped_members = _annotate_stamped_skips(
+        validation.skipped_members,
+        stamped_tuples,
+    )
     _confirm_approval_resolution(
         group_store=uow.groups,
         group=group,
@@ -609,6 +803,7 @@ def _approve_group(
             "resolution_id": resolution_id,
             "applied_tuples": validation.applied_tuples,
             "skipped_tuples_existing_edges": validation.skipped_existing,
+            "stamped_existing_edges": stamped_tuples,
         },
     )
     return ResolveGroupResult(
@@ -617,6 +812,8 @@ def _approve_group(
         edges_created=edges_created,
         edges_skipped=validation.edges_skipped,
         resolution_id=resolution_id,
+        skipped_members=skipped_members,
+        edges_stamped=len(stamped_tuples),
     )
 
 

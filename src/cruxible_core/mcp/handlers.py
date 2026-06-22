@@ -1427,6 +1427,7 @@ def handle_resolve_group(
     rationale: str = "",
     resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
+    stamp_existing: bool = False,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     return _dispatch_remote_or_local(
@@ -1437,6 +1438,7 @@ def handle_resolve_group(
             rationale=rationale,
             resolved_by=resolved_by,
             expected_pending_version=_required_pending_version(expected_pending_version),
+            stamp_existing=stamp_existing,
         ),
         lambda: api.resolve_group(
             instance_id,
@@ -1445,6 +1447,7 @@ def handle_resolve_group(
             rationale=rationale,
             resolved_by=resolved_by,
             expected_pending_version=expected_pending_version,
+            stamp_existing=stamp_existing,
         ),
         allow_local=False,
         operation_name="cruxible_resolve_group",

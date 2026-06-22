@@ -54,6 +54,7 @@ async def resolve_group(
         resolved_by=req.resolved_by,
         expected_pending_version=req.expected_pending_version,
         actor_context=req.actor_context,
+        stamp_existing=req.stamp_existing,
     )
 
 

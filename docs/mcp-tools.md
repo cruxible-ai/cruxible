@@ -1426,8 +1426,9 @@ error-level finding exists.
 | `expected_pending_version` | yes | integer |  |
 | `rationale` | no | string |  |
 | `resolved_by` | no | enum: human, agent |  |
+| `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
 
-**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`
+**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 

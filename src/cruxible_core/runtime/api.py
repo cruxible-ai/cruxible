@@ -2937,6 +2937,7 @@ def resolve_group(
     resolved_by: contracts.GroupResolvedBy = "human",
     expected_pending_version: int | None = None,
     actor_context: Any | None = None,
+    stamp_existing: bool = False,
 ) -> contracts.ResolveGroupToolResult:
     """Resolve a candidate group (approve or reject)."""
     check_permission("cruxible_resolve_group", instance_id=instance_id)
@@ -2951,6 +2952,7 @@ def resolve_group(
         resolved_by=resolved_by,
         expected_pending_version=expected_pending_version,
         actor_context=actor,
+        stamp_existing=stamp_existing,
     )
     return contracts.ResolveGroupToolResult(
         group_id=result.group_id,
@@ -2959,6 +2961,8 @@ def resolve_group(
         edges_skipped=result.edges_skipped,
         resolution_id=result.resolution_id,
         receipt_id=result.receipt_id,
+        skipped_members=result.skipped_members,
+        edges_stamped=result.edges_stamped,
     )
 
 

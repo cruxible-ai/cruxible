@@ -178,6 +178,10 @@ class ResolveGroupRequest(BaseModel):
     resolved_by: contracts.GroupResolvedBy = "human"
     expected_pending_version: int
     actor_context: contracts.GovernedActorContext | None = None
+    # When approving, bless each surviving pre-existing edge (a member tuple
+    # already live) with the group's review status + provenance instead of
+    # skipping it silently. Default keeps today's skip-but-now-explained behavior.
+    stamp_existing: bool = False
 
 
 class UpdateTrustStatusRequest(BaseModel):

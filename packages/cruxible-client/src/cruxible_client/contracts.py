@@ -1385,6 +1385,14 @@ class ResolveGroupToolResult(BaseModel):
     edges_skipped: int
     resolution_id: str | None = None
     receipt_id: str | None = None
+    # Per-member explanation for every skipped member: identity fields plus a
+    # ``skip_kind`` ("existing_edge"/"validation_failed"), a human-readable
+    # ``reason``, and ``stamped`` ("true"/"false" — whether stamp-existing
+    # blessed the surviving edge). Empty when nothing was skipped.
+    skipped_members: list[dict[str, str]] = Field(default_factory=list)
+    # Count of pre-existing edges blessed with the group's review/provenance
+    # when ``stamp_existing`` was requested.
+    edges_stamped: int = 0
 
 
 class UpdateTrustStatusToolResult(BaseModel):

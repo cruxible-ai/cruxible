@@ -1474,6 +1474,7 @@ class CruxibleClient:
         rationale: str = "",
         resolved_by: contracts.GroupResolvedBy = "human",
         expected_pending_version: int,
+        stamp_existing: bool = False,
         actor_context: contracts.GovernedActorContext | dict[str, Any] | None = None,
     ) -> contracts.ResolveGroupToolResult:
         response = self._client.post(
@@ -1484,6 +1485,7 @@ class CruxibleClient:
                     "rationale": rationale,
                     "resolved_by": resolved_by,
                     "expected_pending_version": expected_pending_version,
+                    "stamp_existing": stamp_existing,
                 },
                 actor_context,
             ),
