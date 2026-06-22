@@ -14,10 +14,13 @@ identity shape with the existing ``apply_digest`` pattern.
 
 Modes:
 
-* ``metadata`` -- digest + byte_count only; the payload body is dropped from
-  the retained representation (still summarised via the preview metadata).
-* ``preview`` -- digest + byte_count + a bounded structural preview; the full
-  body is kept inline only when it is small enough to do so cheaply.
+* ``metadata`` -- digest + byte_count; the small-payload body is KEPT inline
+  (preserving the mutation-node contract) and is only shed when it exceeds the
+  inline byte limit, replaced then by a compact omitted marker carrying the
+  digest + byte_count.
+* ``preview`` -- digest + byte_count; same inline-when-small behaviour as
+  ``metadata``, but an oversized body is shed to a bounded structural preview
+  instead of the compact omitted marker.
 * ``full``    -- digest + byte_count + the complete payload body retained
   inline. (The mutation payload already lives inline on the receipt, so this
   is a clean inline reuse -- no separate content-addressed body store is

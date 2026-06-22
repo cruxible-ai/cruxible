@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -44,6 +43,7 @@ from cruxible_core.server.routes.snapshots import router as snapshots_router
 from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
 from cruxible_core.server.routes.state import router as state_router
 from cruxible_core.server.routes.workflows import router as workflows_router
+from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
 
 UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
 
@@ -84,9 +84,9 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(sqlite3.IntegrityError)
+    @app.exception_handler(StorageIntegrityError)
     async def integrity_error_handler(
-        request: Request, exc: sqlite3.IntegrityError
+        request: Request, exc: StorageIntegrityError
     ) -> JSONResponse:
         # An unhandled sqlite IntegrityError (UNIQUE/FOREIGN KEY/CHECK/NOT NULL)
         # otherwise surfaces through the catch-all handler below, echoing the raw
@@ -106,8 +106,8 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(sqlite3.DatabaseError)
-    async def database_error_handler(request: Request, exc: sqlite3.DatabaseError) -> JSONResponse:
+    @app.exception_handler(StorageDatabaseError)
+    async def database_error_handler(request: Request, exc: StorageDatabaseError) -> JSONResponse:
         # Any other low-level sqlite error (OperationalError, etc.) may also carry
         # SQL fragments / schema names. Keep the client message generic and log
         # the detail server-side.

@@ -33,6 +33,10 @@ from cruxible_core.storage.protocols import (
 from cruxible_core.temporal import format_datetime, utc_now
 
 StorageIntegrityError = sqlite3.IntegrityError
+# Broader low-level storage error family (OperationalError, etc.). Re-exported so
+# non-storage layers (e.g. the HTTP error handlers) can recognize and genericize
+# DB errors without importing sqlite3 directly across the storage boundary.
+StorageDatabaseError = sqlite3.DatabaseError
 
 _GRAPH_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS storage_migrations (

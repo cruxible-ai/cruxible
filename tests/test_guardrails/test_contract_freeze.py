@@ -188,8 +188,14 @@ def test_receipt_shape_is_pinned_as_exempt() -> None:
     `results` (not `items`) is the receipt's own stable vocabulary; see the
     Deferred section of docs/dev/api-consistency-pass-0.2.md. Changing this set
     is a breaking change to persisted artifacts and requires its own decision.
+
+    Deliberate 0.2 envelope decision (wi-governance-actor-context-normalization,
+    Robert-approved): `actor_context` was promoted to a first-class receipt field
+    so token-derived actor identity is usable by governance without digging into
+    node detail. Additive + defaults None (older receipts still load).
     """
     assert sorted(Receipt.model_fields.keys()) == [
+        "actor_context",
         "committed",
         "created_at",
         "duration_ms",

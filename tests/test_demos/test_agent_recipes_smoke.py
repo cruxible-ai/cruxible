@@ -353,14 +353,14 @@ def test_recipe_regenerate_kit_docs(tmp_path: Path) -> None:
 def test_recipe_regenerate_kit_docs_changes_stale_content() -> None:
     """The Regenerate Kit Docs recipe actually rewrites stale marker blocks.
 
-    The round-trip above proves the command writes *some* content and is
-    idempotent. This proves it does real work: rendering the marker blocks
-    against the live config produces text that differs from the committed
-    README (i.e. the recipe is not a silent no-op). Whether the *committed*
-    README should already be current is owned by the stale-docs work item, not
-    this recipe smoke — so this only asserts the recipe transforms content, not
-    that the repo is in sync.
+    Proves the recipe does real work (not a silent no-op) WITHOUT depending on
+    whether the committed README happens to be in sync (that is owned by the
+    stale-docs work item). We inject a stale sentinel between a marker pair and
+    assert the recipe overwrites it with the live rendering, and that the result
+    differs from the staled input and is idempotent.
     """
+    import re
+
     from cruxible_core.canonical_views.config import (
         load_config_for_rendering,
         render_readme_update,
@@ -369,8 +369,19 @@ def test_recipe_regenerate_kit_docs_changes_stale_content() -> None:
 
     config = load_config_for_rendering(KEV_TRIAGE_CONFIG, runtime=True)
     current = KEV_TRIAGE_README.read_text()
-    regenerated = render_readme_update(current, config, selected_view_keys("all"))
-    # Markers preserved; content actually (re)rendered between them.
+    sentinel = "STALE_PLACEHOLDER_THAT_MUST_BE_OVERWRITTEN"
+    staled, n = re.subn(
+        r"(<!-- CRUXIBLE:BEGIN ontology -->).*?(<!-- CRUXIBLE:END ontology -->)",
+        rf"\1\n{sentinel}\n\2",
+        current,
+        flags=re.DOTALL,
+    )
+    assert n == 1, "ontology marker pair not found in the committed README"
+
+    regenerated = render_readme_update(staled, config, selected_view_keys("all"))
+    # The recipe REWRITES the marker block: stale content is gone, live render present.
+    assert sentinel not in regenerated, "recipe did not overwrite stale marker content"
+    assert regenerated != staled, "recipe was a silent no-op on stale input"
     assert "<!-- CRUXIBLE:BEGIN ontology -->" in regenerated
     # Re-rendering the just-regenerated text is a fixed point (idempotent).
     twice = render_readme_update(regenerated, config, selected_view_keys("all"))

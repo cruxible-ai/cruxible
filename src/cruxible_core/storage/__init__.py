@@ -9,6 +9,7 @@ from cruxible_core.storage.sqlite import (
     SQLiteGraphRepository,
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
+    StorageDatabaseError,
     StorageIntegrityError,
 )
 
@@ -18,6 +19,7 @@ __all__ = [
     "SQLiteStorageBackend",
     "SQLiteUnitOfWork",
     "StorageBackendProtocol",
+    "StorageDatabaseError",
     "StorageIntegrityError",
     "UnitOfWorkProtocol",
 ]
