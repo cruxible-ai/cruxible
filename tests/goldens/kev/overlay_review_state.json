@@ -12031,7 +12031,8 @@
       "parameters": {
         "action": "approve",
         "expected_pending_version": 1,
-        "group_id": "<GROUP_2>"
+        "group_id": "<GROUP_2>",
+        "stamp_existing": false
       },
       "query_name": "",
       "receipt_id": "<RECEIPT_13>"
