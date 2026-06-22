@@ -552,6 +552,114 @@ class TestSkipExplanationAndStamp:
         # Domain properties of the surviving edge are preserved.
         assert rel.properties.get("verified") is True
 
+    def test_stamp_existing_with_prior_provenance_is_internally_consistent(
+        self, instance: CruxibleInstance
+    ) -> None:
+        """Blessing a direct-WRITTEN edge (non-null provenance + real receipt) stays consistent.
+
+        Regression for the inconsistency where ``_stamp_existing_edge`` injected the
+        group ``receipt_id``/``resolution_id`` onto a surviving direct-write edge but
+        PRESERVED its direct-write ``source_ref`` (e.g. ``batch_direct_write``). Lineage
+        derives group identity solely from ``source_ref.startswith("group:")``, so the
+        edge would report ``non_group_provenance`` while carrying a group resolution
+        receipt — provenance and the receipt correlation disagreeing.
+
+        The invariant under test: lineage's group-identity verdict and the
+        receipt/resolution correlation must AGREE. We chose model (A): the blessed
+        edge becomes group-attributed (``source_ref=group:<id>``) so lineage resolves
+        it to the group AND the group receipt/resolution are present and consistent.
+        Direct-write creation history is preserved (``created_at`` survives).
+        """
+        from cruxible_core.service import service_batch_direct_write
+        from cruxible_core.service.types import (
+            BatchDirectWriteInput,
+            BatchRelationshipWriteInput,
+        )
+
+        actor = _actor()
+        # Seed an EXISTING service-created edge WITH non-null direct-write provenance
+        # (source=batch_direct_write, source_ref=batch_direct_write, real receipt_id).
+        write_result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                relationships=[
+                    BatchRelationshipWriteInput(
+                        from_type="Part",
+                        from_id="BP-1",
+                        relationship_type="fits",
+                        to_type="Vehicle",
+                        to_id="V-1",
+                        properties={"verified": True},
+                    )
+                ]
+            ),
+            actor_context=actor,
+        )
+        assert write_result.valid is True
+        before = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert before is not None
+        assert before.metadata.provenance is not None
+        assert before.metadata.provenance.source == "batch_direct_write"
+        assert before.metadata.provenance.source_ref == "batch_direct_write"
+        assert before.metadata.provenance.receipt_id is not None
+        direct_write_receipt_id = before.metadata.provenance.receipt_id
+        direct_write_created_at = before.metadata.provenance.created_at
+
+        proposed = service_propose_group(
+            instance,
+            "fits",
+            [_member("BP-1", "V-1")],
+            thesis_text="test",
+            thesis_facts={"style": "casual"},
+            actor_context=actor,
+        )
+        result = service_resolve_group(
+            instance,
+            proposed.group_id,
+            "approve",
+            expected_pending_version=1,
+            actor_context=actor,
+            stamp_existing=True,
+        )
+        assert result.edges_created == 0  # tuple already live
+        assert result.edges_stamped == 1
+
+        rel = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
+        assert rel is not None
+        prov = rel.metadata.provenance
+        assert prov is not None
+
+        # Provenance is internally consistent: group source_ref + group correlation.
+        assert prov.source == "group_resolve"
+        assert prov.source_ref == f"group:{proposed.group_id}"
+        assert prov.resolution_id == result.resolution_id
+        assert prov.receipt_id == result.receipt_id
+        # The group receipt is NOT the old direct-write receipt.
+        assert prov.receipt_id != direct_write_receipt_id
+        # Direct-write creation history is preserved.
+        assert prov.created_at == direct_write_created_at
+        assert prov.last_modified_by == "group_resolve"
+
+        # Lineage's group-identity verdict AGREES with the receipt correlation:
+        # it resolves the edge to the group + its resolution (no non_group_provenance).
+        lineage = service_get_relationship_lineage(
+            instance,
+            from_type="Part",
+            from_id="BP-1",
+            relationship_type="fits",
+            to_type="Vehicle",
+            to_id="V-1",
+        )
+        assert lineage.found is True
+        assert "non_group_provenance" not in lineage.warnings
+        assert lineage.group is not None
+        assert lineage.group.group_id == proposed.group_id
+        assert lineage.resolution is not None
+        assert lineage.resolution.resolution_id == result.resolution_id
+        assert lineage.provenance is not None
+        assert lineage.provenance["receipt_id"] == result.receipt_id
+        assert lineage.provenance["resolution_id"] == result.resolution_id
+
     def test_stamp_existing_default_off_leaves_edge_unreviewed(
         self, instance: CruxibleInstance
     ) -> None:

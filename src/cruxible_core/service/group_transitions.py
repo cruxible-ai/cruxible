@@ -575,12 +575,24 @@ def _blessed_metadata_for_existing(
     """Build metadata that blesses a pre-existing edge with the group's review.
 
     Mirrors the creation-time stamp ``apply_relationship`` gives a freshly
-    group-resolved edge (review approved/source=group, provenance source
-    ``group_resolve``/``group:<id>`` with the resolution correlation), but applied
-    as a modification to a surviving direct-added edge: creation history on the
-    provenance is preserved when present (only ``last_modified_*`` and the
-    resolution/receipt correlation are stamped); a null-provenance direct-add is
-    backfilled with fresh group provenance so it becomes auditable.
+    group-resolved edge: the blessed edge becomes indistinguishable in identity
+    from a natively group-resolved one (review approved/source=group, provenance
+    source ``group_resolve``/``group:<id>`` with the resolution correlation),
+    applied as a modification to a surviving direct-added edge.
+
+    Internal-consistency invariant: an edge's provenance must never simultaneously
+    claim a non-group origin (``source_ref`` like ``add_relationship``) AND carry a
+    group ``resolution_id``/``receipt_id`` -- lineage derives group identity solely
+    from ``source_ref.startswith("group:")`` (see ``provenance_group_id``), so a
+    direct-write ``source_ref`` paired with a group resolution receipt would report
+    as non-group-provenance while carrying a group resolution receipt. When we
+    inject the group correlation we therefore also relabel ``source``/``source_ref``
+    to the group values so lineage's group-identity verdict and the receipt
+    correlation agree. Direct-write creation history is preserved as real history:
+    ``created_at``/``created_actor_context`` survive (``stamp_provenance_modified``
+    only touches ``last_modified_*``), and the prior direct-write receipt remains in
+    the audit chain. A null-provenance direct-add is backfilled with fresh group
+    provenance so it becomes auditable.
     """
     metadata = existing.metadata
     now = utc_now()
@@ -600,6 +612,8 @@ def _blessed_metadata_for_existing(
             actor_context=actor_context,
         ).model_copy(
             update={
+                "source": "group_resolve",
+                "source_ref": source_ref,
                 "resolution_id": resolution_id,
                 "receipt_id": receipt_id,
             }
