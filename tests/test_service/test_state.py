@@ -295,6 +295,88 @@ def test_pull_apply_clears_dangling_upstream_receipt_and_stamps_clone_origin(
         overlay_store.close()
 
 
+def test_create_overlay_clears_dangling_upstream_receipt_and_stamps_clone_origin(
+    tmp_path: Path,
+) -> None:
+    # Regression for the INITIAL overlay-create path: a freshly created overlay
+    # from a release whose relationships ALREADY carry receipt_ids must not start
+    # with edges pointing at receipts absent from the overlay's own store. The
+    # clone/state-pull paths relabel; overlay-create must too.
+    root = tmp_path / "root-model"
+    root.mkdir()
+    (root / "config.yaml").write_text(STATE_MODEL_YAML)
+    root_instance = CruxibleInstance.init(root, "config.yaml")
+    service_add_entities(
+        root_instance,
+        [_case("CASE-A", "Alpha"), _case("CASE-B", "Beta")],
+    )
+    # Author a receipt-bearing relationship in the ROOT before publishing, so the
+    # published graph.json carries a receipt_id that resolves only in the root.
+    add = service_add_relationships(
+        root_instance,
+        [
+            RelationshipInstance(
+                from_type="Case",
+                from_id="CASE-A",
+                relationship_type="cites",
+                to_type="Case",
+                to_id="CASE-B",
+            )
+        ],
+        source="test",
+        source_ref="upstream-author",
+    )
+    assert add.added == 1
+    root_edge = root_instance.load_graph().get_relationship(
+        "Case", "CASE-A", "Case", "CASE-B", "cites"
+    )
+    assert root_edge is not None
+    assert root_edge.metadata.provenance is not None
+    upstream_receipt_id = root_edge.metadata.provenance.receipt_id
+    assert upstream_receipt_id is not None
+
+    release_dir = tmp_path / "releases" / "current"
+    service_publish_state(
+        root_instance,
+        transport_ref=f"file://{release_dir}",
+        state_id="case-law",
+        release_id="v1.0.0",
+        compatibility="data_only",
+    )
+
+    overlay_root = tmp_path / "cloned-model"
+    overlay_instance = service_create_state_overlay(
+        transport_ref=f"file://{release_dir}",
+        root_dir=overlay_root,
+    ).instance
+
+    overlay_graph = overlay_instance.load_graph()
+    cloned_edge = overlay_graph.get_relationship("Case", "CASE-A", "Case", "CASE-B", "cites")
+    assert cloned_edge is not None
+    provenance = cloned_edge.metadata.provenance
+    assert provenance is not None
+    # The upstream receipt lives only in the root instance -- not shipped in the
+    # bundle -- so the cloned edge's pointer is cleared and clone origin stamped.
+    assert provenance.receipt_id is None
+    assert provenance.clone_origin == "upstream-snapshot"
+    assert getattr(provenance, "cloned_receipt_id", None) == upstream_receipt_id
+
+    # Invariant: no edge in the fresh overlay references a receipt that is absent
+    # from this instance's store.
+    overlay_store = overlay_instance.get_receipt_store()
+    try:
+        assert overlay_store.get_receipt(upstream_receipt_id) is None
+        for rel in overlay_graph.iter_relationships():
+            rel_provenance = rel.metadata.provenance
+            if rel_provenance is None or rel_provenance.receipt_id is None:
+                continue
+            assert overlay_store.get_receipt(rel_provenance.receipt_id) is not None, (
+                f"dangling receipt_id {rel_provenance.receipt_id} on {rel.relationship_label()}"
+            )
+    finally:
+        overlay_store.close()
+
+
 def test_overlay_state_ref_specific_release_tracks_latest_ref(
     published_release_fixture: tuple[CruxibleInstance, Path],
     tmp_path: Path,

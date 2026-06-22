@@ -112,7 +112,15 @@ def service_create_state_overlay(
         ".cruxible/composed/config.yaml",
         instance_mode=instance_mode,
     )
-    instance.save_graph(_load_graph_from_bundle(upstream_dir))
+    upstream_graph = _load_graph_from_bundle(upstream_dir)
+    # The upstream bundle is graph+config+lock with NO receipts: any receipt_id
+    # an upstream edge carries points at a receipt in the publishing instance
+    # that is absent in this fresh overlay. Clear those dangling pointers and
+    # stamp clone origin before the initial save so no edge in the new overlay
+    # references a phantom receipt -- the same invariant the clone-from-snapshot
+    # and state-pull-apply paths enforce.
+    upstream_graph.relabel_clone_receipts()
+    instance.save_graph(upstream_graph)
     upstream = UpstreamMetadata(
         transport_ref=resolved.tracking_transport_ref,
         requested_source_ref=resolved.source_ref,
