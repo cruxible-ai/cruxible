@@ -6,4 +6,5 @@ entry_config: config.yaml
 provider_paths: []
 copy_paths:
   - README.md
+  - skills
 requires_extras: []

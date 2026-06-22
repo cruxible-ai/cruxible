@@ -311,6 +311,70 @@ def _co_write_guarded_instance(tmp_path: Path, *, kind: str | None = None) -> Cr
     return CruxibleInstance.init(tmp_path, "config.yaml")
 
 
+REVIEW_VERDICT_GUARD_YAML = """\
+version: "1.0"
+name: review_verdict_guard_state
+
+enums:
+  review_status:
+    values: [requested, in_review, changes_requested, approved, withdrawn]
+  state_note_kind:
+    values: [review_note, field_note]
+
+entity_types:
+  ReviewRequest:
+    properties:
+      review_request_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: review_status
+      title:
+        type: string
+        optional: true
+  StateNote:
+    properties:
+      note_id:
+        type: string
+        primary_key: true
+      kind:
+        type: string
+        enum_ref: state_note_kind
+      body:
+        type: string
+        optional: true
+
+relationships:
+  - name: state_note_about_review_request
+    from: StateNote
+    to: ReviewRequest
+
+mutation_guards:
+  - name: review_verdict_requires_rationale_note
+    entity_type: ReviewRequest
+    property: status
+    new_value: [changes_requested, approved, withdrawn]
+    condition:
+      type: co_write
+      requires:
+        entity_type: StateNote
+        via_relationship: state_note_about_review_request
+        kind: review_note
+    message: >-
+      A ReviewRequest verdict (changes_requested/approved/withdrawn) must be
+      accompanied by a new StateNote(kind=review_note) linked via
+      state_note_about_review_request in the same write. Status can't advance
+      without recording why.
+"""
+
+
+def _review_verdict_guarded_instance(tmp_path: Path) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(dedent(REVIEW_VERDICT_GUARD_YAML))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
 EVIDENCE_GUARD_YAML = """\
 version: "1.0"
 name: evidence_guard_state
@@ -1502,6 +1566,160 @@ class TestCoWriteMutationGuard:
             ),
         )
         assert unguarded.valid is True
+
+
+class TestReviewVerdictRequiresRationaleNoteGuard:
+    """Synthetic binding test for the agent-operation kit's
+    ``review_verdict_requires_rationale_note`` co_write guard.
+
+    Asserts THIS binding's behavior on a ReviewRequest-verdict shape without
+    initializing the real agent-operation kit (which ships no lock file): a
+    governed verdict batch with NO co-written ``review_note`` is rejected; the
+    same batch that ALSO creates the StateNote(kind=review_note) +
+    ``state_note_about_review_request`` edge passes; each of the three verdict
+    values (changes_requested/approved/withdrawn) triggers.
+    """
+
+    VERDICTS = ("changes_requested", "approved", "withdrawn")
+
+    @staticmethod
+    def _review_request(
+        entity_id: str = "RR-1", status: str = "changes_requested"
+    ) -> EntityWriteInput:
+        return EntityWriteInput(
+            entity_type="ReviewRequest",
+            entity_id=entity_id,
+            properties={"review_request_id": entity_id, "status": status},
+        )
+
+    @staticmethod
+    def _note(entity_id: str = "SN-1", *, kind: str = "review_note") -> EntityWriteInput:
+        return EntityWriteInput(
+            entity_type="StateNote",
+            entity_id=entity_id,
+            properties={"note_id": entity_id, "kind": kind, "body": "Verdict rationale."},
+        )
+
+    @staticmethod
+    def _about(
+        note_id: str = "SN-1", review_request_id: str = "RR-1"
+    ) -> BatchRelationshipWriteInput:
+        return BatchRelationshipWriteInput(
+            from_type="StateNote",
+            from_id=note_id,
+            relationship_type="state_note_about_review_request",
+            to_type="ReviewRequest",
+            to_id=review_request_id,
+        )
+
+    @pytest.mark.parametrize(
+        "verdict",
+        VERDICTS,
+    )
+    def test_each_verdict_rejected_without_co_written_review_note(
+        self, tmp_path: Path, verdict: str
+    ) -> None:
+        # An auth-on / governed verdict batch with NO co-written review_note is
+        # REJECTED — every one of the three verdict values triggers the guard.
+        instance = _review_verdict_guarded_instance(tmp_path / verdict)
+
+        with pytest.raises(DataValidationError, match="review_verdict_requires_rationale_note"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(entities=[self._review_request(status=verdict)]),
+                actor_context=_actor_context("authorized-reviewer"),
+            )
+
+        assert instance.load_graph().get_entity("ReviewRequest", "RR-1") is None
+
+    @pytest.mark.parametrize(
+        "verdict",
+        VERDICTS,
+    )
+    def test_each_verdict_passes_with_co_written_review_note(
+        self, tmp_path: Path, verdict: str
+    ) -> None:
+        # The same batch that ALSO creates the StateNote(kind=review_note) and
+        # the state_note_about_review_request edge PASSES — for each verdict.
+        instance = _review_verdict_guarded_instance(tmp_path / verdict)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    self._review_request(status=verdict),
+                    self._note(),
+                ],
+                relationships=[self._about()],
+            ),
+            actor_context=_actor_context("authorized-reviewer"),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("ReviewRequest", "RR-1")
+        assert entity is not None
+        assert entity.properties["status"] == verdict
+
+    def test_wrong_note_kind_does_not_satisfy_guard(self, tmp_path: Path) -> None:
+        # A co-written StateNote whose kind is not review_note must NOT satisfy
+        # the verdict guard.
+        instance = _review_verdict_guarded_instance(tmp_path)
+
+        with pytest.raises(DataValidationError, match="review_verdict_requires_rationale_note"):
+            service_batch_direct_write(
+                instance,
+                BatchDirectWriteInput(
+                    entities=[
+                        self._review_request(status="approved"),
+                        self._note(kind="field_note"),
+                    ],
+                    relationships=[self._about()],
+                ),
+            )
+
+        assert instance.load_graph().get_entity("ReviewRequest", "RR-1") is None
+
+    def test_stale_pre_existing_note_does_not_satisfy_guard(self, tmp_path: Path) -> None:
+        # A review_note written in a PRIOR write does not satisfy a later bare
+        # verdict transition; the note must be co-written in the same UOW.
+        instance = _review_verdict_guarded_instance(tmp_path)
+
+        seed = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(
+                entities=[
+                    self._review_request(status="in_review"),
+                    self._note(),
+                ],
+                relationships=[self._about()],
+            ),
+        )
+        assert seed.valid is True
+
+        with pytest.raises(DataValidationError, match="review_verdict_requires_rationale_note"):
+            service_add_entity_inputs(
+                instance,
+                [self._review_request(status="approved")],
+            )
+
+        entity = instance.load_graph().get_entity("ReviewRequest", "RR-1")
+        assert entity is not None
+        # The stale note must NOT have let the verdict through.
+        assert entity.properties["status"] == "in_review"
+
+    def test_non_verdict_status_does_not_fire(self, tmp_path: Path) -> None:
+        # Non-verdict statuses (requested/in_review) are not guarded values.
+        instance = _review_verdict_guarded_instance(tmp_path)
+
+        result = service_batch_direct_write(
+            instance,
+            BatchDirectWriteInput(entities=[self._review_request(status="in_review")]),
+        )
+
+        assert result.valid is True
+        entity = instance.load_graph().get_entity("ReviewRequest", "RR-1")
+        assert entity is not None
+        assert entity.properties["status"] == "in_review"
 
 
 class TestBatchDirectWrite:
