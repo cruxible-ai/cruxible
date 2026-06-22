@@ -91,6 +91,23 @@ before adding domain-specific variants: sequencing dependencies, impediment
 blockers, composition roll-ups, lineage/follow-up, replacement, review gates,
 and durable state notes should remain distinct relationships.
 
+## Query Relationship-State Visibility
+
+Queries traverse relationships at one of four visibility states, set with the
+`relationship_state` query field (default `live`). Choose the state that matches
+whether you want only accepted state, only proposals awaiting review, or both:
+
+| State | Includes |
+|-------|----------|
+| `live` | Active relationships whose review state is neither `pending` nor `rejected` — deterministic/unreviewed state plus approved state. The default. |
+| `accepted` | Active relationships whose review status is `approved`. |
+| `pending` | Active relationships whose review status is `pending` (proposals awaiting review). |
+| `reviewable` | `live` relationships plus pending relationships — use for triage/context queries where an agent should see accepted state and still-reviewable proposals in one evidence path. |
+
+`pending` and `reviewable` require `result_shape: path` or `relationship` and do
+not allow `dedupe: entity`. See [Config Reference](config-reference.md) for the
+full query-field rules.
+
 ## Recipe: Validate And Lock After Edits
 
 Use this after changing `config.yaml`, provider refs, provider code, artifacts,

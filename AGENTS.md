@@ -131,7 +131,7 @@ in `state.db`. `.cruxible/snapshots/` is a portable export/cache, and
 Deterministic workflow engine with lock-file reproducibility:
 
 - `compiler.py` — Compiles workflows to `CompiledPlan`, generates SHA256 locks (`cruxible.lock.yaml`), resolves providers and artifacts
-- `executor.py` — Runtime execution supporting 10 step types: query, provider, assert, make_candidates, map_signals, propose_relationship_group, make_entities, make_relationships, apply_entities, apply_relationships
+- `executor.py` / `step_handlers.py` — Runtime execution dispatching 19 step kinds (the `StepKind` literal in `config/schema.py`; `DEFAULT_STEP_HANDLER_REGISTRY` asserts coverage of all of them): query, provider, assert, assert_not_truncated, assert_count, assert_exists, shape_items, join_items, filter_items, aggregate_items, dedupe_items, make_candidates, map_signals, propose_relationship_group, make_entities, make_relationships, apply_entities, apply_relationships, apply_all
 - `contracts.py` — Payload validation against declared contracts
 - `refs.py` — Step reference resolution (`$input`, `$steps.*`, `$item`)
 
@@ -180,13 +180,16 @@ Deterministic graph quality assessment with 6 checks:
 
 ### Permission Modes
 
-MCP tools are gated by `CRUXIBLE_MODE` env var. Three cumulative tiers:
+MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
+(`ADMIN ⊃ GRAPH_WRITE ⊃ GOVERNED_WRITE ⊃ READ_ONLY`), defined as
+`PermissionMode` in `runtime/permissions.py`:
 
 | Mode | Env value | Tools |
 |------|-----------|-------|
-| `READ_ONLY` | `read_only` | `init` (reload only), `validate`, `schema`, `query`, `receipt`, `list`, `sample`, `evaluate`, `find_candidates`, `get_entity`, `get_relationship` |
-| `GRAPH_WRITE` | `graph_write` | READ_ONLY + `add_entity`, `add_relationship`, `feedback`, `outcome` |
-| `ADMIN` | `admin` (default) | All tools including `init` (new instance), `ingest`, `add_constraint` |
+| `READ_ONLY` | `read_only` | `init` (reload only), `validate`, `schema`, `query`, `receipt`, `list`, `sample`, `evaluate`, `find_candidates`, `get_entity`, `get_relationship`, inspect/lint/trace reads |
+| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + governed operator actions: `feedback`, `outcome`, proposal/group workflows, decision records, snapshot creation, source artifact registration, and subscribed state pulls |
+| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + direct graph writes (`add_entity`, `add_relationship`), canonical workflow apply, and group resolution / trust updates |
+| `ADMIN` | `admin` (default) | All tools: instance lifecycle, active config replacement, locks, clones, overlays, `ingest`, `add_constraint`, and published-state trust boundaries |
 
 - `CRUXIBLE_ALLOWED_ROOTS` env var (comma-separated absolute paths) restricts which directories `cruxible_init` can access.
 - Audit logging uses structlog to stderr.
