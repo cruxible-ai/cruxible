@@ -212,6 +212,19 @@ entity_types:
 Enum values must be non-empty and unique. With `extends`, overlays may add new
 enum names but may not redefine or extend upstream enum vocabularies.
 
+> **Authoring note — domain `status` vs. entity lifecycle.** A domain `status`
+> enum should model **progress / workflow** states (e.g. `planned`, `active`,
+> `closed`). Entity **retirement / deletion** is a *different axis* — "does this
+> entity still exist / is it live" — and is the canonical way to "delete" an
+> entity. It is being factored into a **canonical core entity lifecycle**
+> (`lifecycle.status`, gated out of live reads, uniform across all entities the
+> way relationship lifecycle already is), **not** a per-kit `status` value. When
+> authoring a kit, keep retirement-flavored values (`retired`, `decommissioned`,
+> `superseded`) **out** of your `status` enum — the `asset_status` example above
+> mixes the two for illustration, but the canonical soft-delete is the entity
+> lifecycle, not a status value. This keeps "where is this in its workflow"
+> separate from "is this entity still live."
+
 `ordered: low_to_high` marks a shared enum as semantically ranked. The order of
 `values` is the rank order from lowest to highest. Query `order_by` clauses can
 reference ordered enums with `enum_ref` to sort by rank instead of lexical string
