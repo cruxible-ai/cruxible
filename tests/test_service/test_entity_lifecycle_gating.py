@@ -514,3 +514,115 @@ def test_normal_metadata_without_reserved_key_is_unaffected() -> None:
         metadata={"note": "keep-me", "owner": "team-a"},
     )
     assert entity.metadata == {"note": "keep-me", "owner": "team-a"}
+
+
+# ---------------------------------------------------------------------------
+# Relationship-shape gating parity (codex F-002): a retracted edge whose
+# endpoints stay LIVE must surface/hide IDENTICALLY through `list edges` and a
+# relationship-shaped collection query. The chokepoint must NOT gate the edge's
+# (live) target endpoint as if it were the result entity -- the EDGE is the
+# logical result and is gated by the relationship-state machine during
+# collection, exactly like `list edges`.
+# ---------------------------------------------------------------------------
+
+
+def _retract_fits_endpoints_live(instance: CruxibleInstance) -> None:
+    """Retract the `fits(BP-1001, V-2024-CIVIC-EX)` edge via the typed lifecycle
+    write, leaving BOTH endpoints LIVE.
+
+    Uses the same typed relationship-lifecycle channel exercised in
+    ``test_relationship_lifecycle_write.py`` (no entity lifecycle is touched, so
+    the Part and Vehicle endpoints remain live).
+    """
+    from cruxible_core.graph.assertion_state import RelationshipLifecycleState
+    from cruxible_core.service.types import (
+        BatchDirectWriteInput,
+        BatchRelationshipWriteInput,
+    )
+
+    service_batch_direct_write(
+        instance,
+        BatchDirectWriteInput(
+            relationships=[
+                BatchRelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-2024-CIVIC-EX",
+                    properties={"verified": True, "source": "catalog"},
+                    lifecycle=RelationshipLifecycleState(  # type: ignore[arg-type]
+                        status="retracted",
+                        reason="superseded by newer fitment",
+                    ),
+                )
+            ]
+        ),
+    )
+
+
+def _list_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[str, str]]:
+    result = service_list(
+        instance,
+        "edges",
+        relationship_type="fits",
+        relationship_state=state,
+    )
+    return {(item["from_id"], item["to_id"]) for item in result.items}
+
+
+def _query_edge_ids(instance: CruxibleInstance, state: str | None) -> set[tuple[str, str]]:
+    """Relationship-shaped collection query equivalent to `list edges`."""
+    from cruxible_core.service import service_query_inline_surface
+
+    res = service_query_inline_surface(
+        instance,
+        {
+            "name": "all_fits",
+            "mode": "collection",
+            "returns": "fits",
+            "result_shape": "relationship",
+            "allow_relationship_state_override": True,
+        },
+        {},
+        relationship_state=state,
+    )
+    return {(item.from_id, item.to_id) for item in res.items}
+
+
+@pytest.mark.parametrize("state", ["not-live", "live", "all"])
+def test_retracted_edge_with_live_endpoints_agrees_across_surfaces(
+    populated_instance: CruxibleInstance,
+    state: str,
+) -> None:
+    """`list edges` and a relationship-shaped collection query AGREE per state.
+
+    Retract `fits(BP-1001, V-2024-CIVIC-EX)` while both endpoints (Part BP-1001,
+    Vehicle V-2024-CIVIC-EX) stay LIVE. The edge is the logical result, gated by
+    the relationship-state machine -- so it must:
+
+      * surface under `not-live` (it is the gated-out edge),
+      * hide under `live` (retracted edges fall out of the live edge view),
+      * surface under `all`.
+
+    Before the fix (codex F-002) the chokepoint gated the edge's LIVE target
+    endpoint as the result entity, so the relationship-shaped query returned `[]`
+    under `not-live`/`all` while `list edges` returned the edge -- they disagreed.
+    """
+    edge = ("BP-1001", "V-2024-CIVIC-EX")
+    _retract_fits_endpoints_live(populated_instance)
+
+    list_ids = _list_edge_ids(populated_instance, state)
+    query_ids = _query_edge_ids(populated_instance, state)
+
+    # The two surfaces must agree on the retracted edge for this state.
+    assert (edge in list_ids) == (edge in query_ids)
+
+    if state == "live":
+        # Retracted edge hidden by BOTH.
+        assert edge not in list_ids
+        assert edge not in query_ids
+    else:  # not-live / all
+        # Retracted edge (live endpoints) surfaced by BOTH.
+        assert edge in list_ids
+        assert edge in query_ids

@@ -305,6 +305,7 @@ def execute_query_definition(
     result_contexts = _filter_contexts_by_entity_state(
         result_contexts,
         effective_options.relationship_state,
+        effective_options.result_shape,
     )
     if declared_entity_return_type is not None:
         _validate_result_context_return_types(
@@ -467,14 +468,18 @@ def _anchor_in_scope(metadata: Any, state: QueryVisibilityState) -> bool:
 def _filter_contexts_by_entity_state(
     contexts: list[QueryRowContext],
     state: QueryVisibilityState,
+    result_shape: QueryResultShape,
 ) -> list[QueryRowContext]:
     """Gate query rows by entity lifecycle visibility at one chokepoint.
 
     This is the single entity-lifecycle chokepoint for the query engine: it runs
     over the assembled result contexts of BOTH collection-mode and traversal-mode
     queries (so ``list entities``, entity queries, and path/relationship rows are
-    all gated identically). Two roles are gated here, in one pass, with the roles
-    they actually play on the row:
+    all gated identically). The gate is RESULT-SHAPE-AWARE because what the
+    ``context.result`` referent *is* differs by shape.
+
+    For ``result_shape in {"entity", "path"}`` the logical result the read returns
+    IS an entity (``context.result``), so two roles are gated here in one pass:
 
     * the RESULT (the referent the read returns) is kept only when it matches
       ``state`` under :func:`entity_matches_query_state` -- the established result
@@ -488,16 +493,35 @@ def _filter_contexts_by_entity_state(
       harmless: under a live read it reduces to the same liveness check as the
       result gate, and under ``not-live`` it is a no-op the result gate dominates.
 
-    For entity collections ``context.entities`` is ``(entity,)``; both gates apply
-    to that one entity (identical to the old result-only behavior). For
-    relationship collections it is ``(source, target)``; ``source`` is an anchor,
-    ``target`` the result. Edges are gated separately by
-    :func:`relationship_matches_query_state`; here we gate the *referents*.
+    For ``result_shape == "relationship"`` the logical result is the EDGE, not an
+    entity. The edge is already gated by :func:`relationship_matches_query_state`
+    during collection/traversal (collection at ``_collection_relationship_contexts``,
+    traversal at the segment expansion), so applying the entity result-state gate
+    to ``context.result`` (which for a relationship row is merely the edge's
+    target ENDPOINT entity, e.g. a live Vehicle) WRONGLY drops a retracted edge
+    whose endpoints are live under ``not-live``/``all`` -- the over-gating codex
+    F-002 flagged, which disagreed with ``list edges``. So for relationship shape
+    we apply ONLY the endpoint anchor gate (:func:`_anchor_in_scope` over
+    ``context.entities`` = ``(source, target)``): endpoints must be live under a
+    live read and are unconditionally in scope under ``not-live``/``all``. Net:
+    a retracted edge with live endpoints surfaces under ``not-live``/``all`` and is
+    hidden under ``live``, matching ``list edges`` exactly. The edge's own lifecycle
+    visibility is still enforced -- by the collection-time relationship-state gate,
+    not here.
 
     ``state == "all"`` is a no-op (everything visible).
     """
     if state == "all":
         return contexts
+    if result_shape == "relationship":
+        # Edge already gated by `relationship_matches_query_state` during
+        # collection; here gate only the endpoint anchors, never the result
+        # entity (the edge's endpoint, not the logical result).
+        return [
+            context
+            for context in contexts
+            if all(_anchor_in_scope(entity.metadata, state) for entity in context.entities)
+        ]
     return [
         context
         for context in contexts
@@ -550,6 +574,7 @@ def _execute_collection_query(
     contexts = _filter_contexts_by_entity_state(
         contexts,
         effective_options.relationship_state,
+        query_schema.result_shape,
     )
     contexts = _apply_includes(
         config,
