@@ -438,22 +438,63 @@ def _resolve_entry_entity(
     return entity
 
 
+def _anchor_in_scope(metadata: Any, state: QueryVisibilityState) -> bool:
+    """Whether a traversal ANCHOR (entry / intermediate hop) is in scope.
+
+    Anchors are not results: they are where a path is *entered* and *passes
+    through*, not the referent the read returns. So they are gated only on
+    presence in the world the read operates over, not on the result state machine:
+
+    * live read (``live`` + the review-only selectors, which resolve to ``live``
+      for entities) -- the anchor must itself be live; a path entered at or routed
+      through a retired/superseded/orphaned entity is invisible, so the row drops.
+      This is the chokepoint that closes the traversal-entry leak (codex F-001):
+      ``parts_for_vehicle`` entered at a retired ``Vehicle`` returns EMPTY under the
+      default ``live`` -- no rows, no error, no existence leak -- exactly like
+      ``list`` when everything is filtered.
+    * ``not-live`` / ``all`` -- the anchor is UNCONDITIONALLY in scope. ``not-live``
+      is a diagnostic of the gated-out *result* set; a live anchor must not block a
+      retired result from surfacing, and a retired anchor must let the traversal
+      proceed. Restricting the anchor itself to non-live here would both hide
+      retired results reached from live anchors and re-surface nothing useful.
+    """
+    if state in ("all", "not-live"):
+        return True
+    # `live` plus the review-only refinements collapse to a live-presence check.
+    return entity_matches_query_state(metadata, "live")
+
+
 def _filter_contexts_by_entity_state(
     contexts: list[QueryRowContext],
     state: QueryVisibilityState,
 ) -> list[QueryRowContext]:
-    """Gate query rows by the result entity's lifecycle visibility.
+    """Gate query rows by entity lifecycle visibility at one chokepoint.
 
     This is the single entity-lifecycle chokepoint for the query engine: it runs
     over the assembled result contexts of BOTH collection-mode and traversal-mode
     queries (so ``list entities``, entity queries, and path/relationship rows are
-    all gated identically). Each row is kept only when its result entity matches
-    ``state`` under :func:`entity_matches_query_state`. Edges are gated separately
-    by :func:`relationship_matches_query_state`; here we gate the *referent*.
+    all gated identically). Two roles are gated here, in one pass, with the roles
+    they actually play on the row:
 
-    ``state == "all"`` is a no-op (everything visible). Defaulting to ``live``
-    means a retired/superseded/orphaned entity falls out of every read path that
-    routes through the engine, with no per-surface logic.
+    * the RESULT (the referent the read returns) is kept only when it matches
+      ``state`` under :func:`entity_matches_query_state` -- the established result
+      state machine (``live`` / ``not-live`` / ``all`` / review-only-as-live).
+    * every entity on the row (``context.entities`` carries the full set: the
+      traversal entry, every intermediate hop, and the result) is gated as an
+      ANCHOR by :func:`_anchor_in_scope`: it must be live under a live read, and is
+      unconditionally in scope under ``not-live`` / ``all``. This closes the
+      entry/intermediate leak (codex F-001) while leaving the ``not-live`` result
+      diagnostic intact. Applying the anchor gate to the result entity too is
+      harmless: under a live read it reduces to the same liveness check as the
+      result gate, and under ``not-live`` it is a no-op the result gate dominates.
+
+    For entity collections ``context.entities`` is ``(entity,)``; both gates apply
+    to that one entity (identical to the old result-only behavior). For
+    relationship collections it is ``(source, target)``; ``source`` is an anchor,
+    ``target`` the result. Edges are gated separately by
+    :func:`relationship_matches_query_state`; here we gate the *referents*.
+
+    ``state == "all"`` is a no-op (everything visible).
     """
     if state == "all":
         return contexts
@@ -461,6 +502,7 @@ def _filter_contexts_by_entity_state(
         context
         for context in contexts
         if entity_matches_query_state(context.result.metadata, state)
+        and all(_anchor_in_scope(entity.metadata, state) for entity in context.entities)
     ]
 
 

@@ -21,8 +21,10 @@ from cruxible_core.service.queries import service_get_entity
 from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
 
 
-def _retire_part_via_batch(instance: CruxibleInstance, part_id: str, status: str) -> None:
-    """Set the typed entity lifecycle on a Part through the batch write path.
+def _retire_entity_via_batch(
+    instance: CruxibleInstance, entity_type: str, entity_id: str, status: str
+) -> None:
+    """Set the typed entity lifecycle on an entity through the batch write path.
 
     Builds the lifecycle via the typed constructor (validated against the entity
     status Literal) and stores its serialized form -- the production write path,
@@ -33,14 +35,19 @@ def _retire_part_via_batch(instance: CruxibleInstance, part_id: str, status: str
         BatchDirectWriteInput(
             entities=[
                 EntityWriteInput(
-                    entity_type="Part",
-                    entity_id=part_id,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
                     properties={},
                     metadata=build_entity_lifecycle_metadata(status=status),  # type: ignore[arg-type]
                 )
             ]
         ),
     )
+
+
+def _retire_part_via_batch(instance: CruxibleInstance, part_id: str, status: str) -> None:
+    """Set the typed entity lifecycle on a Part through the batch write path."""
+    _retire_entity_via_batch(instance, "Part", part_id, status)
 
 
 def _list_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
@@ -83,6 +90,39 @@ def _traversal_part_ids(instance: CruxibleInstance, state: str | None) -> set[st
     # `parts_for_vehicle` defaults to result_shape `path`; the terminal entity of
     # each path is the Part. Entity-lifecycle gating drops paths whose result
     # entity is retired.
+    return {item.result.entity_id for item in res.items}
+
+
+def _inline_traversal_part_ids(instance: CruxibleInstance, state: str | None) -> set[str]:
+    """Run the `parts_for_vehicle` traversal allowing a runtime state override.
+
+    The config's `parts_for_vehicle` query forbids runtime relationship-state
+    overrides, so it can't be driven with an explicit `not-live`/`all` from the
+    service surface. This inline definition mirrors it but opts into the override
+    so the across-state entry-gating behavior can be asserted explicitly.
+    """
+    definition = {
+        "name": "parts_for_vehicle_overridable",
+        "mode": "traversal",
+        "entry_point": "Vehicle",
+        "traversal": [
+            {
+                "relationship": "fits",
+                "direction": "incoming",
+                "filter": {"verified": True},
+            }
+        ],
+        "returns": "list[Part]",
+        "allow_relationship_state_override": True,
+    }
+    from cruxible_core.service import service_query_inline_surface
+
+    res = service_query_inline_surface(
+        instance,
+        definition,
+        {"vehicle_id": "V-2024-CIVIC-EX"},
+        relationship_state=state,
+    )
     return {item.result.entity_id for item in res.items}
 
 
@@ -206,6 +246,103 @@ def test_review_only_states_resolve_to_live_for_entities(
     assert _list_part_ids(populated_instance, review_value) == _list_part_ids(
         populated_instance, "live"
     )
+
+
+# ---------------------------------------------------------------------------
+# Traversal ENTRY gating: a retired entry entity gates the whole traversal
+# (codex F-001). The entry of `parts_for_vehicle` is the Vehicle. Retiring it
+# must drop every row under `live` -- returning EMPTY results, NOT an error, and
+# NOT leaking the retired entry through live path rows -- while `not-live`/`all`
+# keep it in scope and return rows. Consistent with the result chokepoint.
+# ---------------------------------------------------------------------------
+
+
+def test_retired_traversal_entry_yields_no_live_rows(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """Retiring the traversal ENTRY (Vehicle) hides the whole traversal under live.
+
+    Before the fix, the entry entity was resolved without any lifecycle check, so
+    `parts_for_vehicle(V-2024-CIVIC-EX)` still returned Parts even with the Vehicle
+    retired -- leaking the retired entry. The result Parts here are all live, so
+    the only thing gating the rows is the (previously ungated) entry.
+    """
+    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+
+    # Default (None -> live) returns ZERO rows -- not an error.
+    assert _traversal_part_ids(populated_instance, None) == set()
+    # Explicit live agrees (via the overridable mirror; `parts_for_vehicle` itself
+    # forbids a runtime state override, so an explicit selector must go through it).
+    assert _inline_traversal_part_ids(populated_instance, "live") == set()
+
+
+def test_retired_traversal_entry_does_not_block_under_all(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A retired ENTRY does not block the traversal under a non-live read.
+
+    The entry-anchor gate applies only under a live read. Under `all` the retired
+    entry is in scope, so the traversal proceeds and the (live) result Parts still
+    surface -- proving it was the entry, not the results, that `live` gated out.
+    (Result Parts are kept live here on purpose: how a traversal surfaces a retired
+    *result* under not-live/all is a separate expansion concern, orthogonal to the
+    entry-anchor gate this fix adds.)
+    """
+    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+
+    # `live`: the retired entry gates the whole traversal out.
+    assert _inline_traversal_part_ids(populated_instance, "live") == set()
+    # `all`: the retired entry is in scope, so the live result Parts still surface.
+    assert _inline_traversal_part_ids(populated_instance, "all") == {"BP-1001", "BP-1002"}
+
+
+def test_retired_entry_does_not_raise_entity_not_found(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A gated-out (but existing) entry produces zero rows, never an error.
+
+    `EntityNotFoundError` stays reserved for an entry that truly does not exist.
+    An entry that EXISTS but is gated out by lifecycle must read like `list` does
+    when everything is filtered: empty, no error, no existence leak.
+    """
+    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+
+    # No exception; just empty.
+    res = service_query_surface(
+        populated_instance,
+        "parts_for_vehicle",
+        {"vehicle_id": "V-2024-CIVIC-EX"},
+        relationship_state=None,
+    )
+    assert res.items == []
+
+
+def test_missing_entry_still_raises_entity_not_found(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A truly absent entry still raises -- the gated-out path must not swallow it."""
+    from cruxible_core.errors import EntityNotFoundError
+
+    with pytest.raises(EntityNotFoundError):
+        service_query_surface(
+            populated_instance,
+            "parts_for_vehicle",
+            {"vehicle_id": "V-DOES-NOT-EXIST"},
+            relationship_state=None,
+        )
+
+
+@pytest.mark.parametrize("review_value", ["accepted", "pending", "reviewable"])
+def test_review_only_states_gate_traversal_entry_like_live(
+    populated_instance: CruxibleInstance,
+    review_value: str,
+) -> None:
+    """Review-only selectors resolve to `live` for the entry, exactly like results."""
+    _retire_entity_via_batch(populated_instance, "Vehicle", "V-2024-CIVIC-EX", "retired")
+    # Entities have no review axis: review-only selectors gate the entry like live.
+    assert _inline_traversal_part_ids(
+        populated_instance, review_value
+    ) == _inline_traversal_part_ids(populated_instance, "live")
 
 
 # ---------------------------------------------------------------------------
