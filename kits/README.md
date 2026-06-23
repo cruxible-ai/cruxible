@@ -21,7 +21,7 @@ Use the generated README views as the review surface while drafting or fitting a
 kit. Regenerate them after config changes:
 
 ```bash
-uv run cruxible config-views --config kits/<kit>/config.yaml --update-readme kits/<kit>/README.md
+uv run cruxible config views --config kits/<kit>/config.yaml --update-readme kits/<kit>/README.md
 ```
 
 For layered kits such as KEV triage, include `--runtime` so generated views use
@@ -34,5 +34,5 @@ When rendering a runtime wiki for a layered kit, use local scope so only the
 local state plus directly used upstream context is emitted:
 
 ```bash
-uv run cruxible render-wiki --output wiki --scope local
+uv run cruxible wiki render --output wiki --scope local
 ```

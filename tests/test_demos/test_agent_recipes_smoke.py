@@ -30,7 +30,7 @@ each through the surface an agent actually uses:
 * ``validate`` / ``lock`` / ``run`` / ``apply`` / ``decision-record events``
   are daemon HTTP calls, driven through the real ``CruxibleClient`` over an
   in-process FastAPI ``TestClient`` (no socket, no network).
-* ``config-views`` (``--view``/``--update-readme``) is a *local* CLI command
+* ``config views`` (``--view``/``--update-readme``) is a *local* CLI command
   that operates on config/README files directly; it is driven through the real
   Click ``cli`` entry point.
 
@@ -186,7 +186,7 @@ def test_recipe_debug_provider_failure(daemon_client: CruxibleClient, tmp_path: 
 
     The recipe lists read-only trace-inspection commands. Two surfaces:
 
-    1. ``config-views --config <cfg> --runtime --view workflow-steps`` — a local
+    1. ``config views --config <cfg> --runtime --view workflow-steps`` — a local
        CLI render of the provider/step pipeline (driven via the Click ``cli``).
     2. ``decision-record events --trace <trace-id>`` — a daemon read of the
        execution record for a real run.
@@ -207,7 +207,8 @@ def test_recipe_debug_provider_failure(daemon_client: CruxibleClient, tmp_path: 
     rendered = runner.invoke(
         cli,
         [
-            "config-views",
+            "config",
+            "views",
             "--config",
             str(KEV_REFERENCE_CONFIG),
             "--runtime",
@@ -293,7 +294,7 @@ def test_recipe_regenerate_kit_docs(tmp_path: Path) -> None:
     """Recipe: Regenerate Kit Docs (``for-ai-agents.md`` :288-305).
 
     Documented command:
-    ``config-views --config <kit>/config.yaml --runtime --update-readme <README>``.
+    ``config views --config <kit>/config.yaml --runtime --update-readme <README>``.
     Asserts the generated ``CRUXIBLE:BEGIN/END`` marker blocks are written into
     the README, the markers survive, and the regeneration is idempotent (a
     second run is a no-op on already-current content). Runs against a *copy* of
@@ -311,7 +312,8 @@ def test_recipe_regenerate_kit_docs(tmp_path: Path) -> None:
     first = runner.invoke(
         cli,
         [
-            "config-views",
+            "config",
+            "views",
             "--config",
             str(KEV_TRIAGE_CONFIG),
             "--runtime",
@@ -338,7 +340,8 @@ def test_recipe_regenerate_kit_docs(tmp_path: Path) -> None:
     second = runner.invoke(
         cli,
         [
-            "config-views",
+            "config",
+            "views",
             "--config",
             str(KEV_TRIAGE_CONFIG),
             "--runtime",

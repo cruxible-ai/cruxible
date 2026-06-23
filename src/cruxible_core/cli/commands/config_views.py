@@ -18,7 +18,7 @@ from cruxible_core.canonical_views.config import (
 from cruxible_core.cli.main import handle_errors
 
 
-@click.command("config-views")
+@click.command("views")
 @click.option(
     "--config",
     "config_path",

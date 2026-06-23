@@ -1,4 +1,4 @@
-"""CLI commands for feedback, feedback-batch, outcome, and profile lookups."""
+"""CLI ``feedback`` and ``outcome`` groups: recording, batch, analysis, profiles."""
 
 from __future__ import annotations
 
@@ -55,7 +55,17 @@ def _result_payload(result: Any) -> dict[str, Any]:
     return cast(dict[str, Any], dict(result))
 
 
-@click.command("feedback")
+@click.group("feedback")
+def feedback_group() -> None:
+    """Record, batch, analyze, and inspect edge feedback."""
+
+
+@click.group("outcome")
+def outcome_group() -> None:
+    """Record, analyze, and inspect decision outcomes."""
+
+
+@feedback_group.command("record")
 @click.option("--receipt", "receipt_id", default=None, help="Optional source receipt ID.")
 @click.option(
     "--action",
@@ -154,7 +164,7 @@ def feedback_cmd(
             source=cast(contracts.FeedbackSource, source),
         ),
         allow_local=False,
-        command_name="feedback",
+        command_name="feedback record",
     )
 
     if output_json:
@@ -169,7 +179,7 @@ def feedback_cmd(
         click.echo(f"  Receipt: {result.receipt_id}")
 
 
-@click.command("feedback-from-query")
+@feedback_group.command("from-query")
 @click.option("--receipt", "receipt_id", required=True, help="Query receipt ID.")
 @click.option(
     "--result-index",
@@ -264,7 +274,7 @@ def feedback_from_query_cmd(
             path_alias=path_alias,
         ),
         allow_local=False,
-        command_name="feedback-from-query",
+        command_name="feedback from-query",
     )
 
     if output_json:
@@ -279,7 +289,7 @@ def feedback_from_query_cmd(
         click.echo(f"  Receipt: {result.receipt_id}")
 
 
-@click.command("feedback-batch")
+@feedback_group.command("batch")
 @click.option(
     "--items-file",
     type=click.Path(exists=True),
@@ -359,7 +369,7 @@ def feedback_batch_cmd(
             source=cast(contracts.FeedbackSource, source),
         ),
         allow_local=False,
-        command_name="feedback-batch",
+        command_name="feedback batch",
     )
 
     if output_json:
@@ -372,7 +382,7 @@ def feedback_batch_cmd(
         click.echo(f"  Receipt: {result.receipt_id}")
 
 
-@click.command("outcome")
+@outcome_group.command("record")
 @click.option("--receipt", "receipt_id", required=True, help="Receipt ID.")
 @click.option(
     "--outcome",
@@ -412,7 +422,7 @@ def outcome_cmd(
             detail=detail_dict,
         ),
         allow_local=False,
-        command_name="outcome",
+        command_name="outcome record",
     )
     if output_json:
         _emit_json(_result_payload(result))
@@ -420,7 +430,7 @@ def outcome_cmd(
     click.echo(f"Outcome {result.outcome_id} recorded.")
 
 
-@click.command("feedback-profile")
+@feedback_group.command("profile")
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
 @json_option
 @handle_errors
@@ -457,7 +467,7 @@ def feedback_profile_cmd(relationship_type: str, output_json: bool) -> None:
     click.echo(yaml.safe_dump(profile_dict, sort_keys=False))
 
 
-@click.command("outcome-profile")
+@outcome_group.command("profile")
 @click.option(
     "--anchor-type",
     required=True,

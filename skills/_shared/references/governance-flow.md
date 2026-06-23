@@ -342,7 +342,7 @@ When the config changes:
 
 ```bash
 cruxible validate --config config.yaml
-cruxible reload-config --config config.yaml
+cruxible config reload --config config.yaml
 ```
 
 If providers, artifacts, or workflows changed too, lock again:

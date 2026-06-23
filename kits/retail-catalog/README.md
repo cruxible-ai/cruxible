@@ -23,7 +23,7 @@ The usage story is:
 > outcomes calibrate which signals deserve trust.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config-views`; treat those blocks as code-owned
+from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
 structural truth. Everything outside those marker blocks is authored explanation
 for humans and agents reading the kit.
 
@@ -274,14 +274,14 @@ for full entity, relationship, and contract properties. For a generated
 Markdown schema catalog, run:
 
 ```bash
-uv run cruxible config-views --config kits/retail-catalog/config.yaml --runtime --view schema-catalog
+uv run cruxible config views --config kits/retail-catalog/config.yaml --runtime --view schema-catalog
 ```
 
 When the kit is loaded into a local instance, generate navigable reference
 pages under `wiki/reference/` with:
 
 ```bash
-uv run cruxible render-wiki --output wiki --scope local
+uv run cruxible wiki render --output wiki --scope local
 ```
 
 
@@ -515,7 +515,7 @@ No configured constraints.
 Regenerate the generated sections after changing the config:
 
 ```bash
-uv run cruxible config-views --config kits/retail-catalog/config.yaml --update-readme kits/retail-catalog/README.md
+uv run cruxible config views --config kits/retail-catalog/config.yaml --update-readme kits/retail-catalog/README.md
 ```
 
 Validate the config:

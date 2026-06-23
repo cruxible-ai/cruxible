@@ -753,8 +753,8 @@ class TestStatsInspectReload:
         _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
-            ["reload-config", "--config", str(new_config)],
-            "reload-config",
+            ["config", "reload", "--config", str(new_config)],
+            "config reload",
         )
 
 
@@ -768,7 +768,7 @@ class TestConfigViews:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(proposal_workflow_config_yaml)
 
-        result = runner.invoke(cli, ["config-views", "--config", str(config_path)])
+        result = runner.invoke(cli, ["config", "views", "--config", str(config_path)])
 
         assert result.exit_code == 0
         assert "# Cruxible Config Diagrams" in result.output
@@ -792,7 +792,7 @@ class TestConfigViews:
 
         result = runner.invoke(
             cli,
-            ["config-views", "--config", str(config_path), "--view", "ontology", "--bare"],
+            ["config", "views", "--config", str(config_path), "--view", "ontology", "--bare"],
         )
 
         assert result.exit_code == 0
@@ -816,7 +816,8 @@ class TestConfigViews:
         result = runner.invoke(
             cli,
             [
-                "config-views",
+                "config",
+                "views",
                 "--config",
                 str(config_path),
                 "--view",
@@ -846,7 +847,8 @@ class TestConfigViews:
         result = runner.invoke(
             cli,
             [
-                "config-views",
+                "config",
+                "views",
                 "--config",
                 str(config_path),
                 "--view",
@@ -877,7 +879,7 @@ relationships:
 """
         )
 
-        result = runner.invoke(cli, ["config-views", "--config", str(config_path)])
+        result = runner.invoke(cli, ["config", "views", "--config", str(config_path)])
 
         assert result.exit_code == 1
         assert "Error: ConfigError:" in result.output
@@ -975,7 +977,8 @@ workflows:
         result = runner.invoke(
             cli,
             [
-                "config-views",
+                "config",
+                "views",
                 "--config",
                 str(overlay),
                 "--runtime",
@@ -1195,6 +1198,7 @@ class TestFeedback:
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -1212,7 +1216,7 @@ class TestFeedback:
                 "--reason",
                 "Verified in catalog",
             ],
-            "feedback",
+            "feedback record",
         )
 
     def test_feedback_reject(
@@ -1235,6 +1239,7 @@ class TestFeedback:
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -1252,7 +1257,7 @@ class TestFeedback:
                 "--reason",
                 "Wrong part",
             ],
-            "feedback",
+            "feedback record",
         )
 
     def test_feedback_agent_source(
@@ -1275,6 +1280,7 @@ class TestFeedback:
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -1292,7 +1298,7 @@ class TestFeedback:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
-            "feedback",
+            "feedback record",
         )
 
     def test_feedback_from_query_still_requires_receipt(
@@ -1304,7 +1310,8 @@ class TestFeedback:
             runner,
             populated_instance.root,
             [
-                "feedback-from-query",
+                "feedback",
+                "from-query",
                 "--result-index",
                 "0",
                 "--action",
@@ -1340,8 +1347,8 @@ class TestOutcome:
         _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
-            ["outcome", "--receipt", receipt_id, "--outcome", "correct"],
-            "outcome",
+            ["outcome", "record", "--receipt", receipt_id, "--outcome", "correct"],
+            "outcome record",
         )
 
     def test_outcome_with_detail(
@@ -1364,6 +1371,7 @@ class TestOutcome:
             populated_instance.root,
             [
                 "outcome",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--outcome",
@@ -1371,7 +1379,7 @@ class TestOutcome:
                 "--detail",
                 '{"notes": "part did not fit"}',
             ],
-            "outcome",
+            "outcome record",
         )
 
 
@@ -2016,6 +2024,7 @@ class TestAddConstraint:
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "brake_category_match",
@@ -2026,7 +2035,7 @@ class TestAddConstraint:
                 "--description",
                 "Replacement parts must be same category",
             ],
-            "add-constraint",
+            "config add-constraint",
         )
 
     def test_valid_not_equal_rule(
@@ -2038,13 +2047,14 @@ class TestAddConstraint:
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "no_self_replacement",
                 "--rule",
                 "replaces.FROM.part_number != replaces.TO.part_number",
             ],
-            "add-constraint",
+            "config add-constraint",
         )
 
     def test_bad_rule(
@@ -2056,13 +2066,14 @@ class TestAddConstraint:
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "bad",
                 "--rule",
                 "this is not valid syntax",
             ],
-            "add-constraint",
+            "config add-constraint",
         )
 
     def test_duplicate_name(
@@ -2074,13 +2085,14 @@ class TestAddConstraint:
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "unique_rule",
                 "--rule",
                 "replaces.FROM.category == replaces.TO.category",
             ],
-            "add-constraint",
+            "config add-constraint",
         )
 
 
@@ -2467,6 +2479,7 @@ class TestStoreLifecycle:
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -2482,7 +2495,7 @@ class TestStoreLifecycle:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
-            "feedback",
+            "feedback record",
         )
 
     def test_list_receipts_closes_store_on_error(
@@ -2540,6 +2553,7 @@ class TestFeedbackValidation:
     def _feedback_args(self, receipt_id: str, corrections_json: str) -> list[str]:
         return [
             "feedback",
+            "record",
             "--receipt",
             receipt_id,
             "--action",
@@ -2568,7 +2582,7 @@ class TestFeedbackValidation:
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"confidence": true}'),
-            "feedback",
+            "feedback record",
         )
 
     def test_feedback_rejects_string_confidence(
@@ -2581,7 +2595,7 @@ class TestFeedbackValidation:
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"confidence": "high"}'),
-            "feedback",
+            "feedback record",
         )
 
     def test_feedback_rejects_metadata_key(
@@ -2594,7 +2608,7 @@ class TestFeedbackValidation:
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"_provenance": "spoofed", "note": "ok"}'),
-            "feedback",
+            "feedback record",
         )
 
 
@@ -2968,7 +2982,7 @@ class TestGroupHelpCLI:
 class TestFeedbackGroupOverrideCLI:
     def test_feedback_group_override_flag(self, runner: CliRunner) -> None:
         """--group-override flag appears in help."""
-        result = runner.invoke(cli, ["feedback", "--help"])
+        result = runner.invoke(cli, ["feedback", "record", "--help"])
         assert result.exit_code == 0
         assert "--group-override" in result.output
 
@@ -2981,3 +2995,90 @@ def _extract_group_id(output: str) -> str:
                 if word.startswith("GRP-"):
                     return word.rstrip(".")
     raise ValueError(f"No group ID found in output: {output}")
+
+
+class TestNounVerbGrouping:
+    """The flat verb-noun CLI commands now live under noun groups (no aliases)."""
+
+    @pytest.mark.parametrize(
+        "group, subcommands",
+        [
+            ("config", ["reload", "views", "add-constraint", "add-decision-policy"]),
+            ("feedback", ["record", "from-query", "batch", "profile", "analyze"]),
+            ("outcome", ["record", "profile", "analyze"]),
+            ("wiki", ["render"]),
+        ],
+    )
+    def test_group_exposes_expected_subcommands(
+        self,
+        runner: CliRunner,
+        group: str,
+        subcommands: list[str],
+    ) -> None:
+        result = runner.invoke(cli, [group, "--help"])
+        assert result.exit_code == 0, result.output
+        for sub in subcommands:
+            assert sub in result.output, f"{group} help missing subcommand {sub!r}"
+
+    @pytest.mark.parametrize(
+        "command_path",
+        [
+            ["config", "reload", "--help"],
+            ["config", "views", "--help"],
+            ["config", "add-constraint", "--help"],
+            ["config", "add-decision-policy", "--help"],
+            ["feedback", "record", "--help"],
+            ["feedback", "from-query", "--help"],
+            ["feedback", "batch", "--help"],
+            ["feedback", "profile", "--help"],
+            ["feedback", "analyze", "--help"],
+            ["outcome", "record", "--help"],
+            ["outcome", "profile", "--help"],
+            ["outcome", "analyze", "--help"],
+            ["wiki", "render", "--help"],
+        ],
+    )
+    def test_grouped_paths_resolve(
+        self,
+        runner: CliRunner,
+        command_path: list[str],
+    ) -> None:
+        result = runner.invoke(cli, command_path)
+        assert result.exit_code == 0, result.output
+        assert "Usage:" in result.output
+
+    @pytest.mark.parametrize(
+        "old_name",
+        [
+            "reload-config",
+            "config-views",
+            "add-constraint",
+            "add-decision-policy",
+            "feedback-batch",
+            "feedback-from-query",
+            "feedback-profile",
+            "analyze-feedback",
+            "outcome-profile",
+            "analyze-outcomes",
+            "render-wiki",
+        ],
+    )
+    def test_old_flat_names_are_gone(self, old_name: str) -> None:
+        assert old_name not in cli.commands, (
+            f"flat command {old_name!r} must be removed (no legacy aliases)"
+        )
+
+    def test_bare_feedback_and_outcome_are_groups_not_record(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        # The bare nouns are groups now; invoking them with record-only flags must
+        # fail rather than silently recording, since the record verb moved.
+        feedback = runner.invoke(cli, ["feedback", "--action", "approve"])
+        assert feedback.exit_code != 0
+        outcome = runner.invoke(cli, ["outcome", "--receipt", "RCP-1"])
+        assert outcome.exit_code != 0
+
+    def test_batch_direct_write_stays_top_level(self) -> None:
+        # Power-user write verb with no clean noun group; intentionally left flat.
+        assert "batch-direct-write" in cli.commands

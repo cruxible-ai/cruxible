@@ -25,7 +25,7 @@ This demo has two kit directories that represent the two layers:
   that traverse across both layers.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config-views --runtime`; treat those
+from `config.yaml` by `cruxible config views --runtime`; treat those
 blocks as code-owned structural truth. Everything outside those marker blocks
 is authored explanation for humans and agents reading the kit.
 
@@ -306,14 +306,14 @@ for full entity, relationship, and contract properties. For a generated
 Markdown schema catalog, run:
 
 ```bash
-uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view schema-catalog
+uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --view schema-catalog
 ```
 
 When the kit is loaded into a local instance, generate navigable reference
 pages under `wiki/reference/` with:
 
 ```bash
-uv run cruxible render-wiki --output wiki --scope local
+uv run cruxible wiki render --output wiki --scope local
 ```
 
 
@@ -465,13 +465,13 @@ Regenerate the structural sections after changing ontology, workflows,
 governed relationships, or named queries:
 
 ```bash
-uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
+uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view all
+uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --view all
 ```
 
 ## Seed Data

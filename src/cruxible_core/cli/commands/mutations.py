@@ -1,4 +1,4 @@
-"""CLI commands for direct mutations, config updates, and reload-config."""
+"""CLI commands for direct mutations and config edits (config reload/add-*)."""
 
 from __future__ import annotations
 
@@ -925,10 +925,10 @@ def add_constraint_cmd(
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
-    raise click.UsageError("Local mutation disabled for add-constraint; use server mode.")
+    raise click.UsageError("Local mutation disabled for config add-constraint; use server mode.")
 
 
-@click.command("reload-config")
+@click.command("reload")
 @click.option("--config", "config_path", default=None, help="Optional new config path.")
 @handle_errors
 def reload_config_cmd(config_path: str | None) -> None:
@@ -943,7 +943,7 @@ def reload_config_cmd(config_path: str | None) -> None:
         ),
         lambda instance: service_reload_config(instance, config_path=config_path),
         allow_local=False,
-        command_name="reload-config",
+        command_name="config reload",
     )
     status = "updated" if result.updated else "validated"
     if remote:
@@ -1015,4 +1015,6 @@ def add_decision_policy_cmd(
         for warning in result.warnings:
             click.secho(f"  Warning: {warning}", fg="yellow")
         return
-    raise click.UsageError("Local mutation disabled for add-decision-policy; use server mode.")
+    raise click.UsageError(
+        "Local mutation disabled for config add-decision-policy; use server mode."
+    )

@@ -16,7 +16,7 @@ steps only — no custom Python provider**:
   shapes the rows, then materializes entities + relationships via
   ``make_entities`` / ``make_relationships`` / ``apply_all`` — all built-in step
   kinds, zero kit-authored Python,
-* a ``README.md`` with the ``CRUXIBLE:BEGIN/END`` marker blocks ``config-views``
+* a ``README.md`` with the ``CRUXIBLE:BEGIN/END`` marker blocks ``config views``
   refreshes.
 
 Then it drives the documented command sequence (``docs/kit-walkthroughs.md`` lines
@@ -35,7 +35,7 @@ Each documented step is asserted:
 5. ``apply --preview-file preview.json``           -> entities + relationships committed
 6. ``query run asset_owner --param asset_id=...``  -> expected rows + a receipt_id
 7. ``explain --receipt <id> --format markdown``    -> markdown render with trace detail
-8. ``config-views --config <kit>/config.yaml --runtime --update-readme <kit>/README.md``
+8. ``config views --config <kit>/config.yaml --runtime --update-readme <kit>/README.md``
                                                    -> README CRUXIBLE blocks refreshed
 
 Documentation drift this smoke surfaces (the test works around each; these are
@@ -51,7 +51,7 @@ findings about ``docs/kit-walkthroughs.md``, not the kit):
   ``cruxible.lock.yaml`` ("run ``cruxible lock`` before publishing"). A brand-new
   standalone kit must generate a lock *before* ``init``; the ``init``-then-``lock``
   order cannot be followed literally for from-scratch authoring.
-* ``config-views --update-readme`` (line ~133) *replaces existing* CRUXIBLE marker
+* ``config views --update-readme`` (line ~133) *replaces existing* CRUXIBLE marker
   blocks; it does not create them. The README must already contain a
   BEGIN/END block per rendered view or it raises ``MissingReadmeMarkersError``.
 """
@@ -95,7 +95,7 @@ _ASSETS_CSV = (
     "ASSET-2,db-01.example.com,OWNER-2,Data Team\n"
 )
 
-# The nine canonical-view marker keys `config-views --view all` refreshes. The
+# The nine canonical-view marker keys `config views --view all` refreshes. The
 # README must already contain each BEGIN/END block — `--update-readme` *replaces*
 # existing marker blocks, it does not create them (see drift note in the report).
 _README_VIEW_KEYS = (
@@ -259,7 +259,7 @@ workflows:
 
 
 def _kit_readme() -> str:
-    """A README pre-seeded with the marker blocks `config-views` refreshes."""
+    """A README pre-seeded with the marker blocks `config views` refreshes."""
     lines = [
         "# my-risk-kit",
         "",
@@ -484,23 +484,24 @@ def test_standalone_kit_authoring_walkthrough_via_cli(
         f"explain markdown is missing the traversed relationship:\n{explain_out}"
     )
 
-    # ── Step 8: `config-views --runtime --update-readme <kit>/README.md` ──
+    # ── Step 8: `config views --runtime --update-readme <kit>/README.md` ──
     # This is a local (no-daemon) command operating on the config file directly.
     before = readme_path.read_text()
     views = _ok(
         invoke(
-            "config-views",
+            "config",
+            "views",
             "--config",
             str(config_path),
             "--runtime",
             "--update-readme",
             str(readme_path),
         ),
-        "config-views --update-readme",
+        "config views --update-readme",
     )
     assert f"Updated {readme_path}" in views.output
     after = readme_path.read_text()
-    assert after != before, "config-views did not modify the README"
+    assert after != before, "config views did not modify the README"
     # The marker blocks survive and now wrap generated content (the ontology view
     # names our entity types).
     assert "<!-- CRUXIBLE:BEGIN ontology -->" in after

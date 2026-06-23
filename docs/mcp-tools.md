@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-This is the full searchable reference for Cruxible MCP tools. MCP is a curated agent connector, not full CLI parity. The HTTP API/client remain the broader remote product surface; CLI keeps shell-only utilities such as `context`, `config-views --update-readme`, `export edges`, and local receipt `explain`.
+This is the full searchable reference for Cruxible MCP tools. MCP is a curated agent connector, not full CLI parity. The HTTP API/client remain the broader remote product surface; CLI keeps shell-only utilities such as `context`, `config views --update-readme`, `export edges`, and local receipt `explain`.
 
 ## Permission Modes
 

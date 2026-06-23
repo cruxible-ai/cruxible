@@ -1653,7 +1653,7 @@ def get_relationship_cmd(
     console.print(relationship_table(rel))
 
 
-@click.command("analyze-feedback")
+@click.command("analyze")
 @click.option("--relationship", "relationship_type", required=True, help="Relationship type.")
 @click.option("--limit", default=200, type=click.IntRange(min=1), help="Rows to inspect.")
 @click.option(
@@ -1772,7 +1772,7 @@ def analyze_feedback_cmd(
         click.secho(f"Warning: {warning}", fg="yellow")
 
 
-@click.command("analyze-outcomes")
+@click.command("analyze")
 @click.option(
     "--anchor-type",
     required=True,

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     feedback_batch_cmd: Any
     feedback_cmd: Any
     feedback_from_query_cmd: Any
+    feedback_group: Any
     feedback_profile_cmd: Any
     clone_cmd: Any
     get_entity_cmd: Any
@@ -37,13 +38,14 @@ if TYPE_CHECKING:
     list_group: Any
     lock_cmd: Any
     outcome_cmd: Any
+    outcome_group: Any
     outcome_profile_cmd: Any
     plan_cmd: Any
     propose_cmd: Any
     query: Any
     reload_config_cmd: Any
-    render_wiki_cmd: Any
     run_cmd: Any
+    wiki_group: Any
     sample: Any
     schema: Any
     server_group: Any
@@ -65,8 +67,10 @@ else:
         feedback_batch_cmd,
         feedback_cmd,
         feedback_from_query_cmd,
+        feedback_group,
         feedback_profile_cmd,
         outcome_cmd,
+        outcome_group,
         outcome_profile_cmd,
     )
     from cruxible_core.cli.commands.groups import (
@@ -107,7 +111,7 @@ else:
     from cruxible_core.cli.commands.server import server_group
     from cruxible_core.cli.commands.source_artifacts import source_group
     from cruxible_core.cli.commands.state import state_group
-    from cruxible_core.cli.commands.wiki import render_wiki_cmd
+    from cruxible_core.cli.commands.wiki import wiki_group
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
         clone_cmd,
@@ -139,6 +143,7 @@ __all__ = [
     "feedback_batch_cmd",
     "feedback_cmd",
     "feedback_from_query_cmd",
+    "feedback_group",
     "feedback_profile_cmd",
     "clone_cmd",
     "get_entity_cmd",
@@ -154,13 +159,14 @@ __all__ = [
     "list_group",
     "lock_cmd",
     "outcome_cmd",
+    "outcome_group",
     "outcome_profile_cmd",
     "plan_cmd",
     "propose_cmd",
     "query",
     "reload_config_cmd",
-    "render_wiki_cmd",
     "run_cmd",
+    "wiki_group",
     "sample",
     "schema",
     "server_group",

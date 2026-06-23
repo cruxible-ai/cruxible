@@ -170,7 +170,7 @@ After local config changes:
 
 ```bash
 cruxible validate --config config.yaml
-cruxible reload-config --config config.yaml
+cruxible config reload --config config.yaml
 cruxible lock
 ```
 

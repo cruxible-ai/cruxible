@@ -14,7 +14,7 @@ evidence for operation-state claims. They are not modeled as operation-state
 entities.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config-views`; treat those blocks as code-owned
+from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
 structural truth. Everything outside those marker blocks is authored explanation.
 
 ## Modeling Notes
@@ -267,5 +267,5 @@ No configured receipt-anchored outcome profiles.
 ## Regeneration
 
 ```bash
-uv run cruxible config-views --config kits/agent-operation/config.yaml --update-readme kits/agent-operation/README.md
+uv run cruxible config views --config kits/agent-operation/config.yaml --update-readme kits/agent-operation/README.md
 ```

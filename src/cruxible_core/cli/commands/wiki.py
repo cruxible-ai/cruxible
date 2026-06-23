@@ -1,4 +1,4 @@
-"""CLI command for deterministic wiki rendering."""
+"""CLI ``wiki`` group for deterministic wiki rendering."""
 
 from __future__ import annotations
 
@@ -23,7 +23,12 @@ def _parse_focus_values(values: tuple[str, ...]) -> tuple[SubjectRef, ...]:
     return tuple(refs)
 
 
-@click.command("render-wiki")
+@click.group("wiki")
+def wiki_group() -> None:
+    """Render deterministic Markdown wikis from instance state."""
+
+
+@wiki_group.command("render")
 @click.option(
     "--output",
     "output_dir",
@@ -97,7 +102,7 @@ def render_wiki_cmd(
         return
 
     _common._guard_local_read_fallback()
-    instance = _common._require_local_instance("render-wiki")
+    instance = _common._require_local_instance("wiki render")
     options = WikiOptions(
         output_dir=output_dir,
         focus=focus,

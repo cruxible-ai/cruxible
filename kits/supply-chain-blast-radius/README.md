@@ -16,7 +16,7 @@ Governed edges are rule-centric: proposal bucket signatures carry `rule_id` and
 across many incidents instead of starting fresh every time.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config-views`; treat those blocks as
+from `config.yaml` by `cruxible config views`; treat those blocks as
 code-owned structural truth. Everything outside those marker blocks is authored
 explanation for humans and agents reading the kit.
 
@@ -366,14 +366,14 @@ for full entity, relationship, and contract properties. For a generated
 Markdown schema catalog, run:
 
 ```bash
-uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --runtime --view schema-catalog
+uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --runtime --view schema-catalog
 ```
 
 When the kit is loaded into a local instance, generate navigable reference
 pages under `wiki/reference/` with:
 
 ```bash
-uv run cruxible render-wiki --output wiki --scope local
+uv run cruxible wiki render --output wiki --scope local
 ```
 
 
@@ -586,8 +586,8 @@ No configured constraints.
 Detailed mechanical Mermaid renderings are still available when needed:
 
 ```bash
-uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view workflow-steps
-uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view queries
+uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view workflow-steps
+uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view queries
 ```
 
 ## Maintenance
@@ -596,13 +596,13 @@ Regenerate the structural sections after changing ontology, workflows, governed
 relationships, or named queries:
 
 ```bash
-uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --update-readme kits/supply-chain-blast-radius/README.md
+uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --update-readme kits/supply-chain-blast-radius/README.md
 ```
 
 To inspect the same generated bundle without editing the README:
 
 ```bash
-uv run cruxible config-views --config kits/supply-chain-blast-radius/config.yaml --view all
+uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --view all
 ```
 
 ## Status

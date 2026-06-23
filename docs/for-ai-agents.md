@@ -260,8 +260,8 @@ When a workflow fails:
 Useful commands:
 
 ```bash
-cruxible config-views --config config.yaml --runtime --view workflow-steps
-cruxible config-views --config config.yaml --runtime --view signal-policy-catalog
+cruxible config views --config config.yaml --runtime --view workflow-steps
+cruxible config views --config config.yaml --runtime --view signal-policy-catalog
 cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> decision-record events \
   --trace <trace-id>
 ```
@@ -291,14 +291,14 @@ Generated kit README blocks are code-owned. After changing a kit config, refresh
 the marked blocks:
 
 ```bash
-cruxible config-views --config kits/kev-triage/config.yaml --runtime \
+cruxible config views --config kits/kev-triage/config.yaml --runtime \
   --update-readme kits/kev-triage/README.md
 ```
 
 For a full local wiki:
 
 ```bash
-cruxible render-wiki --output wiki --scope local
+cruxible wiki render --output wiki --scope local
 ```
 
 The generated docs are grounding material for the agent and reviewer. They are

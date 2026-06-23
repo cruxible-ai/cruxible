@@ -70,9 +70,30 @@ cruxible relationship add work_item_part_of_work_item WorkItem wi-child WorkItem
 cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkItem wi-parent --set composition_basis="Refined after review"
 ```
 
-## cruxible add-constraint
+## cruxible config
 
-**Usage:** `cruxible add-constraint [OPTIONS]`
+**Usage:** `cruxible config [OPTIONS]`
+
+**Purpose:** Edit, validate, and render the active config.
+
+**Subcommands:**
+
+- `cruxible config reload` - Validate the active config or repoint the instance to a new config file.
+- `cruxible config views` - Render canonical Mermaid/Markdown views for a Cruxible config.
+- `cruxible config add-constraint` - Add a constraint rule to the config.
+- `cruxible config add-decision-policy` - Add a decision policy to the config.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, or rendered file output depending on the subcommand.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible config add-constraint
+
+**Usage:** `cruxible config add-constraint [OPTIONS]`
 
 **Purpose:** Add a constraint rule to the config.
 
@@ -93,9 +114,9 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 - Permission mode too low for read operations.
 - Group ID not found.
 
-## cruxible add-decision-policy
+## cruxible config add-decision-policy
 
-**Usage:** `cruxible add-decision-policy [OPTIONS]`
+**Usage:** `cruxible config add-decision-policy [OPTIONS]`
 
 **Purpose:** Add a decision policy to the config.
 
@@ -492,9 +513,9 @@ shared_evidence:
 - Payload file is not a JSON/YAML object.
 - Unknown shared evidence key or invalid source-evidence locator.
 
-## cruxible analyze-feedback
+## cruxible feedback analyze
 
-**Usage:** `cruxible analyze-feedback [OPTIONS]`
+**Usage:** `cruxible feedback analyze [OPTIONS]`
 
 **Purpose:** Analyze structured feedback and print remediation suggestions.
 
@@ -517,9 +538,9 @@ shared_evidence:
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible analyze-outcomes
+## cruxible outcome analyze
 
-**Usage:** `cruxible analyze-outcomes [OPTIONS]`
+**Usage:** `cruxible outcome analyze [OPTIONS]`
 
 **Purpose:** Analyze structured outcomes and print trust/debugging suggestions.
 
@@ -593,9 +614,9 @@ shared_evidence:
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible config-views
+## cruxible config views
 
-**Usage:** `cruxible config-views [OPTIONS]`
+**Usage:** `cruxible config views [OPTIONS]`
 
 **Purpose:** Render canonical Mermaid/Markdown views for a Cruxible config.
 
@@ -972,6 +993,28 @@ findings.
 
 **Usage:** `cruxible feedback [OPTIONS]`
 
+**Purpose:** Record, batch, analyze, and inspect edge feedback.
+
+**Subcommands:**
+
+- `cruxible feedback record` - Submit feedback on a specific edge by explicit relationship coordinates.
+- `cruxible feedback from-query` - Submit edge feedback by selecting relationship evidence from a query receipt.
+- `cruxible feedback batch` - Submit a batch of edge feedback with one top-level receipt.
+- `cruxible feedback profile` - Display the configured feedback profile for one relationship type.
+- `cruxible feedback analyze` - Analyze structured feedback and print remediation suggestions.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible feedback record
+
+**Usage:** `cruxible feedback record [OPTIONS]`
+
 **Purpose:** Submit feedback on a specific edge by explicit relationship coordinates.
 
 **Options And Arguments:**
@@ -1002,9 +1045,9 @@ findings.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible feedback-from-query
+## cruxible feedback from-query
 
-**Usage:** `cruxible feedback-from-query [OPTIONS]`
+**Usage:** `cruxible feedback from-query [OPTIONS]`
 
 **Purpose:** Submit edge-level feedback by selecting one relationship row or path segment from a query receipt.
 
@@ -1036,9 +1079,9 @@ findings.
 - Multi-hop path rows require exactly one of `--path-index` or `--path-alias`.
 - The selected path alias is missing or duplicated, or the selected edge is no longer in the graph.
 
-## cruxible feedback-batch
+## cruxible feedback batch
 
-**Usage:** `cruxible feedback-batch [OPTIONS]`
+**Usage:** `cruxible feedback batch [OPTIONS]`
 
 **Purpose:** Submit a batch of edge feedback with one top-level receipt.
 
@@ -1059,9 +1102,9 @@ findings.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible feedback-profile
+## cruxible feedback profile
 
-**Usage:** `cruxible feedback-profile [OPTIONS]`
+**Usage:** `cruxible feedback profile [OPTIONS]`
 
 **Purpose:** Display the configured feedback profile for one relationship type.
 
@@ -1744,6 +1787,26 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 
 **Usage:** `cruxible outcome [OPTIONS]`
 
+**Purpose:** Record, analyze, and inspect decision outcomes.
+
+**Subcommands:**
+
+- `cruxible outcome record` - Record the outcome of a decision.
+- `cruxible outcome profile` - Display the configured outcome profile for one anchor context.
+- `cruxible outcome analyze` - Analyze structured outcomes and print trust/debugging suggestions.
+
+**Output And Side Effects:**
+- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible outcome record
+
+**Usage:** `cruxible outcome record [OPTIONS]`
+
 **Purpose:** Record the outcome of a decision.
 
 **Options And Arguments:**
@@ -1763,9 +1826,9 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible outcome-profile
+## cruxible outcome profile
 
-**Usage:** `cruxible outcome-profile [OPTIONS]`
+**Usage:** `cruxible outcome profile [OPTIONS]`
 
 **Purpose:** Display the configured outcome profile for one anchor context.
 
@@ -1958,9 +2021,9 @@ cruxible query inline \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible reload-config
+## cruxible config reload
 
-**Usage:** `cruxible reload-config [OPTIONS]`
+**Usage:** `cruxible config reload [OPTIONS]`
 
 **Purpose:** Validate the active config or repoint the instance to a new config file.
 
@@ -1978,9 +2041,26 @@ cruxible query inline \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible render-wiki
+## cruxible wiki
 
-**Usage:** `cruxible render-wiki [OPTIONS]`
+**Usage:** `cruxible wiki [OPTIONS]`
+
+**Purpose:** Render deterministic Markdown wikis from instance state.
+
+**Subcommands:**
+
+- `cruxible wiki render` - Render a deterministic Markdown wiki from the current state.
+
+**Output And Side Effects:**
+- Produces documentation or file output; graph state is not changed.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for read operations.
+
+## cruxible wiki render
+
+**Usage:** `cruxible wiki render [OPTIONS]`
 
 **Purpose:** Render a deterministic Markdown wiki from the current state.
 

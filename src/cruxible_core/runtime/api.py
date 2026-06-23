@@ -399,7 +399,7 @@ def init_governed(
         has_config=has_config,
         existing_with_config_error=(
             "Governed instance already exists for this workspace root. "
-            "Edit the config locally, then use reload-config in server mode to sync it."
+            "Edit the config locally, then use `config reload` in server mode to sync it."
         ),
         initialize=initialize_governed,
         include_initialized_warnings=True,

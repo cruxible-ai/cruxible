@@ -20,22 +20,22 @@ views as the review surface.
 Use inline output for fast review when the agent harness can render Mermaid:
 
 ```bash
-uv run cruxible config-views --config config.yaml --view all
+uv run cruxible config views --config config.yaml --view all
 ```
 
 Also update durable README marker blocks so CLI and non-GUI harnesses can
 inspect the same generated views:
 
 ```bash
-uv run cruxible config-views --config config.yaml --update-readme README.md
+uv run cruxible config views --config config.yaml --update-readme README.md
 ```
 
 If the config uses `extends`, render the runtime composed view for
 onboarding/review surfaces:
 
 ```bash
-uv run cruxible config-views --config config.yaml --runtime --view all
-uv run cruxible config-views --config config.yaml --runtime --update-readme README.md
+uv run cruxible config views --config config.yaml --runtime --view all
+uv run cruxible config views --config config.yaml --runtime --update-readme README.md
 ```
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned
@@ -184,7 +184,7 @@ After workflow config changes:
 
 ```bash
 cruxible validate --config config.yaml
-cruxible reload-config --config config.yaml
+cruxible config reload --config config.yaml
 cruxible lock
 ```
 

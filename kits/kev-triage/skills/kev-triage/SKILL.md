@@ -294,7 +294,7 @@ reviewers have two different follow-up tools:
 - **Receipt outcomes** — if later operational evidence shows a prior decision
   surface was right or wrong, record an anchored outcome on the relevant
   receipt:
-  `cruxible outcome --receipt <receipt_id> --outcome correct|incorrect|partial|unknown --detail '{"reason":"..."}'`
+  `cruxible outcome record --receipt <receipt_id> --outcome correct|incorrect|partial|unknown --detail '{"reason":"..."}'`
 
 This loop matters to agents too:
 

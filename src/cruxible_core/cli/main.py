@@ -152,10 +152,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     evaluate,
     explain,
     export_group,
-    feedback_batch_cmd,
-    feedback_cmd,
-    feedback_from_query_cmd,
-    feedback_profile_cmd,
+    feedback_group,
     get_entity_cmd,
     get_relationship_cmd,
     group_group,
@@ -168,13 +165,11 @@ from cruxible_core.cli.commands import (  # noqa: E402
     lint_cmd,
     list_group,
     lock_cmd,
-    outcome_cmd,
-    outcome_profile_cmd,
+    outcome_group,
     plan_cmd,
     propose_cmd,
     query,
     reload_config_cmd,
-    render_wiki_cmd,
     run_cmd,
     sample,
     schema,
@@ -187,11 +182,11 @@ from cruxible_core.cli.commands import (  # noqa: E402
     update_entity_cmd,
     update_relationship_cmd,
     validate,
+    wiki_group,
 )  # re-exported from cli.commands submodules
 
 cli.add_command(init)
 cli.add_command(validate)
-cli.add_command(config_views_cmd, "config-views")
 cli.add_command(connect_group, "context")
 cli.add_command(decision_records_cmd, "decision-record")
 cli.add_command(lock_cmd)
@@ -206,18 +201,8 @@ cli.add_command(snapshot_group, "snapshot")
 cli.add_command(source_group, "source")
 cli.add_command(clone_cmd, "clone")
 cli.add_command(query)
-cli.add_command(render_wiki_cmd, "render-wiki")
-cli.add_command(reload_config_cmd, "reload-config")
 cli.add_command(server_group, "server")
 cli.add_command(explain)
-cli.add_command(feedback_cmd, "feedback")
-cli.add_command(feedback_batch_cmd, "feedback-batch")
-cli.add_command(feedback_from_query_cmd, "feedback-from-query")
-cli.add_command(feedback_profile_cmd, "feedback-profile")
-cli.add_command(analyze_feedback_cmd, "analyze-feedback")
-cli.add_command(outcome_cmd, "outcome")
-cli.add_command(outcome_profile_cmd, "outcome-profile")
-cli.add_command(analyze_outcomes_cmd, "analyze-outcomes")
 cli.add_command(list_group, "list")
 cli.add_command(schema)
 cli.add_command(stats_cmd, "stats")
@@ -225,6 +210,25 @@ cli.add_command(sample)
 cli.add_command(evaluate)
 cli.add_command(lint_cmd, "lint")
 cli.add_command(inspect_group, "inspect")
+
+# config group: config-editing and review-surface verbs.
+config_group = click.Group("config", help="Edit, validate, and render the active config.")
+config_group.add_command(reload_config_cmd, "reload")
+config_group.add_command(config_views_cmd, "views")
+config_group.add_command(add_constraint_cmd, "add-constraint")
+config_group.add_command(add_decision_policy_cmd, "add-decision-policy")
+cli.add_command(config_group, "config")
+
+# feedback group: record/batch/from-query/profile (defined in feedback.py) plus analyze.
+feedback_group.add_command(analyze_feedback_cmd, "analyze")
+cli.add_command(feedback_group, "feedback")
+
+# outcome group: record/profile (defined in feedback.py) plus analyze.
+outcome_group.add_command(analyze_outcomes_cmd, "analyze")
+cli.add_command(outcome_group, "outcome")
+
+cli.add_command(wiki_group, "wiki")
+
 entity_group = click.Group("entity", help="Entity reads and writes.")
 entity_group.add_command(add_entity_cmd, "add")
 entity_group.add_command(update_entity_cmd, "update")
@@ -241,7 +245,5 @@ relationship_group.add_command(inspect_relationship_lineage_cmd, "lineage")
 cli.add_command(entity_group, "entity")
 cli.add_command(relationship_group, "relationship")
 cli.add_command(batch_direct_write_cmd, "batch-direct-write")
-cli.add_command(add_constraint_cmd, "add-constraint")
-cli.add_command(add_decision_policy_cmd, "add-decision-policy")
 cli.add_command(export_group, "export")
 cli.add_command(group_group, "group")

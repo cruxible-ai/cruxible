@@ -130,7 +130,7 @@ cruxible explain --receipt <receipt-id> --format markdown
 ### 5. Refresh Generated Docs
 
 ```bash
-cruxible config-views --config my-risk-kit/config.yaml --runtime \
+cruxible config views --config my-risk-kit/config.yaml --runtime \
   --update-readme my-risk-kit/README.md
 ```
 

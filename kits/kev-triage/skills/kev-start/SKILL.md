@@ -64,27 +64,27 @@ For fast review in GUI harnesses that can render Mermaid, show the generated
 views inline. From the repository root:
 
 ```
-uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --view all
+uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --view all
 ```
 
 If you are already inside `kits/kev-triage/`, use the same command with the
 local config path:
 
 ```
-uv run cruxible config-views --config config.yaml --runtime --view all
+uv run cruxible config views --config config.yaml --runtime --view all
 ```
 
 Also keep the README marker blocks updated so CLI and non-GUI harnesses can
 inspect the same generated views. From the repository root:
 
 ```
-uv run cruxible config-views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
+uv run cruxible config views --config kits/kev-triage/config.yaml --runtime --update-readme kits/kev-triage/README.md
 ```
 
 From inside `kits/kev-triage/`:
 
 ```
-uv run cruxible config-views --config config.yaml --runtime --update-readme README.md
+uv run cruxible config views --config config.yaml --runtime --update-readme README.md
 ```
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is code-owned
@@ -472,7 +472,7 @@ Render the wiki and inspect at least one subject page (a user asset or
 service) to confirm the linked context renders correctly:
 
 ```
-cruxible render-wiki --output wiki --scope local
+cruxible wiki render --output wiki --scope local
 ```
 
 Then open at least one rendered page under `wiki/subjects/`.

@@ -109,8 +109,8 @@ Use this to answer:
 If the state has enough history, inspect recurring review and outcome patterns:
 
 ```bash
-cruxible analyze-feedback --relationship <relationship_type>
-cruxible analyze-outcomes --anchor-type <receipt|resolution> --surface-type <query|workflow|operation> --surface-name <name>
+cruxible feedback analyze --relationship <relationship_type>
+cruxible outcome analyze --anchor-type <receipt|resolution> --surface-type <query|workflow|operation> --surface-name <name>
 ```
 
 Use whichever filters match the review surface you are investigating. Treat these as evidence about recurring process failures, not as automatic instructions to mutate the state.

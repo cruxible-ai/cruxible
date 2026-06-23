@@ -594,7 +594,7 @@ def _normalize_outcome_surface_filters(
     surface_type: str | None,
     surface_name: str | None,
 ) -> tuple[SurfaceType | None, str | None]:
-    """Normalize analyze-outcomes surface filters into one exact surface pair."""
+    """Normalize outcome-analyze surface filters into one exact surface pair."""
     if query_name is not None and workflow_name is not None:
         raise ConfigError("Specify at most one of query_name or workflow_name")
 

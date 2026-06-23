@@ -10,7 +10,7 @@ target use case is modeling Cruxible's own `docs/dev` state without turning the
 docs themselves into graph entities.
 
 Everything between `CRUXIBLE:BEGIN` / `CRUXIBLE:END` markers is regenerated
-from `config.yaml` by `cruxible config-views`; treat those blocks as code-owned
+from `config.yaml` by `cruxible config views`; treat those blocks as code-owned
 structural truth.
 
 ## Scope
