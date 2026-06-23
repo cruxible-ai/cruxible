@@ -3207,3 +3207,60 @@ def test_relationship_dry_run_validates_without_persisting(
         },
     )
     assert lookup.json()["found"] is False
+
+
+def test_http_entity_lifecycle_gating_parity(
+    app_client: TestClient,
+    server_project: Path,
+):
+    """A retired entity is hidden from live HTTP reads and surfaced by not-live.
+
+    Mirrors the service/MCP entity-lifecycle gating: the unified ``--state``
+    selector reaches the HTTP ``GET /list/entities`` route, while the by-id
+    ``GET /entities/{type}/{id}`` route is NOT gated and reveals lifecycle status.
+    """
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    # Retire BP-1001 via the batch-direct-write path using the typed lifecycle
+    # field (the only lifecycle write channel; no hand-authored metadata blob).
+    retire = app_client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json={
+            "payload": {
+                "entities": [
+                    {
+                        "entity_type": "Part",
+                        "entity_id": "BP-1001",
+                        "properties": {},
+                        "lifecycle": {"status": "retired"},
+                    }
+                ]
+            },
+            "dry_run": False,
+        },
+    )
+    assert retire.status_code == 200
+
+    def _ids(params: dict[str, str]) -> set[str]:
+        resp = app_client.get(f"/api/v1/{instance_id}/list/entities", params=params)
+        assert resp.status_code == 200, resp.text
+        return {item["entity_id"] for item in resp.json()["items"]}
+
+    # Default (no selector) is live -> retired Part is hidden.
+    assert _ids({"entity_type": "Part"}) == {"BP-1002"}
+    assert _ids({"entity_type": "Part", "relationship_state": "live"}) == {"BP-1002"}
+    # not-live surfaces exactly the gated-out set.
+    assert _ids({"entity_type": "Part", "relationship_state": "not-live"}) == {"BP-1001"}
+    # all returns everything.
+    assert _ids({"entity_type": "Part", "relationship_state": "all"}) == {
+        "BP-1001",
+        "BP-1002",
+    }
+
+    # By-id get is NOT gated and reveals the lifecycle status.
+    by_id = app_client.get(f"/api/v1/{instance_id}/entities/Part/BP-1001")
+    assert by_id.status_code == 200
+    body = by_id.json()
+    assert body["found"] is True
+    assert body["metadata"]["lifecycle"]["status"] == "retired"

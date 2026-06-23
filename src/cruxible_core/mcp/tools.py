@@ -165,7 +165,7 @@ def register_tools(server: FastMCP) -> list[str]:
         params: dict[str, Any] | None = None,
         limit: int | None = None,
         offset: int = 0,
-        relationship_state: contracts.QueryRelationshipState | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query and return results plus a receipt.
@@ -200,7 +200,7 @@ def register_tools(server: FastMCP) -> list[str]:
         definition: contracts.InlineQueryDefinition,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
-        relationship_state: contracts.QueryRelationshipState | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         """Run a bounded inline graph query for read-only agent exploration.
@@ -407,6 +407,7 @@ def register_tools(server: FastMCP) -> list[str]:
         where: dict[str, dict[str, Any]] | None = None,
         operation_type: str | None = None,
         fields: list[str] | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
     ) -> contracts.ListResult:
         """List `entities|edges|receipts|feedback|outcomes` with optional filters.
 
@@ -419,6 +420,10 @@ def register_tools(server: FastMCP) -> list[str]:
         or `{"status": {"in": ["active", "planned"]}}`.
         `fields` projects entity properties for `resource_type="entities"`.
         `operation_type` filters receipts (e.g. "query", "add_entity", "ingest").
+        `relationship_state` is the read-visibility selector (`live|accepted|all|
+        not-live|pending|reviewable`): for entities it gates by lifecycle, for
+        edges by review+lifecycle. Entities default to `live`; edges return all
+        stored edges unless a selector is given.
 
         Edge items include `edge_key` for use with `cruxible_feedback` when
         multiple edges exist between the same endpoints.
@@ -436,6 +441,7 @@ def register_tools(server: FastMCP) -> list[str]:
             where=where,
             operation_type=operation_type,
             fields=fields,
+            relationship_state=relationship_state,
         )
 
     @_tool

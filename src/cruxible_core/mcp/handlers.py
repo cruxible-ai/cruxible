@@ -324,7 +324,7 @@ def handle_query(
     params: dict[str, Any] | None = None,
     limit: int | None = None,
     offset: int = 0,
-    relationship_state: contracts.QueryRelationshipState | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a named query."""
@@ -357,7 +357,7 @@ def handle_query_inline(
     definition: contracts.InlineQueryDefinition,
     params: dict[str, Any] | None = None,
     limit: int | None = None,
-    relationship_state: contracts.QueryRelationshipState | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
 ) -> contracts.QueryToolResult:
     """Execute a bounded inline query definition without persisting it to config."""
@@ -390,7 +390,7 @@ def _client_query(
     params: dict[str, Any] | None,
     limit: int | None,
     offset: int,
-    relationship_state: contracts.QueryRelationshipState | None,
+    relationship_state: contracts.QueryVisibilityState | None,
     decision_record_id: str | None,
 ) -> contracts.QueryToolResult:
     if relationship_state is None and decision_record_id is None:
@@ -937,6 +937,7 @@ def handle_list(
     where: dict[str, dict[str, Any]] | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     return _dispatch_remote_or_local(
@@ -953,6 +954,7 @@ def handle_list(
             where=where,
             operation_type=operation_type,
             fields=fields,
+            relationship_state=relationship_state,
         ),
         lambda: api.list_resources(
             instance_id,
@@ -967,6 +969,7 @@ def handle_list(
             where=where,
             operation_type=operation_type,
             fields=fields,
+            relationship_state=relationship_state,
         ),
     )
 

@@ -29,7 +29,8 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance, Rela
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.engine import execute_query_definition
-from cruxible_core.query.enums import QueryRelationshipState
+from cruxible_core.query.entity_state import resolve_entity_visibility_state
+from cruxible_core.query.enums import QueryVisibilityState
 from cruxible_core.query.predicates import (
     build_predicate_context,
     evaluate_query_predicates,
@@ -105,7 +106,7 @@ def service_query(
     query_name: str,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and persist the receipt.
@@ -161,7 +162,7 @@ def service_evaluate_query(
     query_name: str,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryServiceResult:
     """Evaluate a named query without persisting receipts or decision events."""
     return _evaluate_query_result(
@@ -179,7 +180,7 @@ def service_query_surface(
     *,
     limit: int | None = None,
     offset: int = 0,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a named query and apply caller-facing result windowing."""
@@ -210,7 +211,7 @@ def service_query_inline_surface(
     params: dict[str, Any],
     *,
     limit: int | None = None,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
     """Execute a bounded inline query definition without persisting it to config."""
@@ -276,7 +277,7 @@ def service_evaluate_query_surface(
     params: dict[str, Any],
     *,
     limit: int | None = None,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryServiceResult:
     """Evaluate a named query with caller-facing truncation and no persisted receipt."""
     surface_limit = limit
@@ -301,7 +302,7 @@ def _evaluate_query_result(
     query_name: str,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryServiceResult:
     config = instance.load_config()
     graph = instance.load_graph()
@@ -344,7 +345,7 @@ def _evaluate_inline_query_result(
     query_schema: NamedQuerySchema,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryServiceResult:
     config = instance.load_config()
     graph = instance.load_graph()
@@ -921,7 +922,7 @@ def service_list(
     receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
     where: Mapping[str, Mapping[str, Any]] | None = None,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = None,
     limit: int = 50,
@@ -929,11 +930,17 @@ def service_list(
 ) -> ListResult:
     """List entities, edges, receipts, feedback, or outcomes.
 
-    ``relationship_state`` (edges only) selects edge visibility through the same
-    shared :func:`relationship_matches_query_state` filter the query engine uses,
-    so a filtered ``list edges`` view agrees exactly with traversal/include
-    visibility. ``None`` (the default) keeps the stored-edge inspection contract:
-    every stored edge is returned regardless of review/lifecycle state.
+    ``relationship_state`` is the unified read-visibility selector. For ENTITIES
+    it gates by lifecycle through the shared :func:`entity_matches_query_state`
+    filter (the query engine applies it); for EDGES it gates by review AND
+    lifecycle through :func:`relationship_matches_query_state`. The same selector
+    therefore agrees exactly with traversal/include visibility across surfaces.
+
+    Defaults differ by resource to preserve each surface's contract: entities
+    default to ``live`` (only live entities), while edges default to ``None`` --
+    the stored-edge inspection contract returns every stored edge regardless of
+    review/lifecycle state. Pass an explicit selector (``all`` / ``not-live`` /
+    ...) to override either.
     """
     _VALID_RESOURCES = ("entities", "edges", "receipts", "feedback", "outcomes")
     if resource not in _VALID_RESOURCES:
@@ -945,8 +952,8 @@ def service_list(
         raise ConfigError("where is only supported for entities and edges")
     if property_filter is not None and where is not None:
         raise ConfigError("property_filter and where are mutually exclusive")
-    if relationship_state is not None and resource != "edges":
-        raise ConfigError("relationship_state is only supported for edges")
+    if relationship_state is not None and resource not in ("entities", "edges"):
+        raise ConfigError("state is only supported for entities and edges")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
 
@@ -958,6 +965,7 @@ def service_list(
             entity_type=entity_type,
             property_filter=property_filter,
             where=where,
+            relationship_state=relationship_state,
             fields=fields,
             limit=limit,
             offset=offset,
@@ -1026,6 +1034,7 @@ def _service_list_entities(
     entity_type: str,
     property_filter: Mapping[str, Any] | None,
     where: Mapping[str, Mapping[str, Any]] | None,
+    relationship_state: QueryVisibilityState | None,
     fields: list[str] | None,
     limit: int,
     offset: int,
@@ -1039,11 +1048,19 @@ def _service_list_entities(
         property_filter=property_filter,
         where=where,
     )
+    # Default ``list entities`` to live-only; honor an explicit visibility
+    # selector (``all`` / ``not-live`` / ...) when the caller provides one. The
+    # synthetic query routes through the engine, so entity-lifecycle gating is
+    # applied by the same chokepoint every other read path uses. Entities have no
+    # review axis, so the review-only selectors collapse to ``live`` here (they
+    # would otherwise trip the path-shape constraints those values carry).
+    entity_state = resolve_entity_visibility_state(relationship_state or "live")
     query_schema = NamedQuerySchema(
         mode="collection",
         returns=entity_type,
         result_shape="entity",
         where=query_where,
+        relationship_state=entity_state,
     )
     query_result = execute_query_definition(
         config,
@@ -1069,7 +1086,7 @@ def _service_list_edges(
     relationship_type: str | None,
     property_filter: Mapping[str, Any] | None,
     where: Mapping[str, Mapping[str, Any]] | None,
-    relationship_state: QueryRelationshipState | None,
+    relationship_state: QueryVisibilityState | None,
     limit: int,
     offset: int,
 ) -> ListResult:

@@ -33,6 +33,10 @@ from cruxible_core.service import (
     service_batch_direct_write,
     service_reload_config,
 )
+from cruxible_core.service.lifecycle_inputs import (
+    entity_metadata_with_lifecycle,
+    relationship_lifecycle_state,
+)
 
 
 def _field_assignment(raw: str, *, option_name: str) -> tuple[str, str]:
@@ -296,7 +300,7 @@ def _contract_batch_payload_to_service(
                 entity_type=entity.entity_type,
                 entity_id=entity.entity_id,
                 properties=entity.properties,
-                metadata=entity.metadata,
+                metadata=entity_metadata_with_lifecycle(entity.metadata, entity.lifecycle),
             )
             for entity in payload.entities
         ],
@@ -313,6 +317,7 @@ def _contract_batch_payload_to_service(
                 source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
+                lifecycle=relationship_lifecycle_state(edge.lifecycle),
             )
             for edge in payload.relationships
         ],
@@ -409,6 +414,7 @@ def _entity_payload(
     entity_type: str,
     entity_id: str,
     properties: Mapping[str, Any],
+    lifecycle: contracts.EntityLifecycleInput | None = None,
 ) -> contracts.BatchDirectWritePayload:
     return contracts.BatchDirectWritePayload(
         entities=[
@@ -416,11 +422,50 @@ def _entity_payload(
                 entity_type=entity_type,
                 entity_id=entity_id,
                 properties=dict(properties),
+                lifecycle=lifecycle,
             )
         ],
         relationships=[],
         shared_evidence={},
     )
+
+
+def _build_entity_lifecycle_input(
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
+) -> contracts.EntityLifecycleInput | None:
+    """Build a typed entity lifecycle input from the CLI lifecycle options."""
+    if lifecycle_status is None:
+        if lifecycle_reason is not None:
+            raise click.UsageError("--lifecycle-reason requires --lifecycle-status")
+        return None
+    try:
+        return contracts.EntityLifecycleInput.model_validate(
+            {"status": lifecycle_status, "reason": lifecycle_reason}
+        )
+    except ValidationError as exc:
+        raise click.BadParameter(f"--lifecycle-status is invalid: {exc}") from exc
+
+
+def _build_relationship_lifecycle_input(
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
+) -> contracts.RelationshipLifecycleInput | None:
+    """Build a typed relationship lifecycle input from the CLI lifecycle options."""
+    if lifecycle_status is None:
+        if lifecycle_reason is not None:
+            raise click.UsageError("--lifecycle-reason requires --lifecycle-status")
+        return None
+    try:
+        return contracts.RelationshipLifecycleInput.model_validate(
+            {"status": lifecycle_status, "reason": lifecycle_reason}
+        )
+    except ValidationError as exc:
+        raise click.BadParameter(f"--lifecycle-status is invalid: {exc}") from exc
+
+
+_ENTITY_LIFECYCLE_STATUSES = ("live", "superseded", "retired", "orphaned")
+_RELATIONSHIP_LIFECYCLE_STATUSES = ("active", "inactive", "superseded", "retracted")
 
 
 def _relationship_payload(
@@ -435,6 +480,7 @@ def _relationship_payload(
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
     pending: bool = False,
+    lifecycle: contracts.RelationshipLifecycleInput | None = None,
 ) -> contracts.BatchDirectWritePayload:
     return contracts.BatchDirectWritePayload(
         entities=[],
@@ -450,6 +496,7 @@ def _relationship_payload(
                 evidence_refs=[_parse_evidence_ref(raw) for raw in evidence_refs],
                 source_evidence=[_parse_source_evidence(raw) for raw in source_evidence],
                 evidence_rationale=evidence_rationale,
+                lifecycle=lifecycle,
             )
         ],
         shared_evidence={},
@@ -489,6 +536,17 @@ def _require_property_assignments(properties: Mapping[str, Any], *, command_name
     multiple=True,
     help="Typed JSON property assignment FIELD=JSON. Repeat for multiple properties.",
 )
+@click.option(
+    "--lifecycle-status",
+    type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
+    default=None,
+    help="Typed entity lifecycle status (live, superseded, retired, orphaned).",
+)
+@click.option(
+    "--lifecycle-reason",
+    default=None,
+    help="Optional reason for the lifecycle status (requires --lifecycle-status).",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
@@ -500,6 +558,8 @@ def add_entity_cmd(
     props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
     dry_run: bool,
     output_json: bool,
 ) -> None:
@@ -511,10 +571,11 @@ def add_entity_cmd(
         entity_id_option=entity_id_option,
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
+    lifecycle = _build_entity_lifecycle_input(lifecycle_status, lifecycle_reason)
     if _entity_exists(entity_type, entity_id, command_name="entity add"):
         raise DataValidationError(f"Entity {entity_type}:{entity_id} already exists")
     result = _run_batch_payload(
-        _entity_payload(entity_type, entity_id, properties),
+        _entity_payload(entity_type, entity_id, properties, lifecycle),
         dry_run=dry_run,
         command_name="entity add",
     )
@@ -544,6 +605,17 @@ def add_entity_cmd(
     multiple=True,
     help="Typed JSON property assignment FIELD=JSON. Repeat for multiple properties.",
 )
+@click.option(
+    "--lifecycle-status",
+    type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
+    default=None,
+    help="Typed entity lifecycle status (live, superseded, retired, orphaned).",
+)
+@click.option(
+    "--lifecycle-reason",
+    default=None,
+    help="Optional reason for the lifecycle status (requires --lifecycle-status).",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
@@ -555,10 +627,18 @@ def update_entity_cmd(
     props: str | None,
     set_values: tuple[str, ...],
     set_json_values: tuple[str, ...],
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
     dry_run: bool,
     output_json: bool,
 ) -> None:
-    """Update one existing entity using FIELD=VALUE property assignments."""
+    """Update one existing entity's properties and/or lifecycle state.
+
+    Set ``--lifecycle-status retired`` (or ``superseded``/``orphaned``) to move an
+    entity onto the entity-lifecycle axis (the canonical soft-delete); it is then
+    gated out of live reads while remaining fetchable by id. The typed lifecycle
+    write replaces the entity's lifecycle state and preserves other metadata.
+    """
     entity_type, entity_id = _resolve_entity_identity(
         entity_type,
         entity_id,
@@ -566,11 +646,15 @@ def update_entity_cmd(
         entity_id_option=entity_id_option,
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
-    _require_property_assignments(properties, command_name="update entity")
+    lifecycle = _build_entity_lifecycle_input(lifecycle_status, lifecycle_reason)
+    if not properties and lifecycle is None:
+        raise click.UsageError(
+            "update entity requires at least one --set, --set-json, --props, or --lifecycle-status"
+        )
     if not _entity_exists(entity_type, entity_id, command_name="entity update"):
         raise DataValidationError(f"Entity {entity_type}:{entity_id} not found")
     result = _run_batch_payload(
-        _entity_payload(entity_type, entity_id, properties),
+        _entity_payload(entity_type, entity_id, properties, lifecycle),
         dry_run=dry_run,
         command_name="entity update",
     )
@@ -628,6 +712,20 @@ def update_entity_cmd(
     is_flag=True,
     help="Create the relationship as pending review instead of live state.",
 )
+@click.option(
+    "--lifecycle-status",
+    type=click.Choice(_RELATIONSHIP_LIFECYCLE_STATUSES),
+    default=None,
+    help=(
+        "Typed edge lifecycle status (active, inactive, superseded, retracted). "
+        "Sets only assertion.lifecycle; cannot approve/reject the edge."
+    ),
+)
+@click.option(
+    "--lifecycle-reason",
+    default=None,
+    help="Optional reason for the lifecycle status (requires --lifecycle-status).",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
@@ -649,6 +747,8 @@ def add_relationship_cmd(
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
     pending: bool,
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
     dry_run: bool,
     output_json: bool,
 ) -> None:
@@ -667,6 +767,7 @@ def add_relationship_cmd(
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
     _validate_relationship_evidence(evidence_refs, source_evidence)
+    lifecycle = _build_relationship_lifecycle_input(lifecycle_status, lifecycle_reason)
     if _relationship_exists(
         relationship_type,
         from_type,
@@ -691,6 +792,7 @@ def add_relationship_cmd(
             source_evidence=source_evidence,
             evidence_rationale=evidence_rationale,
             pending=pending,
+            lifecycle=lifecycle,
         ),
         dry_run=dry_run,
         command_name="relationship add",
@@ -747,6 +849,21 @@ def add_relationship_cmd(
     default=None,
     help="Optional rationale for the attached relationship evidence.",
 )
+@click.option(
+    "--lifecycle-status",
+    type=click.Choice(_RELATIONSHIP_LIFECYCLE_STATUSES),
+    default=None,
+    help=(
+        "Typed edge lifecycle status (active, inactive, superseded, retracted) "
+        "-- e.g. retract a live edge. Sets only assertion.lifecycle; cannot "
+        "approve/reject the edge."
+    ),
+)
+@click.option(
+    "--lifecycle-reason",
+    default=None,
+    help="Optional reason for the lifecycle status (requires --lifecycle-status).",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without mutating graph state.")
 @json_option
 @handle_errors
@@ -767,10 +884,18 @@ def update_relationship_cmd(
     evidence_refs: tuple[str, ...],
     source_evidence: tuple[str, ...],
     evidence_rationale: str | None,
+    lifecycle_status: str | None,
+    lifecycle_reason: str | None,
     dry_run: bool,
     output_json: bool,
 ) -> None:
-    """Update one existing relationship using FIELD=VALUE property assignments."""
+    """Update one existing relationship's properties, evidence, or lifecycle.
+
+    Set ``--lifecycle-status retracted`` (or ``superseded``/``inactive``) to move
+    the edge off live graph semantics. This typed lifecycle write sets ONLY the
+    edge's lifecycle state -- it can never approve or reject the edge (that stays
+    exclusive to the governed feedback / group-resolve paths).
+    """
     relationship_type, from_type, from_id, to_type, to_id = _resolve_relationship_identity(
         relationship_type,
         from_type,
@@ -785,10 +910,13 @@ def update_relationship_cmd(
     )
     properties = _parse_property_inputs(props, set_values, set_json_values)
     _validate_relationship_evidence(evidence_refs, source_evidence)
-    if not (properties or evidence_refs or source_evidence or evidence_rationale):
+    lifecycle = _build_relationship_lifecycle_input(lifecycle_status, lifecycle_reason)
+    if not (
+        properties or evidence_refs or source_evidence or evidence_rationale or lifecycle
+    ):
         raise click.UsageError(
             "update relationship requires at least one --set, --set-json, "
-            "--evidence-ref, --source-evidence, or --evidence-rationale"
+            "--evidence-ref, --source-evidence, --evidence-rationale, or --lifecycle-status"
         )
     if not _relationship_exists(
         relationship_type,
@@ -813,6 +941,7 @@ def update_relationship_cmd(
             evidence_refs=evidence_refs,
             source_evidence=source_evidence,
             evidence_rationale=evidence_rationale,
+            lifecycle=lifecycle,
         ),
         dry_run=dry_run,
         command_name="relationship update",

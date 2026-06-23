@@ -112,7 +112,7 @@ named_queries: {}
   #   returns: EntityB
   #   result_shape: path          # path, entity, relationship
   #   dedupe: path                # path, entity, none
-  #   relationship_state: live    # live, accepted, pending, reviewable
+  #   relationship_state: live    # live, accepted, all, not-live, pending, reviewable
   #   allow_relationship_state_override: false
   #   traversal:
   #     - relationship: entity_a_relates_to_entity_b

@@ -335,7 +335,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `params` | no | object | null |  |
 | `limit` | no | integer | null |  |
 | `offset` | no | integer | Number of results to skip before the returned window. |
-| `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
+| `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
@@ -361,7 +361,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `definition` | yes | InlineQueryDefinition | Inline query definition object: same JSON shape as a configured named query (`mode`, `returns`, `traversal`, `where`, `select`, `order_by`, `include`, `limit`, `max_paths`, `max_paths_per_result`, ...) plus a required `name`. |
 | `params` | no | object | null |  |
 | `limit` | no | integer | null |  |
-| `relationship_state` | no | string | null | One of `live`, `accepted`, `pending`, or `reviewable`. |
+| `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
 | `decision_record_id` | no | string | null |  |
 
 **Returns:** Top-level fields: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `param_hints`, `policy_summary`
@@ -627,6 +627,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `where` | no | object | null | Bounded entity/edge property predicates such as `{"status": {"eq": "active"}}`, `{"title": {"contains": "query"}}`, or `{"status": {"in": ["active", "planned"]}}`. |
 | `operation_type` | no | string | null |  |
 | `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
+| `relationship_state` | no | string | null | Read-visibility state (`live`, `accepted`, `all`, `not-live`, `pending`, `reviewable`). For entities it gates by lifecycle (default `live`); for edges by review+lifecycle (default returns all stored edges). |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 

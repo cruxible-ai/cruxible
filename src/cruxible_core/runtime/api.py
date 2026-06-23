@@ -111,6 +111,10 @@ from cruxible_core.service import (
     service_update_trust_status,
     service_validate,
 )
+from cruxible_core.service.lifecycle_inputs import (
+    entity_metadata_with_lifecycle,
+    relationship_lifecycle_state,
+)
 from cruxible_core.service.snapshots import paths_overlap, read_instance_backup_manifest
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
@@ -1350,7 +1354,7 @@ def query(
     limit: int | None = None,
     *,
     offset: int = 0,
-    relationship_state: contracts.QueryRelationshipState | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
 ) -> contracts.QueryToolResult:
@@ -1378,7 +1382,7 @@ def query_inline(
     params: dict[str, Any] | None = None,
     limit: int | None = None,
     *,
-    relationship_state: contracts.QueryRelationshipState | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
     decision_record_id: str | None = None,
     surface: str = "local",
 ) -> contracts.QueryToolResult:
@@ -1723,6 +1727,7 @@ def list_resources(
     operation_type: str | None = None,
     fields: list[str] | None = None,
     offset: int = 0,
+    relationship_state: contracts.QueryVisibilityState | None = None,
 ) -> contracts.ListResult:
     """List entities, edges, receipts, feedback, or outcomes."""
     check_permission("cruxible_list", instance_id=instance_id)
@@ -1739,6 +1744,7 @@ def list_resources(
         where=where,
         operation_type=operation_type,
         fields=fields,
+        relationship_state=relationship_state,
         limit=limit,
         offset=offset,
     )
@@ -2478,6 +2484,7 @@ def _relationship_input_to_service(
         ],
         source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
         evidence_rationale=edge.evidence_rationale,
+        lifecycle=relationship_lifecycle_state(edge.lifecycle),
     )
 
 
@@ -2490,7 +2497,7 @@ def _batch_payload_to_service(
                 entity_type=entity.entity_type,
                 entity_id=entity.entity_id,
                 properties=entity.properties,
-                metadata=entity.metadata,
+                metadata=entity_metadata_with_lifecycle(entity.metadata, entity.lifecycle),
             )
             for entity in payload.entities
         ],
@@ -2510,6 +2517,7 @@ def _batch_payload_to_service(
                 source_evidence=[ref.model_dump(mode="python") for ref in edge.source_evidence],
                 evidence_rationale=edge.evidence_rationale,
                 shared_evidence_keys=list(edge.shared_evidence_keys),
+                lifecycle=relationship_lifecycle_state(edge.lifecycle),
             )
             for edge in payload.relationships
         ],
@@ -2587,7 +2595,7 @@ def add_entities(
             entity_id=entity.entity_id,
             properties=entity.properties,
             metadata={
-                **entity.metadata,
+                **entity_metadata_with_lifecycle(entity.metadata, entity.lifecycle),
                 **({"actor_context": dump_actor_context(actor)} if actor is not None else {}),
             },
         )

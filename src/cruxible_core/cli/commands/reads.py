@@ -59,6 +59,7 @@ from cruxible_core.cli.commands._common import (
     console,
     decision_record_option,
     json_option,
+    state_option,
 )
 from cruxible_core.cli.formatting import (
     entities_table,
@@ -403,7 +404,7 @@ def _run_query_command(
     params = _parse_params(param)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
     effective_relationship_state = cast(
-        contracts.QueryRelationshipState | None,
+        contracts.QueryVisibilityState | None,
         relationship_state,
     )
     client = _common._get_client()
@@ -612,12 +613,7 @@ def query(ctx: click.Context) -> None:
 @click.argument("query_name")
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
-@click.option(
-    "--relationship-state",
-    type=click.Choice(["live", "accepted", "pending", "reviewable"]),
-    default=None,
-    help="Override query relationship visibility state.",
-)
+@state_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
@@ -626,7 +622,7 @@ def query_run(
     query_name: str,
     param: tuple[str, ...],
     limit: int | None,
-    relationship_state: str | None,
+    state: str | None,
     count_only: bool,
     decision_record_id: str | None,
     output_json: bool,
@@ -636,7 +632,7 @@ def query_run(
         query_name=query_name,
         param=param,
         limit=limit,
-        relationship_state=relationship_state,
+        relationship_state=state,
         count_only=count_only,
         output_json=output_json,
         decision_record_id=decision_record_id,
@@ -657,12 +653,7 @@ def query_run(
 )
 @click.option("--param", multiple=True, help="Query parameter as KEY=VALUE.")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Max results to display.")
-@click.option(
-    "--relationship-state",
-    type=click.Choice(["live", "accepted", "pending", "reviewable"]),
-    default=None,
-    help="Override query relationship visibility state.",
-)
+@state_option
 @click.option("--count", "count_only", is_flag=True, help="Show only summary metadata.")
 @decision_record_option
 @json_option
@@ -672,7 +663,7 @@ def query_inline_cmd(
     definition_file: Path | None,
     param: tuple[str, ...],
     limit: int | None,
-    relationship_state: str | None,
+    state: str | None,
     count_only: bool,
     decision_record_id: str | None,
     output_json: bool,
@@ -685,8 +676,8 @@ def query_inline_cmd(
     params = _parse_params(param)
     resolved_decision_record_id = _resolve_decision_record_id(decision_record_id)
     effective_relationship_state = cast(
-        contracts.QueryRelationshipState | None,
-        relationship_state,
+        contracts.QueryVisibilityState | None,
+        state,
     )
     response_limit = 1 if count_only and limit is None else limit
     query_name = f"inline:{definition.name}"

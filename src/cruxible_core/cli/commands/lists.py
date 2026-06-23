@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -19,6 +19,7 @@ from cruxible_core.cli.commands._common import (
     _require_local_instance,
     console,
     json_option,
+    state_option,
 )
 from cruxible_core.cli.formatting import (
     edges_table,
@@ -76,6 +77,7 @@ def list_group() -> None:
 )
 @click.option("--limit", default=50, help="Max entities to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
+@state_option
 @json_option
 @handle_errors
 def list_entities(
@@ -84,11 +86,13 @@ def list_entities(
     where_values: tuple[str, ...],
     limit: int,
     offset: int,
+    state: str | None,
     output_json: bool,
 ) -> None:
     """List entities of a given type."""
     projected_fields = list(fields) or None
     where = _parse_where_options(where_values)
+    visibility_state = cast("contracts.QueryVisibilityState | None", state)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -96,8 +100,9 @@ def list_entities(
             entity_type=entity_type,
             limit=limit,
             offset=offset,
-            **({"where": where} if where is not None else {}),
-            **({"fields": projected_fields} if projected_fields is not None else {}),
+            relationship_state=visibility_state,
+            where=where,
+            fields=projected_fields,
         ),
         lambda instance: service_list(
             instance,
@@ -105,8 +110,9 @@ def list_entities(
             entity_type=entity_type,
             limit=limit,
             offset=offset,
-            **({"where": where} if where is not None else {}),
-            **({"fields": projected_fields} if projected_fields is not None else {}),
+            relationship_state=visibility_state,
+            where=where,
+            fields=projected_fields,
         ),
     )
     entities = (
@@ -308,6 +314,7 @@ def list_outcomes(receipt_id: str | None, limit: int, offset: int, output_json: 
 )
 @click.option("--limit", default=50, help="Max edges to show.")
 @click.option("--offset", default=0, type=click.IntRange(min=0), help="Rows to skip.")
+@state_option
 @json_option
 @handle_errors
 def list_edges(
@@ -315,10 +322,18 @@ def list_edges(
     where_values: tuple[str, ...],
     limit: int,
     offset: int,
+    state: str | None,
     output_json: bool,
 ) -> None:
-    """List edges in the graph."""
+    """List edges in the graph.
+
+    By default every stored edge is returned (the inspection contract). Pass
+    ``--state`` to gate edges by review+lifecycle: ``live`` hides
+    rejected/closed edges, ``not-live`` surfaces exactly those, ``all`` returns
+    everything.
+    """
     where = _parse_where_options(where_values)
+    visibility_state = cast("contracts.QueryVisibilityState | None", state)
     result = _dispatch_cli_instance(
         lambda client, instance_id: client.list(
             instance_id,
@@ -326,7 +341,8 @@ def list_edges(
             relationship_type=relationship,
             limit=limit,
             offset=offset,
-            **({"where": where} if where is not None else {}),
+            relationship_state=visibility_state,
+            where=where,
         ),
         lambda instance: service_list(
             instance,
@@ -334,7 +350,8 @@ def list_edges(
             relationship_type=relationship,
             limit=limit,
             offset=offset,
-            **({"where": where} if where is not None else {}),
+            relationship_state=visibility_state,
+            where=where,
         ),
     )
     if output_json:

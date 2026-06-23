@@ -512,7 +512,7 @@ class TestWorkflowExecutor:
         proposal_workflow_instance.save_config(config)
         write_lock_for_instance(proposal_workflow_instance)
 
-        with pytest.raises(QueryExecutionError, match="relationship_state override"):
+        with pytest.raises(QueryExecutionError, match="visibility state override"):
             execute_workflow(
                 proposal_workflow_instance,
                 proposal_workflow_instance.load_config(),

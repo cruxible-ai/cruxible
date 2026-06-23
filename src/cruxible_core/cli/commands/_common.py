@@ -55,6 +55,21 @@ decision_record_option = click.option(
     help="Decision record ID for audit logging.",
 )
 
+# Unified read-visibility selector. Gates entities by lifecycle and edges by
+# review+lifecycle through the same engine filter, so a single flag controls
+# every read surface. ``live`` is the implicit default (None => server/service
+# default). ``not-live`` and ``all`` are the audit/recovery views.
+state_option = click.option(
+    "--state",
+    "state",
+    type=click.Choice(["live", "accepted", "all", "not-live", "pending", "reviewable"]),
+    default=None,
+    help=(
+        "Read-visibility state: live (default), accepted, all, not-live, "
+        "pending, or reviewable."
+    ),
+)
+
 
 def _emit_json(data: Any) -> None:
     """Emit structured JSON to stdout, bypassing Rich."""

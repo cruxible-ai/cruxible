@@ -92,7 +92,14 @@ class TestInputSchema:
         enum_schema = next(
             item for item in relationship_state["anyOf"] if item.get("type") == "string"
         )
-        assert enum_schema["enum"] == ["live", "accepted", "pending", "reviewable"]
+        assert enum_schema["enum"] == [
+            "live",
+            "accepted",
+            "all",
+            "not-live",
+            "pending",
+            "reviewable",
+        ]
 
     def test_query_inline_schema(self, server):
         schemas = _get_tool_schemas(server)

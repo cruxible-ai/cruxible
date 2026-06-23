@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
+from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
 from cruxible_core.graph.operations import (
@@ -63,6 +64,10 @@ class _PreparedBatchRelationship:
     relationship: RelationshipInstance
     evidence_refs: list[EvidenceRef]
     pending: bool = False
+    # Typed, review-SAFE lifecycle override; applied to ``assertion.lifecycle``
+    # only (see ``apply_relationship``). ``None`` leaves lifecycle at its add/
+    # update default.
+    lifecycle: RelationshipLifecycleState | None = None
 
 
 @dataclass
@@ -680,6 +685,7 @@ def _prepare_batch_direct_write(
                 relationship=edge,
                 evidence_refs=refs,
                 pending=relationship.pending,
+                lifecycle=relationship.lifecycle,
             )
         )
         _record_evidence_sources(evidence_sources, evidence_seen, refs)
@@ -703,6 +709,7 @@ def _prepare_batch_direct_write(
                 source=source,
                 source_ref=source_ref,
                 pending=relationship_item.pending,
+                lifecycle=relationship_item.lifecycle,
             )
 
     try:
@@ -875,6 +882,7 @@ def service_batch_direct_write(
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
                 pending=relationship_item.pending,
+                lifecycle=relationship_item.lifecycle,
             )
             persisted_relationship = prepared.graph.get_relationship(
                 edge.from_type,
@@ -1118,9 +1126,8 @@ def service_add_relationship_inputs(
     _create_receipt: bool = True,
 ) -> AddRelationshipResult:
     """Normalize relationship write inputs, then add or update graph relationships."""
-    normalized = [
-        _relationship_from_input(instance, relationship) for relationship in relationships
-    ]
+    inputs = list(relationships)
+    normalized = [_relationship_from_input(instance, relationship) for relationship in inputs]
     return service_add_relationships(
         instance,
         [relationship for relationship, _pending in normalized],
@@ -1130,6 +1137,7 @@ def service_add_relationship_inputs(
         actor_context=actor_context,
         _create_receipt=_create_receipt,
         pending=[pending for _relationship, pending in normalized],
+        lifecycle=[relationship.lifecycle for relationship in inputs],
     )
 
 
@@ -1143,6 +1151,9 @@ def service_add_relationships(
     actor_context: GovernedActorContext | None = None,
     _create_receipt: bool = True,
     pending: bool | Sequence[bool] = False,
+    lifecycle: RelationshipLifecycleState
+    | None
+    | Sequence[RelationshipLifecycleState | None] = None,
 ) -> AddRelationshipResult:
     """Add or update relationships in the graph (batch upsert).
 
@@ -1150,6 +1161,11 @@ def service_add_relationships(
     New edges get provenance stamped. Updated edges merge domain properties and
     preserve existing relationship metadata.
     Raises DataValidationError on duplicates within the batch or schema violations.
+
+    ``lifecycle`` is the typed, review-SAFE lifecycle write channel (mirrors the
+    batch direct-write path). When supplied per edge it is threaded to
+    ``apply_relationship`` which sets ONLY ``assertion.lifecycle``; the review axis
+    and group override are never touched from here.
     """
     check_upstream_type_ownership(
         instance.get_upstream_metadata(),
@@ -1176,9 +1192,17 @@ def service_add_relationships(
         )
         if len(pending_flags) != len(relationships):
             raise DataValidationError("pending flag count must match relationship count")
+        lifecycle_states: list[RelationshipLifecycleState | None] = (
+            list(lifecycle)
+            if isinstance(lifecycle, Sequence)
+            else [lifecycle] * len(relationships)
+        )
+        if len(lifecycle_states) != len(relationships):
+            raise DataValidationError("lifecycle count must match relationship count")
 
         for i, edge in enumerate(relationships, start=1):
             pending_flag = pending_flags[i - 1]
+            lifecycle_state = lifecycle_states[i - 1]
             key = edge.identity_tuple()
             if key in batch_seen:
                 errors.append(
@@ -1220,7 +1244,7 @@ def service_add_relationships(
                     )
                 continue
             batch_seen.add(key)
-            prepared_relationships.append((validated, edge, pending_flag))
+            prepared_relationships.append((validated, edge, pending_flag, lifecycle_state))
             if builder:
                 builder.record_validation(
                     passed=True,
@@ -1241,7 +1265,9 @@ def service_add_relationships(
             instance,
             config,
             current_graph=graph,
-            relationships=[validated for validated, _edge, _pending_flag in prepared_relationships],
+            relationships=[
+                validated for validated, _edge, _pending_flag, _lifecycle in prepared_relationships
+            ],
         )
         for error in guard_errors:
             if builder:
@@ -1258,7 +1284,7 @@ def service_add_relationships(
         interactions = _detect_direct_write_group_interactions(
             instance,
             graph,
-            [edge for _validated, edge, _pending_flag in prepared_relationships],
+            [edge for _validated, edge, _pending_flag, _lifecycle in prepared_relationships],
             group_store=ctx.uow.groups if ctx.uow is not None else None,
         )
         _record_group_interaction_validation(builder, interactions)
@@ -1267,12 +1293,12 @@ def service_add_relationships(
             return AddRelationshipResult(
                 added=sum(
                     1
-                    for validated, _edge, _pending_flag in prepared_relationships
+                    for validated, _edge, _pending_flag, _lifecycle in prepared_relationships
                     if not validated.is_update
                 ),
                 updated=sum(
                     1
-                    for validated, _edge, _pending_flag in prepared_relationships
+                    for validated, _edge, _pending_flag, _lifecycle in prepared_relationships
                     if validated.is_update
                 ),
                 pending_conflicts=list(interactions.pending_conflicts),
@@ -1282,7 +1308,7 @@ def service_add_relationships(
         added = 0
         updated = 0
         touched_relationships = []
-        for validated, edge, pending_flag in prepared_relationships:
+        for validated, edge, pending_flag, lifecycle_state in prepared_relationships:
             apply_relationship(
                 graph,
                 validated,
@@ -1291,6 +1317,7 @@ def service_add_relationships(
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
                 pending=pending_flag,
+                lifecycle=lifecycle_state,
             )
             persisted = graph.get_relationship(
                 edge.from_type,

@@ -91,22 +91,28 @@ before adding domain-specific variants: sequencing dependencies, impediment
 blockers, composition roll-ups, lineage/follow-up, replacement, review gates,
 and durable state notes should remain distinct relationships.
 
-## Query Relationship-State Visibility
+## Read-Visibility State (`--state`)
 
-Queries traverse relationships at one of four visibility states, set with the
-`relationship_state` query field (default `live`). Choose the state that matches
-whether you want only accepted state, only proposals awaiting review, or both:
+Reads are gated at one read-visibility state, set with the `--state` flag (CLI),
+the `state` MCP/HTTP parameter, or the `relationship_state` query-config field
+(default `live`). The SAME selector gates **entities** (by lifecycle) and
+**relationships** (by review AND lifecycle), so one flag controls every surface:
 
-| State | Includes |
-|-------|----------|
-| `live` | Active relationships whose review state is neither `pending` nor `rejected` — deterministic/unreviewed state plus approved state. The default. |
-| `accepted` | Active relationships whose review status is `approved`. |
-| `pending` | Active relationships whose review status is `pending` (proposals awaiting review). |
-| `reviewable` | `live` relationships plus pending relationships — use for triage/context queries where an agent should see accepted state and still-reviewable proposals in one evidence path. |
+| State | Entities (lifecycle) | Relationships (review + lifecycle) |
+|-------|----------------------|------------------------------------|
+| `live` (default) | Only `lifecycle.status == live` entities. | Active edges whose review state is neither `pending` nor `rejected`. |
+| `accepted` | Resolves to `live` (entities have no review axis). | Active edges whose review status is `approved`. |
+| `all` | Every entity, regardless of lifecycle. | Every stored edge, regardless of review/lifecycle. |
+| `not-live` | Exactly the gated-out set: `retired`/`superseded`/`orphaned` entities. | Edges hidden from live reads: review-`rejected` OR lifecycle closed/retracted/superseded. |
+| `pending` | Resolves to `live`. | Active edges whose review status is `pending` (proposals awaiting review). |
+| `reviewable` | Resolves to `live`. | `live` edges plus pending edges — triage/context in one evidence path. |
+
+An explicit by-id `entity get` is **never gated**: it returns the entity and
+shows its `lifecycle.status` even when hidden from live reads (recovery path).
 
 `pending` and `reviewable` require `result_shape: path` or `relationship` and do
-not allow `dedupe: entity`. See [Config Reference](config-reference.md) for the
-full query-field rules.
+not allow `dedupe: entity` (they refine the relationship review axis). See
+[Config Reference](config-reference.md) for the full query-field rules.
 
 ## Recipe: Validate And Lock After Edits
 

@@ -39,6 +39,14 @@
         "unavailable"
       ]
     },
+    "EntityLifecycleStatus": {
+      "values": [
+        "live",
+        "superseded",
+        "retired",
+        "orphaned"
+      ]
+    },
     "FeedbackAction": {
       "values": [
         "approve",
@@ -149,14 +157,6 @@
         "traversal"
       ]
     },
-    "QueryRelationshipState": {
-      "values": [
-        "live",
-        "accepted",
-        "pending",
-        "reviewable"
-      ]
-    },
     "QueryResultShape": {
       "values": [
         "entity",
@@ -164,11 +164,29 @@
         "relationship"
       ]
     },
+    "QueryVisibilityState": {
+      "values": [
+        "live",
+        "accepted",
+        "all",
+        "not-live",
+        "pending",
+        "reviewable"
+      ]
+    },
     "ReceiptExplanationFormat": {
       "values": [
         "json",
         "markdown",
         "mermaid"
+      ]
+    },
+    "RelationshipLifecycleStatus": {
+      "values": [
+        "active",
+        "inactive",
+        "superseded",
+        "retracted"
       ]
     },
     "ResourceType": {
@@ -2006,6 +2024,18 @@
                 "title": "From Type",
                 "type": "string"
               },
+              "lifecycle": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RelationshipLifecycleInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Typed, review-safe lifecycle write. Sets only the edge's lifecycle status/reason; cannot touch its review or group-override state."
+              },
               "pending": {
                 "default": false,
                 "description": "If true, stage the edge as pending review instead of live state.",
@@ -2072,9 +2102,21 @@
                 "title": "Entity Type",
                 "type": "string"
               },
+              "lifecycle": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EntityLifecycleInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+              },
               "metadata": {
                 "additionalProperties": true,
-                "description": "Free-form non-schema metadata stored alongside the entity.",
+                "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
                 "title": "Metadata",
                 "type": "object"
               },
@@ -2090,6 +2132,41 @@
               "entity_id"
             ],
             "title": "EntityInput",
+            "type": "object"
+          },
+          "EntityLifecycleInput": {
+            "additionalProperties": false,
+            "description": "Typed, review-SAFE lifecycle write for an entity.\n\nCarries ONLY the entity lifecycle axis. Entities have no review axis, so there\nis nothing else this could touch. The server validates ``status`` against the\nentity lifecycle vocabulary and stores it as the typed entity lifecycle state.",
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable reason for the lifecycle change.",
+                "title": "Reason"
+              },
+              "status": {
+                "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+                "enum": [
+                  "live",
+                  "superseded",
+                  "retired",
+                  "orphaned"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "EntityLifecycleInput",
             "type": "object"
           },
           "EvidenceRef": {
@@ -2169,6 +2246,41 @@
               "source_record_id"
             ],
             "title": "EvidenceRef",
+            "type": "object"
+          },
+          "RelationshipLifecycleInput": {
+            "additionalProperties": false,
+            "description": "Typed, review-SAFE lifecycle write for a relationship edge.\n\nCarries ONLY the lifecycle axis (``status`` + ``reason``). It deliberately has\nNO ``review`` or ``group_override`` field: a lifecycle write through this\nchannel is structurally incapable of approving/rejecting an edge or flipping\nthe group override -- those stay exclusive to the governed feedback / group\npaths. The server sets only ``assertion.lifecycle`` from this input.",
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable reason for the lifecycle change.",
+                "title": "Reason"
+              },
+              "status": {
+                "description": "Relationship lifecycle status: active, inactive, superseded, or retracted.",
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RelationshipLifecycleInput",
             "type": "object"
           },
           "SharedEvidenceInput": {
@@ -2704,6 +2816,26 @@
             "type": "string"
           }
         },
+        "lifecycle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelationshipLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed, review-safe lifecycle write. Sets only the edge's lifecycle status/reason; cannot touch its review or group-override state."
+          }
+        },
         "pending": {
           "default": false,
           "default_json_serializable": true,
@@ -2873,6 +3005,41 @@
             "title": "EvidenceRef",
             "type": "object"
           },
+          "RelationshipLifecycleInput": {
+            "additionalProperties": false,
+            "description": "Typed, review-SAFE lifecycle write for a relationship edge.\n\nCarries ONLY the lifecycle axis (``status`` + ``reason``). It deliberately has\nNO ``review`` or ``group_override`` field: a lifecycle write through this\nchannel is structurally incapable of approving/rejecting an edge or flipping\nthe group override -- those stay exclusive to the governed feedback / group\npaths. The server sets only ``assertion.lifecycle`` from this input.",
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable reason for the lifecycle change.",
+                "title": "Reason"
+              },
+              "status": {
+                "description": "Relationship lifecycle status: active, inactive, superseded, or retracted.",
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RelationshipLifecycleInput",
+            "type": "object"
+          },
           "SourceEvidenceInput": {
             "properties": {
               "block_selector": {
@@ -2987,6 +3154,18 @@
             "description": "Entity type of the source endpoint.",
             "title": "From Type",
             "type": "string"
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelationshipLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed, review-safe lifecycle write. Sets only the edge's lifecycle status/reason; cannot touch its review or group-override state."
           },
           "pending": {
             "default": false,
@@ -5415,6 +5594,26 @@
             "type": "string"
           }
         },
+        "lifecycle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EntityLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+          }
+        },
         "metadata": {
           "has_default": false,
           "has_default_factory": true,
@@ -5422,7 +5621,7 @@
           "required": false,
           "schema": {
             "additionalProperties": true,
-            "description": "Free-form non-schema metadata stored alongside the entity.",
+            "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
             "title": "Metadata",
             "type": "object"
           }
@@ -5441,6 +5640,43 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "EntityLifecycleInput": {
+            "additionalProperties": false,
+            "description": "Typed, review-SAFE lifecycle write for an entity.\n\nCarries ONLY the entity lifecycle axis. Entities have no review axis, so there\nis nothing else this could touch. The server validates ``status`` against the\nentity lifecycle vocabulary and stores it as the typed entity lifecycle state.",
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable reason for the lifecycle change.",
+                "title": "Reason"
+              },
+              "status": {
+                "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+                "enum": [
+                  "live",
+                  "superseded",
+                  "retired",
+                  "orphaned"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "EntityLifecycleInput",
+            "type": "object"
+          }
+        },
         "properties": {
           "entity_id": {
             "description": "Unique id for the entity; re-using an id upserts it.",
@@ -5452,9 +5688,21 @@
             "title": "Entity Type",
             "type": "string"
           },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EntityLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+          },
           "metadata": {
             "additionalProperties": true,
-            "description": "Free-form non-schema metadata stored alongside the entity.",
+            "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
             "title": "Metadata",
             "type": "object"
           },
@@ -5475,6 +5723,86 @@
       "required_fields": [
         "entity_id",
         "entity_type"
+      ]
+    },
+    "EntityLifecycleInput": {
+      "fields": {
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable reason for the lifecycle change.",
+            "title": "Reason"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+            "enum": [
+              "live",
+              "superseded",
+              "retired",
+              "orphaned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Typed, review-SAFE lifecycle write for an entity.\n\nCarries ONLY the entity lifecycle axis. Entities have no review axis, so there\nis nothing else this could touch. The server validates ``status`` against the\nentity lifecycle vocabulary and stores it as the typed entity lifecycle state.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable reason for the lifecycle change.",
+            "title": "Reason"
+          },
+          "status": {
+            "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+            "enum": [
+              "live",
+              "superseded",
+              "retired",
+              "orphaned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "EntityLifecycleInput",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
       ]
     },
     "EvaluateResult": {
@@ -8111,7 +8439,7 @@
           "required": false,
           "schema": {
             "default": false,
-            "description": "Permit callers to override relationship_state at run time.",
+            "description": "Permit callers to override the visibility state at run time.",
             "title": "Allow Relationship State Override",
             "type": "boolean"
           }
@@ -8315,10 +8643,12 @@
           "required": false,
           "schema": {
             "default": "live",
-            "description": "Edge state to read: live, accepted, pending, or reviewable.",
+            "description": "Default read-visibility state for this query: live, accepted, all, not-live, pending, or reviewable.",
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -8420,7 +8750,7 @@
         "properties": {
           "allow_relationship_state_override": {
             "default": false,
-            "description": "Permit callers to override relationship_state at run time.",
+            "description": "Permit callers to override the visibility state at run time.",
             "title": "Allow Relationship State Override",
             "type": "boolean"
           },
@@ -8544,10 +8874,12 @@
           },
           "relationship_state": {
             "default": "live",
-            "description": "Edge state to read: live, accepted, pending, or reviewable.",
+            "description": "Default read-visibility state for this query: live, accepted, all, not-live, pending, or reviewable.",
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -12045,6 +12377,8 @@
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -12231,6 +12565,8 @@
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -14478,6 +14814,8 @@
                 "enum": [
                   "live",
                   "accepted",
+                  "all",
+                  "not-live",
                   "pending",
                   "reviewable"
                 ],
@@ -16294,6 +16632,8 @@
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -16918,6 +17258,8 @@
             "enum": [
               "live",
               "accepted",
+              "all",
+              "not-live",
               "pending",
               "reviewable"
             ],
@@ -17453,6 +17795,26 @@
             "type": "string"
           }
         },
+        "lifecycle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelationshipLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed, review-safe lifecycle write. Sets only the edge's lifecycle status/reason; cannot touch its review or group-override state."
+          }
+        },
         "pending": {
           "default": false,
           "default_json_serializable": true,
@@ -17608,6 +17970,41 @@
             "title": "EvidenceRef",
             "type": "object"
           },
+          "RelationshipLifecycleInput": {
+            "additionalProperties": false,
+            "description": "Typed, review-SAFE lifecycle write for a relationship edge.\n\nCarries ONLY the lifecycle axis (``status`` + ``reason``). It deliberately has\nNO ``review`` or ``group_override`` field: a lifecycle write through this\nchannel is structurally incapable of approving/rejecting an edge or flipping\nthe group override -- those stay exclusive to the governed feedback / group\npaths. The server sets only ``assertion.lifecycle`` from this input.",
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable reason for the lifecycle change.",
+                "title": "Reason"
+              },
+              "status": {
+                "description": "Relationship lifecycle status: active, inactive, superseded, or retracted.",
+                "enum": [
+                  "active",
+                  "inactive",
+                  "superseded",
+                  "retracted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RelationshipLifecycleInput",
+            "type": "object"
+          },
           "SourceEvidenceInput": {
             "properties": {
               "block_selector": {
@@ -17723,6 +18120,18 @@
             "title": "From Type",
             "type": "string"
           },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelationshipLifecycleInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed, review-safe lifecycle write. Sets only the edge's lifecycle status/reason; cannot touch its review or group-override state."
+          },
           "pending": {
             "default": false,
             "description": "If true, stage the edge as pending review instead of live state.",
@@ -17775,6 +18184,86 @@
         "relationship_type",
         "to_id",
         "to_type"
+      ]
+    },
+    "RelationshipLifecycleInput": {
+      "fields": {
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable reason for the lifecycle change.",
+            "title": "Reason"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "description": "Relationship lifecycle status: active, inactive, superseded, or retracted.",
+            "enum": [
+              "active",
+              "inactive",
+              "superseded",
+              "retracted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Typed, review-SAFE lifecycle write for a relationship edge.\n\nCarries ONLY the lifecycle axis (``status`` + ``reason``). It deliberately has\nNO ``review`` or ``group_override`` field: a lifecycle write through this\nchannel is structurally incapable of approving/rejecting an edge or flipping\nthe group override -- those stay exclusive to the governed feedback / group\npaths. The server sets only ``assertion.lifecycle`` from this input.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable reason for the lifecycle change.",
+            "title": "Reason"
+          },
+          "status": {
+            "description": "Relationship lifecycle status: active, inactive, superseded, or retracted.",
+            "enum": [
+              "active",
+              "inactive",
+              "superseded",
+              "retracted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RelationshipLifecycleInput",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
       ]
     },
     "RelationshipLineageResult": {

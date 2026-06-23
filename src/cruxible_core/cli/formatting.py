@@ -9,6 +9,7 @@ from rich.table import Table
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.assertion_state import entity_lifecycle_status
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
@@ -18,14 +19,20 @@ from cruxible_core.temporal import format_datetime
 
 
 def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
-    """Build a Rich table for a list of entities."""
+    """Build a Rich table for a list of entities.
+
+    Surfaces each entity's lifecycle status (``live`` unless retired/superseded/
+    orphaned) so by-id ``entity get`` reveals the canonical lifecycle state of an
+    entity even though that surface intentionally bypasses live-only gating.
+    """
     table = Table(title=f"{entity_type} entities")
     table.add_column("ID", style="cyan")
+    table.add_column("Lifecycle")
     table.add_column("Properties")
 
     for e in entities:
         props = ", ".join(f"{k}={v}" for k, v in e.properties.items())
-        table.add_row(e.entity_id, props)
+        table.add_row(e.entity_id, entity_lifecycle_status(e.metadata), props)
 
     return table
 

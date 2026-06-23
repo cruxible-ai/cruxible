@@ -242,6 +242,11 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
+- A by-id get is **not** subject to live-only lifecycle gating: it returns the
+  entity even when its `lifecycle.status` is `retired`/`superseded`/`orphaned`,
+  and surfaces that status (in the `Lifecycle` table column and in the JSON
+  `metadata.lifecycle.status`). This is the recovery/inspection path for an
+  entity hidden from live `query`/`list` reads.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
@@ -1622,14 +1627,16 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--relationship` | no | `` | text | Filter by relationship type. |
 | `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max edges to show. |
+| `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
-- `list edges` is a stored-relationship inspection surface. It may show
-  pending, rejected, or otherwise non-live stored edges. Named queries are
-  logical-state reads and apply `relationship_state` filtering, so use query
-  commands when you need live/reviewable truth rather than store inspection.
+- `list edges` is a stored-relationship inspection surface. With no `--state`
+  it returns every stored edge, including pending, rejected, or otherwise
+  non-live ones. Pass `--state live` (or use named queries, which are logical
+  reads) when you need live/reviewable truth rather than store inspection;
+  `--state not-live` surfaces exactly the rejected/closed edges for recovery.
 - Example: `cruxible list edges --relationship work_item_depends_on_work_item --where dependency_basis~schema --json`
 
 **Common Errors:**
@@ -1652,10 +1659,14 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max entities to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
+| `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded/orphaned entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only. Without `--field`, returns full entity records. With `--field`,
+- Read-only. Defaults to `--state live`: retired/superseded/orphaned entities
+  (entity `lifecycle.status != live`) are hidden. Use `--state not-live` to find
+  the gated-out set (recovery), or `--state all` for everything. Without
+  `--field`, returns full entity records. With `--field`,
   returns the same list envelope but trims each entity's `properties` to the
   requested fields while always keeping `entity_type` and `entity_id`.
 - `--where` filters configured entity properties after the caller has selected
@@ -1930,7 +1941,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `query_name` | yes | `Sentinel.UNSET` | text | Positional argument. |
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
-| `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, `pending`, or `reviewable`. The named query must set `allow_relationship_state_override: true`. |
+| `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding a named query's configured state requires `allow_relationship_state_override: true`. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
@@ -1957,7 +1968,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--definition-file` | no | `` | path | Path to a JSON or YAML inline query definition. |
 | `--param` | no | `Sentinel.UNSET` | text | Query parameter as KEY=VALUE. |
 | `--limit` | no | `` | integer range | Max results to display. |
-| `--relationship-state` | no | `` | choice | Override query relationship visibility state: `live`, `accepted`, `pending`, or `reviewable`. The inline definition must set `allow_relationship_state_override: true`. |
+| `--state` | no | `` | choice | Read-visibility state: `live` (default), `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. Overriding the inline definition's configured state requires `allow_relationship_state_override: true`. |
 | `--count` | no | `False` | boolean | Show only summary metadata. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |

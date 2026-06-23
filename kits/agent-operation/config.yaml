@@ -19,13 +19,18 @@ enums:
     values: [low, medium, high, critical]
     ordered: low_to_high
   lifecycle_status:
+    # Domain PROGRESS only. Retirement/supersession is a separate canonical axis
+    # (entity lifecycle.status: live|superseded|retired|orphaned, gated out of
+    # live reads) -- set it via the generic write path / migration, not here.
     # watching: open but not actively worked, awaiting a defined trigger/signal
     # (e.g. a recurrence or external event). State the wake condition in the summary.
-    values: [planned, active, blocked, watching, deferred, closed, superseded]
+    values: [planned, active, blocked, watching, deferred, closed]
   work_item_type:
     values: [feature, bug, cleanup, research, docs, test, infrastructure, operations]
   decision_status:
-    values: [proposed, accepted, superseded, rejected, deferred]
+    # Progress only; a decision being superseded is entity lifecycle.status, not
+    # a domain status value.
+    values: [proposed, accepted, rejected, deferred]
   decision_impact_type:
     values: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
   review_status:
@@ -696,7 +701,7 @@ named_queries:
         as: work_item
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     include:
       latest_review:
         from: $result
@@ -1083,22 +1088,24 @@ named_queries:
 
   superseded_decisions:
     mode: collection
-    description: Decisions whose status indicates they have been superseded.
+    description: >-
+      Decisions retired/superseded on the canonical entity-lifecycle axis
+      (lifecycle.status != live), gated out of live reads. Supersession is no
+      longer a domain status value.
     returns: Decision
     result_shape: entity
-    where:
-      result.properties.status:
-        eq: superseded
+    relationship_state: not-live
     limit: 100
 
   superseded_work_items:
     mode: collection
-    description: Work items whose status indicates they have been superseded.
+    description: >-
+      Work items retired/superseded on the canonical entity-lifecycle axis
+      (lifecycle.status != live), gated out of live reads. Supersession is no
+      longer a domain status value.
     returns: WorkItem
     result_shape: entity
-    where:
-      result.properties.status:
-        eq: superseded
+    relationship_state: not-live
     limit: 100
 
 mutation_guards:

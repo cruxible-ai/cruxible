@@ -19,6 +19,7 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.decision.types import DecisionEvent, DecisionRecord
 from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import (
@@ -33,7 +34,7 @@ from cruxible_core.group.types import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
@@ -109,6 +110,10 @@ class RelationshipWriteInput:
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
     source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
     evidence_rationale: str | None = None
+    # Typed, review-SAFE lifecycle write. Sets ONLY ``assertion.lifecycle`` on the
+    # edge; structurally cannot touch ``assertion.review`` or ``group_override``
+    # because :class:`RelationshipLifecycleState` carries neither field.
+    lifecycle: RelationshipLifecycleState | None = None
 
 
 @dataclass
@@ -230,7 +235,7 @@ class QueryServiceResult:
     retained_path_count: int | None = None
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
-    relationship_state: QueryRelationshipState = "live"
+    relationship_state: QueryVisibilityState = "live"
     param_hints: QueryParamHints | None = None
     policy_summary: dict[str, int] = field(default_factory=dict)
 
@@ -267,7 +272,7 @@ class QueryDefinitionServiceResult:
     returns: str = ""
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
-    relationship_state: QueryRelationshipState = "live"
+    relationship_state: QueryVisibilityState = "live"
     allow_relationship_state_override: bool = False
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = field(default_factory=list)

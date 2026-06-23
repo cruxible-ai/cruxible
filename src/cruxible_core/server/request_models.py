@@ -75,7 +75,7 @@ class QueryRequest(BaseModel):
     params: dict[str, Any] | None = None
     limit: int | None = None
     offset: int = Field(default=0, ge=0)
-    relationship_state: contracts.QueryRelationshipState | None = None
+    relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
 
 
@@ -83,7 +83,7 @@ class InlineQueryRequest(BaseModel):
     definition: contracts.InlineQueryDefinition
     params: dict[str, Any] | None = None
     limit: int | None = None
-    relationship_state: contracts.QueryRelationshipState | None = None
+    relationship_state: contracts.QueryVisibilityState | None = None
     decision_record_id: str | None = None
 
 

@@ -298,7 +298,7 @@ class CruxibleClient:
         params: dict[str, Any] | None = None,
         limit: int | None = None,
         offset: int = 0,
-        relationship_state: contracts.QueryRelationshipState | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
@@ -321,7 +321,7 @@ class CruxibleClient:
         params: dict[str, str] | None = None,
         limit: int | None = None,
         offset: int = 0,
-        relationship_state: contracts.QueryRelationshipState | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
     ) -> contracts.QueryToolResult:
         """Run a named query through the GET /views read-model shim.
 
@@ -351,7 +351,7 @@ class CruxibleClient:
         definition: contracts.InlineQueryDefinition,
         params: dict[str, Any] | None = None,
         limit: int | None = None,
-        relationship_state: contracts.QueryRelationshipState | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
         decision_record_id: str | None = None,
     ) -> contracts.QueryToolResult:
         response = self._client.post(
@@ -708,6 +708,7 @@ class CruxibleClient:
         where: dict[str, dict[str, Any]] | None = None,
         operation_type: str | None = None,
         fields: builtins.list[str] | None = None,
+        relationship_state: contracts.QueryVisibilityState | None = None,
     ) -> contracts.ListResult:
         params: dict[str, Any] = {
             "entity_type": entity_type,
@@ -718,6 +719,7 @@ class CruxibleClient:
             "offset": offset,
             "operation_type": operation_type,
             "fields": fields,
+            "relationship_state": relationship_state,
         }
         if property_filter is not None:
             params["property_filter"] = json.dumps(property_filter)

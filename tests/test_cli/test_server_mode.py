@@ -842,7 +842,7 @@ def test_query_inline_uses_server_client(monkeypatch, runner: CliRunner):
             "category=brakes",
             "--limit",
             "25",
-            "--relationship-state",
+            "--state",
             "reviewable",
             "--decision-record",
             "DR-1",

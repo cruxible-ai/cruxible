@@ -20,6 +20,7 @@ from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
+    RelationshipLifecycleState,
     RelationshipReviewState,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -230,6 +231,7 @@ def apply_relationship(
     resolution_id: str | None = None,
     actor_context: GovernedActorContext | None = None,
     pending: bool = False,
+    lifecycle: RelationshipLifecycleState | None = None,
 ) -> None:
     """Apply a validated relationship to the graph (add or update).
 
@@ -238,6 +240,14 @@ def apply_relationship(
     actor_context when supplied. Updated edges preserve existing metadata while
     stamping provenance modification fields when provenance exists; creation-time
     correlation fields are never rewritten.
+
+    ``lifecycle`` is the typed, review-SAFE lifecycle write channel. When supplied,
+    it sets ONLY ``assertion.lifecycle`` -- the review axis (``assertion.review``)
+    and ``group_override`` are left exactly as computed for the add path or as
+    found on the existing edge for the update path. Because ``lifecycle`` is typed
+    as :class:`RelationshipLifecycleState` (which has no ``review`` /
+    ``group_override`` fields), a lifecycle write is structurally incapable of
+    self-approving/rejecting an edge or flipping the group override.
     """
     rel = validated.relationship
     if validated.is_update:
@@ -267,6 +277,16 @@ def apply_relationship(
             )
             if incoming_evidence is not None:
                 metadata = metadata.model_copy(update={"evidence": incoming_evidence})
+            if lifecycle is not None:
+                # Set ONLY the lifecycle slice of the existing assertion; the
+                # review state and group_override are preserved untouched.
+                metadata = metadata.model_copy(
+                    update={
+                        "assertion": metadata.assertion.model_copy(
+                            update={"lifecycle": lifecycle}
+                        ),
+                    }
+                )
             rel.metadata = metadata
         graph.replace_relationship_state(
             rel.from_type,
@@ -279,6 +299,15 @@ def apply_relationship(
         )
     else:
         incoming_evidence = rel.metadata.evidence
+        assertion = (
+            _pending_assertion(actor_context)
+            if pending
+            else _initial_assertion(source, source_ref, actor_context)
+        )
+        if lifecycle is not None:
+            # Override ONLY the lifecycle slice of the freshly-built assertion; the
+            # review state computed above (pending vs initial) is preserved.
+            assertion = assertion.model_copy(update={"lifecycle": lifecycle})
         rel.metadata = RelationshipMetadata(
             provenance=make_provenance(
                 source,
@@ -287,11 +316,7 @@ def apply_relationship(
                 resolution_id=resolution_id,
                 actor_context=actor_context,
             ),
-            assertion=(
-                _pending_assertion(actor_context)
-                if pending
-                else _initial_assertion(source, source_ref, actor_context)
-            ),
+            assertion=assertion,
             evidence=incoming_evidence,
         )
         graph.add_relationship(rel)

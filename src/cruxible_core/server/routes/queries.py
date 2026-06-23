@@ -73,7 +73,7 @@ async def view(
     request: Request,
     limit: int | None = Query(default=None, ge=1),
     offset: int = Query(default=0, ge=0),
-    relationship_state: contracts.QueryRelationshipState | None = None,
+    relationship_state: contracts.QueryVisibilityState | None = None,
 ) -> contracts.QueryToolResult:
     """GET shim over named-query execution for read-model consumers.
 
@@ -197,6 +197,7 @@ async def list_resources(
     where: str | None = None,
     operation_type: str | None = None,
     fields: list[str] | None = Query(default=None),
+    relationship_state: contracts.QueryVisibilityState | None = None,
 ) -> contracts.ListResult:
     resolved_instance_id = resolve_server_instance_id(instance_id)
     return api.list_resources(
@@ -212,6 +213,7 @@ async def list_resources(
         where=_parse_where_filter(where),
         operation_type=operation_type,
         fields=fields,
+        relationship_state=relationship_state,
     )
 
 

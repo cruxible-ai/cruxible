@@ -216,14 +216,55 @@ enum names but may not redefine or extend upstream enum vocabularies.
 > enum should model **progress / workflow** states (e.g. `planned`, `active`,
 > `closed`). Entity **retirement / deletion** is a *different axis* — "does this
 > entity still exist / is it live" — and is the canonical way to "delete" an
-> entity. It is being factored into a **canonical core entity lifecycle**
-> (`lifecycle.status`, gated out of live reads, uniform across all entities the
-> way relationship lifecycle already is), **not** a per-kit `status` value. When
-> authoring a kit, keep retirement-flavored values (`retired`, `decommissioned`,
-> `superseded`) **out** of your `status` enum — the `asset_status` example above
-> mixes the two for illustration, but the canonical soft-delete is the entity
-> lifecycle, not a status value. This keeps "where is this in its workflow"
-> separate from "is this entity still live."
+> entity. It lives in the **canonical core entity lifecycle**
+> `lifecycle.status` (uniform across all entities the way relationship lifecycle
+> already is), **not** a per-kit `status` value. When authoring a kit, keep
+> retirement-flavored values (`retired`, `decommissioned`, `superseded`) **out**
+> of your `status` enum — the `asset_status` example above mixes the two for
+> illustration, but the canonical soft-delete is the entity lifecycle, not a
+> status value. This keeps "where is this in its workflow" separate from "is this
+> entity still live."
+
+### Entity `lifecycle.status` (read visibility)
+
+Every entity carries an optional, **typed** lifecycle state stored on its
+metadata under `lifecycle` (an `EntityLifecycleState`, validated on write):
+
+```yaml
+metadata:
+  lifecycle:
+    status: live   # one of: live | superseded | retired | orphaned (default live)
+    reason: "replaced by WI-204"       # optional
+    closed_at: "2026-06-23T00:00:00Z"  # optional (shared closed_at/closed_by audit pair)
+```
+
+The lifecycle shares its structure with the relationship lifecycle (same
+`reason`, effective window, `closed_at`/`closed_by` audit pair, and supersession
+links); only the `status` vocabulary differs (`live|superseded|retired|orphaned`
+for entities vs `active|inactive|superseded|retracted` for relationships).
+
+- **Default is `live`.** An entity with no `lifecycle` metadata is treated as
+  live, so existing data needs no migration to keep current behavior.
+- Set it through the **typed lifecycle write channel** — `entity update
+  --lifecycle-status retired [--lifecycle-reason "…"]`, or `batch-direct-write`
+  with the typed `lifecycle` field on the entity input. The status is validated
+  against the entity lifecycle vocabulary; it is **not** a free-form metadata
+  blob, and there is no special retire verb.
+- **Read gating is uniform.** Every read path (`query`, `list entities`,
+  traversal/relationship reads, and the MCP/HTTP equivalents) defaults to
+  **live-only**: a `retired`/`superseded`/`orphaned` entity is hidden. The one
+  exception is an explicit **by-id `entity get`**, which always returns the
+  entity and shows its `lifecycle.status` (the recovery/inspection path).
+- The `--state` selector (config field `relationship_state`) controls
+  visibility: `live` (default), `not-live` (only the gated-out set), `all`
+  (everything). For entities the review-only values (`accepted`/`pending`/
+  `reviewable`) resolve to `live`, since an entity has no review axis.
+
+**Migrating a `status: superseded` corpus.** When you remove a retirement value
+from a domain `status` enum, move the affected entities onto the lifecycle axis
+with `cruxible_core.migrations.migrate_status_to_lifecycle(graph)`: it sets
+`lifecycle.status = superseded` and resets the domain `status` to a valid
+progress-terminal (`closed`). It is idempotent and supports `dry_run`.
 
 `ordered: low_to_high` marks a shared enum as semantically ranked. The order of
 `values` is the rank order from lowest to highest. Query `order_by` clauses can
@@ -376,8 +417,8 @@ named_queries:
 | `returns` | string | **yes** | — | Description of the return type |
 | `result_shape` | string | no | `"path"` | Output shape: `entity`, `path`, or `relationship` |
 | `dedupe` | string | no | shape-dependent | Result dedupe mode: `entity`, `path`, or `none`. Entity queries default to `entity`; path and relationship queries default to `path`. |
-| `relationship_state` | string | no | `"live"` | Relationship visibility: `live`, `accepted`, `pending`, or `reviewable` |
-| `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override `relationship_state` |
+| `relationship_state` | string | no | `"live"` | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle (see Read visibility below). The runtime/CLI selector for this is the `--state` flag (`state` on MCP/HTTP). |
+| `allow_relationship_state_override` | bool | no | `false` | Whether runtime callers may override the visibility state |
 | `where` | dict | no | `null` | Top-level predicate map for collection queries; invalid for traversal queries |
 | `select` | dict | no | `null` | Projection map from output field name to query reference or literal value. When present, user-facing rows return `{values}` while receipts preserve source evidence for audit and feedback. |
 | `order_by` | list | no | `[]` | Deterministic ordering rules. Each item uses `by`, optional `direction` (`asc` or `desc`), optional `value_type` (`string`, `int`, `integer`, `float`, `number`, `bool`, `date`, or `datetime`), and optional ordered `enum_ref`. |

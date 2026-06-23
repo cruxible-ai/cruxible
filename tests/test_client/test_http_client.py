@@ -302,6 +302,7 @@ def test_batch_direct_write_uses_expected_route_and_payload():
                         "entity_id": "V-BATCH",
                         "properties": {"vehicle_id": "V-BATCH"},
                         "metadata": {},
+                        "lifecycle": None,
                     }
                 ],
                 "relationships": [],
@@ -677,6 +678,7 @@ def test_add_relationships_serializes_evidence_fields():
                         }
                     ],
                     "evidence_rationale": "Accepted direct source-backed assertion.",
+                    "lifecycle": None,
                 }
             ],
             "dry_run": False,

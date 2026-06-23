@@ -18,7 +18,7 @@ from cruxible_core.provider.types import (
     ResolvedArtifact,
 )
 from cruxible_core.query.engine import execute_query_definition
-from cruxible_core.query.enums import QueryRelationshipState
+from cruxible_core.query.enums import QueryVisibilityState
 from cruxible_core.query.read_surface import (
     run_query as read_run_query,
 )
@@ -63,7 +63,7 @@ def _resolve_query_relationship_state(
     step_id: str,
     input_payload: dict[str, Any],
     step_outputs: dict[str, Any],
-) -> QueryRelationshipState | None:
+) -> QueryVisibilityState | None:
     if relationship_state_template is None:
         return None
     relationship_state = resolve_value(
@@ -76,7 +76,7 @@ def _resolve_query_relationship_state(
             f"Workflow step '{step_id}' relationship_state must resolve to one of "
             "accepted, live, pending, reviewable"
         )
-    return cast(QueryRelationshipState, relationship_state)
+    return cast(QueryVisibilityState, relationship_state)
 
 
 def _read_output_metadata(

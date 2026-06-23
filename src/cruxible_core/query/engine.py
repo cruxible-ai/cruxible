@@ -35,7 +35,8 @@ from cruxible_core.predicate import (
     PredicateValueType,
     evaluate_typed_comparison,
 )
-from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
+from cruxible_core.query.entity_state import entity_matches_query_state
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
 from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.query.predicates import (
     build_predicate_context,
@@ -101,7 +102,7 @@ class _TraversalState:
 
 @dataclass(frozen=True)
 class _EffectiveQueryOptions:
-    relationship_state: QueryRelationshipState
+    relationship_state: QueryVisibilityState
     relationship_state_source: str
     result_shape: QueryResultShape
     dedupe: QueryDedupe
@@ -153,7 +154,7 @@ def execute_query(
     query_name: str,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryResult:
     """Execute a named query from the config against the graph.
 
@@ -193,7 +194,7 @@ def execute_query_definition(
     query_schema: NamedQuerySchema,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState | None = None,
+    relationship_state: QueryVisibilityState | None = None,
 ) -> QueryResult:
     """Execute a named or inline query definition against the graph."""
     effective_options = _resolve_effective_query_options(
@@ -300,6 +301,10 @@ def execute_query_definition(
         result_states,
         effective_options.result_shape,
         optional_path_aliases=optional_path_aliases,
+    )
+    result_contexts = _filter_contexts_by_entity_state(
+        result_contexts,
+        effective_options.relationship_state,
     )
     if declared_entity_return_type is not None:
         _validate_result_context_return_types(
@@ -433,6 +438,32 @@ def _resolve_entry_entity(
     return entity
 
 
+def _filter_contexts_by_entity_state(
+    contexts: list[QueryRowContext],
+    state: QueryVisibilityState,
+) -> list[QueryRowContext]:
+    """Gate query rows by the result entity's lifecycle visibility.
+
+    This is the single entity-lifecycle chokepoint for the query engine: it runs
+    over the assembled result contexts of BOTH collection-mode and traversal-mode
+    queries (so ``list entities``, entity queries, and path/relationship rows are
+    all gated identically). Each row is kept only when its result entity matches
+    ``state`` under :func:`entity_matches_query_state`. Edges are gated separately
+    by :func:`relationship_matches_query_state`; here we gate the *referent*.
+
+    ``state == "all"`` is a no-op (everything visible). Defaulting to ``live``
+    means a retired/superseded/orphaned entity falls out of every read path that
+    routes through the engine, with no per-surface logic.
+    """
+    if state == "all":
+        return contexts
+    return [
+        context
+        for context in contexts
+        if entity_matches_query_state(context.result.metadata, state)
+    ]
+
+
 def _execute_collection_query(
     config: CoreConfig,
     graph: EntityGraph,
@@ -474,6 +505,10 @@ def _execute_collection_query(
             f"Unsupported collection query result_shape '{query_schema.result_shape}'"
         )
 
+    contexts = _filter_contexts_by_entity_state(
+        contexts,
+        effective_options.relationship_state,
+    )
     contexts = _apply_includes(
         config,
         graph,
@@ -762,7 +797,7 @@ def _collection_relationship_contexts(
     query_schema: NamedQuerySchema,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
     builder: ReceiptBuilder,
 ) -> tuple[list[QueryRowContext], dict[str, int]]:
     resolved = config.resolve_relationship_reference(query_schema.returns)
@@ -979,7 +1014,7 @@ def _resolve_effective_query_options(
     config: CoreConfig,
     query_name: str,
     query_schema: NamedQuerySchema,
-    relationship_state_override: QueryRelationshipState | None,
+    relationship_state_override: QueryVisibilityState | None,
 ) -> _EffectiveQueryOptions:
     effective_relationship_state = (
         query_schema.relationship_state
@@ -1008,9 +1043,9 @@ def _validate_effective_query_options(
     config: CoreConfig,
     query_name: str,
     query_schema: NamedQuerySchema,
-    effective_relationship_state: QueryRelationshipState,
+    effective_relationship_state: QueryVisibilityState,
     *,
-    relationship_state_override: QueryRelationshipState | None,
+    relationship_state_override: QueryVisibilityState | None,
 ) -> None:
     """Validate execution-time query options after runtime overrides are applied."""
     is_collection = query_schema.mode == "collection"
@@ -1018,10 +1053,17 @@ def _validate_effective_query_options(
         relationship_state_override is not None
         and not query_schema.allow_relationship_state_override
     ):
-        raise QueryExecutionError("relationship_state override is not allowed for this named query")
-    if effective_relationship_state not in {"live", "accepted", "pending", "reviewable"}:
+        raise QueryExecutionError("visibility state override is not allowed for this named query")
+    if effective_relationship_state not in {
+        "live",
+        "accepted",
+        "all",
+        "not-live",
+        "pending",
+        "reviewable",
+    }:
         raise QueryExecutionError(
-            f"Unsupported relationship_state '{effective_relationship_state}'"
+            f"Unsupported visibility state '{effective_relationship_state}'"
         )
     if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
         raise QueryExecutionError(
@@ -1132,7 +1174,7 @@ def _execute_step(
     params: dict[str, Any],
     query_name: str,
     requires_path_retention: bool,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
     traversal_budget: _TraversalBudgetState,
     step_index: int,
     policy_summary: dict[str, int],
@@ -1761,7 +1803,7 @@ def _apply_includes(
     contexts: list[QueryRowContext],
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
     builder: ReceiptBuilder | None,
 ) -> list[QueryRowContext]:
     """Attach one-hop include side context to base query row contexts."""
@@ -1850,7 +1892,7 @@ def _evaluate_include(
     context: QueryRowContext,
     params: dict[str, Any],
     *,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
 ) -> QueryIncludeResult:
     anchor = _resolve_include_anchor(alias, spec.from_, context)
     if anchor is None:

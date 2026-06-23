@@ -15,7 +15,7 @@ from cruxible_core.predicate import (
     evaluate_typed_comparison,
     infer_predicate_value_type,
 )
-from cruxible_core.query.enums import QueryRelationshipState
+from cruxible_core.query.enums import QueryVisibilityState
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryPathSegment
 
@@ -249,7 +249,7 @@ def evaluate_related_predicate(
     params: dict[str, Any],
     *,
     config: CoreConfig,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
 ) -> bool:
     """Return whether a related edge exists and matches the related predicates."""
     anchor = context.candidate
@@ -283,7 +283,7 @@ def related_edge_exists(
     candidate_entity: EntityInstance,
     relationship_type: str,
     direction: str,
-    relationship_state: QueryRelationshipState,
+    relationship_state: QueryVisibilityState,
 ) -> bool:
     """Check whether a related edge exists under the effective query state."""
     for neighbor, segment, _relative_direction in iter_step_relationships(

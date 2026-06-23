@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
-from cruxible_core.query.enums import QueryDedupe, QueryRelationshipState, QueryResultShape
+from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
 
 _PATH_TOKEN = r"[\w-]+"
 _PATH_TOKEN_RE = re.compile(rf"^{_PATH_TOKEN}$")
@@ -505,7 +505,7 @@ class NamedQuerySchema(BaseModel):
     returns: str
     result_shape: QueryResultShape = "path"
     dedupe: QueryDedupe = "path"
-    relationship_state: QueryRelationshipState = "live"
+    relationship_state: QueryVisibilityState = "live"
     allow_relationship_state_override: bool = False
     where: QueryPredicateSpec | None = None
     select: dict[str, Any] | None = None

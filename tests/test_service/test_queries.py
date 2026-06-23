@@ -426,16 +426,30 @@ def test_list_edges_default_state_keeps_full_inspection_view(
     )
 
 
-def test_list_edges_rejects_relationship_state_for_non_edges(
+def test_list_rejects_state_for_unsupported_resources(
     populated_instance: CruxibleInstance,
 ) -> None:
-    with pytest.raises(ConfigError, match="relationship_state is only supported for edges"):
+    # The unified visibility selector gates entities (lifecycle) and edges
+    # (review+lifecycle); resources without a visibility axis must reject it.
+    with pytest.raises(ConfigError, match="state is only supported for entities and edges"):
         service_list(
             populated_instance,
-            "entities",
-            entity_type="Part",
+            "receipts",
             relationship_state="live",
         )
+
+
+def test_list_entities_accepts_state_selector(
+    populated_instance: CruxibleInstance,
+) -> None:
+    # Entities now route the visibility selector through the lifecycle filter.
+    result = service_list(
+        populated_instance,
+        "entities",
+        entity_type="Part",
+        relationship_state="live",
+    )
+    assert result.total >= 0
 
 
 def test_list_edges_keeps_missing_endpoint_edge_with_and_without_where(

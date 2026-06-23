@@ -13,7 +13,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-QueryRelationshipState = Literal["live", "accepted", "pending", "reviewable"]
+QueryVisibilityState = Literal["live", "accepted", "all", "not-live", "pending", "reviewable"]
 QueryMode = Literal["collection", "traversal"]
 QueryResultShape = Literal["entity", "path", "relationship"]
 QueryDedupe = Literal["entity", "path", "none"]
@@ -57,8 +57,60 @@ HostedInstanceSourceType = Literal["kit", "reference_model"]
 HostedInstanceInitStatus = Literal["initialized", "already_initialized"]
 GovernedActorType = Literal["human_user", "service_account", "system"]
 
+# Per-kind lifecycle status vocabularies. Deliberately distinct: entities and
+# relationships do NOT share a status enum (only the surrounding structure).
+EntityLifecycleStatus = Literal["live", "superseded", "retired", "orphaned"]
+RelationshipLifecycleStatus = Literal["active", "inactive", "superseded", "retracted"]
+
+# Reserved key inside ``EntityInput.metadata``. Entity lifecycle state is stored
+# under this key by the server's typed encode path, so authoring it by hand in a
+# free-form metadata dict would bypass the typed ``lifecycle`` validator (and could
+# silently soft-delete the entity). It is therefore un-authorable on every write
+# surface: the contract rejects it and directs authors to the typed ``lifecycle``
+# field. Mirrors ``cruxible_core.graph.assertion_state.ENTITY_LIFECYCLE_METADATA_KEY``
+# (kept in sync as a constant rather than imported to keep this package core-free).
+RESERVED_ENTITY_LIFECYCLE_METADATA_KEY = "lifecycle"
+
 
 # ── Structured input types ───────────────────────────────────────────
+
+
+class EntityLifecycleInput(BaseModel):
+    """Typed, review-SAFE lifecycle write for an entity.
+
+    Carries ONLY the entity lifecycle axis. Entities have no review axis, so there
+    is nothing else this could touch. The server validates ``status`` against the
+    entity lifecycle vocabulary and stores it as the typed entity lifecycle state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: EntityLifecycleStatus = Field(
+        description="Entity lifecycle status: live, superseded, retired, or orphaned."
+    )
+    reason: str | None = Field(
+        default=None, description="Optional human-readable reason for the lifecycle change."
+    )
+
+
+class RelationshipLifecycleInput(BaseModel):
+    """Typed, review-SAFE lifecycle write for a relationship edge.
+
+    Carries ONLY the lifecycle axis (``status`` + ``reason``). It deliberately has
+    NO ``review`` or ``group_override`` field: a lifecycle write through this
+    channel is structurally incapable of approving/rejecting an edge or flipping
+    the group override -- those stay exclusive to the governed feedback / group
+    paths. The server sets only ``assertion.lifecycle`` from this input.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: RelationshipLifecycleStatus = Field(
+        description="Relationship lifecycle status: active, inactive, superseded, or retracted."
+    )
+    reason: str | None = Field(
+        default=None, description="Optional human-readable reason for the lifecycle change."
+    )
 
 
 class RelationshipInput(BaseModel):
@@ -86,6 +138,13 @@ class RelationshipInput(BaseModel):
     evidence_rationale: str | None = Field(
         default=None,
         description="Free-text explanation of why the attached evidence supports the edge.",
+    )
+    lifecycle: RelationshipLifecycleInput | None = Field(
+        default=None,
+        description=(
+            "Typed, review-safe lifecycle write. Sets only the edge's lifecycle "
+            "status/reason; cannot touch its review or group-override state."
+        ),
     )
 
 
@@ -116,8 +175,41 @@ class EntityInput(BaseModel):
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        description="Free-form non-schema metadata stored alongside the entity.",
+        description=(
+            "Free-form non-schema metadata stored alongside the entity. The "
+            "reserved 'lifecycle' key is owned by the typed `lifecycle` field; set "
+            "lifecycle there, not here."
+        ),
     )
+    lifecycle: EntityLifecycleInput | None = Field(
+        default=None,
+        description=(
+            "Typed entity lifecycle write. Sets the entity's lifecycle "
+            "status/reason (the canonical soft-delete / supersession axis), "
+            "validated and stored as typed lifecycle state."
+        ),
+    )
+
+    @field_validator("metadata")
+    @classmethod
+    def _reject_reserved_lifecycle_key(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Reject hand-authored lifecycle state in free-form ``metadata``.
+
+        The reserved ``lifecycle`` key is owned by the typed ``lifecycle`` field and
+        is the server's encode slot for validated lifecycle state. Authoring it in a
+        free-form ``metadata`` dict would bypass the typed validator and silently
+        change the entity's lifecycle (e.g. soft-delete it). Rejecting -- rather than
+        silently stripping -- preserves author intent: the write fails loudly and
+        points to the typed channel. Fires on every surface (batch direct-write, MCP,
+        HTTP) because they all deserialize into this same contract model.
+        """
+        if isinstance(value, dict) and RESERVED_ENTITY_LIFECYCLE_METADATA_KEY in value:
+            raise ValueError(
+                f"metadata key '{RESERVED_ENTITY_LIFECYCLE_METADATA_KEY}' is reserved for "
+                "typed entity lifecycle state and cannot be set via free-form metadata; "
+                "use the typed `lifecycle` field instead."
+            )
+        return value
 
 
 class BatchDirectWritePayload(BaseModel):
@@ -627,7 +719,7 @@ class QueryToolResult(BaseModel):
     steps_executed: int
     result_shape: Literal["entity", "path", "relationship"] = "path"
     dedupe: Literal["entity", "path", "none"] = "path"
-    relationship_state: QueryRelationshipState = "live"
+    relationship_state: QueryVisibilityState = "live"
     param_hints: "QueryParamHints | None" = None
     policy_summary: dict[str, int] = Field(default_factory=dict)
 
@@ -657,13 +749,16 @@ class InlineQueryDefinition(BaseModel):
         default=None,
         description="Deduplicate rows by entity, path, or none.",
     )
-    relationship_state: QueryRelationshipState = Field(
+    relationship_state: QueryVisibilityState = Field(
         default="live",
-        description="Edge state to read: live, accepted, pending, or reviewable.",
+        description=(
+            "Default read-visibility state for this query: live, accepted, all, "
+            "not-live, pending, or reviewable."
+        ),
     )
     allow_relationship_state_override: bool = Field(
         default=False,
-        description="Permit callers to override relationship_state at run time.",
+        description="Permit callers to override the visibility state at run time.",
     )
     where: dict[str, Any] | None = Field(
         default=None, description="Filter predicates applied to matched rows."
@@ -892,7 +987,7 @@ class NamedQueryInfoResult(BaseModel):
     returns: str
     result_shape: Literal["entity", "path", "relationship"] = "path"
     dedupe: Literal["entity", "path", "none"] = "path"
-    relationship_state: QueryRelationshipState = "live"
+    relationship_state: QueryVisibilityState = "live"
     allow_relationship_state_override: bool = False
     select: dict[str, Any] | None = None
     order_by: list[dict[str, Any]] = Field(default_factory=list)

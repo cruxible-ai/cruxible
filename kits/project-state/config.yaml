@@ -19,11 +19,16 @@ enums:
     values: [low, medium, high, critical]
     ordered: low_to_high
   lifecycle_status:
+    # Domain PROGRESS only. Retirement/supersession is a separate canonical axis
+    # (entity lifecycle.status: live|superseded|retired|orphaned, gated out of
+    # live reads) -- set it via the generic write path / migration, not here.
     # watching: open but not actively worked, awaiting a defined trigger/signal
     # (e.g. a recurrence or external event). State the wake condition in the summary.
-    values: [planned, active, blocked, watching, deferred, closed, superseded]
+    values: [planned, active, blocked, watching, deferred, closed]
   decision_status:
-    values: [proposed, accepted, superseded, rejected, deferred]
+    # Progress only; a decision being superseded is entity lifecycle.status, not
+    # a domain status value.
+    values: [proposed, accepted, rejected, deferred]
   decision_impact_type:
     values: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
   work_item_type:
@@ -832,7 +837,7 @@ named_queries:
         max_depth: 3
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -851,7 +856,7 @@ named_queries:
       result.properties.owner:
         eq: $input.owner
       result.properties.status:
-        not_in: [closed, superseded]
+        not_in: [closed]
     include:
       latest_review:
         from: $result
@@ -1068,7 +1073,7 @@ named_queries:
         max_depth: 3
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -1093,7 +1098,7 @@ named_queries:
         max_depth: 2
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -1114,7 +1119,7 @@ named_queries:
         as: roadmap_work
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -1136,7 +1141,7 @@ named_queries:
         max_depth: 5
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -1158,7 +1163,7 @@ named_queries:
         max_depth: 5
         where:
           candidate.properties.status:
-            not_in: [closed, superseded]
+            not_in: [closed]
     select:
       work_item_id: $result.entity_id
       title: $result.properties.title
@@ -1422,12 +1427,13 @@ named_queries:
 
   superseded_decisions:
     mode: collection
-    description: Decisions whose status indicates they have been superseded.
+    description: >-
+      Decisions retired/superseded on the canonical entity-lifecycle axis
+      (lifecycle.status != live). Supersession is no longer a domain status
+      value; this surfaces the entities gated out of live reads.
     result_shape: entity
     returns: Decision
-    where:
-      result.properties.status:
-        eq: superseded
+    relationship_state: not-live
     limit: 100
 
 mutation_guards:
