@@ -56,16 +56,29 @@ cruxible query --query owner_patch_queue --param owner_id=<owner>
 cruxible query --query vulnerability_asset_context --param cve_id=<cve_id>
 ```
 
-## Agent-mode constraints
+## Write-policy constraints
 
-This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
+Two independent governance axes apply here. They are enforced at the daemon, not
+by this skill, so respect them rather than trying to work around them:
 
-- `cruxible add-relationship` is **blocked**. Agents cannot write accepted
-  edges directly — only `group propose`.
-- `cruxible ingest` is **blocked**. Bulk CSV import is an operator action,
-  not an agent action.
-- `cruxible add-entity` is allowed for durable operational entities such as
-  `Exception` / `CompensatingControl` records when the user asks for them.
+- **Permission mode** (`CRUXIBLE_MODE`): run agents under
+  `CRUXIBLE_MODE=governed_write`, not `admin`. Use `admin` only for
+  operator-approved maintenance (lock regeneration, canonical apply).
+- **Direct-write refusal** (`refuse_direct_writes`): governed relationship types
+  in this kit are marked `write_policy: proposal_only`. A direct
+  `cruxible add-relationship` to such a type is **refused**
+  (`DirectWriteRefusedError`, HTTP 403) regardless of permission mode — even
+  `admin` is refused. Accepted edges enter only through `group propose` ->
+  resolve (or a canonical `apply_relationships` workflow). To stage an edge for
+  review without making it live, use `add-relationship --pending`.
+
+Other expectations for this kit:
+
+- Treat `cruxible ingest` (bulk CSV import) as an operator action, not an agent
+  action.
+- `cruxible add-entity` remains available for durable operational entities such
+  as `Exception` / `CompensatingControl` records when the user asks for them,
+  unless the entity type is itself marked `write_policy: proposal_only`.
 - Do not assign numeric confidence properties on governed relationship
   proposals. Relationship confidence is represented by declared tri-state
   signal-source evidence: `support`, `unsure`, or `contradict`. Put the reason
@@ -75,8 +88,9 @@ This instance must run under `CRUXIBLE_AGENT_MODE=1`. In that mode:
   only as an input that the workflow maps into a tri-state signal. Do not copy
   scores into proposal member properties or accepted graph relationships.
 
-If a command fails with `PermissionDeniedError: ... disabled in agent mode`,
-do not retry or try to bypass. Surface the error to the user and stop.
+If a command fails with `DirectWriteRefusedError` or `PermissionDeniedError`, do
+not retry or try to bypass. Surface the error to the user and stop. For a
+refused relationship write, propose it through `group propose` instead.
 
 ## Evidence boundary
 
@@ -344,7 +358,8 @@ Stop and ask the user (don't guess) when:
   new write surface.
 - Review material conflicts with graph state (e.g., the report says an
   exception exists but no `Exception` entity is found).
-- You hit `PermissionDeniedError` in agent mode. Retrying won't help.
+- You hit `DirectWriteRefusedError` or `PermissionDeniedError`. Retrying won't
+  help; a refused relationship write means propose it via `group propose`.
 - A workflow `propose` produces no reviewable group when you expected one.
   Either the upstream layer didn't populate, prerequisite approved edges are
   missing, or the proposal policy rejected everything — either way, surface it.

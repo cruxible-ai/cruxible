@@ -37,7 +37,7 @@ def register_tools(server: FastMCP) -> list[str]:
 
     @_tool
     def cruxible_server_info() -> contracts.ServerInfoResult:
-        """Return live daemon metadata such as agent mode, state dir, and instance count."""
+        """Return live daemon metadata such as permission mode, state dir, and instance count."""
         return handlers.handle_server_info()
 
     @_tool

@@ -148,7 +148,7 @@ def handle_validate(
 
 
 def handle_server_info() -> contracts.ServerInfoResult:
-    """Return live daemon metadata such as agent mode and state dir."""
+    """Return live daemon metadata such as permission mode and state dir."""
     return _dispatch_remote_or_local(
         lambda client: client.server_info(),
         api.server_info,

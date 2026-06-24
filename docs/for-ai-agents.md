@@ -35,6 +35,37 @@ CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
 Use `admin` only for bootstrap, lock regeneration, canonical apply, and explicit
 operator-approved maintenance.
 
+## Two Governance Axes
+
+Permission mode is one axis; direct-write policy is a second, **independent**
+one. Do not confuse them — and note that the permission tiers are cumulative, so
+a `graph_write` actor can both direct-add and propose. There is no permission
+tier meaning "may propose but may not direct-add."
+
+- **Permission mode** — `CRUXIBLE_MODE` (`read_only` ⊂ `governed_write` ⊂
+  `graph_write` ⊂ `admin`), enforced at the daemon boundary.
+- **Direct-write policy** — `refuse_direct_writes`. A type marked
+  `write_policy: proposal_only` (per-type, via the instance
+  `runtime.default_write_policy`, or via the daemon `CRUXIBLE_REFUSE_DIRECT_WRITES`
+  env kill-switch) **refuses** direct graph-write verbs (`add_entity` /
+  `add_relationship` / `batch_direct_write` / lifecycle write) with
+  `DirectWriteRefusedError` (HTTP 403). This is a **hard** constraint independent
+  of permission tier — even `admin` is refused.
+
+  When you hit `DirectWriteRefusedError`, do not retry or escalate the
+  permission mode. Route the write through the governed path instead:
+  - relationships: `group propose` → resolve, or `add-relationship --pending` to
+    stage an edge for review (pending writes are always allowed);
+  - entities/relationships in bulk: a canonical `apply_entities` /
+    `apply_relationships` workflow.
+
+  See [Direct-Write Governance](config-reference.md#direct-write-governance-refuse_direct_writes)
+  for the precedence table and the three knobs.
+
+There is **no** `CRUXIBLE_AGENT_MODE` env var — if older docs or skills mention
+it, they are stale. The real knobs are `CRUXIBLE_MODE` and the
+`refuse_direct_writes` policy above.
+
 ## Core Responsibilities
 
 The agent should:

@@ -68,11 +68,13 @@ of the state model itself.
 ```yaml
 runtime:
   trace_payloads: preview
+  default_write_policy: direct
 ```
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `trace_payloads` | string | no | `"preview"` | Provider trace payload retention: `"full"`, `"preview"`, or `"metadata"` |
+| `default_write_policy` | string | no | `"direct"` | Instance-wide default direct-write governance: `"direct"` or `"proposal_only"`. Applies to entity/relationship types whose own `write_policy` is unset. See [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). |
 
 Trace payload retention controls what is persisted in provider execution traces:
 
@@ -86,6 +88,57 @@ Trace payload retention controls what is persisted in provider execution traces:
 Local SQLite does not provide cold storage or later hydration for omitted
 payload bodies. Choose `full` only when local full-body provider provenance is
 more important than trace database size.
+
+---
+
+## Direct-Write Governance (`refuse_direct_writes`)
+
+The `CRUXIBLE_MODE` permission tiers (`read_only` ⊂ `governed_write` ⊂
+`graph_write` ⊂ `admin`) are **cumulative**: a `graph_write` actor can both
+direct-add a fact *and* propose one. The tiers therefore cannot express "this
+domain is proposal-only" — a per-domain governance axis. `refuse_direct_writes`
+adds that axis.
+
+A type marked **`proposal_only`** refuses bare direct graph-write verbs
+(`add_entity` / `add_relationship` / `batch_direct_write` / the typed lifecycle
+write) and forces state in only through the governed proposal/workflow path. It
+is a **hard constraint, independent of permission tier** — even `admin` is
+refused. The refusal raises `DirectWriteRefusedError` (HTTP **403**,
+`error_code: direct_write_refused`).
+
+Three knobs control it:
+
+| Knob | Where | Values | Effect |
+|------|-------|--------|--------|
+| `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). |
+| `default_write_policy` | `runtime` | `direct` (default) \| `proposal_only` | Instance-wide default for types whose own `write_policy` is unset. |
+| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **hard kill-switch**: forces `proposal_only` for every type, overriding every per-type opt-out and the default. |
+
+**Effective policy (union — any path to `proposal_only` wins):** a write is
+refused when the env kill-switch is set **OR** the type's explicit `write_policy`
+is `proposal_only` **OR** the type's `write_policy` is unset and
+`runtime.default_write_policy` is `proposal_only`.
+
+| `CRUXIBLE_REFUSE_DIRECT_WRITES` | type `write_policy` | `default_write_policy` | Effective |
+|---|---|---|---|
+| unset | unset | `direct` | direct |
+| unset | unset | `proposal_only` | proposal_only |
+| unset | `direct` | `proposal_only` | **direct** (opts out) |
+| unset | `proposal_only` | `direct` | proposal_only |
+| set | `direct` | `direct` | **proposal_only** (env wins) |
+| set | unset | `direct` | proposal_only |
+
+**Always permitted, regardless of policy:**
+
+- Relationship writes with **`pending: true`** — they stage an edge for review
+  and are not live. (Entities have no pending path; a direct entity add of a
+  `proposal_only` type is refused outright — add it through a canonical
+  `apply_entities` workflow.)
+- Governed verbs: proposal **group resolution** (`group propose` → resolve) and
+  **canonical workflow apply** (`apply_entities` / `apply_relationships`).
+
+The default (everything unset) is byte-identical to pre-`refuse_direct_writes`
+behavior — all direct writes succeed.
 
 ---
 
@@ -157,6 +210,7 @@ entity_types:
 | `description` | string | no | `null` | Human-readable description of this entity type |
 | `properties` | dict | **yes** | — | Property definitions (see below) |
 | `constraints` | list[string] | no | `[]` | Constraint names that apply to this entity type |
+| `write_policy` | string | no | `null` | `"direct"` or `"proposal_only"`. Governs direct entity adds for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `null` inherits `runtime.default_write_policy`. |
 
 ### PropertySchema
 
@@ -317,6 +371,7 @@ relationships:
 | `is_hierarchy` | bool | no | `false` | Mark as a hierarchical relationship |
 | `proposal_policy` | ProposalPolicyConfig | no | `null` | Governed proposal policy (see [proposal_policy](#proposal_policy)) |
 | `proposal_identity` | string | no | `"thesis_signature"` | `"thesis_signature"` groups trust by proposal thesis; `"relationship_tuple"` groups trust by edge tuple and requires `proposal_policy` |
+| `write_policy` | string | no | `null` | `"direct"` or `"proposal_only"`. Governs direct edge writes for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `null` inherits `runtime.default_write_policy`. |
 
 **Notes:**
 - `from` and `to` must reference entity type names defined in `entity_types`.

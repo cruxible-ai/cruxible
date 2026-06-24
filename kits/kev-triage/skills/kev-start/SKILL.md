@@ -46,8 +46,9 @@ Produce a working KEV local in one pass:
 - For custom onboarding, replace local seed or source files after
   `state create-overlay --kit` materializes the local overlay, unless you are already
   working in a local where the kit has been applied
-- `CRUXIBLE_AGENT_MODE` may be set; that's fine — this skill does not use
-  blocked commands
+- The daemon may run under a restrictive `CRUXIBLE_MODE` (e.g.
+  `governed_write`) and/or `refuse_direct_writes` for governed types; that's
+  fine — this skill does not perform direct writes to governed types
 
 If the daemon isn't reachable, stop and tell the user to start the project's
 configured Cruxible daemon before continuing. Do not try to initialize
@@ -118,10 +119,6 @@ If `context show --json` includes an `instance_id`, then run:
 cruxible stats --json
 cruxible query list --json
 ```
-
-Confirm `agent_mode` from `cruxible server info --json` before acting. If the
-daemon was started without it, call that out explicitly because this skill's
-guarded local-mode assumptions will not be exercised.
 
 Use this step to decide which milestone already exists:
 
