@@ -1667,7 +1667,7 @@ def test_snapshot_create_uses_expected_route():
     assert captured["payload"]["label"] == "baseline"
 
 
-def test_instance_snapshot_and_restore_use_expected_routes():
+def test_instance_backup_and_restore_use_expected_routes():
     captured: list[tuple[str, dict[str, Any]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1684,7 +1684,7 @@ def test_instance_snapshot_and_restore_use_expected_routes():
             "instance_mode": "governed",
             "artifacts": {"state.db": "sha256:abc"},
         }
-        if request.url.path.endswith("/instance/snapshot"):
+        if request.url.path.endswith("/instance/backup"):
             return httpx.Response(
                 200,
                 json={
@@ -1704,7 +1704,7 @@ def test_instance_snapshot_and_restore_use_expected_routes():
         )
 
     client = _build_client(handler)
-    snap = client.snapshot_instance(
+    snap = client.backup_instance(
         "inst_123",
         artifact_path="/tmp/backup.zip",
         label="pre-release",
@@ -1715,7 +1715,7 @@ def test_instance_snapshot_and_restore_use_expected_routes():
     assert restored.root_dir == "/srv/restored"
     assert captured == [
         (
-            "/api/v1/inst_123/instance/snapshot",
+            "/api/v1/inst_123/instance/backup",
             {"artifact_path": "/tmp/backup.zip", "label": "pre-release"},
         ),
         (

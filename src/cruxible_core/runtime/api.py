@@ -46,6 +46,7 @@ from cruxible_core.service import (
     service_analyze_feedback,
     service_analyze_outcomes,
     service_apply_workflow,
+    service_backup_instance,
     service_batch_direct_write,
     service_clone_snapshot,
     service_config_compatibility_warnings,
@@ -104,7 +105,6 @@ from cruxible_core.service import (
     service_sample,
     service_schema,
     service_server_info,
-    service_snapshot_instance,
     service_state_status,
     service_stats,
     service_test,
@@ -905,24 +905,24 @@ def create_snapshot(
     )
 
 
-def snapshot_instance(
+def backup_instance(
     instance_id: str,
     *,
     artifact_path: str,
     label: str | None = None,
     actor_context: Any | None = None,
-) -> contracts.InstanceSnapshotResult:
+) -> contracts.InstanceBackupResult:
     """Write a same-identity backup artifact for a governed instance."""
-    check_permission("cruxible_instance_snapshot", instance_id=instance_id)
+    check_permission("cruxible_instance_backup", instance_id=instance_id)
     _hosted_actor_context(actor_context)
     instance = get_manager().get(instance_id)
-    result = service_snapshot_instance(
+    result = service_backup_instance(
         instance,
         instance_id=instance_id,
         artifact_path=artifact_path,
         label=label,
     )
-    return contracts.InstanceSnapshotResult(
+    return contracts.InstanceBackupResult(
         instance_id=result.instance_id,
         artifact_path=result.artifact_path,
         manifest=contracts.InstanceBackupManifest.model_validate(
@@ -1008,9 +1008,9 @@ def relocate_instance(
 ) -> contracts.InstanceRelocateResult:
     """Move a healthy governed instance to a new directory, preserving identity.
 
-    Orchestrates the daemon-only steps the CLI cannot do alone: snapshot the
+    Orchestrates the daemon-only steps the CLI cannot do alone: back up the
     loaded instance while healthy, restore it at *to_dir*, repoint the registry,
-    and swap the manager entry to the relocated instance object. If the snapshot
+    and swap the manager entry to the relocated instance object. If the backup
     or restore fails the original instance stays loaded and registered; only on a
     successful restore is the registry repointed and (optionally) the old
     directory removed.
@@ -1062,8 +1062,8 @@ def relocate_instance(
     # at the caller's workspace rather than falling back to the daemon root.
     existing_workspace_root = record.workspace_root if record is not None else None
 
-    # Resolve and snapshot the live instance while it is still healthy. A failure
-    # to snapshot/restore raises here with the original instance untouched. The
+    # Resolve and back up the live instance while it is still healthy. A failure
+    # to back up/restore raises here with the original instance untouched. The
     # service never removes the source; that happens below, only after the
     # registry and manager have been swapped to the relocated instance.
     instance = manager.get(instance_id)

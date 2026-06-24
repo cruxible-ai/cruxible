@@ -99,11 +99,11 @@
   "/api/v1/{instance_id}/inspect/{view}": {
     "GET": "CanonicalViewResult"
   },
+  "/api/v1/{instance_id}/instance/backup": {
+    "POST": "InstanceBackupResult"
+  },
   "/api/v1/{instance_id}/instance/relocate": {
     "POST": "InstanceRelocateResult"
-  },
-  "/api/v1/{instance_id}/instance/snapshot": {
-    "POST": "InstanceSnapshotResult"
   },
   "/api/v1/{instance_id}/lint": {
     "POST": "LintResult"

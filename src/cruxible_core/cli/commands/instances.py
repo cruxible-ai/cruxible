@@ -17,7 +17,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.service import service_restore_instance, service_snapshot_instance
+from cruxible_core.service import service_backup_instance, service_restore_instance
 
 
 @click.group("instance")
@@ -25,24 +25,24 @@ def instance_group() -> None:
     """Back up and restore exact Cruxible instances."""
 
 
-@instance_group.command("snapshot")
+@instance_group.command("backup")
 @click.argument("artifact_path")
 @click.option("--label", default=None, help="Optional human label for the backup artifact.")
 @json_option
 @handle_errors
-def instance_snapshot_cmd(
+def instance_backup_cmd(
     artifact_path: str,
     label: str | None,
     output_json: bool,
 ) -> None:
     """Write a portable same-identity backup artifact for the current instance."""
     result = _dispatch_cli_instance(
-        lambda client, instance_id: client.snapshot_instance(
+        lambda client, instance_id: client.backup_instance(
             instance_id,
             artifact_path=artifact_path,
             label=label,
         ),
-        lambda instance: service_snapshot_instance(
+        lambda instance: service_backup_instance(
             instance,
             instance_id=str(instance.get_root_path()),
             artifact_path=artifact_path,
@@ -51,7 +51,7 @@ def instance_snapshot_cmd(
     )
     payload = (
         result.model_dump(mode="json")
-        if isinstance(result, contracts.InstanceSnapshotResult)
+        if isinstance(result, contracts.InstanceBackupResult)
         else {
             "instance_id": result.instance_id,
             "artifact_path": result.artifact_path,

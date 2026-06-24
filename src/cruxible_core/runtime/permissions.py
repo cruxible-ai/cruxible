@@ -151,7 +151,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_lock_workflow": PermissionMode.ADMIN,
     "cruxible_reload_config": PermissionMode.ADMIN,
     "cruxible_clone_snapshot": PermissionMode.ADMIN,
-    "cruxible_instance_snapshot": PermissionMode.ADMIN,
+    "cruxible_instance_backup": PermissionMode.ADMIN,
     "cruxible_instance_restore": PermissionMode.ADMIN,
     "cruxible_instance_relocate": PermissionMode.ADMIN,
     "cruxible_state_publish": PermissionMode.ADMIN,

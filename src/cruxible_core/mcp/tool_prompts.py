@@ -236,7 +236,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_create_snapshot": (
         "Use when you need to mark the current state with a named snapshot."
     ),
-    "cruxible_instance_snapshot": (
+    "cruxible_instance_backup": (
         "Use when you need a portable same-identity backup of an instance, including "
         "its authoritative state database."
     ),

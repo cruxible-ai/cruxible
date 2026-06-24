@@ -133,7 +133,7 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_clone_snapshot")
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_instance_snapshot")
+            check_permission("cruxible_instance_backup")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_instance_restore")
         with pytest.raises(PermissionDeniedError):
@@ -179,7 +179,7 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_lock_workflow")
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_instance_snapshot")
+            check_permission("cruxible_instance_backup")
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_instance_restore")
         with pytest.raises(PermissionDeniedError):
@@ -189,7 +189,7 @@ class TestCheckPermission:
         check_permission("cruxible_lock_workflow")
         check_permission("cruxible_reload_config")
         check_permission("cruxible_clone_snapshot")
-        check_permission("cruxible_instance_snapshot")
+        check_permission("cruxible_instance_backup")
         check_permission("cruxible_instance_restore")
         check_permission("cruxible_instance_relocate")
         check_permission("cruxible_state_publish")

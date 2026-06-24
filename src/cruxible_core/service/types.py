@@ -777,7 +777,7 @@ class CloneSnapshotResult:
 
 
 @dataclass
-class InstanceSnapshotResult:
+class InstanceBackupResult:
     instance_id: str
     artifact_path: str
     manifest: InstanceBackupManifest

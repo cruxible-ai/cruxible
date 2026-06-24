@@ -1605,21 +1605,21 @@ def handle_create_snapshot(
     )
 
 
-def handle_instance_snapshot(
+def handle_instance_backup(
     instance_id: str,
     artifact_path: str,
     label: str | None = None,
-) -> contracts.InstanceSnapshotResult:
+) -> contracts.InstanceBackupResult:
     """Write a portable same-identity backup artifact for an instance."""
     return _dispatch_remote_or_local(
-        lambda client: client.snapshot_instance(
+        lambda client: client.backup_instance(
             instance_id,
             artifact_path=artifact_path,
             label=label,
         ),
-        lambda: api.snapshot_instance(instance_id, artifact_path=artifact_path, label=label),
+        lambda: api.backup_instance(instance_id, artifact_path=artifact_path, label=label),
         allow_local=False,
-        operation_name="cruxible_instance_snapshot",
+        operation_name="cruxible_instance_backup",
     )
 
 

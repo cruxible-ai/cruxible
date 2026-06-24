@@ -144,7 +144,7 @@ def test_server_mode_create_state_overlay_no_activate_leaves_context(
     assert json.loads(shown.output)["instance_id"] == "inst_old"
 
 
-def test_server_mode_instance_snapshot_and_restore(
+def test_server_mode_instance_backup_and_restore(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
 ) -> None:
@@ -172,11 +172,11 @@ def test_server_mode_instance_snapshot_and_restore(
     )
 
     class StubClient:
-        def snapshot_instance(self, instance_id, *, artifact_path, label=None):
-            captured["snapshot_instance_id"] = instance_id
-            captured["snapshot_artifact_path"] = artifact_path
-            captured["snapshot_label"] = label
-            return contracts.InstanceSnapshotResult(
+        def backup_instance(self, instance_id, *, artifact_path, label=None):
+            captured["backup_instance_id"] = instance_id
+            captured["backup_artifact_path"] = artifact_path
+            captured["backup_label"] = label
+            return contracts.InstanceBackupResult(
                 instance_id=instance_id,
                 artifact_path=artifact_path,
                 manifest=manifest,
@@ -196,12 +196,12 @@ def test_server_mode_instance_snapshot_and_restore(
 
     snap = runner.invoke(
         cli,
-        ["instance", "snapshot", "/tmp/backup.zip", "--label", "pre-release"],
+        ["instance", "backup", "/tmp/backup.zip", "--label", "pre-release"],
     )
     assert snap.exit_code == 0
     assert "Wrote instance backup /tmp/backup.zip" in snap.output
-    assert captured["snapshot_instance_id"] == "inst_old"
-    assert captured["snapshot_label"] == "pre-release"
+    assert captured["backup_instance_id"] == "inst_old"
+    assert captured["backup_label"] == "pre-release"
 
     restore = runner.invoke(
         cli,

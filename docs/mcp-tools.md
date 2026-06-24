@@ -88,7 +88,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 - Permission mode too low for this tool.
 - Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
 
-## cruxible_instance_snapshot
+## cruxible_instance_backup
 
 **Permission:** `ADMIN`
 

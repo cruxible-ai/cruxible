@@ -409,11 +409,11 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
             assert label == "baseline"
             return contracts.SnapshotCreateResult(snapshot=snapshot)
 
-        def snapshot_instance(self, instance_id, *, artifact_path, label=None):
+        def backup_instance(self, instance_id, *, artifact_path, label=None):
             assert instance_id == "inst_123"
             assert artifact_path == "/tmp/backup.zip"
             assert label == "backup"
-            return contracts.InstanceSnapshotResult(
+            return contracts.InstanceBackupResult(
                 instance_id=instance_id,
                 artifact_path=artifact_path,
                 manifest=manifest,
@@ -454,7 +454,7 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
     assert handlers.handle_reload_config("inst_123", config_yaml="name: demo\n").updated
     assert handlers.handle_create_snapshot("inst_123", "baseline").snapshot.snapshot_id == "snap_1"
     assert (
-        handlers.handle_instance_snapshot("inst_123", "/tmp/backup.zip", "backup").artifact_path
+        handlers.handle_instance_backup("inst_123", "/tmp/backup.zip", "backup").artifact_path
         == "/tmp/backup.zip"
     )
     assert (
@@ -620,9 +620,9 @@ def test_workflow_apply_handler_delegates_to_client(monkeypatch: pytest.MonkeyPa
         (handlers.handle_reload_config, ("inst_123",), "cruxible_reload_config"),
         (handlers.handle_create_snapshot, ("inst_123", None), "cruxible_create_snapshot"),
         (
-            handlers.handle_instance_snapshot,
+            handlers.handle_instance_backup,
             ("inst_123", "/tmp/backup.zip", None),
-            "cruxible_instance_snapshot",
+            "cruxible_instance_backup",
         ),
         (
             handlers.handle_instance_restore,

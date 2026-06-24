@@ -16,9 +16,9 @@ from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service import service_add_entities
 from cruxible_core.service.snapshots import (
     read_instance_backup_manifest,
+    service_backup_instance,
     service_relocate_instance,
     service_restore_instance,
-    service_snapshot_instance,
 )
 
 CONFIG_YAML = """\
@@ -68,7 +68,7 @@ def test_instance_backup_restore_preserves_graph_receipts_and_config(tmp_path: P
     )
     artifact = tmp_path / "backup.cruxible.zip"
 
-    result = service_snapshot_instance(
+    result = service_backup_instance(
         source,
         instance_id="inst_backup",
         artifact_path=artifact,
@@ -105,7 +105,7 @@ def test_instance_backup_uses_sqlite_backup_for_live_state(tmp_path: Path) -> No
     )
     artifact = tmp_path / "backup.cruxible.zip"
 
-    service_snapshot_instance(source, instance_id="inst_backup", artifact_path=artifact)
+    service_backup_instance(source, instance_id="inst_backup", artifact_path=artifact)
 
     with zipfile.ZipFile(artifact) as archive:
         db_bytes = archive.read("state.db")
@@ -121,7 +121,7 @@ def test_instance_backup_uses_sqlite_backup_for_live_state(tmp_path: Path) -> No
 def test_instance_restore_rejects_digest_mismatch(tmp_path: Path) -> None:
     source = _instance(tmp_path / "source")
     artifact = tmp_path / "backup.cruxible.zip"
-    service_snapshot_instance(source, instance_id="inst_backup", artifact_path=artifact)
+    service_backup_instance(source, instance_id="inst_backup", artifact_path=artifact)
     broken = tmp_path / "broken.cruxible.zip"
 
     with zipfile.ZipFile(artifact) as archive, zipfile.ZipFile(broken, "w") as out:
@@ -140,7 +140,7 @@ def test_instance_restore_requires_required_manifest_artifact_digests(
 ) -> None:
     source = _instance(tmp_path / "source")
     artifact = tmp_path / "backup.cruxible.zip"
-    service_snapshot_instance(source, instance_id="inst_backup", artifact_path=artifact)
+    service_backup_instance(source, instance_id="inst_backup", artifact_path=artifact)
     broken = tmp_path / "missing-manifest-artifact.cruxible.zip"
 
     with zipfile.ZipFile(artifact) as archive, zipfile.ZipFile(broken, "w") as out:
@@ -172,7 +172,7 @@ def test_instance_restore_rejects_existing_instance(tmp_path: Path) -> None:
     source = _instance(tmp_path / "source")
     target = _instance(tmp_path / "target")
     artifact = tmp_path / "backup.cruxible.zip"
-    service_snapshot_instance(source, instance_id="inst_backup", artifact_path=artifact)
+    service_backup_instance(source, instance_id="inst_backup", artifact_path=artifact)
 
     with pytest.raises(ConfigError, match="Instance already exists"):
         service_restore_instance(artifact_path=artifact, root_dir=target.root)
@@ -313,7 +313,7 @@ def test_aborted_relocate_leaves_original_usable(tmp_path: Path) -> None:
     assert reloaded.load_graph().get_entity("Thing", "T-keep") is not None
 
 
-def test_relocate_snapshot_failure_leaves_original_usable(
+def test_relocate_backup_failure_leaves_original_usable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,17 +330,17 @@ def test_relocate_snapshot_failure_leaves_original_usable(
     )
     target = tmp_path / "moved"
 
-    # Force the snapshot step to fail. The source must be left completely untouched
+    # Force the backup step to fail. The source must be left completely untouched
     # and no partial instance should appear at the target.
     def _boom(*args: object, **kwargs: object) -> None:
-        raise ConfigError("snapshot boom")
+        raise ConfigError("backup boom")
 
     monkeypatch.setattr(
-        "cruxible_core.service.snapshots.service_snapshot_instance",
+        "cruxible_core.service.snapshots.service_backup_instance",
         _boom,
     )
 
-    with pytest.raises(ConfigError, match="snapshot boom"):
+    with pytest.raises(ConfigError, match="backup boom"):
         service_relocate_instance(
             source,
             instance_id="inst_relocated",

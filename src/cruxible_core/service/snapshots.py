@@ -1,4 +1,4 @@
-"""Snapshot, clone, and same-identity instance backup service functions."""
+"""Graph-snapshot, clone, and same-identity instance backup service functions."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.types import (
     CloneSnapshotResult,
+    InstanceBackupResult,
     InstanceRelocateResult,
     InstanceRestoreResult,
-    InstanceSnapshotResult,
     SnapshotCreateResult,
     SnapshotListResult,
 )
@@ -96,13 +96,13 @@ def service_clone_snapshot(
     return CloneSnapshotResult(instance=cloned, snapshot=snapshot)
 
 
-def service_snapshot_instance(
+def service_backup_instance(
     instance: InstanceProtocol,
     *,
     instance_id: str,
     artifact_path: str | Path,
     label: str | None = None,
-) -> InstanceSnapshotResult:
+) -> InstanceBackupResult:
     """Write a portable same-identity backup artifact for an instance."""
     if not isinstance(instance, CruxibleInstance):
         raise ConfigError("Instance backup currently supports only local filesystem instances")
@@ -158,7 +158,7 @@ def service_snapshot_instance(
                 _write_zip_member(archive, name, content)
         os.replace(temp_artifact, artifact)
 
-    return InstanceSnapshotResult(
+    return InstanceBackupResult(
         instance_id=instance_id,
         artifact_path=str(artifact),
         manifest=manifest,
@@ -233,10 +233,10 @@ def service_relocate_instance(
     instance_mode: str = CruxibleInstance.GOVERNED_MODE,
     registry_status: Literal["registered", "repaired", "unchanged"] = "registered",
 ) -> InstanceRelocateResult:
-    """Move a healthy same-identity instance to *to_dir* by snapshot-then-restore.
+    """Move a healthy same-identity instance to *to_dir* by backup-then-restore.
 
     Steps, ordered so an abort never leaves the instance unreachable:
-      1. Snapshot the (still-healthy) instance to a throwaway artifact. If this
+      1. Back up the (still-healthy) instance to a throwaway artifact. If this
          fails, the source is untouched.
       2. Restore the artifact into ``to_dir`` (atomic ``os.replace`` of a staging
          dir). If this fails, the source is still untouched and usable.
@@ -247,7 +247,7 @@ def service_relocate_instance(
     ordering keeps the source as a usable fallback if any of those later steps
     fail, so ``source_removed`` is always ``False`` in the returned result.
 
-    The source instance stays live and queryable throughout snapshot + restore;
+    The source instance stays live and queryable throughout backup + restore;
     the caller atomically overwrites the manager slot with the relocated instance
     at the end (the source is never dropped from the manager mid-relocate).
     """
@@ -273,7 +273,7 @@ def service_relocate_instance(
             f"Relocate target {target_root} contains the source {source_root}"
         )
 
-    # 1. Snapshot the healthy instance to a throwaway artifact. Keep it under the
+    # 1. Back up the healthy instance to a throwaway artifact. Keep it under the
     #    target's parent so the temp + restore staging share a filesystem.
     target_root.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -281,7 +281,7 @@ def service_relocate_instance(
         dir=str(target_root.parent),
     ) as tmp:
         artifact = Path(tmp) / "relocate.cruxible.zip"
-        snapshot = service_snapshot_instance(
+        backup = service_backup_instance(
             instance,
             instance_id=instance_id,
             artifact_path=artifact,
@@ -301,7 +301,7 @@ def service_relocate_instance(
         instance_id=restored.instance_id,
         from_dir=str(source_root),
         to_dir=restored.root_dir,
-        manifest=snapshot.manifest,
+        manifest=backup.manifest,
         source_removed=False,
         registry_status=restored.registry_status,
     )

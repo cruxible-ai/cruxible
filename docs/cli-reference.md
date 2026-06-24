@@ -2529,7 +2529,7 @@ cruxible source dereference \
 
 **Subcommands:**
 
-- `cruxible instance snapshot` - Write a portable same-identity backup artifact for the current instance.
+- `cruxible instance backup` - Write a portable same-identity backup artifact for the current instance.
 - `cruxible instance restore` - Restore a same-identity backup artifact.
 - `cruxible instance relocate` - Move the current healthy instance to a new directory, preserving identity.
 
@@ -2541,9 +2541,9 @@ cruxible source dereference \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible instance snapshot
+## cruxible instance backup
 
-**Usage:** `cruxible instance snapshot [OPTIONS] ARTIFACT_PATH`
+**Usage:** `cruxible instance backup [OPTIONS] ARTIFACT_PATH`
 
 **Purpose:** Write a portable same-identity backup artifact for the current instance.
 

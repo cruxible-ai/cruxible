@@ -9456,6 +9456,130 @@
         "original_config_path"
       ]
     },
+    "InstanceBackupResult": {
+      "fields": {
+        "artifact_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_path",
+          "required": true,
+          "schema": {
+            "title": "Artifact Path",
+            "type": "string"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "manifest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "manifest",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/InstanceBackupManifest"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InstanceBackupManifest": {
+            "properties": {
+              "artifacts": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Artifacts",
+                "type": "object"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "string"
+              },
+              "cruxible_version": {
+                "title": "Cruxible Version",
+                "type": "string"
+              },
+              "format_version": {
+                "default": 1,
+                "title": "Format Version",
+                "type": "integer"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "instance_mode": {
+                "title": "Instance Mode",
+                "type": "string"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "original_config_path": {
+                "title": "Original Config Path",
+                "type": "string"
+              },
+              "restored_config_path": {
+                "default": "config.yaml",
+                "title": "Restored Config Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "created_at",
+              "cruxible_version",
+              "original_config_path",
+              "instance_mode"
+            ],
+            "title": "InstanceBackupManifest",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "artifact_path": {
+            "title": "Artifact Path",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/$defs/InstanceBackupManifest"
+          }
+        },
+        "required": [
+          "instance_id",
+          "artifact_path",
+          "manifest"
+        ],
+        "title": "InstanceBackupResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_path",
+        "instance_id",
+        "manifest"
+      ]
+    },
     "InstanceRelocateResult": {
       "fields": {
         "from_dir": {
@@ -9792,130 +9916,6 @@
         "instance_id",
         "manifest",
         "root_dir"
-      ]
-    },
-    "InstanceSnapshotResult": {
-      "fields": {
-        "artifact_path": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "artifact_path",
-          "required": true,
-          "schema": {
-            "title": "Artifact Path",
-            "type": "string"
-          }
-        },
-        "instance_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "instance_id",
-          "required": true,
-          "schema": {
-            "title": "Instance Id",
-            "type": "string"
-          }
-        },
-        "manifest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "manifest",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/InstanceBackupManifest"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "InstanceBackupManifest": {
-            "properties": {
-              "artifacts": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "title": "Artifacts",
-                "type": "object"
-              },
-              "created_at": {
-                "title": "Created At",
-                "type": "string"
-              },
-              "cruxible_version": {
-                "title": "Cruxible Version",
-                "type": "string"
-              },
-              "format_version": {
-                "default": 1,
-                "title": "Format Version",
-                "type": "integer"
-              },
-              "instance_id": {
-                "title": "Instance Id",
-                "type": "string"
-              },
-              "instance_mode": {
-                "title": "Instance Mode",
-                "type": "string"
-              },
-              "label": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Label"
-              },
-              "original_config_path": {
-                "title": "Original Config Path",
-                "type": "string"
-              },
-              "restored_config_path": {
-                "default": "config.yaml",
-                "title": "Restored Config Path",
-                "type": "string"
-              }
-            },
-            "required": [
-              "instance_id",
-              "created_at",
-              "cruxible_version",
-              "original_config_path",
-              "instance_mode"
-            ],
-            "title": "InstanceBackupManifest",
-            "type": "object"
-          }
-        },
-        "properties": {
-          "artifact_path": {
-            "title": "Artifact Path",
-            "type": "string"
-          },
-          "instance_id": {
-            "title": "Instance Id",
-            "type": "string"
-          },
-          "manifest": {
-            "$ref": "#/$defs/InstanceBackupManifest"
-          }
-        },
-        "required": [
-          "instance_id",
-          "artifact_path",
-          "manifest"
-        ],
-        "title": "InstanceSnapshotResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "artifact_path",
-        "instance_id",
-        "manifest"
       ]
     },
     "LintResult": {

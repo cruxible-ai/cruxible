@@ -334,7 +334,7 @@ class SnapshotCreateRequest(BaseModel):
     actor_context: contracts.GovernedActorContext | None = None
 
 
-class InstanceSnapshotRequest(BaseModel):
+class InstanceBackupRequest(BaseModel):
     artifact_path: str
     label: str | None = None
     actor_context: contracts.GovernedActorContext | None = None

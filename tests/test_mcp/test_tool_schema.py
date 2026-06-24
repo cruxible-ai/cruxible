@@ -479,7 +479,7 @@ class TestOutputSchema:
             ),
             ("cruxible_create_snapshot", {"snapshot"}),
             (
-                "cruxible_instance_snapshot",
+                "cruxible_instance_backup",
                 {"instance_id", "artifact_path", "manifest"},
             ),
             (

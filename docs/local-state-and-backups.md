@@ -106,7 +106,7 @@ is backfilled:
   traceability), so the edge is honestly labeled as clone-origin rather than
   referencing a phantom receipt.
 
-`cruxible instance snapshot` writes a portable same-identity backup artifact for
+`cruxible instance backup` writes a portable same-identity backup artifact for
 the active instance. The artifact includes the SQLite state database, active
 config, instance metadata, optional workflow lock, and a manifest with content
 digests. The service uses SQLite's backup API for the database copy instead of

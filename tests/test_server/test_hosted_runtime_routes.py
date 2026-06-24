@@ -29,7 +29,7 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.snapshots import service_snapshot_instance
+from cruxible_core.service.snapshots import service_backup_instance
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -2259,7 +2259,7 @@ def _build_restore_artifact(tmp_path: Path, instance_id: str) -> Path:
     (source_root / "config.yaml").write_text(CAR_PARTS_YAML)
     source_instance = CruxibleInstance.init(source_root, "config.yaml")
     artifact = tmp_path / f"{instance_id}.cruxible.zip"
-    service_snapshot_instance(
+    service_backup_instance(
         source_instance,
         instance_id=instance_id,
         artifact_path=artifact,

@@ -1189,7 +1189,7 @@ class InstanceBackupManifest(BaseModel):
     artifacts: dict[str, str] = Field(default_factory=dict)
 
 
-class InstanceSnapshotResult(BaseModel):
+class InstanceBackupResult(BaseModel):
     instance_id: str
     artifact_path: str
     manifest: InstanceBackupManifest

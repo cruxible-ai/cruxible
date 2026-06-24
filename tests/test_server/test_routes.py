@@ -28,7 +28,7 @@ from cruxible_core.server.credentials import (
 )
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.routes import resolve_server_instance_id
-from cruxible_core.service.snapshots import service_snapshot_instance
+from cruxible_core.service.snapshots import service_backup_instance
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1660,7 +1660,7 @@ def test_state_publish_overlay_and_status_routes(
     assert status.json()["upstream"]["release_id"] == "v1.0.0"
 
 
-def test_instance_snapshot_and_restore_routes(
+def test_instance_backup_and_restore_routes(
     app_client: TestClient,
     server_project: Path,
     tmp_path: Path,
@@ -1668,13 +1668,13 @@ def test_instance_snapshot_and_restore_routes(
     instance_id = _init_instance(app_client, server_project)
     artifact = tmp_path / "project-state.cruxible.zip"
 
-    snapshot = app_client.post(
-        f"/api/v1/{instance_id}/instance/snapshot",
+    backup = app_client.post(
+        f"/api/v1/{instance_id}/instance/backup",
         json={"artifact_path": str(artifact), "label": "pre-release"},
     )
-    assert snapshot.status_code == 200
-    assert snapshot.json()["instance_id"] == instance_id
-    assert snapshot.json()["manifest"]["label"] == "pre-release"
+    assert backup.status_code == 200
+    assert backup.json()["instance_id"] == instance_id
+    assert backup.json()["manifest"]["label"] == "pre-release"
     assert artifact.exists()
 
     source_root = tmp_path / "restore-source"
@@ -1682,7 +1682,7 @@ def test_instance_snapshot_and_restore_routes(
     (source_root / "config.yaml").write_text(CAR_PARTS_YAML)
     source_instance = CruxibleInstance.init(source_root, "config.yaml")
     restore_artifact = tmp_path / "restore.cruxible.zip"
-    service_snapshot_instance(
+    service_backup_instance(
         source_instance,
         instance_id="inst_restored",
         artifact_path=restore_artifact,
