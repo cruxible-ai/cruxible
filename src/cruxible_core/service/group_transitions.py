@@ -521,6 +521,7 @@ def _record_relationship_write_nodes(
 def _apply_resolved_relationships(
     *,
     instance: InstanceProtocol,
+    config: CoreConfig,
     graph: EntityGraph,
     group_id: str,
     relationships: list[ValidatedRelationship],
@@ -535,11 +536,14 @@ def _apply_resolved_relationships(
     touched_relationships: list[RelationshipInstance] = []
     for validated in relationships:
         relationship = validated.relationship
+        # source="group_resolve" is a governed verb — always permitted by the
+        # chokepoint regardless of write_policy.
         apply_relationship(
             graph,
             validated,
             "group_resolve",
             f"group:{group_id}",
+            config=config,
             receipt_id=receipt_id,
             resolution_id=resolution_id,
             actor_context=actor_context,
@@ -783,6 +787,7 @@ def _approve_group(
     _record_relationship_write_nodes(builder, validation.valid_inputs)
     edges_created = _apply_resolved_relationships(
         instance=instance,
+        config=config,
         graph=graph,
         group_id=group.group_id,
         relationships=validation.valid_inputs,

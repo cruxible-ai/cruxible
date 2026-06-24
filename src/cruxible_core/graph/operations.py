@@ -16,7 +16,7 @@ from typing import Any
 
 from cruxible_core.config.property_validation import validate_property_payload
 from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, DirectWriteRefusedError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     RelationshipAssertion,
@@ -166,8 +166,39 @@ def validate_relationship(
     return ValidatedRelationship(relationship=rel, is_update=is_update)
 
 
-def apply_entity(graph: EntityGraph, validated: ValidatedEntity) -> None:
-    """Apply a validated entity to the graph (add or update)."""
+def apply_entity(
+    graph: EntityGraph,
+    validated: ValidatedEntity,
+    *,
+    config: CoreConfig,
+    source: str,
+) -> None:
+    """Apply a validated entity to the graph (add or update).
+
+    The single entity chokepoint. Every direct entity write funnels here, so the
+    ``refuse_direct_writes`` governance check lives here: a write whose ``source``
+    is NOT a governed verb (``workflow_apply`` / ``group_resolve``) is refused
+    when the entity type resolves to ``proposal_only``. Entities have no pending
+    staging path, so a refused direct add is refused outright. The decision is
+    resolved INSIDE the chokepoint (callers pass ``config`` + ``source``) so it
+    stays a single funnel — a pre-resolved bool would re-scatter governance
+    across call sites and let a future verb slip through.
+    """
+    # Deferred import: service/__init__ -> ... -> graph.operations, so a
+    # top-level import would be circular. Importing the resolver module here
+    # breaks that cycle.
+    from cruxible_core.service.direct_write_policy import (
+        effective_entity_write_policy,
+        is_governed_source,
+    )
+
+    entity_type = validated.entity.entity_type
+    if (
+        not is_governed_source(source)
+        and effective_entity_write_policy(config, entity_type) == "proposal_only"
+    ):
+        raise DirectWriteRefusedError("entity", entity_type, source)
+
     if validated.is_update:
         graph.update_entity_properties(
             validated.entity.entity_type,
@@ -227,6 +258,7 @@ def apply_relationship(
     source: str,
     source_ref: str,
     *,
+    config: CoreConfig,
     receipt_id: str | None = None,
     resolution_id: str | None = None,
     actor_context: GovernedActorContext | None = None,
@@ -248,8 +280,31 @@ def apply_relationship(
     as :class:`RelationshipLifecycleState` (which has no ``review`` /
     ``group_override`` fields), a lifecycle write is structurally incapable of
     self-approving/rejecting an edge or flipping the group override.
+
+    The single relationship chokepoint, so the ``refuse_direct_writes`` governance
+    check lives here: a write whose ``source`` is NOT a governed verb
+    (``workflow_apply`` / ``group_resolve``) AND is ``not pending`` is refused when
+    the relationship type resolves to ``proposal_only``. A ``pending=True`` write
+    is PERMITTED even under ``proposal_only`` — it stages for review, it is not
+    live. The typed lifecycle write carries the same ``source`` and so is covered
+    by this one predicate (no extra hook). Resolved INSIDE the chokepoint
+    (callers pass ``config``) to keep the decision in one funnel.
     """
+    # Deferred import: service/__init__ -> ... -> graph.operations, so a
+    # top-level import would be circular. Importing the resolver module here
+    # breaks that cycle.
+    from cruxible_core.service.direct_write_policy import (
+        effective_relationship_write_policy,
+        is_governed_source,
+    )
+
     rel = validated.relationship
+    if (
+        not is_governed_source(source)
+        and not pending
+        and effective_relationship_write_policy(config, rel.relationship_type) == "proposal_only"
+    ):
+        raise DirectWriteRefusedError("relationship", rel.relationship_type, source)
     if validated.is_update:
         incoming_evidence = rel.metadata.evidence
         existing_rel = graph.get_relationship(
@@ -282,9 +337,7 @@ def apply_relationship(
                 # review state and group_override are preserved untouched.
                 metadata = metadata.model_copy(
                     update={
-                        "assertion": metadata.assertion.model_copy(
-                            update={"lifecycle": lifecycle}
-                        ),
+                        "assertion": metadata.assertion.model_copy(update={"lifecycle": lifecycle}),
                     }
                 )
             rel.metadata = metadata

@@ -70,6 +70,7 @@ def _normalize_query_entity_returns(returns: str) -> str:
         return stripped[5:-1].strip()
     return stripped
 
+
 # ---------------------------------------------------------------------------
 # Property Schema (shared between entity types and relationships)
 # ---------------------------------------------------------------------------
@@ -191,6 +192,15 @@ class EntityTypeSchema(BaseModel):
     description: str | None = None
     properties: dict[str, PropertySchema]
     constraints: list[str] = Field(default_factory=list)
+    write_policy: Literal["direct", "proposal_only"] | None = None
+    """Per-type direct-write governance.
+
+    ``None`` inherits ``runtime.default_write_policy``; ``"direct"`` explicitly
+    opts out of the instance default (but not the env kill-switch);
+    ``"proposal_only"`` refuses direct entity adds for this type. Resolved by
+    ``service/direct_write_policy.py`` and enforced at the
+    ``graph/operations.py`` chokepoint.
+    """
 
     @model_validator(mode="after")
     def apply_graph_property_defaults(self) -> EntityTypeSchema:
@@ -244,6 +254,17 @@ class RelationshipSchema(BaseModel):
     reverse_name: str | None = Field(default=None, validation_alias="inverse")
     proposal_policy: ProposalPolicySchema | None = None
     proposal_identity: Literal["thesis_signature", "relationship_tuple"] = "thesis_signature"
+    write_policy: Literal["direct", "proposal_only"] | None = None
+    """Per-type direct-write governance.
+
+    ``None`` inherits ``runtime.default_write_policy``; ``"direct"`` explicitly
+    opts out of the instance default (but not the env kill-switch);
+    ``"proposal_only"`` refuses direct (non-pending) edge writes for this type —
+    edges may only enter through the governed proposal/``group_resolve`` or
+    ``workflow_apply`` path, or be staged with ``pending=true``. Resolved by
+    ``service/direct_write_policy.py`` and enforced at the
+    ``graph/operations.py`` chokepoint.
+    """
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
 
@@ -252,8 +273,7 @@ class RelationshipSchema(BaseModel):
         self.properties = _apply_graph_property_defaults(self.properties)
         if self.proposal_identity == "relationship_tuple" and self.proposal_policy is None:
             msg = (
-                "proposal_identity 'relationship_tuple' requires a governed "
-                "proposal_policy section"
+                "proposal_identity 'relationship_tuple' requires a governed proposal_policy section"
             )
             raise ValueError(msg)
         return self
@@ -300,8 +320,7 @@ def _validate_top_level_query_predicate_scopes(
         if scope not in QUERY_PREDICATE_SCOPES:
             allowed = ", ".join(sorted(QUERY_PREDICATE_SCOPES))
             msg = (
-                f"top-level {field_name} predicate path '{path}' must start "
-                f"with one of: {allowed}"
+                f"top-level {field_name} predicate path '{path}' must start with one of: {allowed}"
             )
             raise ValueError(msg)
 
@@ -882,9 +901,7 @@ class OutcomeProfileSchema(BaseModel):
                 msg = "Resolution outcome profiles require relationship_type"
                 raise ValueError(msg)
             if self.surface_type is not None or self.surface_name is not None:
-                msg = (
-                    "Resolution outcome profiles may not define surface_type or surface_name"
-                )
+                msg = "Resolution outcome profiles may not define surface_type or surface_name"
                 raise ValueError(msg)
             allowed_prefixes = {"RESOLUTION", "GROUP", "WORKFLOW", "THESIS"}
         else:
@@ -892,9 +909,7 @@ class OutcomeProfileSchema(BaseModel):
                 msg = "Receipt outcome profiles require surface_type and surface_name"
                 raise ValueError(msg)
             if self.relationship_type is not None or self.workflow_name is not None:
-                msg = (
-                    "Receipt outcome profiles may not define relationship_type or workflow_name"
-                )
+                msg = "Receipt outcome profiles may not define relationship_type or workflow_name"
                 raise ValueError(msg)
             allowed_prefixes = {"RECEIPT", "SURFACE", "TRACESET"}
 
@@ -992,8 +1007,7 @@ class PropertyQualityCheck(QualityCheckBase):
         else:
             if self.relationship_type is None or self.entity_type is not None:
                 msg = (
-                    "Property quality checks targeting relationships require "
-                    "relationship_type only"
+                    "Property quality checks targeting relationships require relationship_type only"
                 )
                 raise ValueError(msg)
 
@@ -1034,10 +1048,7 @@ class JsonContentQualityCheck(QualityCheckBase):
                 raise ValueError(msg)
         else:
             if self.relationship_type is None or self.entity_type is not None:
-                msg = (
-                    "JSON content checks targeting relationships require "
-                    "relationship_type only"
-                )
+                msg = "JSON content checks targeting relationships require relationship_type only"
                 raise ValueError(msg)
 
         if self.rule == "required_nested_keys":
@@ -1306,8 +1317,7 @@ class MutationGuardSchema(BaseModel):
             if forbidden_fields:
                 joined = ", ".join(forbidden_fields)
                 raise ValueError(
-                    "relationship evidence guards may not define "
-                    f"entity-property fields: {joined}"
+                    f"relationship evidence guards may not define entity-property fields: {joined}"
                 )
             return self
 
@@ -1925,9 +1935,7 @@ class WorkflowStepSchema(BaseModel):
         ]
         if len(active_step_kinds) != 1:
             valid = ", ".join(f"'{k}'" for k in get_args(StepKind))
-            raise ValueError(
-                f"Workflow step must define exactly one of {valid}"
-            )
+            raise ValueError(f"Workflow step must define exactly one of {valid}")
 
         step_kind = active_step_kinds[0]
         step_policies = {
@@ -2019,6 +2027,15 @@ class RuntimeConfigSchema(BaseModel):
 
     trace_payloads: TracePayloadRetention = "preview"
     mutation_payloads: MutationPayloadRetention = "metadata"
+    default_write_policy: Literal["direct", "proposal_only"] = "direct"
+    """Instance-wide default direct-write governance.
+
+    Applies to entity/relationship types whose own ``write_policy`` is unset
+    (``None``). ``"proposal_only"`` makes the whole instance proposal-only unless
+    a type opts out with an explicit ``write_policy: direct``. The
+    ``CRUXIBLE_REFUSE_DIRECT_WRITES`` env kill-switch overrides this and every
+    per-type opt-out. See ``service/direct_write_policy.py``.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -2165,10 +2182,7 @@ class CoreConfig(BaseModel):
                 for index, order in enumerate(include.order_by):
                     self._validate_order_enum_ref(
                         order,
-                        (
-                            f"Named query '{query_name}' include '{include_alias}' "
-                            f"order_by[{index}]"
-                        ),
+                        (f"Named query '{query_name}' include '{include_alias}' order_by[{index}]"),
                     )
         return self
 
@@ -2180,10 +2194,7 @@ class CoreConfig(BaseModel):
             msg = f"{location} references unknown enum_ref '{order.enum_ref}'"
             raise ValueError(msg)
         if enum_schema.ordered != "low_to_high":
-            msg = (
-                f"{location} references enum_ref '{order.enum_ref}', "
-                "but that enum is not ordered"
-            )
+            msg = f"{location} references enum_ref '{order.enum_ref}', but that enum is not ordered"
             raise ValueError(msg)
 
     @model_validator(mode="after")

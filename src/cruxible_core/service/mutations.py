@@ -612,7 +612,7 @@ def _prepare_batch_direct_write(
             validated_entity,
             actor_context=actor_context,
         )
-        apply_entity(graph, validated_entity)
+        apply_entity(graph, validated_entity, config=config, source=source)
         if builder:
             builder.record_validation(
                 passed=True,
@@ -700,7 +700,15 @@ def _prepare_batch_direct_write(
             )
 
     proposed_guard_graph = graph
-    if config.mutation_guards and validated_relationships:
+    if validated_relationships:
+        # Apply the validated edges to a throwaway graph through the shared
+        # chokepoint. This serves two purposes: (1) it surfaces a
+        # DirectWriteRefusedError for proposal_only types here, in prepare, so
+        # both the dry-run preview and the live write refuse identically (entity
+        # refusal already happens in prepare via apply_entity above); and (2) it
+        # yields the post-write proposed graph the mutation guards evaluate
+        # against. The guard error collection below still runs only when guards
+        # are configured.
         proposed_guard_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
         for relationship_item in validated_relationships:
             apply_relationship(
@@ -708,6 +716,7 @@ def _prepare_batch_direct_write(
                 relationship_item.validated,
                 source=source,
                 source_ref=source_ref,
+                config=config,
                 pending=relationship_item.pending,
                 lifecycle=relationship_item.lifecycle,
             )
@@ -871,6 +880,7 @@ def service_batch_direct_write(
                     detail=detail,
                 )
 
+        config = instance.load_config()
         touched_relationships = []
         for relationship_item in prepared.relationships:
             edge = relationship_item.relationship
@@ -879,6 +889,7 @@ def service_batch_direct_write(
                 relationship_item.validated,
                 source,
                 source_ref,
+                config=config,
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
                 pending=relationship_item.pending,
@@ -1044,7 +1055,7 @@ def service_add_entities(
 
         graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
         for validated in pending:
-            apply_entity(graph, validated)
+            apply_entity(graph, validated, config=config, source="add_entity")
         try:
             guard_errors = mutation_guard_errors(
                 config,
@@ -1193,9 +1204,7 @@ def service_add_relationships(
         if len(pending_flags) != len(relationships):
             raise DataValidationError("pending flag count must match relationship count")
         lifecycle_states: list[RelationshipLifecycleState | None] = (
-            list(lifecycle)
-            if isinstance(lifecycle, Sequence)
-            else [lifecycle] * len(relationships)
+            list(lifecycle) if isinstance(lifecycle, Sequence) else [lifecycle] * len(relationships)
         )
         if len(lifecycle_states) != len(relationships):
             raise DataValidationError("lifecycle count must match relationship count")
@@ -1314,6 +1323,7 @@ def service_add_relationships(
                 validated,
                 source,
                 source_ref,
+                config=config,
                 receipt_id=builder.receipt_id if builder else None,
                 actor_context=actor_context,
                 pending=pending_flag,

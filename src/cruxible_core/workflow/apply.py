@@ -468,6 +468,7 @@ def apply_relationship_set(
                 validated,
                 "workflow_apply",
                 source_ref,
+                config=config,
                 receipt_id=receipt_builder.receipt_id if persist_writes else None,
                 actor_context=actor_context,
             )
@@ -493,6 +494,7 @@ def apply_relationship_set(
                 validated,
                 "workflow_apply",
                 source_ref,
+                config=config,
                 actor_context=actor_context,
             )
             if persist_writes:
@@ -548,7 +550,11 @@ def _enforce_entity_mutation_guards(
 
     proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
     for validated in validated_entities:
-        apply_entity(proposed_graph, validated)
+        # Guard-preview write on a throwaway proposed graph. MUST carry
+        # source="workflow_apply" (the governed verb) so proposal_only entity
+        # types are not refused during guard evaluation before any real write —
+        # the live entity write below at apply_entity_set bypasses apply_entity.
+        apply_entity(proposed_graph, validated, config=config, source="workflow_apply")
 
     guard_errors = mutation_guard_errors(
         config,

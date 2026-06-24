@@ -30,7 +30,8 @@ errors (runtime data), making it easy to catch by category.
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
-    └── PermissionDeniedError (MCP permission mode)
+    ├── PermissionDeniedError (MCP permission mode)
+    └── DirectWriteRefusedError (governed proposal_only direct-write refusal)
 """
 
 from __future__ import annotations
@@ -257,9 +258,7 @@ class CustomerCodeExecutionUnsupportedError(ExecutionError):
     error_code = "customer_code_execution_unsupported"
 
     def __init__(self) -> None:
-        super().__init__(
-            "Customer code execution is not supported in this hosted runtime profile."
-        )
+        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
 
 
 class TransportError(ExecutionError):
@@ -362,4 +361,35 @@ class PermissionDeniedError(CoreError):
         super().__init__(
             f"Tool '{tool_name}' requires {required_mode} mode, "
             f"but server is running in {current_mode} mode"
+        )
+
+
+class DirectWriteRefusedError(CoreError):
+    """Direct graph write refused because the target is governed proposal_only.
+
+    A HARD governance constraint, independent of permission tier (even
+    ``CRUXIBLE_MODE=admin`` is refused). State for a ``proposal_only`` type may
+    only enter through the governed proposal/workflow path; relationship writes
+    may also be staged with ``pending=true``.
+    """
+
+    error_code = "direct_write_refused"
+
+    def __init__(self, kind: str, type_name: str, source: str):
+        self.kind = kind
+        self.type_name = type_name
+        self.source = source
+        if kind == "relationship":
+            forward = (
+                "Use 'group propose' to stage a governed proposal, or pass "
+                "pending=true to stage the edge for review."
+            )
+        else:
+            forward = (
+                "Add it through a governed canonical workflow (apply_entities) "
+                "instead of a direct write."
+            )
+        super().__init__(
+            f"Direct write to {kind} '{type_name}' is refused "
+            f"(write_policy=proposal_only). {forward}"
         )

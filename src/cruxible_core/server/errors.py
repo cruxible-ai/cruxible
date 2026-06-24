@@ -12,6 +12,7 @@ from cruxible_core.errors import (
     CoreError,
     CustomerCodeExecutionUnsupportedError,
     DataValidationError,
+    DirectWriteRefusedError,
     EntityNotFoundError,
     EntityTypeNotFoundError,
     GroupNotFoundError,
@@ -62,7 +63,10 @@ def _status_for_error(exc: CoreError) -> int:
         return 403
     if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
         return 400
-    if isinstance(exc, (PermissionDeniedError, OwnershipError, InstanceScopeError)):
+    if isinstance(
+        exc,
+        (PermissionDeniedError, OwnershipError, InstanceScopeError, DirectWriteRefusedError),
+    ):
         return 403
     if isinstance(
         exc,
@@ -105,6 +109,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["tool_name"] = exc.tool_name
         context["current_mode"] = exc.current_mode
         context["required_mode"] = exc.required_mode
+    if isinstance(exc, DirectWriteRefusedError):
+        context["kind"] = exc.kind
+        context["type_name"] = exc.type_name
+        context["source"] = exc.source
     if isinstance(exc, EntityTypeNotFoundError):
         context["entity_type"] = exc.entity_type
         context["known_entity_types"] = exc.known_entity_types

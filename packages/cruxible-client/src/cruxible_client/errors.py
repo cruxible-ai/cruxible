@@ -170,9 +170,7 @@ class CustomerCodeExecutionUnsupportedError(ExecutionError):
     error_code = "customer_code_execution_unsupported"
 
     def __init__(self) -> None:
-        super().__init__(
-            "Customer code execution is not supported in this hosted runtime profile."
-        )
+        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
 
 
 class OwnershipError(CoreError):
@@ -256,6 +254,21 @@ class PermissionDeniedError(CoreError):
         )
 
 
+class DirectWriteRefusedError(CoreError):
+    """Direct graph write refused because the target is governed proposal_only."""
+
+    error_code = "direct_write_refused"
+
+    def __init__(self, kind: str, type_name: str, source: str, message: str | None = None):
+        self.kind = kind
+        self.type_name = type_name
+        self.source = source
+        super().__init__(
+            message
+            or (f"Direct write to {kind} '{type_name}' is refused (write_policy=proposal_only).")
+        )
+
+
 class ErrorResponse(BaseModel):
     """Structured error payload returned by the HTTP server."""
 
@@ -288,6 +301,13 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("tool_name", "unknown"),
             context.get("current_mode", "unknown"),
             context.get("required_mode", "unknown"),
+        )
+    elif body.error_type == "DirectWriteRefusedError":
+        exc = DirectWriteRefusedError(
+            context.get("kind", "unknown"),
+            context.get("type_name", "unknown"),
+            context.get("source", "unknown"),
+            message=body.message,
         )
     elif body.error_type == "EntityTypeNotFoundError":
         exc = EntityTypeNotFoundError(

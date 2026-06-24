@@ -253,6 +253,25 @@ class TestEntityTypeSchema:
         entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
         assert entity.get_primary_key() is None
 
+    def test_write_policy_defaults_to_none(self):
+        entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
+        assert entity.write_policy is None
+
+    @pytest.mark.parametrize("policy", ["direct", "proposal_only"])
+    def test_write_policy_accepts_enum_values(self, policy):
+        entity = EntityTypeSchema(
+            properties={"name": PropertySchema(type="string")},
+            write_policy=policy,
+        )
+        assert entity.write_policy == policy
+
+    def test_write_policy_rejects_unknown_value(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            EntityTypeSchema(
+                properties={"name": PropertySchema(type="string")},
+                write_policy="refuse",
+            )
+
 
 class TestRelationshipSchema:
     def test_from_alias(self):
@@ -278,6 +297,23 @@ class TestRelationshipSchema:
         assert rel.properties == {}
         assert rel.reverse_name is None
         assert rel.proposal_identity == "thesis_signature"
+        assert rel.write_policy is None
+
+    @pytest.mark.parametrize("policy", ["direct", "proposal_only"])
+    def test_write_policy_accepts_enum_values(self, policy):
+        rel = RelationshipSchema(name="r", from_entity="A", to_entity="B", write_policy=policy)
+        assert rel.write_policy == policy
+
+    def test_write_policy_rejects_unknown_value(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            RelationshipSchema(name="r", from_entity="A", to_entity="B", write_policy="nope")
+
+    def test_write_policy_parses_under_extra_forbid(self):
+        # RelationshipSchema is extra="forbid"; the declared field must parse.
+        rel = RelationshipSchema.model_validate(
+            {"name": "r", "from": "A", "to": "B", "write_policy": "proposal_only"}
+        )
+        assert rel.write_policy == "proposal_only"
 
     def test_relationship_properties_default_optional_and_string(self):
         rel = RelationshipSchema(
@@ -308,6 +344,31 @@ class TestRelationshipSchema:
             proposal_identity="relationship_tuple",
         )
         assert rel.proposal_identity == "relationship_tuple"
+
+
+class TestRuntimeConfigWritePolicy:
+    def test_default_write_policy_defaults_to_direct(self):
+        runtime = RuntimeConfigSchema()
+        assert runtime.default_write_policy == "direct"
+
+    @pytest.mark.parametrize("policy", ["direct", "proposal_only"])
+    def test_default_write_policy_accepts_enum_values(self, policy):
+        runtime = RuntimeConfigSchema(default_write_policy=policy)
+        assert runtime.default_write_policy == policy
+
+    def test_default_write_policy_rejects_unknown_value(self):
+        with pytest.raises(ValidationError, match="Input should be"):
+            RuntimeConfigSchema(default_write_policy="maybe")
+
+    def test_parses_under_extra_forbid(self):
+        # RuntimeConfigSchema is extra="forbid"; the declared field must parse and
+        # unknown sibling keys must still be rejected.
+        runtime = RuntimeConfigSchema.model_validate(
+            {"trace_payloads": "preview", "default_write_policy": "proposal_only"}
+        )
+        assert runtime.default_write_policy == "proposal_only"
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            RuntimeConfigSchema.model_validate({"unknown_key": True})
 
 
 class TestTraversalStep:

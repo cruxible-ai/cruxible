@@ -286,7 +286,7 @@ relationships:
             "confidence": 0.5,
             "note": "verified manually",
         }
-        apply_relationship(graph, validated, "cli_add", "add_relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship", config=config)
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel is not None
         assert rel.properties["confidence"] == 0.5
@@ -331,7 +331,7 @@ relationships:
 class TestApplyEntity:
     def test_apply_new(self, config, graph):
         validated = validate_entity(config, graph, "Vehicle", "V2", {"vehicle_id": "V2"})
-        apply_entity(graph, validated)
+        apply_entity(graph, validated, config=config, source="add_entity")
         assert graph.has_entity("Vehicle", "V2")
 
     def test_apply_update(self, config, graph):
@@ -343,7 +343,7 @@ class TestApplyEntity:
             {"vehicle_id": "V1"},
             metadata={"last_seen": "service"},
         )
-        apply_entity(graph, validated)
+        apply_entity(graph, validated, config=config, source="add_entity")
         entity = graph.get_entity("Vehicle", "V1")
         assert "vehicle_id" in entity.properties
         assert entity.metadata["last_seen"] == "service"
@@ -354,7 +354,7 @@ class TestApplyEntity:
         graph.update_entity_metadata("Vehicle", "V1", {"origin": "fixture"})
 
         validated = validate_entity(config, graph, "Vehicle", "V1", {"vehicle_id": "V1"})
-        apply_entity(graph, validated)
+        apply_entity(graph, validated, config=config, source="add_entity")
 
         entity = graph.get_entity("Vehicle", "V1")
         assert entity is not None
@@ -383,7 +383,7 @@ class TestApplyRelationship:
             "V1",
             {"confidence": 0.9},
         )
-        apply_relationship(graph, validated, "mcp_add", "add_relationship")
+        apply_relationship(graph, validated, "mcp_add", "add_relationship", config=config)
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel is not None
         assert rel.properties == {"confidence": 0.9}
@@ -426,7 +426,7 @@ class TestApplyRelationship:
             {"confidence": 0.9},
         )
         assert validated.is_update is True
-        apply_relationship(graph, validated, "cli_add", "add_relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship", config=config)
 
         rel = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits")
         assert rel.properties["confidence"] == 0.9
@@ -460,7 +460,7 @@ class TestApplyRelationship:
             config, graph, "Part", "P1", "fits", "Vehicle", "V1", {"confidence": 0.9}
         )
         assert validated.is_update is True
-        apply_relationship(graph, validated, "cli_add", "add_relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship", config=config)
 
         prov = graph.get_relationship("Part", "P1", "Vehicle", "V1", "fits").metadata.provenance
         assert prov is not None
@@ -481,7 +481,7 @@ class TestApplyRelationship:
             "V1",
             {"confidence": 0.9},
         )
-        apply_relationship(graph, validated, "cli_add", "add_relationship")
+        apply_relationship(graph, validated, "cli_add", "add_relationship", config=config)
         rel = graph.get_relationship("Part", "P2", "Vehicle", "V1", "fits")
         prov = rel.metadata.provenance
         assert prov is not None
