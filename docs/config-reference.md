@@ -106,13 +106,22 @@ is a **hard constraint, independent of permission tier** — even `admin` is
 refused. The refusal raises `DirectWriteRefusedError` (HTTP **403**,
 `error_code: direct_write_refused`).
 
+**Scope.** `refuse_direct_writes` governs how state is *created* — it forces the
+direct-write verbs above through the proposal/workflow path. It does **not**
+govern the `feedback` review channel: promoting an already-staged (`pending`)
+edge to live, or correcting an existing edge, goes through `feedback` — a
+separate path gated by **reviewer identity** (enforced when server auth is on;
+unattributed under auth-off local mode). So `proposal_only` guarantees that
+*creation* is governed; *promotion* of a staged edge is exactly as strong as the
+feedback review-gate, no stronger.
+
 Three knobs control it:
 
 | Knob | Where | Values | Effect |
 |------|-------|--------|--------|
 | `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). |
 | `default_write_policy` | `runtime` | `direct` (default) \| `proposal_only` | Instance-wide default for types whose own `write_policy` is unset. |
-| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **hard kill-switch**: forces `proposal_only` for every type, overriding every per-type opt-out and the default. |
+| `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch** for the direct-write verbs: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default. (Chokepoint only — the feedback review/promotion path is separate; see Scope above.) |
 
 **Effective policy (union — any path to `proposal_only` wins):** a write is
 refused when the env kill-switch is set **OR** the type's explicit `write_policy`

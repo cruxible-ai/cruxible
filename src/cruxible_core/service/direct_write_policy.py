@@ -47,7 +47,9 @@ WritePolicy = Literal["direct", "proposal_only"]
 # Add any future governed verb here, with a comment naming it.
 _GOVERNED_SOURCES: frozenset[str] = frozenset({"workflow_apply", "group_resolve"})
 
-# Env kill-switch. Daemon-wide hard override forcing proposal_only everywhere.
+# Env kill-switch: daemon-wide override forcing proposal_only for the direct-write
+# verbs at the chokepoint (overrides per-type opt-outs + the default). Scope: governs
+# the write chokepoint only -- the feedback review/promotion channel is separate.
 _ENV_REFUSE_DIRECT_WRITES = "CRUXIBLE_REFUSE_DIRECT_WRITES"
 
 
