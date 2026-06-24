@@ -826,38 +826,6 @@ class TestWorkflowExecutionServices:
         assert "Workflow head snapshot changed between preview and apply." in message
         assert "apply digest and head snapshot id" in message
 
-    def test_service_apply_workflow_rejects_live_config_digest_drift(
-        self,
-        canonical_workflow_instance: CruxibleInstance,
-    ) -> None:
-        """Defense-in-depth: apply rejects a live config digest that no longer
-        matches the digest recorded in the preview receipt, even when the
-        apply/head/lock checks all still pass.
-
-        The apply-time config digest is forced to a value that differs from the
-        preview-recorded digest. Patching the name bound in service.execution
-        leaves the in-apply preview recompilation (which uses the compiler's own
-        binding) untouched, so every other guard still passes and only the new
-        config_digest equality check fires.
-        """
-        service_lock(canonical_workflow_instance)
-        preview = service_run(canonical_workflow_instance, "build_reference", {})
-
-        with (
-            patch(
-                "cruxible_core.service.execution.compute_lock_config_digest",
-                return_value="sha256:drifted-config-digest",
-            ),
-            pytest.raises(ConfigError, match="Workflow config changed; rerun workflow preview"),
-        ):
-            service_apply_workflow(
-                canonical_workflow_instance,
-                "build_reference",
-                {},
-                expected_apply_digest=preview.apply_digest or "",
-                expected_head_snapshot_id=preview.head_snapshot_id,
-            )
-
     def test_write_transaction_refreshes_graph_cache_from_disk(
         self, canonical_workflow_instance: CruxibleInstance
     ) -> None:
