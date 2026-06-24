@@ -110,9 +110,9 @@ def config_expand_cmd(
 ) -> None:
     """Expand a compact authoring config to the explicit engine config.
 
-    Deterministic, compile-then-commit preprocessor: the expanded YAML stays the
-    canonical, engine-loaded contract and is reviewable as a diff against the
-    compact source.
+    The compact form is the single source of truth: the loader expands it on load,
+    so this is a deterministic inspection/review transform (e.g. to diff the resolved
+    explicit graph), not a committed artifact.
     """
     from cruxible_core.config.compact import dump_expanded, expand_compact_file_full
 

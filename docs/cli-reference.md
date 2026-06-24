@@ -80,6 +80,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 
 - `cruxible config reload` - Validate the active config or repoint the instance to a new config file.
 - `cruxible config views` - Render canonical Mermaid/Markdown views for a Cruxible config.
+- `cruxible config expand` - Expand a compact authoring config to the explicit engine config.
 - `cruxible config add-constraint` - Add a constraint rule to the config.
 - `cruxible config add-decision-policy` - Add a decision policy to the config.
 
@@ -90,6 +91,27 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible config expand
+
+**Usage:** `cruxible config expand [OPTIONS]`
+
+**Purpose:** Expand a compact authoring config to the explicit engine config. The compact form is the single source of truth; the loader expands it on load, so the explicit output is for inspection/review (e.g. diffing the resolved graph), not a committed artifact.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--in` | yes | `` | file | Path to the compact authoring YAML to expand. |
+| `--out` | no | stdout | file | Write the expanded explicit YAML here. |
+| `--validate` / `--no-validate` | no | `validate` | flag | Validate the expanded config as a CoreConfig before writing. |
+
+**Output And Side Effects:**
+- Pure transform: reads the compact YAML and writes the expanded explicit YAML to `--out` (or stdout). No instance, daemon, or graph state is touched.
+
+**Common Errors:**
+- Malformed compact grammar (raises a compact-expansion error naming the construct).
+- The expanded config fails CoreConfig validation (unless `--no-validate`).
 
 ## cruxible config add-constraint
 
