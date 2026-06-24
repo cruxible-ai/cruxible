@@ -274,6 +274,24 @@ def test_relationship_block_description() -> None:
     assert "multi-line" in config["relationships"][0]["description"]
 
 
+def test_relationship_block_description_containing_arrow() -> None:
+    # Regression: a block `description` whose text contains `->` must not be
+    # mistaken for a second `name: From -> To` signature (_find_signature key set).
+    config = _expand(
+        _REL_HEADER,
+        """
+        relationships:
+          - work_item_owned_by_actor: WorkItem -> Actor
+            description: Maps WorkItem -> Actor (the owner).
+        """,
+    )
+    rel = config["relationships"][0]
+    assert rel["name"] == "work_item_owned_by_actor"
+    assert rel["from"] == "WorkItem"
+    assert rel["to"] == "Actor"
+    assert rel["description"] == "Maps WorkItem -> Actor (the owner)."
+
+
 def test_relationship_self_evident_edge_has_no_description() -> None:
     config = _expand(
         _REL_HEADER,

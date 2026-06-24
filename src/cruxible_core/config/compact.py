@@ -392,10 +392,11 @@ def _find_signature(item: dict[str, Any]) -> tuple[str, str]:
     """Find the relationship name and its `From -> To` signature in a list item.
 
     The signature is the single mapping key whose value is a string containing
-    ``->``. The other keys (proposal_policy, basis, desc, properties) are
-    structured fields.
+    ``->``. The other keys (proposal_policy, basis, description, properties) are
+    structured fields and are skipped -- so a block ``description`` whose text
+    contains ``->`` is not mistaken for a second signature.
     """
-    structured = {"proposal_policy", "basis", "desc", "properties"}
+    structured = {"proposal_policy", "basis", "description", "properties"}
     candidates = [
         (key, value)
         for key, value in item.items()
