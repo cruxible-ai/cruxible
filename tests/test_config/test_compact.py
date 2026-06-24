@@ -260,13 +260,13 @@ def test_relationship_trailing_comment_becomes_description() -> None:
     assert config["relationships"][0]["description"] == "Actor accountable for a work item."
 
 
-def test_relationship_block_desc() -> None:
+def test_relationship_block_description() -> None:
     config = _expand(
         _REL_HEADER,
         """
         relationships:
           - work_item_owned_by_actor: WorkItem -> Actor
-            desc: >
+            description: >
               A multi-line
               description.
         """,
@@ -391,7 +391,7 @@ def test_direction_inferred_anchor_is_to_means_incoming() -> None:
             entry_point: Actor
             returns: WorkItem
             traverse:
-              - rel: work_item_owned_by_actor
+              - relationship: work_item_owned_by_actor
                 as: work_item
         """,
     )
@@ -410,7 +410,7 @@ def test_direction_inferred_anchor_is_from_means_outgoing() -> None:
             entry_point: WorkItem
             returns: Actor
             traverse:
-              - rel: work_item_owned_by_actor
+              - relationship: work_item_owned_by_actor
                 as: owner
         """,
     )
@@ -428,7 +428,7 @@ def test_self_ref_with_marker_out() -> None:
             entry_point: WorkItem
             returns: WorkItem
             traverse:
-              - rel: work_item_depends_on_work_item>
+              - relationship: work_item_depends_on_work_item>
                 as: dep
         """,
     )
@@ -447,7 +447,7 @@ def test_self_ref_with_marker_in() -> None:
             entry_point: WorkItem
             returns: WorkItem
             traverse:
-              - rel: work_item_depends_on_work_item<
+              - relationship: work_item_depends_on_work_item<
                 as: dep
         """,
     )
@@ -467,7 +467,7 @@ def test_self_ref_without_marker_fails_loudly() -> None:
                 entry_point: WorkItem
                 returns: WorkItem
                 traverse:
-                  - rel: work_item_depends_on_work_item
+                  - relationship: work_item_depends_on_work_item
                     as: dep
             """,
         )
@@ -535,11 +535,11 @@ def test_named_bounded_include_set() -> None:
             entry_point: Actor
             returns: WorkItem
             traverse:
-              - rel: work_item_owned_by_actor
+              - relationship: work_item_owned_by_actor
                 as: work_item
             include:
               latest:
-                rel: work_item_depends_on_work_item>
+                relationship: work_item_depends_on_work_item>
                 limit: 1
                 order: requested_at desc date
         """,
@@ -600,7 +600,7 @@ def test_traverse_where_targets_candidate() -> None:
             entry_point: Actor
             returns: WorkItem
             traverse:
-              - rel: work_item_owned_by_actor
+              - relationship: work_item_owned_by_actor
                 as: work_item
                 where: {status: {not_in: [closed]}}
         """,
@@ -713,11 +713,11 @@ def test_select_deep_projection_passes_through() -> None:
             entry_point: Actor
             returns: WorkItem
             traverse:
-              - rel: work_item_owned_by_actor
+              - relationship: work_item_owned_by_actor
                 as: work_item
             include:
               latest:
-                rel: work_item_depends_on_work_item>
+                relationship: work_item_depends_on_work_item>
                 limit: 1
             select:
               properties: [work_item_id]
@@ -921,9 +921,12 @@ def test_quality_check_cardinality() -> None:
         """
         quality_checks:
           - c:
-              card: WorkItem out work_item_owned_by_actor
-              min: 1
-              desc: Work items should have an owner.
+              cardinality:
+                entity: WorkItem
+                relationship: work_item_owned_by_actor
+                direction: out
+                min: 1
+              description: Work items should have an owner.
         """,
     )
     check = config["quality_checks"][0]
@@ -932,6 +935,7 @@ def test_quality_check_cardinality() -> None:
     assert check["relationship_type"] == "work_item_owned_by_actor"
     assert check["direction"] == "outgoing"
     assert check["min_count"] == 1
+    assert check["description"] == "Work items should have an owner."
 
 
 def test_quality_check_property_non_empty() -> None:
@@ -939,7 +943,9 @@ def test_quality_check_property_non_empty() -> None:
         _QUERY_HEADER,
         """
         quality_checks:
-          - c: {prop: work_item_depends_on_work_item.dependency_basis, rule: non_empty}
+          - c:
+              property: work_item_depends_on_work_item.dependency_basis
+              rule: non_empty
         """,
     )
     check = config["quality_checks"][0]

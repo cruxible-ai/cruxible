@@ -335,10 +335,10 @@ def _expand_relationships(
 
         rel: dict[str, Any] = {"name": name, "from": from_entity, "to": to_entity}
 
-        # Description: trailing `# comment` (one-line) or block `desc: >`.
+        # Description: trailing `# comment` (one-line) or block `description: >`.
         description = comments.get(name)
-        if "desc" in item:
-            description = item["desc"]
+        if "description" in item:
+            description = item["description"]
         if description is not None:
             rel["description"] = description
 
@@ -973,10 +973,12 @@ def _expand_named_include(
     from_ref: str,
     query_name: str,
 ) -> dict[str, Any]:
-    """Expand a NEW named bounded include set (`include: {name: {rel:..., ...}}`)."""
-    rel_ref = set_body.get("rel")
+    """Expand a NEW named bounded include set (`include: {name: {relationship:..., ...}}`)."""
+    rel_ref = set_body.get("relationship")
     if rel_ref is None:
-        raise CompactExpansionError(f"query '{query_name}' include '{set_name}': must define 'rel'")
+        raise CompactExpansionError(
+            f"query '{query_name}' include '{set_name}': must define 'relationship'"
+        )
     rel_name, direction = _resolve_direction(
         rel_ref, anchor or "", rel_index, context=f"query '{query_name}' include '{set_name}'"
     )
@@ -1084,9 +1086,11 @@ def _expand_traverse_step(
     query_name: str,
 ) -> dict[str, Any]:
     """Expand a single explicit ``traverse:`` step."""
-    rel_ref = step.get("rel")
+    rel_ref = step.get("relationship")
     if rel_ref is None:
-        raise CompactExpansionError(f"query '{query_name}' traverse step must define 'rel'")
+        raise CompactExpansionError(
+            f"query '{query_name}' traverse step must define 'relationship'"
+        )
     rel_name, direction = _resolve_direction(
         rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
     )
@@ -1290,14 +1294,17 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
 # Quality checks
 # ---------------------------------------------------------------------------
 
-_CARD_RE = re.compile(r"^\s*(?P<entity>\w+)\s+(?P<dir>out|in)\s+(?P<rel>\w+)\s*$")
-
-
 def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
     """Expand compact ``quality_checks:`` to explicit discriminated checks.
 
-    Cardinality: ``card: <entity> <out|in> <rel>`` + min/max -> kind cardinality.
-    Property:    ``{prop: <rel>.<prop>, rule: non_empty|required}`` -> kind property.
+    Cardinality::
+
+        cardinality: {entity:, relationship:, direction: out|in, min:, max:}
+
+    Property::
+
+        property: <relationship>.<field>
+        rule: non_empty|required
     """
     out: list[dict[str, Any]] = []
     for item in raw_checks:
@@ -1305,54 +1312,61 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
             raise CompactExpansionError(f"quality check must be a single-key mapping, got {item!r}")
         name, body = next(iter(item.items()))
 
-        if "card" in body:
+        if "cardinality" in body:
             out.append(_expand_cardinality_check(name, body))
-        elif "prop" in body:
+        elif "property" in body:
             out.append(_expand_property_check(name, body))
         else:
-            raise CompactExpansionError(f"quality check '{name}': must define 'card' or 'prop'")
+            raise CompactExpansionError(
+                f"quality check '{name}': must define 'cardinality' or 'property'"
+            )
     return out
 
 
 def _expand_cardinality_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
-    match = _CARD_RE.match(body["card"])
-    if match is None:
+    card = body["cardinality"]
+    if not isinstance(card, dict):
+        raise CompactExpansionError(f"quality check '{name}': 'cardinality' must be a mapping")
+    direction = card.get("direction")
+    if direction not in ("out", "in"):
         raise CompactExpansionError(
-            f"quality check '{name}': card must be '<Entity> <out|in> <rel>', got '{body['card']}'"
+            f"quality check '{name}': cardinality.direction must be 'out' or 'in', "
+            f"got {direction!r}"
         )
     check: dict[str, Any] = {
         "name": name,
         "kind": "cardinality",
-        "entity_type": match.group("entity"),
-        "relationship_type": match.group("rel"),
-        "direction": "outgoing" if match.group("dir") == "out" else "incoming",
+        "entity_type": card["entity"],
+        "relationship_type": card["relationship"],
+        "direction": "outgoing" if direction == "out" else "incoming",
     }
-    if "desc" in body:
-        check["description"] = body["desc"]
-    if "min" in body:
-        check["min_count"] = body["min"]
-    if "max" in body:
-        check["max_count"] = body["max"]
+    if "description" in body:
+        check["description"] = body["description"]
+    if "min" in card:
+        check["min_count"] = card["min"]
+    if "max" in card:
+        check["max_count"] = card["max"]
     return check
 
 
 def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
-    prop_path = body["prop"]
-    if "." not in prop_path:
+    property_path = body["property"]
+    if "." not in property_path:
         raise CompactExpansionError(
-            f"quality check '{name}': prop must be '<rel>.<prop>', got '{prop_path}'"
+            f"quality check '{name}': property must be '<relationship>.<field>', "
+            f"got '{property_path}'"
         )
-    rel, prop = prop_path.split(".", 1)
+    relationship, field = property_path.split(".", 1)
     check: dict[str, Any] = {
         "name": name,
         "kind": "property",
         "target": "relationship",
-        "relationship_type": rel,
-        "property": prop,
+        "relationship_type": relationship,
+        "property": field,
         "rule": body["rule"],
     }
-    if "desc" in body:
-        check["description"] = body["desc"]
+    if "description" in body:
+        check["description"] = body["description"]
     return check
 
 

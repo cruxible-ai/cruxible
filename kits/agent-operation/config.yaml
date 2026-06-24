@@ -138,7 +138,7 @@ relationships:
   - state_note_supersedes_state_note: StateNote -> StateNote   # Supersedes/corrects an earlier note.
     basis: supersession_basis
   - state_note_resolves_state_note: StateNote -> StateNote
-    desc: >
+    description: >
       Note resolves an earlier note (e.g. a review finding) without erasing it; the
       original still stands as raised. "Unresolved" = no incoming resolves edge.
     basis: resolution_basis
@@ -217,12 +217,12 @@ named_queries:
     max_paths_per_result: 100
     description: Work items owned by an actor with latest reviews, dependency counts, blockers, subjects.
     traverse:
-      - rel: work_item_owned_by_actor
+      - relationship: work_item_owned_by_actor
         as: work_item
         where: {status: {not_in: [closed]}}
     include:
       latest_review:
-        rel: review_request_for_work_item
+        relationship: review_request_for_work_item
         limit: 1
         order: [requested_at desc date, resolved_at desc date]
     select:
@@ -291,7 +291,7 @@ named_queries:
     max_paths: 200
     description: State notes attached to a work item, newest first.
     traverse:
-      - rel: state_note_about_work_item
+      - relationship: state_note_about_work_item
         as: state_note
     order: created_at desc datetime
 
@@ -304,7 +304,7 @@ named_queries:
     max_paths_per_result: 25
     description: Approved review requests for a work item. Used by the closed-transition guard.
     traverse:
-      - rel: review_request_for_work_item
+      - relationship: review_request_for_work_item
         as: approved_review
         where: {status: {eq: approved}}
 
@@ -334,7 +334,7 @@ named_queries:
     max_paths_per_result: 100
     description: Child/descendant work items under a parent.
     traverse:
-      - rel: work_item_part_of_work_item<
+      - relationship: work_item_part_of_work_item<
         as: child_or_descendant
         max_depth: 5
 
@@ -411,31 +411,60 @@ mutation_guards:
 
 quality_checks:
   - work_items_have_owner:
-      card: WorkItem out work_item_owned_by_actor
-      min: 1
-      desc: Work items should have an accountable actor.
+      cardinality:
+        entity: WorkItem
+        relationship: work_item_owned_by_actor
+        direction: out
+        min: 1
+      description: Work items should have an accountable actor.
   - review_requests_review_work:
-      card: ReviewRequest out review_request_for_work_item
-      min: 1
-      desc: Review requests should attach to the work item they review.
+      cardinality:
+        entity: ReviewRequest
+        relationship: review_request_for_work_item
+        direction: out
+        min: 1
+      description: Review requests should attach to the work item they review.
   - work_item_part_of_single_parent:
-      card: WorkItem out work_item_part_of_work_item
-      max: 1
-      desc: Composition should form a tree; one direct parent.
+      cardinality:
+        entity: WorkItem
+        relationship: work_item_part_of_work_item
+        direction: out
+        max: 1
+      description: Composition should form a tree; one direct parent.
   - work_item_spawned_from_single_origin:
-      card: WorkItem out work_item_spawned_from_work_item
-      max: 1
-      desc: Lineage records at most one direct origin.
+      cardinality:
+        entity: WorkItem
+        relationship: work_item_spawned_from_work_item
+        direction: out
+        max: 1
+      description: Lineage records at most one direct origin.
   - state_notes_have_author:
-      card: StateNote out state_note_authored_by_actor
-      min: 1
-      desc: State notes should be attributable to an actor.
-  - work_dependencies_have_basis: {prop: work_item_depends_on_work_item.dependency_basis, rule: non_empty}
-  - work_supersessions_have_basis: {prop: work_item_supersedes_work_item.supersession_basis, rule: non_empty}
-  - risk_work_blockers_have_basis: {prop: risk_blocks_work_item.blocking_basis, rule: non_empty}
-  - open_question_work_blockers_have_basis: {prop: open_question_blocks_work_item.blocking_basis, rule: non_empty}
-  - decision_work_constraints_have_type: {prop: decision_constrains_work_item.impact_type, rule: required}
-  - decision_supersessions_have_basis: {prop: decision_supersedes_decision.supersession_basis, rule: non_empty}
-  - state_note_supersessions_have_basis: {prop: state_note_supersedes_state_note.supersession_basis, rule: non_empty}
+      cardinality:
+        entity: StateNote
+        relationship: state_note_authored_by_actor
+        direction: out
+        min: 1
+      description: State notes should be attributable to an actor.
+  - work_dependencies_have_basis:
+      property: work_item_depends_on_work_item.dependency_basis
+      rule: non_empty
+  - work_supersessions_have_basis:
+      property: work_item_supersedes_work_item.supersession_basis
+      rule: non_empty
+  - risk_work_blockers_have_basis:
+      property: risk_blocks_work_item.blocking_basis
+      rule: non_empty
+  - open_question_work_blockers_have_basis:
+      property: open_question_blocks_work_item.blocking_basis
+      rule: non_empty
+  - decision_work_constraints_have_type:
+      property: decision_constrains_work_item.impact_type
+      rule: required
+  - decision_supersessions_have_basis:
+      property: decision_supersedes_decision.supersession_basis
+      rule: non_empty
+  - state_note_supersessions_have_basis:
+      property: state_note_supersedes_state_note.supersession_basis
+      rule: non_empty
 
 constraints: []
