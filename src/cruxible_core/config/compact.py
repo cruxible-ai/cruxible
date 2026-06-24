@@ -1,10 +1,11 @@
 """Deterministic compact-config expander.
 
-This module is an *authoring-time preprocessor* (compile-then-commit). It reads a
-COMPACT authoring YAML (e.g. ``kits/agent-operation/config.yaml``; a fuller commented
-reference lives at ``docs/dev/agent-operation.compact.draft.yaml``) and expands it 1:1 into the explicit
-``CoreConfig``-shaped dict the engine loads. The compact layer never reaches the
-engine: graph semantics stay fully explicit in the expanded artifact.
+It reads a COMPACT authoring YAML (e.g. ``kits/agent-operation/config.yaml``; a fuller
+commented reference lives at ``docs/dev/agent-operation.compact.draft.yaml``) and expands
+it 1:1 into the explicit ``CoreConfig``-shaped dict. The compact source is the single
+source of truth: the loader (``config/loader.py``) detects it via :func:`looks_compact`
+and expands it on load, so the explicit form exists only transiently in memory -- there
+is no committed expanded artifact. Graph semantics stay fully explicit post-expansion.
 
 The expander loads the source with a plain YAML parser and then interprets the
 compact *string values* (the closed set of 7 string mini-languages documented in
@@ -1361,6 +1362,35 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
 
 # Authoring-only top-level keys that are consumed/stripped, never emitted.
 _AUTHORING_ONLY_KEYS = {"presets", "metadata"}
+
+
+def looks_compact(data: Any) -> bool:
+    """Heuristic: does this parsed config use the compact authoring grammar?
+
+    True when the config carries an authoring-only top-level key (``presets`` /
+    ``metadata``), expresses relationships as single-key ``name: 'From -> To'`` maps,
+    or declares entity-type properties as scalar strings. Explicit (engine) ``CoreConfig``
+    YAML never does any of these, so this stays False for explicit configs and their load
+    path is unchanged. Used by the loader to decide whether to expand before validating.
+    """
+    if not isinstance(data, dict):
+        return False
+    if data.keys() & _AUTHORING_ONLY_KEYS:
+        return True
+    rels = data.get("relationships")
+    if isinstance(rels, list) and rels:
+        first = rels[0]
+        if isinstance(first, dict) and len(first) == 1:
+            (value,) = first.values()
+            if isinstance(value, str) and "->" in value:
+                return True
+    entity_types = data.get("entity_types")
+    if isinstance(entity_types, dict):
+        for spec in entity_types.values():
+            props = spec.get("properties") if isinstance(spec, dict) else None
+            if isinstance(props, dict) and any(isinstance(v, str) for v in props.values()):
+                return True
+    return False
 
 
 def expand_compact(source_text: str) -> dict[str, Any]:

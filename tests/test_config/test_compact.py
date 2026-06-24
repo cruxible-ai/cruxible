@@ -23,12 +23,10 @@ from cruxible_core.config.compact import (
 from cruxible_core.config.schema import CoreConfig
 
 KIT_DIR = Path(__file__).resolve().parents[2] / "kits" / "agent-operation"
-# docs/dev is gitignored, so tests run against the COMMITTED compact source
-# (config.yaml). The docs/dev draft is a local-only commented reference; it
-# expands identically. config.expanded.yaml is the explicit engine artifact the
-# kit manifest loads.
+# config.yaml is the single source of truth (compact); the loader expands it on load,
+# so there is no committed expanded artifact. Tests run against this committed source.
+# (The docs/dev draft is a local-only commented reference; it expands identically.)
 DRAFT_PATH = KIT_DIR / "config.yaml"
-REFERENCE_CONFIG = KIT_DIR / "config.expanded.yaml"
 
 
 def _expand(*parts: str) -> dict:
@@ -1063,38 +1061,46 @@ def test_draft_actor_work_queue_aliased_counts() -> None:
     assert select["blocking_risk_count"] == "$include.risk_blocks_work_item.count"
 
 
-# --- Kit load-path regressions (F-001) ----------------------------------------
-# config.yaml is the compact SOURCE and does NOT load as explicit config; the kit
-# manifest's entry_config must point at the generated explicit artifact, and that
-# artifact must stay in sync with the source.
+# --- Kit load-path: the loader expands the compact source ---------------------
+# config.yaml is the single source of truth (compact); load_config expands it to the
+# explicit CoreConfig on load -- there is NO committed expanded artifact. The manifest
+# entry_config names the compact source directly.
 
 
 def test_kit_manifest_entry_config_loads_as_valid_config() -> None:
-    """The manifest's entry_config must resolve to a loadable explicit CoreConfig.
+    """The manifest's entry_config (the compact config.yaml) loads via load_config.
 
-    Regression for F-001: config.yaml became the compact source (which fails normal
-    config validation), so entry_config must name the generated explicit artifact,
-    not the compact source. materialize_kit/service_init/load_config follow
-    manifest.entry_config directly.
+    load_config detects the compact grammar and expands it before validating, so the
+    kit loads with no separate explicit artifact. materialize_kit/service_init/
+    load_config all follow manifest.entry_config through this path.
     """
     import yaml as _yaml
 
     from cruxible_core.config.loader import load_config
 
     manifest = _yaml.safe_load((KIT_DIR / "cruxible-kit.yaml").read_text(encoding="utf-8"))
+    assert manifest["entry_config"] == "config.yaml"  # the compact source, not an artifact
     entry = KIT_DIR / manifest["entry_config"]
-    config = load_config(str(entry))  # must not raise
+    config = load_config(str(entry))  # compact -> expanded -> validated; must not raise
     assert config.name == "agent_operation"
 
 
-def test_compact_source_matches_committed_expanded_artifact() -> None:
-    """Drift guard: the committed explicit artifact must equal expand(compact source).
+def test_looks_compact_distinguishes_compact_from_explicit() -> None:
+    """The loader's compact detector is True for the compact kit, False for explicit.
 
-    Keeps the engine-loaded config.expanded.yaml from going stale relative to the
-    authored config.yaml under compile-then-commit.
+    Explicit (engine) configs must stay on the unchanged load path, so the detector
+    must not fire on the explicit project-state kit config.
     """
-    fresh = dump_expanded(expand_compact_file(KIT_DIR / "config.yaml"))
-    committed = (KIT_DIR / "config.expanded.yaml").read_text(encoding="utf-8")
-    assert fresh == committed, (
-        "config.expanded.yaml is stale; regenerate via `cruxible config expand`"
+    import yaml as _yaml
+
+    from cruxible_core.config.compact import looks_compact
+
+    compact = _yaml.safe_load((KIT_DIR / "config.yaml").read_text(encoding="utf-8"))
+    assert looks_compact(compact) is True
+
+    explicit = _yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "kits" / "project-state" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
     )
+    assert looks_compact(explicit) is False
