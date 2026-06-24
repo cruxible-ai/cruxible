@@ -280,6 +280,71 @@ def test_batch_direct_write_entity_refused(
         )
 
 
+def test_single_relationship_dry_run_also_refused(
+    proposal_only_instance: CruxibleInstance,
+) -> None:
+    # The single-relationship add path (what cruxible_add_relationship uses) must
+    # refuse a proposal_only direct write in dry-run identically to the live write.
+    # Regression: the dry_run branch used to early-return AddRelationshipResult(
+    # added=1) before reaching the chokepoint, so the preview disagreed with live.
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        service_add_relationship_inputs(
+            proposal_only_instance,
+            [_fits_input()],
+            source="add_relationship",
+            source_ref="add_relationship",
+            dry_run=True,
+        )
+    assert exc.value.kind == "relationship"
+    assert exc.value.type_name == "fits"
+
+
+def test_single_entity_dry_run_also_refused(
+    proposal_only_instance: CruxibleInstance,
+) -> None:
+    # Symmetric to the relationship case: a proposal_only entity dry-run must
+    # refuse identically to live. (The entity path already refused in dry-run via
+    # apply_entity running before its own early return — this pins that it stays
+    # symmetric with the single-relationship fix.)
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        service_add_entity_inputs(
+            proposal_only_instance,
+            [
+                EntityWriteInput(
+                    entity_type="Part",
+                    entity_id="BP-9",
+                    properties={"part_number": "BP-9"},
+                )
+            ],
+            dry_run=True,
+        )
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Part"
+
+
+def test_single_relationship_pending_dry_run_allowed(
+    proposal_only_instance: CruxibleInstance,
+) -> None:
+    # A pending=True dry-run of a proposal_only relationship must NOT be
+    # over-refused — pending stages for review, it is not a live direct write, so
+    # the dry-run refusal tightening must leave it allowed (matches live).
+    result = service_add_relationship_inputs(
+        proposal_only_instance,
+        [_fits_input(pending=True)],
+        source="add_relationship",
+        source_ref="add_relationship",
+        dry_run=True,
+    )
+    assert result.added == 1
+    # Dry-run must not persist anything.
+    assert (
+        proposal_only_instance.load_graph().get_relationship(
+            "Part", "BP-1", "Vehicle", "V-1", "fits"
+        )
+        is None
+    )
+
+
 def test_batch_direct_write_dry_run_also_refused(
     proposal_only_instance: CruxibleInstance,
 ) -> None:

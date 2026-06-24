@@ -1298,6 +1298,29 @@ def service_add_relationships(
         )
         _record_group_interaction_validation(builder, interactions)
 
+        # Run the refuse_direct_writes chokepoint here, in the prepare phase that
+        # executes for BOTH dry-run and live, so a dry-run preview refuses a
+        # proposal_only direct write identically to the live write (mirrors how
+        # _prepare_batch_direct_write applies the edges through the chokepoint and
+        # how the entity path refuses via apply_entity before its own dry-run
+        # early return). Without this, the dry-run branch below would return
+        # added=1 for a proposal_only direct add while the live write raises
+        # DirectWriteRefusedError. A throwaway graph copy keeps this side-effect
+        # free; the live block re-applies to the real graph below. pending=True
+        # and governed sources are PERMITTED by the chokepoint, so this never
+        # over-refuses.
+        refusal_check_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
+        for validated, _edge, pending_flag, lifecycle_state in prepared_relationships:
+            apply_relationship(
+                refusal_check_graph,
+                validated,
+                source,
+                source_ref,
+                config=config,
+                pending=pending_flag,
+                lifecycle=lifecycle_state,
+            )
+
         if dry_run:
             return AddRelationshipResult(
                 added=sum(
