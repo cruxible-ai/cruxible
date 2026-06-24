@@ -79,3 +79,59 @@ def config_views_cmd(
             bare=bare,
         )
     )
+
+
+@click.command("expand")
+@click.option(
+    "--in",
+    "in_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to the compact authoring YAML to expand.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the expanded explicit YAML here (default: stdout).",
+)
+@click.option(
+    "--validate/--no-validate",
+    "validate_output",
+    default=True,
+    show_default=True,
+    help="Validate the expanded config as a CoreConfig before writing.",
+)
+@handle_errors
+def config_expand_cmd(
+    in_path: Path,
+    out_path: Path | None,
+    validate_output: bool,
+) -> None:
+    """Expand a compact authoring config to the explicit engine config.
+
+    Deterministic, compile-then-commit preprocessor: the expanded YAML stays the
+    canonical, engine-loaded contract and is reviewable as a diff against the
+    compact source.
+    """
+    from cruxible_core.config.compact import dump_expanded, expand_compact_file_full
+
+    result = expand_compact_file_full(in_path)
+
+    if validate_output:
+        from cruxible_core.config.schema import CoreConfig
+
+        CoreConfig.model_validate(result.config)
+
+    rendered = dump_expanded(result.config)
+
+    for warning in result.warnings:
+        click.echo(f"warning: {warning}", err=True)
+    if result.metadata:
+        click.echo(f"metadata (stripped from engine config): {result.metadata}", err=True)
+
+    if out_path is not None:
+        out_path.write_text(rendered, encoding="utf-8")
+        click.echo(f"Wrote {out_path}")
+    else:
+        click.echo(rendered, nl=False)

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     analyze_outcomes_cmd: Any
     apply_cmd: Any
     batch_direct_write_cmd: Any
+    config_expand_cmd: Any
     config_views_cmd: Any
     connect_group: Any
     decision_records_cmd: Any
@@ -58,7 +59,10 @@ if TYPE_CHECKING:
     validate: Any
     state_group: Any
 else:
-    from cruxible_core.cli.commands.config_views import config_views_cmd
+    from cruxible_core.cli.commands.config_views import (
+        config_expand_cmd,
+        config_views_cmd,
+    )
     from cruxible_core.cli.commands.context import (
         connect_group,
     )
@@ -134,6 +138,7 @@ __all__ = [
     "analyze_outcomes_cmd",
     "apply_cmd",
     "batch_direct_write_cmd",
+    "config_expand_cmd",
     "config_views_cmd",
     "connect_group",
     "decision_records_cmd",

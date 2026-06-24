@@ -146,6 +146,7 @@ from cruxible_core.cli.commands import (  # noqa: E402
     apply_cmd,
     batch_direct_write_cmd,
     clone_cmd,
+    config_expand_cmd,
     config_views_cmd,
     connect_group,
     decision_records_cmd,
@@ -215,6 +216,7 @@ cli.add_command(inspect_group, "inspect")
 config_group = click.Group("config", help="Edit, validate, and render the active config.")
 config_group.add_command(reload_config_cmd, "reload")
 config_group.add_command(config_views_cmd, "views")
+config_group.add_command(config_expand_cmd, "expand")
 config_group.add_command(add_constraint_cmd, "add-constraint")
 config_group.add_command(add_decision_policy_cmd, "add-decision-policy")
 cli.add_command(config_group, "config")
