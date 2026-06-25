@@ -2740,7 +2740,7 @@ def get_entity(
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
         properties=entity.properties,
-        metadata=entity.metadata,
+        metadata=entity.metadata.to_metadata_dict(),
     )
 
 

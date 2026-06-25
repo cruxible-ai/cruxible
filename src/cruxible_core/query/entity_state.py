@@ -20,9 +20,8 @@ from typing import Any
 
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleStatus,
-    entity_is_live,
-    entity_lifecycle_status,
 )
+from cruxible_core.graph.types import EntityMetadata
 from cruxible_core.query.enums import REVIEW_ONLY_VISIBILITY_STATES, QueryVisibilityState
 
 
@@ -35,24 +34,25 @@ def entity_matches_query_state(
     * ``live`` (default) -- lifecycle status ``live`` and within its effective
       window.
     * ``all`` -- every stored entity, regardless of lifecycle.
-    * ``not-live`` -- the complement of ``live``: retired/superseded/orphaned (or
+    * ``not-live`` -- the complement of ``live``: retired/superseded (or
       effective-window-expired) entities -- the set gated out of live reads.
     * ``accepted`` / ``pending`` / ``reviewable`` -- entities have no review axis,
       so these resolve to ``live``.
     """
     if state == "all":
         return True
+    is_live = EntityMetadata.from_metadata(metadata).is_live()
     if state == "not-live":
-        return not entity_is_live(metadata)
+        return not is_live
     # `live` plus all review-only refinements collapse to live for entities.
     if state == "live" or state in REVIEW_ONLY_VISIBILITY_STATES:
-        return entity_is_live(metadata)
+        return is_live
     raise ValueError(f"Unsupported query visibility state '{state}'")
 
 
 def entity_visibility_status(metadata: Any) -> EntityLifecycleStatus:
     """Return the typed lifecycle status for entity metadata."""
-    return entity_lifecycle_status(metadata)
+    return EntityMetadata.from_metadata(metadata).lifecycle_status()
 
 
 def resolve_entity_visibility_state(state: QueryVisibilityState) -> QueryVisibilityState:

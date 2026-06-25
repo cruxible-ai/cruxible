@@ -697,7 +697,8 @@ class TestAddEntities:
         graph = initialized_instance.load_graph()
         entity = graph.get_entity("Vehicle", "V-1")
         assert entity is not None
-        assert entity.metadata == {"source": "input-wrapper"}
+        # Free-form metadata is carried in the typed envelope's `extra` slot.
+        assert entity.metadata.extra == {"source": "input-wrapper"}
 
     def test_batch(self, initialized_instance: CruxibleInstance) -> None:
         entities = [
@@ -755,7 +756,8 @@ class TestAddEntities:
         assert result.updated == 1
         entity = populated_instance.load_graph().get_entity("Vehicle", "V-2024-CIVIC-EX")
         assert entity is not None
-        assert entity.metadata == {"origin": "fixture", "last_seen": "service"}
+        # Both free-form keys merge into the typed envelope's `extra` slot.
+        assert entity.metadata.extra == {"origin": "fixture", "last_seen": "service"}
 
     def test_incremental_entity_mutation_does_not_full_save(
         self, initialized_instance: CruxibleInstance

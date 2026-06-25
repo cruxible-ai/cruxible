@@ -1568,7 +1568,7 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
                 "entity_type": entity.entity_type,
                 "entity_id": entity.entity_id,
                 "properties": dict(entity.properties),
-                "metadata": dict(entity.metadata),
+                "metadata": entity.metadata.to_metadata_dict(),
             }
         )
         return

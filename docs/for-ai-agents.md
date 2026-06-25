@@ -134,7 +134,7 @@ the `state` MCP/HTTP parameter, or the `relationship_state` query-config field
 | `live` (default) | Only `lifecycle.status == live` entities. | Active edges whose review state is neither `pending` nor `rejected`. |
 | `accepted` | Resolves to `live` (entities have no review axis). | Active edges whose review status is `approved`. |
 | `all` | Every entity, regardless of lifecycle. | Every stored edge, regardless of review/lifecycle. |
-| `not-live` | Exactly the gated-out set: `retired`/`superseded`/`orphaned` entities. | Edges hidden from live reads: review-`rejected` OR lifecycle closed/retracted/superseded. |
+| `not-live` | Exactly the gated-out set: `retired`/`superseded` entities. | Edges hidden from live reads: review-`rejected` OR lifecycle closed/retracted/superseded. |
 | `pending` | Resolves to `live`. | Active edges whose review status is `pending` (proposals awaiting review). |
 | `reviewable` | Resolves to `live`. | `live` edges plus pending edges — triage/context in one evidence path. |
 

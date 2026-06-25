@@ -1639,7 +1639,9 @@ def test_add_entity_returns_contract_shape(app_client: TestClient, server_projec
     assert response.json()["entities_added"] == 1
     lookup = app_client.get(f"/api/v1/{instance_id}/entities/Vehicle/V-1")
     assert lookup.status_code == 200
-    assert lookup.json()["metadata"] == {"source": "route-test"}
+    # The wire shape is the typed metadata envelope: free-form author keys are
+    # nested under "extra" (they can never sit beside the typed lifecycle slot).
+    assert lookup.json()["metadata"] == {"extra": {"source": "route-test"}}
 
 
 def test_state_publish_overlay_and_status_routes(

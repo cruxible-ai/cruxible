@@ -711,7 +711,8 @@ class TestGetEntity:
         entity = service_get_entity(initialized_instance, "Vehicle", "V-1")
 
         assert entity is not None
-        assert entity.metadata == {"source": "fixture"}
+        # Free-form metadata is carried in the typed envelope's `extra` slot.
+        assert entity.metadata.extra == {"source": "fixture"}
 
     def test_not_found(self, populated_instance: CruxibleInstance) -> None:
         entity = service_get_entity(populated_instance, "Vehicle", "NONEXISTENT")
@@ -749,7 +750,9 @@ class TestGetEntity:
 
         assert result.found is True
         assert result.properties["vehicle_id"] == "V-2024-CIVIC-EX"
-        assert result.metadata == {"source": "fixture"}
+        # The read surface serializes the typed envelope to its flat dict shape:
+        # free-form keys are nested under "extra".
+        assert result.metadata == {"extra": {"source": "fixture"}}
         assert result.total_neighbors == 2
         assert {neighbor.relationship_type for neighbor in result.neighbors} == {"fits"}
         assert {neighbor.direction for neighbor in result.neighbors} == {"incoming"}

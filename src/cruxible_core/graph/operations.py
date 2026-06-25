@@ -205,11 +205,12 @@ def apply_entity(
             validated.entity.entity_id,
             dict(validated.entity.properties),
         )
-        if validated.entity.metadata:
+        metadata_updates = validated.entity.metadata.to_metadata_dict()
+        if metadata_updates:
             graph.update_entity_metadata(
                 validated.entity.entity_type,
                 validated.entity.entity_id,
-                dict(validated.entity.metadata),
+                metadata_updates,
             )
     else:
         graph.add_entity(validated.entity)

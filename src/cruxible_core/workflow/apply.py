@@ -327,6 +327,8 @@ def apply_entity_set(
 
     for validated in validated_entities:
         entity = validated.entity
+        # On update we merge the actor context into the stored metadata dict; the
+        # flat ``{"actor_context": ...}`` shape matches the typed envelope's encode.
         actor_metadata = (
             {"actor_context": dump_actor_context(actor_context)}
             if actor_context is not None
@@ -335,7 +337,10 @@ def apply_entity_set(
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
         if existing is None:
             create_count += 1
-            entity.metadata = {**entity.metadata, **actor_metadata}
+            if actor_context is not None:
+                entity.metadata = entity.metadata.model_copy(
+                    update={"actor_context": actor_context}
+                )
             graph.add_entity(entity)
             if persist_writes:
                 receipt_builder.record_entity_write(

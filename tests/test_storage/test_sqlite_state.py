@@ -187,6 +187,69 @@ def test_save_load_restart_preserves_relationship_state(
     assert len(list(loaded.iter_relationships("fits"))) == 2
 
 
+def test_save_load_restart_preserves_typed_entity_metadata(
+    initialized_instance: CruxibleInstance,
+) -> None:
+    """The typed entity-metadata envelope round-trips through ``metadata_json``.
+
+    Mirrors ``RelationshipMetadata`` persistence: the typed
+    :class:`EntityMetadata` (a real field on ``EntityInstance``, not a dict)
+    serializes to the flat ``metadata_json`` dict and a restart reloads it
+    byte-for-byte into the typed model -- the typed ``lifecycle`` (incl. ``retired``)
+    and the typed ``actor_context`` (the live dogfooding shape), plus a free-form
+    key walled off in ``extra``.
+    """
+    from datetime import datetime, timezone
+
+    from cruxible_core.governance.actors import GovernedActorContext
+    from cruxible_core.graph.assertion_state import EntityLifecycleState
+    from cruxible_core.graph.types import EntityMetadata
+
+    graph = EntityGraph()
+    graph.add_entity(_vehicle())
+    actor = GovernedActorContext(
+        actor_type="human_user",
+        actor_id="robert",
+        org_id="inst_test",
+        operation_id="op_close",
+        timestamp=datetime(2026, 6, 15, 0, 6, 36, tzinfo=timezone.utc),
+    )
+    retired_part = EntityInstance(
+        entity_type="Part",
+        entity_id="BP-1",
+        properties={"part_number": "BP-1", "name": "Pads", "category": "brakes"},
+        # The typed envelope is assigned directly -- no dict round-trip needed.
+        metadata=EntityMetadata(
+            lifecycle=EntityLifecycleState(status="retired", reason="rolled up"),
+            actor_context=actor,
+            extra={"note": "keep-me"},
+        ),
+    )
+    # The runtime field is genuinely typed, exactly like the relationship side.
+    assert isinstance(retired_part.metadata, EntityMetadata)
+    graph.add_entity(retired_part)
+
+    initialized_instance.save_graph(graph)
+    restarted = CruxibleInstance.load(initialized_instance.root)
+    loaded = restarted.load_graph()
+
+    reloaded = loaded.get_entity("Part", "BP-1")
+    assert reloaded is not None
+    # Reloads straight into the typed model -- no free-form spelunking.
+    envelope = reloaded.metadata
+    assert isinstance(envelope, EntityMetadata)
+    assert envelope.lifecycle is not None
+    assert envelope.lifecycle.status == "retired"
+    assert envelope.lifecycle.reason == "rolled up"
+    assert envelope.lifecycle_status() == "retired"
+    assert envelope.is_live() is False
+    # Typed actor_context survives.
+    assert envelope.actor_context is not None
+    assert envelope.actor_context.actor_id == "robert"
+    # Free-form sibling key survives the round-trip, walled off in `extra`.
+    assert envelope.extra["note"] == "keep-me"
+
+
 def test_save_graph_does_not_create_live_graph_json(
     initialized_instance: CruxibleInstance,
 ) -> None:
@@ -595,7 +658,9 @@ def test_instance_store_getters_are_not_used_for_direct_writes() -> None:
                         and isinstance(node.func.value, ast.Name)
                         and node.func.value.id in store_names
                     ):
-                        offenders.append(f"{path}:{node.lineno}:{node.func.value.id}.{node.func.attr}")
+                        offenders.append(
+                            f"{path}:{node.lineno}:{node.func.value.id}.{node.func.attr}"
+                        )
 
     assert offenders == []
 

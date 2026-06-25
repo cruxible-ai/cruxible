@@ -83,7 +83,8 @@ class TestValidateEntity:
         assert result.entity.entity_type == "Vehicle"
         assert result.entity.entity_id == "V2"
         assert "vehicle_id" not in result.entity.properties
-        assert result.entity.metadata == {"source": "test"}
+        # Free-form metadata folds into the typed envelope's `extra` slot.
+        assert result.entity.metadata.extra == {"source": "test"}
         assert result.is_update is False
 
     def test_valid_update_entity(self, config, graph):
@@ -346,7 +347,8 @@ class TestApplyEntity:
         apply_entity(graph, validated, config=config, source="add_entity")
         entity = graph.get_entity("Vehicle", "V1")
         assert "vehicle_id" in entity.properties
-        assert entity.metadata["last_seen"] == "service"
+        # Free-form metadata is carried in the typed envelope's `extra` slot.
+        assert entity.metadata.extra["last_seen"] == "service"
 
     def test_apply_update_preserves_existing_metadata_when_no_metadata_provided(
         self, config, graph
@@ -358,7 +360,7 @@ class TestApplyEntity:
 
         entity = graph.get_entity("Vehicle", "V1")
         assert entity is not None
-        assert entity.metadata == {"origin": "fixture"}
+        assert entity.metadata.extra == {"origin": "fixture"}
 
     def test_unknown_property_rejected(self, config, graph):
         with pytest.raises(DataValidationError, match="unexpected property 'extra'"):

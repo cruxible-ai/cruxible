@@ -267,7 +267,7 @@ class SQLiteGraphRepository:
                     entity.entity_id,
                     entity.node_id(),
                     canonical_json(entity.properties),
-                    canonical_json(entity.metadata),
+                    canonical_json(entity.metadata.to_metadata_dict()),
                 ),
             )
 

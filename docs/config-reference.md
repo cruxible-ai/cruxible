@@ -290,21 +290,28 @@ enum names but may not redefine or extend upstream enum vocabularies.
 
 ### Entity `lifecycle.status` (read visibility)
 
-Every entity carries an optional, **typed** lifecycle state stored on its
-metadata under `lifecycle` (an `EntityLifecycleState`, validated on write):
+Every entity carries an optional, **typed** lifecycle state. It is the typed
+`lifecycle` field of the `EntityMetadata` envelope (an `EntityLifecycleState`,
+validated on write), the entity analogue of the relationship's
+`RelationshipMetadata.assertion.lifecycle`. It serializes onto the stored entity
+metadata under the `lifecycle` key:
 
 ```yaml
+# Stored/serialized shape — NOT hand-authored; written via the typed channel.
 metadata:
   lifecycle:
-    status: live   # one of: live | superseded | retired | orphaned (default live)
+    status: live   # one of: live | superseded | retired (default live)
     reason: "replaced by WI-204"       # optional
     closed_at: "2026-06-23T00:00:00Z"  # optional (shared closed_at/closed_by audit pair)
 ```
 
 The lifecycle shares its structure with the relationship lifecycle (same
 `reason`, effective window, `closed_at`/`closed_by` audit pair, and supersession
-links); only the `status` vocabulary differs (`live|superseded|retired|orphaned`
+links); only the `status` vocabulary differs (`live|superseded|retired`
 for entities vs `active|inactive|superseded|retracted` for relationships).
+`orphaned` is **not** an authorable entity lifecycle status — an orphaned entity
+is a derived evaluate/health finding (surfaced as `integrity.orphan_entity_count`),
+not a state you set.
 
 - **Default is `live`.** An entity with no `lifecycle` metadata is treated as
   live, so existing data needs no migration to keep current behavior.
@@ -312,10 +319,11 @@ for entities vs `active|inactive|superseded|retracted` for relationships).
   --lifecycle-status retired [--lifecycle-reason "…"]`, or `batch-direct-write`
   with the typed `lifecycle` field on the entity input. The status is validated
   against the entity lifecycle vocabulary; it is **not** a free-form metadata
-  blob, and there is no special retire verb.
+  blob (hand-authoring the reserved `lifecycle` metadata key is rejected), and
+  there is no special retire verb.
 - **Read gating is uniform.** Every read path (`query`, `list entities`,
   traversal/relationship reads, and the MCP/HTTP equivalents) defaults to
-  **live-only**: a `retired`/`superseded`/`orphaned` entity is hidden. The one
+  **live-only**: a `retired`/`superseded` entity is hidden. The one
   exception is an explicit **by-id `entity get`**, which always returns the
   entity and shows its `lifecycle.status` (the recovery/inspection path).
 - The `--state` selector (config field `relationship_state`) controls

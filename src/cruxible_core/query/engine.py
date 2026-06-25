@@ -448,7 +448,7 @@ def _anchor_in_scope(metadata: Any, state: QueryVisibilityState) -> bool:
 
     * live read (``live`` + the review-only selectors, which resolve to ``live``
       for entities) -- the anchor must itself be live; a path entered at or routed
-      through a retired/superseded/orphaned entity is invisible, so the row drops.
+      through a retired/superseded entity is invisible, so the row drops.
       This is the chokepoint that closes the traversal-entry leak (codex F-001):
       ``parts_for_vehicle`` entered at a retired ``Vehicle`` returns EMPTY under the
       default ``live`` -- no rows, no error, no existence leak -- exactly like

@@ -43,8 +43,7 @@
       "values": [
         "live",
         "superseded",
-        "retired",
-        "orphaned"
+        "retired"
       ]
     },
     "FeedbackAction": {
@@ -2112,11 +2111,11 @@
                   }
                 ],
                 "default": null,
-                "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+                "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state. This is the ONLY channel for entity lifecycle; free-form `metadata` cannot touch it."
               },
               "metadata": {
                 "additionalProperties": true,
-                "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
+                "description": "Free-form non-schema metadata stored alongside the entity. It is carried verbatim as free-form data (nested under the entity's typed metadata envelope); it cannot set the entity's lifecycle. Set lifecycle via the typed `lifecycle` field, which is the only channel for it.",
                 "title": "Metadata",
                 "type": "object"
               },
@@ -2152,12 +2151,11 @@
                 "title": "Reason"
               },
               "status": {
-                "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+                "description": "Entity lifecycle status: live, superseded, or retired.",
                 "enum": [
                   "live",
                   "superseded",
-                  "retired",
-                  "orphaned"
+                  "retired"
                 ],
                 "title": "Status",
                 "type": "string"
@@ -5611,7 +5609,7 @@
               }
             ],
             "default": null,
-            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state. This is the ONLY channel for entity lifecycle; free-form `metadata` cannot touch it."
           }
         },
         "metadata": {
@@ -5621,7 +5619,7 @@
           "required": false,
           "schema": {
             "additionalProperties": true,
-            "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
+            "description": "Free-form non-schema metadata stored alongside the entity. It is carried verbatim as free-form data (nested under the entity's typed metadata envelope); it cannot set the entity's lifecycle. Set lifecycle via the typed `lifecycle` field, which is the only channel for it.",
             "title": "Metadata",
             "type": "object"
           }
@@ -5659,12 +5657,11 @@
                 "title": "Reason"
               },
               "status": {
-                "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+                "description": "Entity lifecycle status: live, superseded, or retired.",
                 "enum": [
                   "live",
                   "superseded",
-                  "retired",
-                  "orphaned"
+                  "retired"
                 ],
                 "title": "Status",
                 "type": "string"
@@ -5698,11 +5695,11 @@
               }
             ],
             "default": null,
-            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state."
+            "description": "Typed entity lifecycle write. Sets the entity's lifecycle status/reason (the canonical soft-delete / supersession axis), validated and stored as typed lifecycle state. This is the ONLY channel for entity lifecycle; free-form `metadata` cannot touch it."
           },
           "metadata": {
             "additionalProperties": true,
-            "description": "Free-form non-schema metadata stored alongside the entity. The reserved 'lifecycle' key is owned by the typed `lifecycle` field; set lifecycle there, not here.",
+            "description": "Free-form non-schema metadata stored alongside the entity. It is carried verbatim as free-form data (nested under the entity's typed metadata envelope); it cannot set the entity's lifecycle. Set lifecycle via the typed `lifecycle` field, which is the only channel for it.",
             "title": "Metadata",
             "type": "object"
           },
@@ -5754,12 +5751,11 @@
           "json_name": "status",
           "required": true,
           "schema": {
-            "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+            "description": "Entity lifecycle status: live, superseded, or retired.",
             "enum": [
               "live",
               "superseded",
-              "retired",
-              "orphaned"
+              "retired"
             ],
             "title": "Status",
             "type": "string"
@@ -5784,12 +5780,11 @@
             "title": "Reason"
           },
           "status": {
-            "description": "Entity lifecycle status: live, superseded, retired, or orphaned.",
+            "description": "Entity lifecycle status: live, superseded, or retired.",
             "enum": [
               "live",
               "superseded",
-              "retired",
-              "orphaned"
+              "retired"
             ],
             "title": "Status",
             "type": "string"

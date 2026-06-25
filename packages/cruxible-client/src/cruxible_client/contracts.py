@@ -59,17 +59,8 @@ GovernedActorType = Literal["human_user", "service_account", "system"]
 
 # Per-kind lifecycle status vocabularies. Deliberately distinct: entities and
 # relationships do NOT share a status enum (only the surrounding structure).
-EntityLifecycleStatus = Literal["live", "superseded", "retired", "orphaned"]
+EntityLifecycleStatus = Literal["live", "superseded", "retired"]
 RelationshipLifecycleStatus = Literal["active", "inactive", "superseded", "retracted"]
-
-# Reserved key inside ``EntityInput.metadata``. Entity lifecycle state is stored
-# under this key by the server's typed encode path, so authoring it by hand in a
-# free-form metadata dict would bypass the typed ``lifecycle`` validator (and could
-# silently soft-delete the entity). It is therefore un-authorable on every write
-# surface: the contract rejects it and directs authors to the typed ``lifecycle``
-# field. Mirrors ``cruxible_core.graph.assertion_state.ENTITY_LIFECYCLE_METADATA_KEY``
-# (kept in sync as a constant rather than imported to keep this package core-free).
-RESERVED_ENTITY_LIFECYCLE_METADATA_KEY = "lifecycle"
 
 
 # ── Structured input types ───────────────────────────────────────────
@@ -86,7 +77,7 @@ class EntityLifecycleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: EntityLifecycleStatus = Field(
-        description="Entity lifecycle status: live, superseded, retired, or orphaned."
+        description="Entity lifecycle status: live, superseded, or retired."
     )
     reason: str | None = Field(
         default=None, description="Optional human-readable reason for the lifecycle change."
@@ -176,9 +167,10 @@ class EntityInput(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Free-form non-schema metadata stored alongside the entity. The "
-            "reserved 'lifecycle' key is owned by the typed `lifecycle` field; set "
-            "lifecycle there, not here."
+            "Free-form non-schema metadata stored alongside the entity. It is carried "
+            "verbatim as free-form data (nested under the entity's typed metadata "
+            "envelope); it cannot set the entity's lifecycle. Set lifecycle via the "
+            "typed `lifecycle` field, which is the only channel for it."
         ),
     )
     lifecycle: EntityLifecycleInput | None = Field(
@@ -186,30 +178,10 @@ class EntityInput(BaseModel):
         description=(
             "Typed entity lifecycle write. Sets the entity's lifecycle "
             "status/reason (the canonical soft-delete / supersession axis), "
-            "validated and stored as typed lifecycle state."
+            "validated and stored as typed lifecycle state. This is the ONLY "
+            "channel for entity lifecycle; free-form `metadata` cannot touch it."
         ),
     )
-
-    @field_validator("metadata")
-    @classmethod
-    def _reject_reserved_lifecycle_key(cls, value: dict[str, Any]) -> dict[str, Any]:
-        """Reject hand-authored lifecycle state in free-form ``metadata``.
-
-        The reserved ``lifecycle`` key is owned by the typed ``lifecycle`` field and
-        is the server's encode slot for validated lifecycle state. Authoring it in a
-        free-form ``metadata`` dict would bypass the typed validator and silently
-        change the entity's lifecycle (e.g. soft-delete it). Rejecting -- rather than
-        silently stripping -- preserves author intent: the write fails loudly and
-        points to the typed channel. Fires on every surface (batch direct-write, MCP,
-        HTTP) because they all deserialize into this same contract model.
-        """
-        if isinstance(value, dict) and RESERVED_ENTITY_LIFECYCLE_METADATA_KEY in value:
-            raise ValueError(
-                f"metadata key '{RESERVED_ENTITY_LIFECYCLE_METADATA_KEY}' is reserved for "
-                "typed entity lifecycle state and cannot be set via free-form metadata; "
-                "use the typed `lifecycle` field instead."
-            )
-        return value
 
 
 class BatchDirectWritePayload(BaseModel):

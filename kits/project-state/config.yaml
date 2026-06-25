@@ -20,8 +20,8 @@ enums:
     ordered: low_to_high
   lifecycle_status:
     # Domain PROGRESS only. Retirement/supersession is a separate canonical axis
-    # (entity lifecycle.status: live|superseded|retired|orphaned, gated out of
-    # live reads) -- set it via the generic write path / migration, not here.
+    # (entity lifecycle.status: live|superseded|retired, gated out of
+    # live reads) -- set it via the typed lifecycle write channel, not here.
     # watching: open but not actively worked, awaiting a defined trigger/signal
     # (e.g. a recurrence or external event). State the wake condition in the summary.
     values: [planned, active, blocked, watching, deferred, closed]

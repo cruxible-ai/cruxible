@@ -11,14 +11,29 @@ from __future__ import annotations
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.graph.assertion_state import (
-    build_entity_lifecycle_metadata,
-    entity_lifecycle_status,
-)
+from cruxible_core.graph.assertion_state import EntityLifecycleState
+from cruxible_core.graph.types import EntityMetadata
 from cruxible_core.service import service_list, service_query_surface
 from cruxible_core.service.mutations import service_add_entities, service_batch_direct_write
 from cruxible_core.service.queries import service_get_entity
 from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
+
+
+def _lifecycle_metadata(status: str) -> dict:
+    """Build a stored entity-metadata dict carrying a typed lifecycle status.
+
+    The production write path runs through the typed ``EntityMetadata`` envelope
+    (validating ``status`` against the entity lifecycle Literal) and re-encodes it
+    to the flat storable dict -- never a hand-authored ``{"lifecycle": {...}}`` blob.
+    """
+    return EntityMetadata(
+        lifecycle=EntityLifecycleState(status=status)  # type: ignore[arg-type]
+    ).to_metadata_dict()
+
+
+def _entity_lifecycle_status(metadata) -> str:
+    """Decode the typed lifecycle status from a stored entity-metadata dict."""
+    return EntityMetadata.from_metadata(metadata).lifecycle_status()
 
 
 def _retire_entity_via_batch(
@@ -38,7 +53,7 @@ def _retire_entity_via_batch(
                     entity_type=entity_type,
                     entity_id=entity_id,
                     properties={},
-                    metadata=build_entity_lifecycle_metadata(status=status),  # type: ignore[arg-type]
+                    metadata=_lifecycle_metadata(status),
                 )
             ]
         ),
@@ -135,18 +150,19 @@ def test_lifecycle_status_defaults_to_live(populated_instance: CruxibleInstance)
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
     # No lifecycle metadata written yet: the typed accessor reports `live`.
-    assert entity_lifecycle_status(entity.metadata) == "live"
+    assert _entity_lifecycle_status(entity.metadata) == "live"
 
 
 def test_batch_direct_write_sets_lifecycle_status(populated_instance: CruxibleInstance) -> None:
     _retire_part_via_batch(populated_instance, "BP-1001", "retired")
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
-    assert entity.metadata["lifecycle"]["status"] == "retired"
+    assert entity.metadata.lifecycle is not None
+    assert entity.metadata.lifecycle.status == "retired"
     # The write round-trips through storage (reload from disk).
     reloaded = service_get_entity(populated_instance, "Part", "BP-1001")
     assert reloaded is not None
-    assert entity_lifecycle_status(reloaded.metadata) == "retired"
+    assert _entity_lifecycle_status(reloaded.metadata) == "retired"
 
 
 def test_entity_update_sets_lifecycle_status_preserving_metadata(
@@ -173,17 +189,19 @@ def test_entity_update_sets_lifecycle_status_preserving_metadata(
                 entity_type="Part",
                 entity_id="BP-1002",
                 properties={},
-                metadata=build_entity_lifecycle_metadata(status="superseded"),
+                metadata=_lifecycle_metadata("superseded"),
             )
         ],
     )
     entity = service_get_entity(populated_instance, "Part", "BP-1002")
     assert entity is not None
     # Lifecycle decodes as the typed model with the written status.
-    assert entity_lifecycle_status(entity.metadata) == "superseded"
-    assert entity.metadata["lifecycle"]["status"] == "superseded"
-    # Shallow merge preserves the sibling metadata key.
-    assert entity.metadata["note"] == "keep-me"
+    assert _entity_lifecycle_status(entity.metadata) == "superseded"
+    assert entity.metadata.lifecycle is not None
+    assert entity.metadata.lifecycle.status == "superseded"
+    # The free-form sibling key is preserved in the typed envelope's `extra` slot,
+    # walled off from the typed lifecycle (it can never be mistaken for lifecycle).
+    assert entity.metadata.extra["note"] == "keep-me"
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +376,7 @@ def test_entity_get_returns_retired_entity_and_shows_status(
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
     assert entity.entity_id == "BP-1001"
-    assert entity_lifecycle_status(entity.metadata) == "retired"
+    assert _entity_lifecycle_status(entity.metadata) == "retired"
 
 
 # ---------------------------------------------------------------------------
@@ -404,64 +422,77 @@ def test_mcp_list_route_matches_service_gating(
 # Reserved-key defense: free-form entity lifecycle is un-authorable everywhere
 # ---------------------------------------------------------------------------
 #
-# Regression for the MAJOR finding: a hand-authored ``metadata={"lifecycle":
-# {...}}`` must NOT be storable through any write surface (it would bypass the
-# typed lifecycle validator and silently soft-delete the entity). Lifecycle is
-# settable ONLY through the typed ``lifecycle`` field. Because every surface
-# (batch direct-write, MCP, HTTP) deserializes into the same ``EntityInput``
-# contract, validating there covers all three at once.
+# Structural invariant: lifecycle is settable ONLY via the typed ``lifecycle``
+# field. ``EntityInstance.metadata`` is a typed ``EntityMetadata`` object, not a
+# free-form dict, so a hand-authored ``metadata={"lifecycle": {...}}`` has no path
+# to the typed lifecycle slot -- it lands inert in the envelope's ``extra``. There
+# is no reserved-key constant and no rejection guard; the typing makes the bypass
+# impossible by construction.
 
 
-def test_entity_input_rejects_reserved_lifecycle_metadata_key() -> None:
-    """The contract rejects a hand-authored reserved 'lifecycle' metadata key.
+def test_free_form_metadata_lifecycle_key_does_not_set_typed_lifecycle(
+    populated_instance: CruxibleInstance,
+) -> None:
+    """A hand-authored ``metadata={"lifecycle": ...}`` cannot soft-delete an entity.
 
-    This fires on EVERY surface (batch direct-write, MCP, HTTP) because they all
-    deserialize the same ``EntityInput`` model. Rejecting -- not silently
-    stripping -- keeps author intent visible.
+    Drives the author-facing batch direct-write contract (the path that originally
+    persisted the free-form lifecycle blob). With the typed envelope, the author's
+    ``lifecycle`` key is carried as inert free-form data under ``extra`` and the
+    entity's typed lifecycle stays at its default ``live`` -- it is NOT retired.
+    Lifecycle remains settable ONLY via the typed ``lifecycle`` field.
     """
-    from pydantic import ValidationError
-
     from cruxible_client import contracts
+    from cruxible_core.runtime import api
+    from cruxible_core.runtime.instance_manager import get_manager
 
-    with pytest.raises(ValidationError) as exc:
-        contracts.EntityInput(
-            entity_type="Part",
-            entity_id="BP-1001",
-            metadata={"lifecycle": {"status": "retired"}},
-        )
-    # The error points the author at the typed channel.
-    assert "lifecycle" in str(exc.value)
-    assert "typed `lifecycle` field" in str(exc.value)
-
-    # Reserved key alongside other keys is still rejected (no partial accept).
-    with pytest.raises(ValidationError):
-        contracts.EntityInput(
-            entity_type="Part",
-            entity_id="BP-1001",
-            metadata={"note": "keep-me", "lifecycle": {"status": "retired"}},
-        )
-
-
-def test_batch_payload_rejects_reserved_lifecycle_metadata_key() -> None:
-    """The batch direct-write payload rejects the reserved key on its entities.
-
-    The batch path is the one place the original bug actually persisted the
-    free-form blob; the rejection must fire when the payload is deserialized.
-    """
-    from pydantic import ValidationError
-
-    from cruxible_client import contracts
-
-    with pytest.raises(ValidationError):
-        contracts.BatchDirectWritePayload(
+    manager = get_manager()
+    manager.clear()
+    instance_id = "inst-entity-lifecycle-free-form"
+    manager.register(instance_id, populated_instance)
+    try:
+        payload = contracts.BatchDirectWritePayload(
             entities=[
-                {
-                    "entity_type": "Part",
-                    "entity_id": "BP-1001",
-                    "metadata": {"lifecycle": {"status": "retired"}},
-                }
+                contracts.EntityInput(
+                    entity_type="Part",
+                    entity_id="BP-1001",
+                    # Hand-authored free-form "lifecycle" key -- the original bypass.
+                    metadata={"lifecycle": {"status": "retired"}},
+                )
             ]
         )
+        result = api.batch_direct_write(instance_id, payload)
+        assert result.valid
+
+        entity = service_get_entity(populated_instance, "Part", "BP-1001")
+        assert entity is not None
+        # Typed lifecycle is untouched: the entity is NOT soft-deleted.
+        assert _entity_lifecycle_status(entity.metadata) == "live"
+        assert entity.metadata.lifecycle is None
+        # The author's free-form key is preserved verbatim, walled off in `extra`.
+        assert entity.metadata.extra["lifecycle"] == {"status": "retired"}
+    finally:
+        manager.clear()
+
+
+def test_no_reserved_lifecycle_key_guard_exists() -> None:
+    """There is no reserved-key constant or rejection guard left to import.
+
+    The typed envelope removed the need for a guard, so the constant and the
+    validator must be gone from the client contracts (Robert's explicit
+    requirement: no reserved-key references anywhere).
+    """
+    from cruxible_client import contracts
+
+    assert not hasattr(contracts, "RESERVED_ENTITY_LIFECYCLE_METADATA_KEY")
+    assert not hasattr(contracts.EntityInput, "_reject_reserved_lifecycle_key")
+    # A free-form `metadata` dict (even one naming "lifecycle") is accepted by the
+    # contract -- there is no rejection; the typing handles safety downstream.
+    entity = contracts.EntityInput(
+        entity_type="Part",
+        entity_id="BP-1001",
+        metadata={"note": "keep-me", "lifecycle": {"status": "retired"}},
+    )
+    assert entity.metadata == {"note": "keep-me", "lifecycle": {"status": "retired"}}
 
 
 def test_typed_lifecycle_field_still_sets_status(
@@ -497,15 +528,20 @@ def test_typed_lifecycle_field_still_sets_status(
         entity = service_get_entity(populated_instance, "Part", "BP-1001")
         assert entity is not None
         # Lifecycle set via the typed channel round-trips...
-        assert entity_lifecycle_status(entity.metadata) == "retired"
-        # ...and the author's unrelated free-form metadata is preserved alongside.
-        assert entity.metadata["note"] == "still-here"
+        assert _entity_lifecycle_status(entity.metadata) == "retired"
+        # ...and the author's unrelated free-form metadata is preserved in `extra`,
+        # walled off from the typed lifecycle slot.
+        assert entity.metadata.extra["note"] == "still-here"
     finally:
         manager.clear()
 
 
-def test_normal_metadata_without_reserved_key_is_unaffected() -> None:
-    """A normal metadata dict (no reserved key) passes through untouched."""
+def test_free_form_metadata_passes_through_contract_untouched() -> None:
+    """A free-form metadata dict passes through the contract untouched.
+
+    The contract no longer rejects or rewrites ``metadata``; the typed envelope at
+    the core boundary folds it into ``extra`` on write.
+    """
     from cruxible_client import contracts
 
     entity = contracts.EntityInput(

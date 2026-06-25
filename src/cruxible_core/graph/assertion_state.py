@@ -40,7 +40,6 @@ EntityLifecycleStatus = Literal[
     "live",
     "superseded",
     "retired",
-    "orphaned",
 ]
 
 # Per-kind status vocabularies stay DISTINCT (relationship vs entity); only the
@@ -78,7 +77,7 @@ class LifecycleState(BaseModel, Generic[StatusT]):
     pair, and supersession links. Only ``status`` differs by kind -- it is a
     per-kind :class:`~typing.Literal` (relationships use
     ``active|inactive|superseded|retracted``; entities use
-    ``live|superseded|retired|orphaned``) declared by each concrete subclass with
+    ``live|superseded|retired``) declared by each concrete subclass with
     its own default. The two status vocabularies are intentionally NOT unified.
 
     ``status`` is declared FIRST so the serialized JSON of every concrete
@@ -139,6 +138,16 @@ class EntityLifecycleState(LifecycleState[EntityLifecycleStatus]):
     soft-delete / retirement of an entity lives here as ``status != "live"``,
     gated out of live reads. The audit timestamp pair is the shared
     ``closed_at``/``closed_by`` (there is no entity-only ``retired_at``).
+
+    This state is carried by the typed :class:`~cruxible_core.graph.types.EntityMetadata`
+    envelope (``EntityMetadata.lifecycle``), mirroring how
+    :class:`RelationshipLifecycleState` rides inside ``RelationshipMetadata``. There
+    is no free-form ``metadata['lifecycle']`` reserved-key convention -- entity
+    lifecycle is a typed field, encoded/decoded only at the metadata boundary.
+
+    ``orphaned`` is intentionally NOT a value here: an orphaned entity is a DERIVED
+    evaluate/health finding (surfaced as ``integrity.orphan_entity_count``), not an
+    authorable lifecycle state, so it is absent from the vocabulary.
     """
 
     status: EntityLifecycleStatus = "live"
@@ -204,103 +213,7 @@ def relationship_is_live(
     return True
 
 
-# Entity metadata has no typed wrapper analogous to ``RelationshipMetadata``
-# (it is a free-form ``dict``). The typed :class:`EntityLifecycleState` is stored
-# under this reserved key and is the ONLY structured, validated slice of entity
-# metadata. Read paths decode it via :func:`entity_lifecycle_from_metadata`; write
-# paths construct + validate the typed model and embed it via
-# :func:`entity_lifecycle_into_metadata` -- never by hand-authoring the dict.
-ENTITY_LIFECYCLE_METADATA_KEY = "lifecycle"
-
-
-def entity_lifecycle_from_metadata(value: Any) -> EntityLifecycleState:
-    """Load entity lifecycle state from entity-metadata-like input.
-
-    Entity metadata is a free-form ``dict``; the typed lifecycle state (if
-    present) lives under :data:`ENTITY_LIFECYCLE_METADATA_KEY` and is always
-    validated back into an :class:`EntityLifecycleState`. A missing/empty/partial
-    shape decodes to the default ``live`` state so every read path treats
-    undecorated entities as live without per-call dict spelunking.
-    """
-    if value is None:
-        return EntityLifecycleState()
-    if isinstance(value, EntityLifecycleState):
-        return value
-    if isinstance(value, dict):
-        lifecycle = value.get(ENTITY_LIFECYCLE_METADATA_KEY)
-        if lifecycle is None:
-            return EntityLifecycleState()
-        if isinstance(lifecycle, EntityLifecycleState):
-            return lifecycle
-        if isinstance(lifecycle, dict):
-            return EntityLifecycleState.model_validate(lifecycle)
-        raise TypeError("entity lifecycle metadata must be a mapping")
-    raise TypeError("entity lifecycle requires an EntityLifecycleState or metadata dict")
-
-
-def entity_lifecycle_into_metadata(
-    lifecycle: EntityLifecycleState,
-    *,
-    base: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Embed a validated :class:`EntityLifecycleState` into an entity-metadata dict.
-
-    Returns a shallow copy of ``base`` (or a fresh dict) with the typed lifecycle
-    serialized under :data:`ENTITY_LIFECYCLE_METADATA_KEY`. This is the single
-    encode path for entity lifecycle: callers build the typed model (validating
-    ``status`` against the entity ``Literal``) and hand it here, so storage always
-    round-trips a validated lifecycle rather than a hand-authored blob.
-    """
-    metadata = dict(base or {})
-    metadata[ENTITY_LIFECYCLE_METADATA_KEY] = lifecycle.model_dump(mode="json")
-    return metadata
-
-
-def build_entity_lifecycle_metadata(
-    *,
-    status: EntityLifecycleStatus,
-    reason: str | None = None,
-    base: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Construct + validate a typed entity lifecycle and embed it in metadata.
-
-    Convenience wrapper over :func:`entity_lifecycle_into_metadata` for the common
-    ``status`` (+ optional ``reason``) write. ``status`` is validated against the
-    entity :class:`EntityLifecycleStatus` Literal by pydantic at construction.
-    """
-    lifecycle = EntityLifecycleState(status=status, reason=reason)
-    return entity_lifecycle_into_metadata(lifecycle, base=base)
-
-
-def entity_lifecycle_status(metadata: Any) -> EntityLifecycleStatus:
-    """Return the typed lifecycle status for entity metadata.
-
-    Single source of truth for entity-lifecycle inspection. Read surfaces must
-    use this rather than reaching into ``metadata['lifecycle']['status']`` so a
-    malformed/partial metadata shape is decoded consistently.
-    """
-    return entity_lifecycle_from_metadata(metadata).status
-
-
-def entity_is_live(metadata: Any = None) -> bool:
-    """Return whether an entity participates in live graph semantics.
-
-    An entity is live when its lifecycle status is ``live`` and (if bounded) it is
-    currently within its effective window.
-    """
-    lifecycle = entity_lifecycle_from_metadata(metadata)
-    if lifecycle.status != "live":
-        return False
-    if not is_effective(
-        effective_from=lifecycle.effective_from,
-        effective_until=lifecycle.effective_until,
-    ):
-        return False
-    return True
-
-
 __all__ = [
-    "ENTITY_LIFECYCLE_METADATA_KEY",
     "EntityLifecycleState",
     "EntityLifecycleStatus",
     "LifecycleState",
@@ -310,11 +223,6 @@ __all__ = [
     "RelationshipReviewSource",
     "RelationshipReviewState",
     "RelationshipReviewStatus",
-    "build_entity_lifecycle_metadata",
-    "entity_is_live",
-    "entity_lifecycle_from_metadata",
-    "entity_lifecycle_into_metadata",
-    "entity_lifecycle_status",
     "relationship_assertion_from_metadata",
     "relationship_is_live",
     "relationship_lifecycle_is_active",

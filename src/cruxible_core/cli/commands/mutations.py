@@ -464,7 +464,7 @@ def _build_relationship_lifecycle_input(
         raise click.BadParameter(f"--lifecycle-status is invalid: {exc}") from exc
 
 
-_ENTITY_LIFECYCLE_STATUSES = ("live", "superseded", "retired", "orphaned")
+_ENTITY_LIFECYCLE_STATUSES = ("live", "superseded", "retired")
 _RELATIONSHIP_LIFECYCLE_STATUSES = ("active", "inactive", "superseded", "retracted")
 
 
@@ -540,7 +540,7 @@ def _require_property_assignments(properties: Mapping[str, Any], *, command_name
     "--lifecycle-status",
     type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
     default=None,
-    help="Typed entity lifecycle status (live, superseded, retired, orphaned).",
+    help="Typed entity lifecycle status (live, superseded, retired).",
 )
 @click.option(
     "--lifecycle-reason",
@@ -609,7 +609,7 @@ def add_entity_cmd(
     "--lifecycle-status",
     type=click.Choice(_ENTITY_LIFECYCLE_STATUSES),
     default=None,
-    help="Typed entity lifecycle status (live, superseded, retired, orphaned).",
+    help="Typed entity lifecycle status (live, superseded, retired).",
 )
 @click.option(
     "--lifecycle-reason",
@@ -634,7 +634,7 @@ def update_entity_cmd(
 ) -> None:
     """Update one existing entity's properties and/or lifecycle state.
 
-    Set ``--lifecycle-status retired`` (or ``superseded``/``orphaned``) to move an
+    Set ``--lifecycle-status retired`` (or ``superseded``) to move an
     entity onto the entity-lifecycle axis (the canonical soft-delete); it is then
     gated out of live reads while remaining fetchable by id. The typed lifecycle
     write replaces the entity's lifecycle state and preserves other metadata.

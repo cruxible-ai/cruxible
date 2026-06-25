@@ -677,7 +677,9 @@ class TestStatsInspectReload:
 
         assert result.exit_code == 0
         payload = json.loads(result.output)
-        assert payload["metadata"] == {"source": "fixture"}
+        # Free-form entity metadata serializes nested under "extra" in the typed
+        # metadata envelope (the relationship `provenance` below stays typed).
+        assert payload["metadata"] == {"extra": {"source": "fixture"}}
         assert any(
             neighbor["metadata"].get("provenance", {}).get("source") == "ingest"
             for neighbor in payload["neighbors"]

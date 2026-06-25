@@ -219,7 +219,7 @@ def inspect_entity(
         entity_type=entity.entity_type,
         entity_id=entity.entity_id,
         properties=entity_props,
-        metadata=dict(entity.metadata),
+        metadata=entity.metadata.to_metadata_dict(),
         neighbors=neighbors,
         total_neighbors=total_neighbors,
     )

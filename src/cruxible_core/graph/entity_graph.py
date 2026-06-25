@@ -23,6 +23,7 @@ from cruxible_core.graph.provenance import (
 )
 from cruxible_core.graph.types import (
     EntityInstance,
+    EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
     make_node_id,
@@ -33,6 +34,11 @@ from cruxible_core.graph.types import (
 
 def _metadata_dict(metadata: RelationshipMetadata) -> dict[str, Any]:
     return metadata.model_dump(mode="json", exclude_none=True)
+
+
+def _entity_metadata_dict(metadata: EntityMetadata) -> dict[str, Any]:
+    """Encode the typed entity metadata envelope to its flat stored dict."""
+    return metadata.to_metadata_dict()
 
 
 def _relationship_metadata(edge_data: dict[str, Any]) -> RelationshipMetadata:
@@ -65,7 +71,10 @@ class EntityGraph:
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
             properties=entity.properties,
-            metadata=dict(entity.metadata),
+            # The in-memory node stores the flat encoded metadata dict, mirroring how
+            # edges store ``_metadata_dict(rel.metadata)``; the typed envelope is
+            # rehydrated at the ``EntityInstance`` boundary on read.
+            metadata=_entity_metadata_dict(entity.metadata),
         )
         self._entities_by_type[entity.entity_type].add(node_id)
 
@@ -631,8 +640,7 @@ class EntityGraph:
             rel_type = data.get("relationship_type")
             if not isinstance(rel_type, str) or not rel_type:
                 raise ValueError(
-                    "Graph edge "
-                    f"{u!r} -> {v!r} (key={key!r}) is missing relationship_type"
+                    f"Graph edge {u!r} -> {v!r} (key={key!r}) is missing relationship_type"
                 )
             if relationship_type is not None and rel_type != relationship_type:
                 continue
@@ -654,9 +662,16 @@ class EntityGraph:
         relationship_type: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Iterate edges as dicts including edge_key and relationship_type."""
-        for from_type, from_id, to_type, to_id, rel_type, key, props, metadata in (
-            self._iter_edges_raw(relationship_type)
-        ):
+        for (
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            rel_type,
+            key,
+            props,
+            metadata,
+        ) in self._iter_edges_raw(relationship_type):
             yield {
                 "from_type": from_type,
                 "from_id": from_id,
@@ -673,9 +688,16 @@ class EntityGraph:
         relationship_type: str | None = None,
     ) -> Iterator[RelationshipInstance]:
         """Iterate relationships as typed instances."""
-        for from_type, from_id, to_type, to_id, rel_type, key, props, metadata in (
-            self._iter_edges_raw(relationship_type)
-        ):
+        for (
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            rel_type,
+            key,
+            props,
+            metadata,
+        ) in self._iter_edges_raw(relationship_type):
             yield RelationshipInstance(
                 relationship_type=rel_type,
                 from_type=from_type,
@@ -883,16 +905,14 @@ class EntityGraph:
         for edge in self.iter_edges():
             if edge["relationship_type"] not in relationship_type_set:
                 continue
-            if (
-                edge["from_type"] in entity_type_set
-                and not subgraph.has_entity(edge["from_type"], edge["from_id"])
+            if edge["from_type"] in entity_type_set and not subgraph.has_entity(
+                edge["from_type"], edge["from_id"]
             ):
                 source = self.get_entity(edge["from_type"], edge["from_id"])
                 if source is not None:
                     subgraph.add_entity(source)
-            if (
-                edge["to_type"] in entity_type_set
-                and not subgraph.has_entity(edge["to_type"], edge["to_id"])
+            if edge["to_type"] in entity_type_set and not subgraph.has_entity(
+                edge["to_type"], edge["to_id"]
             ):
                 target = self.get_entity(edge["to_type"], edge["to_id"])
                 if target is not None:
@@ -929,11 +949,12 @@ class EntityGraph:
             # entity so the stub does not clobber populated upstream data.
             # Revisit when the extract-stub behavior is redesigned post-0.2.
             if merged.has_entity(entity.entity_type, entity.entity_id) and not entity.properties:
-                if entity.metadata:
+                stub_metadata = _entity_metadata_dict(entity.metadata)
+                if stub_metadata:
                     merged.update_entity_metadata(
                         entity.entity_type,
                         entity.entity_id,
-                        dict(entity.metadata),
+                        stub_metadata,
                     )
                 continue
             merged.add_entity(entity)

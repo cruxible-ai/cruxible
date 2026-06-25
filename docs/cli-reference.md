@@ -265,7 +265,7 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
 - A by-id get is **not** subject to live-only lifecycle gating: it returns the
-  entity even when its `lifecycle.status` is `retired`/`superseded`/`orphaned`,
+  entity even when its `lifecycle.status` is `retired`/`superseded`,
   and surfaces that status (in the `Lifecycle` table column and in the JSON
   `metadata.lifecycle.status`). This is the recovery/inspection path for an
   entity hidden from live `query`/`list` reads.
@@ -1681,11 +1681,11 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max entities to show. |
 | `--offset` | no | `0` | integer | Rows to skip. |
-| `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded/orphaned entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
+| `--state` | no | `` | choice | Read-visibility state by entity lifecycle: `live` (default — hides retired/superseded entities), `all`, or `not-live` (only the gated-out set). Review-only values resolve to `live` (entities have no review axis). |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
-- Read-only. Defaults to `--state live`: retired/superseded/orphaned entities
+- Read-only. Defaults to `--state live`: retired/superseded entities
   (entity `lifecycle.status != live`) are hidden. Use `--state not-live` to find
   the gated-out set (recovery), or `--state all` for everything. Without
   `--field`, returns full entity records. With `--field`,

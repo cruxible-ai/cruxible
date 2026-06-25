@@ -9,7 +9,6 @@ from rich.table import Table
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-from cruxible_core.graph.assertion_state import entity_lifecycle_status
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
@@ -21,8 +20,8 @@ from cruxible_core.temporal import format_datetime
 def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
     """Build a Rich table for a list of entities.
 
-    Surfaces each entity's lifecycle status (``live`` unless retired/superseded/
-    orphaned) so by-id ``entity get`` reveals the canonical lifecycle state of an
+    Surfaces each entity's lifecycle status (``live`` unless retired/superseded)
+    so by-id ``entity get`` reveals the canonical lifecycle state of an
     entity even though that surface intentionally bypasses live-only gating.
     """
     table = Table(title=f"{entity_type} entities")
@@ -32,7 +31,11 @@ def entities_table(entities: list[EntityInstance], entity_type: str) -> Table:
 
     for e in entities:
         props = ", ".join(f"{k}={v}" for k, v in e.properties.items())
-        table.add_row(e.entity_id, entity_lifecycle_status(e.metadata), props)
+        table.add_row(
+            e.entity_id,
+            e.metadata.lifecycle_status(),
+            props,
+        )
 
     return table
 
@@ -345,15 +348,13 @@ def schema_table(config: CoreConfig) -> Table:
     for name, et in config.entity_types.items():
         pk = et.get_primary_key() or "-"
         props = ", ".join(
-            _format_property_name(prop_name, prop)
-            for prop_name, prop in et.properties.items()
+            _format_property_name(prop_name, prop) for prop_name, prop in et.properties.items()
         )
         table.add_row("Entity", name, f"pk={pk}  props=[{props}]")
 
     for rel in config.relationships:
         prop_names = ", ".join(
-            _format_property_name(prop_name, prop)
-            for prop_name, prop in rel.properties.items()
+            _format_property_name(prop_name, prop) for prop_name, prop in rel.properties.items()
         )
         details = f"{rel.from_entity} -> {rel.to_entity}  ({rel.cardinality})"
         if prop_names:

@@ -12,7 +12,7 @@ QueryDedupe = Literal["entity", "path", "none"]
 #   live       -- default; only live entities / live (active + reviewed-in) edges
 #   accepted   -- review-approved edges (entities: resolves to live, no review axis)
 #   all        -- everything, regardless of lifecycle or review state
-#   not-live   -- exactly the set gated out of `live`: retired/superseded/orphaned
+#   not-live   -- exactly the set gated out of `live`: retired/superseded
 #                 entities + rejected (review) or closed/retracted (lifecycle) edges
 #   pending    -- pending-review edges (relationship-review refinement)
 #   reviewable -- live-or-pending edges (relationship-review refinement)

@@ -21,26 +21,32 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.assertion_state import (
     RelationshipLifecycleState,
-    entity_lifecycle_into_metadata,
 )
+from cruxible_core.graph.types import EntityMetadata
 
 
 def entity_metadata_with_lifecycle(
     metadata: dict[str, Any] | None,
     lifecycle: contracts.EntityLifecycleInput | None,
 ) -> dict[str, Any]:
-    """Merge a typed entity lifecycle input into an entity-metadata dict.
+    """Build the typed entity-metadata envelope for a direct write.
 
-    Returns a copy of ``metadata`` (the free-form, non-lifecycle metadata) with the
-    typed lifecycle serialized under the reserved lifecycle key. When ``lifecycle``
-    is ``None`` the metadata is returned unchanged (an undecorated entity stays at
-    its default ``live`` state).
+    Author-supplied ``metadata`` is treated as wholly free-form: it is carried in
+    the envelope's ``extra`` slot, NOT interpreted for owned slices. So a
+    hand-authored ``metadata={"lifecycle": ...}`` lands at ``extra["lifecycle"]`` --
+    inert free-form data -- and can never become the typed lifecycle state. The
+    typed ``lifecycle`` field is set ONLY from the ``lifecycle`` contract input
+    (``EntityInput.lifecycle``), which is the single channel for entity lifecycle.
+    The result is re-encoded to the flat storable dict; ``None`` lifecycle leaves an
+    undecorated entity at its default ``live`` state.
     """
-    base = dict(metadata or {})
-    if lifecycle is None:
-        return base
-    typed = _EntityLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
-    return entity_lifecycle_into_metadata(typed, base=base)
+    extra = dict(metadata or {})
+    typed_lifecycle = (
+        _EntityLifecycleState(status=lifecycle.status, reason=lifecycle.reason)
+        if lifecycle is not None
+        else None
+    )
+    return EntityMetadata(lifecycle=typed_lifecycle, extra=extra).to_metadata_dict()
 
 
 def relationship_lifecycle_state(
