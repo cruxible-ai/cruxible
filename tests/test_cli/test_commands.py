@@ -454,6 +454,61 @@ quality_checks:
 
 
 # ---------------------------------------------------------------------------
+# state health
+# ---------------------------------------------------------------------------
+
+
+class TestStateHealth:
+    def _make_project(self, tmp_path: Path) -> Path:
+        project = tmp_path / "health-project"
+        project.mkdir()
+        (project / "config.yaml").write_text(
+            """\
+version: "1.0"
+name: health_project
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+"""
+        )
+        CruxibleInstance.init(project, "config.yaml")
+        return project
+
+    def test_state_health_table_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        project = self._make_project(tmp_path)
+        result = _chdir_run(runner, project, ["state", "health"])
+        assert result.exit_code == 0, result.output
+        assert "Groups:" in result.output
+        assert "Provenance (edges):" in result.output
+        assert "Freshness:" in result.output
+        assert "Integrity:" in result.output
+        assert "configuration_locked:" in result.output
+
+    def test_state_health_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        project = self._make_project(tmp_path)
+        result = _chdir_run(runner, project, ["state", "health", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        # Envelope plus four deterministic sections present and all-zero on empty.
+        assert set(payload) == {
+            "captured_at",
+            "head_snapshot_id",
+            "groups",
+            "provenance",
+            "freshness",
+            "integrity",
+        }
+        assert payload["groups"]["total_count"] == 0
+        assert payload["provenance"]["total_edge_count"] == 0
+        assert payload["freshness"]["config_compatible"] is True
+        assert payload["integrity"]["configuration_locked"] is False
+
+
+# ---------------------------------------------------------------------------
 # explain
 # ---------------------------------------------------------------------------
 

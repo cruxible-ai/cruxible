@@ -161,6 +161,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 # Internal runtime operations that are not registered MCP tools but still need
 # permission gates owned by this module.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    # Read-only state-health surface: exposed over HTTP (GET /state/health) and
+    # the CLI (`cruxible state health`), but deliberately NOT an MCP tool.
+    "cruxible_state_health": PermissionMode.READ_ONLY,
     "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
     "cruxible_hosted_instance_init": PermissionMode.ADMIN,
     "cruxible_init_with_config": PermissionMode.ADMIN,

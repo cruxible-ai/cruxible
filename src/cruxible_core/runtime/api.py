@@ -105,6 +105,7 @@ from cruxible_core.service import (
     service_sample,
     service_schema,
     service_server_info,
+    service_state_health,
     service_state_status,
     service_stats,
     service_test,
@@ -1790,6 +1791,48 @@ def evaluate(
         summary=report.summary,
         constraint_summary=report.constraint_summary,
         quality_summary=report.quality_summary,
+    )
+
+
+def state_health(instance_id: str) -> contracts.StateHealthResult:
+    """Aggregate read-only, deterministic state-health maintenance signals."""
+    check_permission("cruxible_state_health", instance_id=instance_id)
+    instance = get_manager().get(instance_id)
+    result = service_state_health(instance)
+    return contracts.StateHealthResult(
+        captured_at=result.captured_at,
+        head_snapshot_id=result.head_snapshot_id,
+        groups=contracts.StateHealthGroupsSection(
+            pending_review_count=result.groups.pending_review_count,
+            applying_count=result.groups.applying_count,
+            auto_resolved_count=result.groups.auto_resolved_count,
+            resolved_count=result.groups.resolved_count,
+            total_count=result.groups.total_count,
+            oldest_unresolved_age_seconds=result.groups.oldest_unresolved_age_seconds,
+            newest_unresolved_age_seconds=result.groups.newest_unresolved_age_seconds,
+        ),
+        provenance=contracts.StateHealthProvenanceSection(
+            direct_write_edge_count=result.provenance.direct_write_edge_count,
+            group_backed_edge_count=result.provenance.group_backed_edge_count,
+            other_source_edge_count=result.provenance.other_source_edge_count,
+            total_edge_count=result.provenance.total_edge_count,
+        ),
+        freshness=contracts.StateHealthFreshnessSection(
+            source_artifact_count=result.freshness.source_artifact_count,
+            oldest_source_artifact_age_seconds=(
+                result.freshness.oldest_source_artifact_age_seconds
+            ),
+            provider_trace_count=result.freshness.provider_trace_count,
+            oldest_provider_trace_age_seconds=(result.freshness.oldest_provider_trace_age_seconds),
+            config_compatible=result.freshness.config_compatible,
+            config_warnings=result.freshness.config_warnings,
+        ),
+        integrity=contracts.StateHealthIntegritySection(
+            orphan_entity_count=result.integrity.orphan_entity_count,
+            unused_entity_types=result.integrity.unused_entity_types,
+            unused_relationship_types=result.integrity.unused_relationship_types,
+            configuration_locked=result.integrity.configuration_locked,
+        ),
     )
 
 

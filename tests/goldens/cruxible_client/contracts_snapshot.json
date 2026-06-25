@@ -21161,6 +21161,795 @@
         "source_artifact_id"
       ]
     },
+    "StateHealthFreshnessSection": {
+      "fields": {
+        "config_compatible": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "config_compatible",
+          "required": false,
+          "schema": {
+            "default": true,
+            "title": "Config Compatible",
+            "type": "boolean"
+          }
+        },
+        "config_warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "config_warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Warnings",
+            "type": "array"
+          }
+        },
+        "oldest_provider_trace_age_seconds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "oldest_provider_trace_age_seconds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Provider Trace Age Seconds"
+          }
+        },
+        "oldest_source_artifact_age_seconds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "oldest_source_artifact_age_seconds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Source Artifact Age Seconds"
+          }
+        },
+        "provider_trace_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "provider_trace_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Provider Trace Count",
+            "type": "integer"
+          }
+        },
+        "source_artifact_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_artifact_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Source Artifact Count",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Source-artifact / provider-trace recency plus config-compatibility facts.",
+        "properties": {
+          "config_compatible": {
+            "default": true,
+            "title": "Config Compatible",
+            "type": "boolean"
+          },
+          "config_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Warnings",
+            "type": "array"
+          },
+          "oldest_provider_trace_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Provider Trace Age Seconds"
+          },
+          "oldest_source_artifact_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Source Artifact Age Seconds"
+          },
+          "provider_trace_count": {
+            "default": 0,
+            "title": "Provider Trace Count",
+            "type": "integer"
+          },
+          "source_artifact_count": {
+            "default": 0,
+            "title": "Source Artifact Count",
+            "type": "integer"
+          }
+        },
+        "title": "StateHealthFreshnessSection",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "StateHealthGroupsSection": {
+      "fields": {
+        "applying_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "applying_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Applying Count",
+            "type": "integer"
+          }
+        },
+        "auto_resolved_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "auto_resolved_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Auto Resolved Count",
+            "type": "integer"
+          }
+        },
+        "newest_unresolved_age_seconds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest_unresolved_age_seconds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Newest Unresolved Age Seconds"
+          }
+        },
+        "oldest_unresolved_age_seconds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "oldest_unresolved_age_seconds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Unresolved Age Seconds"
+          }
+        },
+        "pending_review_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending_review_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Pending Review Count",
+            "type": "integer"
+          }
+        },
+        "resolved_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolved_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Resolved Count",
+            "type": "integer"
+          }
+        },
+        "total_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "total_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Total Count",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Candidate-group lifecycle counts plus the unresolved-backlog age span.\n\nAge is scoped to unresolved (pending_review + applying) groups; resolved\ngroups only accumulate age and are not an actionable maintenance signal.",
+        "properties": {
+          "applying_count": {
+            "default": 0,
+            "title": "Applying Count",
+            "type": "integer"
+          },
+          "auto_resolved_count": {
+            "default": 0,
+            "title": "Auto Resolved Count",
+            "type": "integer"
+          },
+          "newest_unresolved_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Newest Unresolved Age Seconds"
+          },
+          "oldest_unresolved_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oldest Unresolved Age Seconds"
+          },
+          "pending_review_count": {
+            "default": 0,
+            "title": "Pending Review Count",
+            "type": "integer"
+          },
+          "resolved_count": {
+            "default": 0,
+            "title": "Resolved Count",
+            "type": "integer"
+          },
+          "total_count": {
+            "default": 0,
+            "title": "Total Count",
+            "type": "integer"
+          }
+        },
+        "title": "StateHealthGroupsSection",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "StateHealthIntegritySection": {
+      "fields": {
+        "configuration_locked": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "configuration_locked",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Configuration Locked"
+          }
+        },
+        "orphan_entity_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "orphan_entity_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Orphan Entity Count",
+            "type": "integer"
+          }
+        },
+        "unused_entity_types": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "unused_entity_types",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unused Entity Types",
+            "type": "array"
+          }
+        },
+        "unused_relationship_types": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "unused_relationship_types",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unused Relationship Types",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Graph-integrity counts reused from the deterministic evaluate findings.",
+        "properties": {
+          "configuration_locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Configuration Locked"
+          },
+          "orphan_entity_count": {
+            "default": 0,
+            "title": "Orphan Entity Count",
+            "type": "integer"
+          },
+          "unused_entity_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unused Entity Types",
+            "type": "array"
+          },
+          "unused_relationship_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unused Relationship Types",
+            "type": "array"
+          }
+        },
+        "title": "StateHealthIntegritySection",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "StateHealthProvenanceSection": {
+      "fields": {
+        "direct_write_edge_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "direct_write_edge_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Direct Write Edge Count",
+            "type": "integer"
+          }
+        },
+        "group_backed_edge_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "group_backed_edge_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Group Backed Edge Count",
+            "type": "integer"
+          }
+        },
+        "other_source_edge_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "other_source_edge_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Other Source Edge Count",
+            "type": "integer"
+          }
+        },
+        "total_edge_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "total_edge_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Total Edge Count",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "description": "Edge provenance tally by source_ref class.",
+        "properties": {
+          "direct_write_edge_count": {
+            "default": 0,
+            "title": "Direct Write Edge Count",
+            "type": "integer"
+          },
+          "group_backed_edge_count": {
+            "default": 0,
+            "title": "Group Backed Edge Count",
+            "type": "integer"
+          },
+          "other_source_edge_count": {
+            "default": 0,
+            "title": "Other Source Edge Count",
+            "type": "integer"
+          },
+          "total_edge_count": {
+            "default": 0,
+            "title": "Total Edge Count",
+            "type": "integer"
+          }
+        },
+        "title": "StateHealthProvenanceSection",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "StateHealthResult": {
+      "fields": {
+        "captured_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "captured_at",
+          "required": true,
+          "schema": {
+            "title": "Captured At",
+            "type": "string"
+          }
+        },
+        "freshness": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "freshness",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/StateHealthFreshnessSection"
+          }
+        },
+        "groups": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "groups",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/StateHealthGroupsSection"
+          }
+        },
+        "head_snapshot_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "head_snapshot_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Head Snapshot Id"
+          }
+        },
+        "integrity": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "integrity",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/StateHealthIntegritySection"
+          }
+        },
+        "provenance": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "provenance",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/StateHealthProvenanceSection"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "StateHealthFreshnessSection": {
+            "description": "Source-artifact / provider-trace recency plus config-compatibility facts.",
+            "properties": {
+              "config_compatible": {
+                "default": true,
+                "title": "Config Compatible",
+                "type": "boolean"
+              },
+              "config_warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Config Warnings",
+                "type": "array"
+              },
+              "oldest_provider_trace_age_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Oldest Provider Trace Age Seconds"
+              },
+              "oldest_source_artifact_age_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Oldest Source Artifact Age Seconds"
+              },
+              "provider_trace_count": {
+                "default": 0,
+                "title": "Provider Trace Count",
+                "type": "integer"
+              },
+              "source_artifact_count": {
+                "default": 0,
+                "title": "Source Artifact Count",
+                "type": "integer"
+              }
+            },
+            "title": "StateHealthFreshnessSection",
+            "type": "object"
+          },
+          "StateHealthGroupsSection": {
+            "description": "Candidate-group lifecycle counts plus the unresolved-backlog age span.\n\nAge is scoped to unresolved (pending_review + applying) groups; resolved\ngroups only accumulate age and are not an actionable maintenance signal.",
+            "properties": {
+              "applying_count": {
+                "default": 0,
+                "title": "Applying Count",
+                "type": "integer"
+              },
+              "auto_resolved_count": {
+                "default": 0,
+                "title": "Auto Resolved Count",
+                "type": "integer"
+              },
+              "newest_unresolved_age_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Newest Unresolved Age Seconds"
+              },
+              "oldest_unresolved_age_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Oldest Unresolved Age Seconds"
+              },
+              "pending_review_count": {
+                "default": 0,
+                "title": "Pending Review Count",
+                "type": "integer"
+              },
+              "resolved_count": {
+                "default": 0,
+                "title": "Resolved Count",
+                "type": "integer"
+              },
+              "total_count": {
+                "default": 0,
+                "title": "Total Count",
+                "type": "integer"
+              }
+            },
+            "title": "StateHealthGroupsSection",
+            "type": "object"
+          },
+          "StateHealthIntegritySection": {
+            "description": "Graph-integrity counts reused from the deterministic evaluate findings.",
+            "properties": {
+              "configuration_locked": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Configuration Locked"
+              },
+              "orphan_entity_count": {
+                "default": 0,
+                "title": "Orphan Entity Count",
+                "type": "integer"
+              },
+              "unused_entity_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Unused Entity Types",
+                "type": "array"
+              },
+              "unused_relationship_types": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Unused Relationship Types",
+                "type": "array"
+              }
+            },
+            "title": "StateHealthIntegritySection",
+            "type": "object"
+          },
+          "StateHealthProvenanceSection": {
+            "description": "Edge provenance tally by source_ref class.",
+            "properties": {
+              "direct_write_edge_count": {
+                "default": 0,
+                "title": "Direct Write Edge Count",
+                "type": "integer"
+              },
+              "group_backed_edge_count": {
+                "default": 0,
+                "title": "Group Backed Edge Count",
+                "type": "integer"
+              },
+              "other_source_edge_count": {
+                "default": 0,
+                "title": "Other Source Edge Count",
+                "type": "integer"
+              },
+              "total_edge_count": {
+                "default": 0,
+                "title": "Total Edge Count",
+                "type": "integer"
+              }
+            },
+            "title": "StateHealthProvenanceSection",
+            "type": "object"
+          }
+        },
+        "description": "Read-only deterministic state-health report.\n\nAggregates raw maintenance metrics (counts, ages, timestamps) and binary\ndeterministic facts only. Carries NO scoring, ranking, severity, or\nthreshold-derived statuses — agents interpret; core reports defensible facts.",
+        "properties": {
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "freshness": {
+            "$ref": "#/$defs/StateHealthFreshnessSection"
+          },
+          "groups": {
+            "$ref": "#/$defs/StateHealthGroupsSection"
+          },
+          "head_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Head Snapshot Id"
+          },
+          "integrity": {
+            "$ref": "#/$defs/StateHealthIntegritySection"
+          },
+          "provenance": {
+            "$ref": "#/$defs/StateHealthProvenanceSection"
+          }
+        },
+        "required": [
+          "captured_at"
+        ],
+        "title": "StateHealthResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "captured_at"
+      ]
+    },
     "StateOverlayResult": {
       "fields": {
         "instance_id": {

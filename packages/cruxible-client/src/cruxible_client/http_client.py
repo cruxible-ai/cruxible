@@ -1294,6 +1294,10 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/state/status")
         return self._parse_model(response, contracts.StateStatusResult)
 
+    def state_health(self, instance_id: str) -> contracts.StateHealthResult:
+        response = self._client.get(f"/api/v1/{instance_id}/state/health")
+        return self._parse_model(response, contracts.StateHealthResult)
+
     def state_pull_preview(self, instance_id: str) -> contracts.StatePullPreviewResult:
         response = self._client.post(f"/api/v1/{instance_id}/state/pull/preview")
         return self._parse_model(response, contracts.StatePullPreviewResult)

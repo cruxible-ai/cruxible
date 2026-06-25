@@ -51,6 +51,13 @@ async def state_status(instance_id: str) -> contracts.StateStatusResult:
     return api.state_status(resolved_instance_id)
 
 
+@router.get("/{instance_id}/state/health", response_model=contracts.StateHealthResult)
+async def state_health(instance_id: str) -> contracts.StateHealthResult:
+    """Read deterministic, read-only state-health maintenance signals."""
+    resolved_instance_id = resolve_server_instance_id(instance_id)
+    return api.state_health(resolved_instance_id)
+
+
 @router.post(
     "/{instance_id}/state/pull/preview",
     response_model=contracts.StatePullPreviewResult,

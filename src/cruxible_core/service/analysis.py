@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from cruxible_core.config.schema import (
@@ -15,6 +16,11 @@ from cruxible_core.config.schema import (
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.graph.provenance import (
+    SOURCE_REF_ADD_RELATIONSHIP,
+    SOURCE_REF_BATCH_DIRECT_WRITE,
+)
+from cruxible_core.graph.types import RelationshipMetadata
 from cruxible_core.group.types import TrustStatus
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.evaluate import (
@@ -38,10 +44,17 @@ from cruxible_core.service.types import (
     ProviderFixCandidate,
     QualityCheckCandidate,
     QueryPolicySuggestion,
+    StateHealthFreshnessSection,
+    StateHealthGroupsSection,
+    StateHealthIntegritySection,
+    StateHealthProvenanceSection,
+    StateHealthResult,
     TrustAdjustmentSuggestion,
     UncodedFeedbackExample,
     UncodedOutcomeExample,
 )
+from cruxible_core.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
+from cruxible_core.workflow.compiler import resolve_lock_path
 
 if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
@@ -80,6 +93,218 @@ def service_config_compatibility_warnings(instance: InstanceProtocol) -> list[st
     return _compute_config_compatibility_warnings(
         config=instance.load_config(),
         graph=instance.load_graph(),
+    )
+
+
+# Direct-write source_refs: edges authored by the deterministic write path.
+_DIRECT_WRITE_SOURCE_REFS = frozenset({SOURCE_REF_ADD_RELATIONSHIP, SOURCE_REF_BATCH_DIRECT_WRITE})
+
+# Unresolved (actionable) group statuses. The age span is scoped to these: an old
+# pending_review group is a stale review backlog and an old applying group is a
+# stuck apply -- both actionable. Resolved groups only accumulate age forever, so
+# including them would make the signal grow unbounded on a healthy instance.
+_UNRESOLVED_GROUP_STATUSES = frozenset({"pending_review", "applying"})
+
+
+def service_state_health(instance: InstanceProtocol) -> StateHealthResult:
+    """Aggregate deterministic, read-only maintenance signals for one instance.
+
+    Parallel to ``service_evaluate``: reports raw metrics (counts, ages,
+    timestamps) and binary deterministic facts (``config_compatible``,
+    ``configuration_locked``) ONLY. No scoring, ranking, severity, or
+    threshold-derived statuses — interpretation belongs to agents. Empty or
+    missing signals default to 0 / None, never errors, so an empty instance
+    returns a valid all-zero report.
+    """
+    now = utc_now()
+    config = instance.load_config()
+    graph = instance.load_graph()
+
+    groups = _state_health_groups(instance, now=now)
+    provenance = _state_health_provenance(graph)
+    freshness = _state_health_freshness(instance, config=config, graph=graph, now=now)
+    integrity = _state_health_integrity(instance, config=config, graph=graph)
+
+    return StateHealthResult(
+        captured_at=format_datetime(now) or now.isoformat(),
+        head_snapshot_id=instance.get_head_snapshot_id(),
+        groups=groups,
+        provenance=provenance,
+        freshness=freshness,
+        integrity=integrity,
+    )
+
+
+def _age_seconds(value: Any, *, now: datetime) -> float | None:
+    """Return ``now - value`` in seconds, or None when the timestamp is unusable."""
+    try:
+        created = parse_datetime(value) if not isinstance(value, datetime) else ensure_utc(value)
+    except (ValueError, TypeError):
+        return None
+    if created is None:
+        return None
+    return (now - created).total_seconds()
+
+
+def _state_health_groups(
+    instance: InstanceProtocol,
+    *,
+    now: datetime,
+) -> StateHealthGroupsSection:
+    """Tally candidate-group counts by status plus the unresolved-backlog age span."""
+    counts = {
+        "pending_review": 0,
+        "applying": 0,
+        "auto_resolved": 0,
+        "resolved": 0,
+    }
+    ages: list[float] = []
+    group_store = instance.get_group_store()
+    try:
+        offset = 0
+        page = 500
+        while True:
+            batch = group_store.list_groups(limit=page, offset=offset)
+            if not batch:
+                break
+            for group in batch:
+                if group.status in counts:
+                    counts[group.status] += 1
+                if group.status in _UNRESOLVED_GROUP_STATUSES:
+                    age = _age_seconds(group.created_at, now=now)
+                    if age is not None:
+                        ages.append(age)
+            if len(batch) < page:
+                break
+            offset += page
+    finally:
+        group_store.close()
+
+    return StateHealthGroupsSection(
+        pending_review_count=counts["pending_review"],
+        applying_count=counts["applying"],
+        auto_resolved_count=counts["auto_resolved"],
+        resolved_count=counts["resolved"],
+        total_count=sum(counts.values()),
+        oldest_unresolved_age_seconds=max(ages) if ages else None,
+        newest_unresolved_age_seconds=min(ages) if ages else None,
+    )
+
+
+def _state_health_provenance(graph: EntityGraph) -> StateHealthProvenanceSection:
+    """Tally every live-store edge by the class of its provenance ``source_ref``."""
+    direct = 0
+    group_backed = 0
+    other = 0
+    total = 0
+    for edge in graph.iter_edges():
+        total += 1
+        metadata = RelationshipMetadata.model_validate(edge.get("metadata") or {})
+        source_ref = metadata.provenance.source_ref if metadata.provenance is not None else None
+        if source_ref in _DIRECT_WRITE_SOURCE_REFS:
+            direct += 1
+        elif source_ref is not None and source_ref.startswith("group:"):
+            group_backed += 1
+        else:
+            other += 1
+    return StateHealthProvenanceSection(
+        direct_write_edge_count=direct,
+        group_backed_edge_count=group_backed,
+        other_source_edge_count=other,
+        total_edge_count=total,
+    )
+
+
+def _state_health_freshness(
+    instance: InstanceProtocol,
+    *,
+    config: CoreConfig,
+    graph: EntityGraph,
+    now: datetime,
+) -> StateHealthFreshnessSection:
+    """Aggregate source-artifact / provider-trace recency and config compatibility."""
+    artifact_store = instance.get_source_artifact_store()
+    try:
+        artifacts = artifact_store.list_artifacts()
+    finally:
+        artifact_store.close()
+    artifact_ages = [
+        age
+        for age in (_age_seconds(record.created_at, now=now) for record in artifacts)
+        if age is not None
+    ]
+
+    receipt_store = instance.get_receipt_store()
+    try:
+        trace_count = receipt_store.count_traces()
+        oldest_trace_age: float | None = None
+        offset = 0
+        page = 500
+        while True:
+            batch = receipt_store.list_traces(limit=page, offset=offset)
+            if not batch:
+                break
+            for trace in batch:
+                age = _age_seconds(trace.get("created_at"), now=now)
+                if age is not None and (oldest_trace_age is None or age > oldest_trace_age):
+                    oldest_trace_age = age
+            if len(batch) < page:
+                break
+            offset += page
+    finally:
+        receipt_store.close()
+
+    config_warnings = _compute_config_compatibility_warnings(config=config, graph=graph)
+    return StateHealthFreshnessSection(
+        source_artifact_count=len(artifacts),
+        oldest_source_artifact_age_seconds=max(artifact_ages) if artifact_ages else None,
+        provider_trace_count=trace_count,
+        oldest_provider_trace_age_seconds=oldest_trace_age,
+        config_compatible=not config_warnings,
+        config_warnings=config_warnings,
+    )
+
+
+def _state_health_integrity(
+    instance: InstanceProtocol,
+    *,
+    config: CoreConfig,
+    graph: EntityGraph,
+) -> StateHealthIntegritySection:
+    """Reuse the deterministic evaluate findings for graph-integrity counts."""
+    group_store = instance.get_group_store()
+    try:
+        evaluation = evaluate_graph(
+            config,
+            graph,
+            group_store=group_store,
+            max_findings=10_000,
+            category_filter=["orphan_entity", "coverage_gap"],
+        )
+    finally:
+        group_store.close()
+
+    orphan_entity_count = 0
+    unused_entity_types: list[str] = []
+    unused_relationship_types: list[str] = []
+    for finding in evaluation.findings:
+        if finding.category == "orphan_entity":
+            orphan_entity_count += 1
+        elif finding.category == "coverage_gap":
+            kind = finding.detail.get("type")
+            name = finding.detail.get("name")
+            if not isinstance(name, str):
+                continue
+            if kind == "entity_type":
+                unused_entity_types.append(name)
+            elif kind == "relationship_type":
+                unused_relationship_types.append(name)
+
+    return StateHealthIntegritySection(
+        orphan_entity_count=orphan_entity_count,
+        unused_entity_types=unused_entity_types,
+        unused_relationship_types=unused_relationship_types,
+        configuration_locked=resolve_lock_path(instance).exists(),
     )
 
 

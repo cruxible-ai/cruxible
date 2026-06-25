@@ -18,6 +18,7 @@ from cruxible_core.config.schema import (
     SignalPolicySchema,
 )
 from cruxible_core.errors import ConfigError
+from cruxible_core.graph.provenance import SOURCE_REF_ADD_RELATIONSHIP
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateMember
 from cruxible_core.receipt.types import Receipt
@@ -33,8 +34,10 @@ from cruxible_core.service import (
     service_propose_group,
     service_query,
     service_resolve_group,
+    service_state_health,
     service_validate,
 )
+from cruxible_core.workflow.compiler import resolve_lock_path
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -910,6 +913,166 @@ class TestLint:
         assert len(result.outcome_reports) == 1
         assert result.outcome_reports[0].anchor_type == "receipt"
         assert len(result.outcome_reports[0].provider_fix_candidates) == 1
+
+
+class TestStateHealth:
+    """service_state_health: deterministic read-only maintenance signals."""
+
+    def test_empty_instance_all_zero(self, initialized_instance: CruxibleInstance) -> None:
+        result = service_state_health(initialized_instance)
+
+        # Valid all-zero report, no errors, no head snapshot.
+        assert result.captured_at  # ISO8601 string present
+        assert result.head_snapshot_id is None
+
+        assert result.groups.total_count == 0
+        assert result.groups.pending_review_count == 0
+        assert result.groups.oldest_unresolved_age_seconds is None
+        assert result.groups.newest_unresolved_age_seconds is None
+
+        assert result.provenance.total_edge_count == 0
+        assert result.provenance.direct_write_edge_count == 0
+        assert result.provenance.group_backed_edge_count == 0
+        assert result.provenance.other_source_edge_count == 0
+
+        assert result.freshness.source_artifact_count == 0
+        assert result.freshness.oldest_source_artifact_age_seconds is None
+        assert result.freshness.provider_trace_count == 0
+        assert result.freshness.config_compatible is True
+        assert result.freshness.config_warnings == []
+
+        assert result.integrity.orphan_entity_count == 0
+        # Empty graph: every configured type is an unused coverage gap.
+        assert "Vehicle" in result.integrity.unused_entity_types
+        assert "fits" in result.integrity.unused_relationship_types
+        assert result.integrity.configuration_locked is False
+
+    def test_integrity_orphans_and_coverage(self, populated_instance: CruxibleInstance) -> None:
+        graph = populated_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id="ORPHAN-1",
+                properties={"part_number": "ORPHAN-1", "name": "Loose Part"},
+            )
+        )
+        populated_instance.save_graph(graph)
+
+        result = service_state_health(populated_instance)
+
+        # The lone unconnected part is reported as an orphan.
+        assert result.integrity.orphan_entity_count == 1
+        # Vehicle/Part/fits/replaces are all present -> not unused.
+        assert "Vehicle" not in result.integrity.unused_entity_types
+        assert "fits" not in result.integrity.unused_relationship_types
+
+    def test_freshness_config_incompatible(self, populated_instance: CruxibleInstance) -> None:
+        # Drop the 'replaces' relationship from config while edges remain in graph.
+        config = populated_instance.load_config()
+        config.relationships = [rel for rel in config.relationships if rel.name != "replaces"]
+        populated_instance.save_config(config)
+
+        result = service_state_health(populated_instance)
+
+        assert result.freshness.config_compatible is False
+        assert any("replaces" in warning for warning in result.freshness.config_warnings)
+
+    def test_configuration_locked_fact(self, populated_instance: CruxibleInstance) -> None:
+        # Binary deterministic fact: lock file presence flips the flag.
+        assert service_state_health(populated_instance).integrity.configuration_locked is False
+        resolve_lock_path(populated_instance).write_text("{}")
+        assert service_state_health(populated_instance).integrity.configuration_locked is True
+
+    def test_groups_counts_and_age(self, populated_instance: CruxibleInstance) -> None:
+        # A resolved group is counted but must NOT contribute to the age span:
+        # resolved groups only accumulate age and are not an actionable signal, so
+        # the span is scoped to the unresolved (pending_review + applying) backlog.
+        _create_resolution_anchor(populated_instance)
+        resolved_only = service_state_health(populated_instance)
+        assert resolved_only.groups.resolved_count >= 1
+        assert resolved_only.groups.oldest_unresolved_age_seconds is None
+        assert resolved_only.groups.newest_unresolved_age_seconds is None
+
+        # A pending (unresolved) group DOES contribute a non-negative age.
+        graph = populated_instance.load_graph()
+        if graph.get_entity("Vehicle", "V-PENDING-1") is None:
+            graph.add_entity(
+                EntityInstance(
+                    entity_type="Vehicle",
+                    entity_id="V-PENDING-1",
+                    properties={"vehicle_id": "V-PENDING-1", "make": "Honda"},
+                )
+            )
+            populated_instance.save_graph(graph)
+        propose_result = service_propose_group(
+            populated_instance,
+            "fits",
+            members=[
+                CandidateMember(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    to_type="Vehicle",
+                    to_id="V-PENDING-1",
+                    relationship_type="fits",
+                )
+            ],
+            thesis_text="pending backlog group",
+            thesis_facts={"vendor": "Honda"},
+            source_workflow_name="propose_kev_product_links",
+            source_workflow_receipt_id=_save_workflow_receipt(
+                populated_instance, "propose_kev_product_links"
+            ),
+        )
+        assert propose_result.group_id is not None
+
+        with_pending = service_state_health(populated_instance)
+        assert with_pending.groups.pending_review_count >= 1
+        assert with_pending.groups.oldest_unresolved_age_seconds is not None
+        assert with_pending.groups.oldest_unresolved_age_seconds >= 0
+        assert with_pending.groups.newest_unresolved_age_seconds is not None
+
+    def test_provenance_source_ref_tally(self, populated_instance: CruxibleInstance) -> None:
+        # populated_instance starts with 4 fixture edges written with NO
+        # provenance source_ref -> they tally as 'other'.
+        baseline = service_state_health(populated_instance)
+        assert baseline.provenance.other_source_edge_count == baseline.provenance.total_edge_count
+        assert baseline.provenance.direct_write_edge_count == 0
+        assert baseline.provenance.group_backed_edge_count == 0
+
+        # Add one DIRECT-write edge stamped with the canonical add_relationship ref.
+        graph = populated_instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id="V-DIRECT-1",
+                properties={"vehicle_id": "V-DIRECT-1", "make": "Honda"},
+            )
+        )
+        populated_instance.save_graph(graph)
+        service_add_relationship_inputs(
+            populated_instance,
+            [
+                RelationshipWriteInput(
+                    from_type="Part",
+                    from_id="BP-1001",
+                    relationship_type="fits",
+                    to_type="Vehicle",
+                    to_id="V-DIRECT-1",
+                    properties={"verified": True},
+                )
+            ],
+            source="test",
+            source_ref=SOURCE_REF_ADD_RELATIONSHIP,
+        )
+
+        # Add one GROUP-backed edge via propose+resolve (source_ref 'group:<id>').
+        _create_resolution_anchor(populated_instance)
+
+        result = service_state_health(populated_instance)
+        assert result.provenance.direct_write_edge_count == 1
+        assert result.provenance.group_backed_edge_count == 1
+        assert result.provenance.other_source_edge_count == baseline.provenance.total_edge_count
+        assert result.provenance.total_edge_count == (baseline.provenance.total_edge_count + 2)
 
 
 def _feedback_target(part_id: str) -> RelationshipInstance:

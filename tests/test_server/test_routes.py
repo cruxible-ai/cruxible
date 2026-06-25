@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client import contracts
 from cruxible_core.errors import ConstraintViolationError, InstanceNotFoundError
 from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
@@ -464,6 +465,25 @@ def test_init_then_seed_then_query_round_trip(
     assert isinstance(lint_payload["has_issues"], bool)
     assert "summary" in lint_payload
     assert "evaluation" in lint_payload
+
+
+def test_state_health_route_returns_valid_report(
+    app_client: TestClient,
+    server_project: Path,
+):
+    instance_id = _init_instance(app_client, server_project)
+    _seed_car_parts_state(app_client, instance_id)
+
+    response = app_client.get(f"/api/v1/{instance_id}/state/health")
+    assert response.status_code == 200
+
+    # Validate the response parses into the published contract shape.
+    payload = contracts.StateHealthResult.model_validate(response.json())
+    assert payload.captured_at
+    assert payload.groups.total_count >= 0
+    assert payload.provenance.total_edge_count >= 1
+    assert payload.freshness.config_compatible is True
+    assert payload.integrity.configuration_locked in (True, False)
 
 
 def test_view_route_runs_named_query_with_string_params(

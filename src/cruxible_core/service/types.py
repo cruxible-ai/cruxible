@@ -982,3 +982,72 @@ class GroupStatusResult:
     pending_version: int | None
     latest_approved_resolution_id: str | None
     approved_history: list[GroupStatusHistoryItem] = field(default_factory=list)
+
+
+# ── State health (read-only deterministic maintenance signals) ────────
+#
+# Parallel to ``service_evaluate``: aggregates DETERMINISTIC raw maintenance
+# metrics (counts, ages, timestamps) and binary deterministic facts only. No
+# scoring, ranking, severity, or threshold-derived statuses — agents interpret;
+# core reports defensible facts. Empty/missing signals default to 0 or None.
+
+
+@dataclass
+class StateHealthGroupsSection:
+    """Candidate-group lifecycle counts plus the unresolved-backlog age span.
+
+    Age is scoped to unresolved (pending_review + applying) groups: resolved
+    groups only accumulate age and are not an actionable maintenance signal.
+    """
+
+    pending_review_count: int = 0
+    applying_count: int = 0
+    auto_resolved_count: int = 0
+    resolved_count: int = 0
+    total_count: int = 0
+    oldest_unresolved_age_seconds: float | None = None
+    newest_unresolved_age_seconds: float | None = None
+
+
+@dataclass
+class StateHealthProvenanceSection:
+    """Edge provenance tally by source_ref class."""
+
+    direct_write_edge_count: int = 0
+    group_backed_edge_count: int = 0
+    other_source_edge_count: int = 0
+    total_edge_count: int = 0
+
+
+@dataclass
+class StateHealthFreshnessSection:
+    """Source-artifact / provider-trace recency plus config compatibility facts."""
+
+    source_artifact_count: int = 0
+    oldest_source_artifact_age_seconds: float | None = None
+    provider_trace_count: int = 0
+    oldest_provider_trace_age_seconds: float | None = None
+    config_compatible: bool = True
+    config_warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class StateHealthIntegritySection:
+    """Graph-integrity counts reused from the deterministic evaluate findings."""
+
+    orphan_entity_count: int = 0
+    unused_entity_types: list[str] = field(default_factory=list)
+    unused_relationship_types: list[str] = field(default_factory=list)
+    configuration_locked: bool | None = None
+
+
+@dataclass
+class StateHealthResult:
+    """Aggregated read-only state-health report (four deterministic sections)."""
+
+    captured_at: str
+    head_snapshot_id: str | None
+    groups: StateHealthGroupsSection
+    provenance: StateHealthProvenanceSection
+    freshness: StateHealthFreshnessSection
+    integrity: StateHealthIntegritySection

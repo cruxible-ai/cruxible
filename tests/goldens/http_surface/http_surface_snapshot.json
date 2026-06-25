@@ -185,6 +185,9 @@
   "/api/v1/{instance_id}/source-evidence/dereference": {
     "POST": "DereferenceSourceEvidenceResult"
   },
+  "/api/v1/{instance_id}/state/health": {
+    "GET": "StateHealthResult"
+  },
   "/api/v1/{instance_id}/state/publish": {
     "POST": "StatePublishResult"
   },

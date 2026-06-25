@@ -2643,6 +2643,7 @@ cruxible source dereference \
 **Subcommands:**
 
 - `cruxible state create-overlay` - Create a new local overlay instance from a published state release.
+- `cruxible state health` - Show read-only deterministic state-health maintenance signals.
 - `cruxible state publish` - Publish the current root state-model instance as an immutable release bundle.
 - `cruxible state pull-apply` - Apply a previewed upstream release into the current overlay.
 - `cruxible state pull-preview` - Preview pulling a newer upstream release into the current overlay.
@@ -2675,6 +2676,26 @@ cruxible source dereference \
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low for mutations or admin operations.
+- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
+
+## cruxible state health
+
+**Usage:** `cruxible state health [OPTIONS]`
+
+**Purpose:** Show read-only deterministic state-health maintenance signals.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | no | `False` | boolean | Output as JSON. |
+
+**Output And Side Effects:**
+- Read-only. Aggregates deterministic maintenance signals (group counts/ages, edge provenance tally, source-artifact/provider-trace freshness, config-compatibility, and graph-integrity counts) into four sections. Reports raw metrics and binary deterministic facts only; no scoring, ranking, severity, or thresholds. Creates no receipts and mutates nothing.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.

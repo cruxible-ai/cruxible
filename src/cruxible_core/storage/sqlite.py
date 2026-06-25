@@ -542,6 +542,12 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
             return None
         return self._row_to_artifact(row)
 
+    def list_artifacts(self) -> list[SourceArtifactRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM source_artifacts ORDER BY created_at DESC, source_artifact_id DESC",
+        ).fetchall()
+        return [self._row_to_artifact(row) for row in rows]
+
     def list_chunks(self, source_artifact_id: str) -> list[SourceArtifactChunk]:
         rows = self._conn.execute(
             "SELECT * FROM source_artifact_chunks "
@@ -557,8 +563,7 @@ class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
         chunk_id: str,
     ) -> SourceArtifactChunk | None:
         row = self._conn.execute(
-            "SELECT * FROM source_artifact_chunks "
-            "WHERE source_artifact_id = ? AND chunk_id = ?",
+            "SELECT * FROM source_artifact_chunks WHERE source_artifact_id = ? AND chunk_id = ?",
             (source_artifact_id, chunk_id),
         ).fetchone()
         if row is None:

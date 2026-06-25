@@ -849,6 +849,67 @@ class EvaluateResult(BaseModel):
     quality_summary: dict[str, int] = Field(default_factory=dict)
 
 
+class StateHealthGroupsSection(BaseModel):
+    """Candidate-group lifecycle counts plus the unresolved-backlog age span.
+
+    Age is scoped to unresolved (pending_review + applying) groups; resolved
+    groups only accumulate age and are not an actionable maintenance signal.
+    """
+
+    pending_review_count: int = 0
+    applying_count: int = 0
+    auto_resolved_count: int = 0
+    resolved_count: int = 0
+    total_count: int = 0
+    oldest_unresolved_age_seconds: float | None = None
+    newest_unresolved_age_seconds: float | None = None
+
+
+class StateHealthProvenanceSection(BaseModel):
+    """Edge provenance tally by source_ref class."""
+
+    direct_write_edge_count: int = 0
+    group_backed_edge_count: int = 0
+    other_source_edge_count: int = 0
+    total_edge_count: int = 0
+
+
+class StateHealthFreshnessSection(BaseModel):
+    """Source-artifact / provider-trace recency plus config-compatibility facts."""
+
+    source_artifact_count: int = 0
+    oldest_source_artifact_age_seconds: float | None = None
+    provider_trace_count: int = 0
+    oldest_provider_trace_age_seconds: float | None = None
+    config_compatible: bool = True
+    config_warnings: list[str] = Field(default_factory=list)
+
+
+class StateHealthIntegritySection(BaseModel):
+    """Graph-integrity counts reused from the deterministic evaluate findings."""
+
+    orphan_entity_count: int = 0
+    unused_entity_types: list[str] = Field(default_factory=list)
+    unused_relationship_types: list[str] = Field(default_factory=list)
+    configuration_locked: bool | None = None
+
+
+class StateHealthResult(BaseModel):
+    """Read-only deterministic state-health report.
+
+    Aggregates raw maintenance metrics (counts, ages, timestamps) and binary
+    deterministic facts only. Carries NO scoring, ranking, severity, or
+    threshold-derived statuses — agents interpret; core reports defensible facts.
+    """
+
+    captured_at: str
+    head_snapshot_id: str | None = None
+    groups: StateHealthGroupsSection = Field(default_factory=StateHealthGroupsSection)
+    provenance: StateHealthProvenanceSection = Field(default_factory=StateHealthProvenanceSection)
+    freshness: StateHealthFreshnessSection = Field(default_factory=StateHealthFreshnessSection)
+    integrity: StateHealthIntegritySection = Field(default_factory=StateHealthIntegritySection)
+
+
 class LintSummary(BaseModel):
     config_warning_count: int = 0
     compatibility_warning_count: int = 0

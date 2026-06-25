@@ -11,6 +11,7 @@ from cruxible_core.service.analysis import (
     service_config_compatibility_warnings,
     service_evaluate,
     service_lint,
+    service_state_health,
 )
 from cruxible_core.service.config_mutations import (
     service_add_constraint,
@@ -328,6 +329,7 @@ __all__ = [
     "service_render_wiki",
     # Analysis
     "service_evaluate",
+    "service_state_health",
     "service_analyze_feedback",
     "service_analyze_outcomes",
     "service_config_compatibility_warnings",
