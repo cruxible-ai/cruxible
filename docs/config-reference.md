@@ -318,9 +318,11 @@ not a state you set.
 - Set it through the **typed lifecycle write channel** — `entity update
   --lifecycle-status retired [--lifecycle-reason "…"]`, or `batch-direct-write`
   with the typed `lifecycle` field on the entity input. The status is validated
-  against the entity lifecycle vocabulary; it is **not** a free-form metadata
-  blob (hand-authoring the reserved `lifecycle` metadata key is rejected), and
-  there is no special retire verb.
+  against the entity lifecycle vocabulary; lifecycle is a **typed field**, not a
+  free-form metadata blob. A `lifecycle` key inside free-form `metadata` is **not**
+  a way to set it — it is carried inertly as ordinary metadata (under the typed
+  envelope's free-form slot) and never changes the entity's lifecycle. There is no
+  reserved metadata key and no special retire verb.
 - **Read gating is uniform.** Every read path (`query`, `list entities`,
   traversal/relationship reads, and the MCP/HTTP equivalents) defaults to
   **live-only**: a `retired`/`superseded` entity is hidden. The one
@@ -330,12 +332,6 @@ not a state you set.
   visibility: `live` (default), `not-live` (only the gated-out set), `all`
   (everything). For entities the review-only values (`accepted`/`pending`/
   `reviewable`) resolve to `live`, since an entity has no review axis.
-
-**Migrating a `status: superseded` corpus.** When you remove a retirement value
-from a domain `status` enum, move the affected entities onto the lifecycle axis
-with `cruxible_core.migrations.migrate_status_to_lifecycle(graph)`: it sets
-`lifecycle.status = superseded` and resets the domain `status` to a valid
-progress-terminal (`closed`). It is idempotent and supports `dry_run`.
 
 `ordered: low_to_high` marks a shared enum as semantically ranked. The order of
 `values` is the rank order from lowest to highest. Query `order_by` clauses can
