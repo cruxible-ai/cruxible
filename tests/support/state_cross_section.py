@@ -125,6 +125,7 @@ _DIGEST_KEYS = {
     "lock_digest",
     "manifest_digest",
     "output_digest",
+    "payload_digest",
 }
 _PATH_KEY_RE = re.compile(r"(^path$|_path$|_dir$|^root$|^root_dir$)")
 _VOLATILE_PATH_MARKERS = ("/tmp/", "/private/tmp/", "/private/var/", "/var/folders/")

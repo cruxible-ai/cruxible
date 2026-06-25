@@ -771,6 +771,11 @@ def _add_one_entity(instance: CruxibleInstance):
     )
 
 
+# service_add_entities records {"count": len(entities)} as the mutation payload
+# (see service/mutations.py service_add_entities). _add_one_entity adds one.
+_ENTITY_PAYLOAD = {"count": 1}
+
+
 class TestMutationPayloadRetention:
     @pytest.mark.parametrize("mode", ["metadata", "preview", "full"])
     def test_every_mode_stamps_digest_and_byte_count(
@@ -781,53 +786,68 @@ class TestMutationPayloadRetention:
         _set_mutation_payload_retention(initialized_instance, mode)
         result = _add_one_entity(initialized_instance)
 
-        receipt, node = _get_mutation_node(initialized_instance, result.receipt_id)
+        _, node = _get_mutation_node(initialized_instance, result.receipt_id)
         pm = node.payload_metadata
         assert pm is not None, "every mode must stamp payload_metadata on the mutation node"
         assert pm.retention == mode
         assert pm.payload_digest.startswith("sha256:")
         assert isinstance(pm.byte_count, int) and pm.byte_count > 0
 
-        # Digest is content-addressed: it must match a hash recomputed from the
-        # receipt's own parameters (the mutation payload).
-        expected_digest, expected_bytes = compute_payload_digest(receipt.parameters)
+        # Digest is content-addressed and computed over the ORIGINAL full
+        # payload (before reduction), so it must match a hash recomputed from the
+        # original add_entity payload -- even for metadata/preview where the
+        # persisted parameters are now the reduced form.
+        expected_digest, expected_bytes = compute_payload_digest(_ENTITY_PAYLOAD)
         assert pm.payload_digest == expected_digest
         assert pm.byte_count == expected_bytes
 
     def test_digest_is_stable_across_runs(self, initialized_instance: CruxibleInstance):
-        # Same payload -> same digest (content-addressed, deterministic).
+        # Same payload -> same digest (content-addressed over the original,
+        # deterministic).
         from cruxible_core.receipt.mutation_payloads import compute_payload_digest
 
         _set_mutation_payload_retention(initialized_instance, "metadata")
         result = _add_one_entity(initialized_instance)
-        receipt, node = _get_mutation_node(initialized_instance, result.receipt_id)
-        # Recompute against the exact persisted parameters and confirm match.
-        recomputed, _ = compute_payload_digest(receipt.parameters)
+        _, node = _get_mutation_node(initialized_instance, result.receipt_id)
+        recomputed, _ = compute_payload_digest(_ENTITY_PAYLOAD)
         assert node.payload_metadata.payload_digest == recomputed
 
     def test_full_mode_retains_body_inline(self, initialized_instance: CruxibleInstance):
         _set_mutation_payload_retention(initialized_instance, "full")
         result = _add_one_entity(initialized_instance)
         receipt, node = _get_mutation_node(initialized_instance, result.receipt_id)
-        # full mode keeps the complete payload body inline on the node.
+        # full mode keeps the complete payload body inline on the node, and the
+        # top-level parameters remain the full body.
         assert node.detail["parameters"] == receipt.parameters
+        assert "_cruxible_payload_omitted" not in node.detail["parameters"]
+        assert "_cruxible_payload_preview" not in node.detail["parameters"]
         assert node.payload_metadata.stored_inline is True
         assert node.payload_metadata.truncated is False
 
-    def test_metadata_mode_keeps_small_body_inline(self, initialized_instance: CruxibleInstance):
-        # Conservative body handling: small payloads keep their full inline body
-        # under every mode, so the existing mutation-node contract (consumers
-        # reading detail["parameters"]) is preserved. Only the digest sidecar is
-        # added.
+    def test_metadata_mode_sheds_body(self, initialized_instance: CruxibleInstance):
+        # Option "b": metadata means metadata. The body is shed from EVERY
+        # persisted copy regardless of size -- the canonical parameters and the
+        # root node detail both carry only the omitted marker.
         _set_mutation_payload_retention(initialized_instance, "metadata")
         result = _add_one_entity(initialized_instance)
         receipt, node = _get_mutation_node(initialized_instance, result.receipt_id)
+        assert "_cruxible_payload_omitted" in node.detail["parameters"]
         assert node.detail["parameters"] == receipt.parameters
-        assert "_cruxible_payload_omitted" not in node.detail["parameters"]
-        assert node.payload_metadata.stored_inline is True
-        assert node.payload_metadata.truncated is False
-        # Digest + byte_count are still stamped regardless of inline retention.
+        assert "count" not in node.detail["parameters"]
+        assert node.payload_metadata.stored_inline is False
+        assert node.payload_metadata.truncated is True
         assert node.payload_metadata.payload_digest.startswith("sha256:")
+
+    def test_preview_mode_sheds_body(self, initialized_instance: CruxibleInstance):
+        # Option "b": preview means preview. The persisted parameters carry only
+        # the bounded structural preview, never the raw full body.
+        _set_mutation_payload_retention(initialized_instance, "preview")
+        result = _add_one_entity(initialized_instance)
+        receipt, node = _get_mutation_node(initialized_instance, result.receipt_id)
+        assert "_cruxible_payload_preview" in node.detail["parameters"]
+        assert node.detail["parameters"] == receipt.parameters
+        assert node.payload_metadata.stored_inline is False
+        assert node.payload_metadata.truncated is True
 
     def test_default_retention_is_metadata(self, initialized_instance: CruxibleInstance):
         # No config change: default mode is "metadata".

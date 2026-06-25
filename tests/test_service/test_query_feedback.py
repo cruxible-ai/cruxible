@@ -382,6 +382,18 @@ def _get_receipt(instance: CruxibleInstance, receipt_id: str):
         store.close()
 
 
+def _set_full_payload_retention(instance: CruxibleInstance) -> None:
+    """Retain the full mutation payload inline on receipts.
+
+    The default ``metadata`` retention sheds the request body from the receipt
+    (only digest + byte_count survive), so tests that assert on the echoed
+    request payload in the root mutation node must opt into ``full`` retention.
+    """
+    config = instance.load_config()
+    config.runtime.mutation_payloads = "full"
+    instance.save_config(config)
+
+
 def _set_review_status(
     instance: CruxibleInstance,
     target: RelationshipInstance,
@@ -666,6 +678,7 @@ class TestFeedbackFromQuery:
         self,
         populated_instance: CruxibleInstance,
     ) -> None:
+        _set_full_payload_retention(populated_instance)
         _add_relationship_query(populated_instance)
         query = service_query(
             populated_instance,
@@ -712,6 +725,9 @@ class TestFeedbackFromQuery:
         populated_instance: CruxibleInstance,
     ) -> None:
         config = populated_instance.load_config()
+        # Opt into full retention so the echoed feedback request body survives on
+        # the receipt's root mutation node (default metadata mode sheds it).
+        config.runtime.mutation_payloads = "full"
         config.feedback_profiles["fits"] = FeedbackProfileSchema(
             version=1,
             reason_codes={

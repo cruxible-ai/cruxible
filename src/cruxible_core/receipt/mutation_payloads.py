@@ -12,19 +12,20 @@ stale on-disk payload be mechanically matched against a committed receipt
 (hash equality), catches replay drift, and shares its ``sha256:``-prefixed
 identity shape with the existing ``apply_digest`` pattern.
 
-Modes:
+Modes (option "b": metadata means metadata, preview means preview):
 
-* ``metadata`` -- digest + byte_count; the small-payload body is KEPT inline
-  (preserving the mutation-node contract) and is only shed when it exceeds the
-  inline byte limit, replaced then by a compact omitted marker carrying the
-  digest + byte_count.
-* ``preview`` -- digest + byte_count; same inline-when-small behaviour as
-  ``metadata``, but an oversized body is shed to a bounded structural preview
-  instead of the compact omitted marker.
+* ``metadata`` -- digest + byte_count ONLY. The body is NEVER carried,
+  regardless of size; it is always replaced by a compact omitted marker
+  carrying the digest + byte_count.
+* ``preview`` -- digest + byte_count + a bounded structural preview ONLY,
+  regardless of size. The raw full body is NEVER carried.
 * ``full``    -- digest + byte_count + the complete payload body retained
   inline. (The mutation payload already lives inline on the receipt, so this
   is a clean inline reuse -- no separate content-addressed body store is
   required, mirroring how trace ``full`` retention keeps its body inline.)
+
+The digest and byte_count are always computed over the ORIGINAL full canonical
+payload (before any reduction), so replay-drift detection still works.
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ from cruxible_core.primitives import canonical_json, json_type_name
 
 MutationPayloadRetention = Literal["full", "preview", "metadata"]
 
-DEFAULT_MUTATION_PAYLOAD_INLINE_BYTES = 32 * 1024
 _PREVIEW_KEY = "_cruxible_payload_preview"
 _OMITTED_KEY = "_cruxible_payload_omitted"
 _MAX_PREVIEW_DEPTH = 3
@@ -80,17 +80,27 @@ def retain_mutation_payload(
     payload: dict[str, Any],
     *,
     retention: MutationPayloadRetention = "metadata",
-    inline_byte_limit: int = DEFAULT_MUTATION_PAYLOAD_INLINE_BYTES,
 ) -> tuple[dict[str, Any], MutationPayloadMetadata]:
     """Build the retained payload representation and its metadata.
 
     Returns ``(retained_payload, metadata)``. ``retained_payload`` is what
-    should be persisted in place of the raw payload for this mode;
-    ``metadata`` always carries ``payload_digest`` and ``byte_count``.
+    should be persisted in place of the raw payload for this mode; it becomes
+    the single canonical value carried by every persisted copy of the receipt.
+    ``metadata`` always carries ``payload_digest`` and ``byte_count``, computed
+    over the ORIGINAL full canonical payload regardless of the mode.
+
+    Semantics (option "b"), applied regardless of payload size:
+
+    * ``full``     -- the complete body, retained inline verbatim.
+    * ``preview``  -- a bounded structural preview ONLY; never the full body.
+    * ``metadata`` -- a compact omitted marker (digest + byte_count) ONLY;
+      never any body.
     """
     if retention not in ("full", "preview", "metadata"):
         raise ValueError(f"Unsupported mutation payload retention: {retention}")
 
+    # Digest + byte_count are always computed over the original full payload,
+    # before any reduction, so replay-drift detection stays accurate.
     digest, byte_count = compute_payload_digest(payload)
 
     if retention == "full":
@@ -106,23 +116,17 @@ def retain_mutation_payload(
             ),
         )
 
-    # Both "preview" and "metadata" keep small payloads inline (preserving the
-    # mutation-node contract) and only shed the body when it exceeds the inline
-    # limit. They differ only in the shed representation: "preview" emits a
-    # bounded structural summary, "metadata" emits a compact omitted marker.
-    stored_inline = byte_count <= inline_byte_limit
-
     if retention == "preview":
         preview_payload = _preview_dict(payload, depth=0)
         preview_metadata = dict(preview_payload[_PREVIEW_KEY])
         return (
-            payload if stored_inline else preview_payload,
+            preview_payload,
             MutationPayloadMetadata(
                 retention=retention,
-                stored_inline=stored_inline,
+                stored_inline=False,
                 byte_count=byte_count,
                 payload_digest=digest,
-                truncated=not stored_inline,
+                truncated=True,
                 preview=preview_metadata,
             ),
         )
@@ -135,13 +139,13 @@ def retain_mutation_payload(
         }
     }
     return (
-        payload if stored_inline else omitted,
+        omitted,
         MutationPayloadMetadata(
             retention=retention,
-            stored_inline=stored_inline,
+            stored_inline=False,
             byte_count=byte_count,
             payload_digest=digest,
-            truncated=not stored_inline,
+            truncated=True,
             preview=dict(omitted[_OMITTED_KEY]),
         ),
     )
