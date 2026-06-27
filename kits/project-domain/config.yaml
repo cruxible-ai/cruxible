@@ -1,0 +1,938 @@
+version: "1.0"
+name: project_domain
+extends: ../agent-operation/config.yaml
+description: >
+  Project/product domain overlay composed over the agent-operation base kit.
+  The base supplies the operating layer (Actor, SubjectRef, WorkItem,
+  ReviewRequest, Decision, Risk, OpenQuestion, StateNote plus their ownership,
+  review-gate, work-axis, governed-judgment, and subject-ref relationships,
+  queries, guards, and checks). This overlay adds the project/product DOMAIN:
+  roadmap items, release lines, and milestones as typed entities, product
+  areas and capabilities as lightweight tag-role classification, and the
+  domain-internal plus seam relationships that connect operation entities to
+  domain structure. It re-expresses the standalone project-state kit with
+  functional parity. Markdown docs, plans, chats, review reports, and
+  transcripts remain source evidence for proposals; they are not modeled as
+  entities here.
+
+  Notes on parity vs the standalone project-state kit:
+  - ProductArea and Capability are tag-role only (classification read by
+    queries and warning-severity checks). Nothing gates on them: no
+    mutation_guard and no error-severity check references them. An overlay
+    cannot add a property to a base entity (the composer rejects redefining an
+    upstream entity_types entry), so area/capability stay as overlay entities
+    rather than being demoted to a property on the base WorkItem.
+  - owner is not a config concern in the base. The base WorkItem (and the
+    other operation entities) have no owner property; ownership is the Actor
+    entity plus the *_owned_by_actor relationships the base provides. Domain
+    entities below therefore carry no owner property. Domain work-queue queries
+    keep their owner select key for output-shape parity, but it resolves to
+    null until ownership is projected through Actor at port time.
+
+enums: {}
+
+entity_types:
+  ProductArea:
+    description: Stable product, project, subsystem, package, or responsibility area.
+    properties:
+      area_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      description:
+        type: string
+        optional: true
+      owner:
+        type: string
+        optional: true
+
+  Capability:
+    description: Durable technical or product ability the project supports.
+    properties:
+      capability_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      description:
+        type: string
+        optional: true
+      status:
+        type: string
+        # Inline enum (not enum_ref): an overlay property cannot enum_ref a
+        # base-defined enum -- the per-layer schema validator rejects an
+        # enum_ref absent from the overlay's own enums, and the composer
+        # rejects redeclaring the base enum. Inline values mirror the base
+        # lifecycle_status enum exactly.
+        enum: [planned, active, blocked, watching, deferred, closed]
+      owner:
+        type: string
+        optional: true
+
+  RoadmapItem:
+    description: Planned investment, initiative, or roadmap-level change.
+    properties:
+      roadmap_item_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum: [planned, active, blocked, watching, deferred, closed]
+      priority:
+        type: string
+        # Inline values mirror the base priority enum (ordered low_to_high in
+        # the base; ordering is not needed here -- no overlay order_by uses it).
+        enum: [low, medium, high, critical]
+      owner:
+        type: string
+        optional: true
+      target_date:
+        type: date
+        optional: true
+
+  ReleaseLine:
+    description: Release train, version line, launch window, or delivery stream.
+    properties:
+      release_line_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+        indexed: true
+      status:
+        type: string
+        enum: [planned, active, blocked, watching, deferred, closed]
+      starts_at:
+        type: date
+        optional: true
+      target_date:
+        type: date
+        optional: true
+
+  Milestone:
+    description: Delivery milestone, gate, checkpoint, or intermediate target.
+    properties:
+      milestone_id:
+        type: string
+        primary_key: true
+      title:
+        type: string
+        indexed: true
+      summary:
+        type: string
+        optional: true
+      status:
+        type: string
+        enum: [planned, active, blocked, watching, deferred, closed]
+      target_date:
+        type: date
+        optional: true
+
+relationships:
+  # --- Deterministic or source-backed project structure (seam + domain-internal) ---
+  - name: review_request_in_release
+    description: Review request belongs to a release line's review context.
+    from: ReviewRequest
+    to: ReleaseLine
+
+  - name: review_request_in_milestone
+    description: Review request belongs to a milestone's review context.
+    from: ReviewRequest
+    to: Milestone
+
+  - name: work_item_in_release
+    description: Work item is planned, tracked, or delivered in a release line.
+    from: WorkItem
+    to: ReleaseLine
+
+  - name: work_item_in_milestone
+    description: Work item belongs to a milestone.
+    from: WorkItem
+    to: Milestone
+
+  - name: milestone_in_release
+    description: Milestone belongs to a release line.
+    from: Milestone
+    to: ReleaseLine
+
+  - name: roadmap_item_in_release
+    description: Roadmap item is planned for a release line.
+    from: RoadmapItem
+    to: ReleaseLine
+
+  - name: roadmap_item_in_milestone
+    description: Roadmap item is planned for a milestone.
+    from: RoadmapItem
+    to: Milestone
+
+  - name: work_item_implements_roadmap_item
+    description: Work item executes part of a roadmap item.
+    from: WorkItem
+    to: RoadmapItem
+
+  - name: work_item_targets_area
+    description: Work item targets a product area.
+    from: WorkItem
+    to: ProductArea
+
+  - name: roadmap_item_targets_area
+    description: Roadmap item targets a product area.
+    from: RoadmapItem
+    to: ProductArea
+
+  - name: capability_in_area
+    description: Capability belongs to a product area.
+    from: Capability
+    to: ProductArea
+
+  - name: roadmap_item_targets_capability
+    description: Roadmap item targets a capability.
+    from: RoadmapItem
+    to: Capability
+
+  # --- Governed interpretation relationships for agent proposals ---
+  - name: roadmap_item_depends_on_roadmap_item
+    description: Governed judgment that one roadmap item depends on another roadmap item landing, being decided, or stabilizing first.
+    from: RoadmapItem
+    to: RoadmapItem
+    properties:
+      dependency_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_area
+    description: Governed judgment that a decision affects a product area.
+    from: Decision
+    to: ProductArea
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_capability
+    description: Governed judgment that a decision affects a capability.
+    from: Decision
+    to: Capability
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: decision_affects_roadmap_item
+    description: Governed judgment that a decision affects a roadmap item.
+    from: Decision
+    to: RoadmapItem
+    properties:
+      impact_type:
+        type: string
+        # Inline values mirror the base decision_impact_type enum.
+        enum: [prioritizes, deprioritizes, blocks, unblocks, scopes, constrains]
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_attaches_to_area
+    description: Governed judgment that a risk attaches to a product area.
+    from: Risk
+    to: ProductArea
+    properties:
+      impact_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: risk_blocks_roadmap_item
+    description: Governed judgment that a risk blocks or materially delays a roadmap item.
+    from: Risk
+    to: RoadmapItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+  - name: open_question_blocks_roadmap_item
+    description: Governed judgment that an open question blocks a roadmap item.
+    from: OpenQuestion
+    to: RoadmapItem
+    properties:
+      blocking_basis:
+        type: string
+        optional: true
+    proposal_policy:
+      signals:
+        source_evidence:
+          role: required
+          always_review_on_unsure: true
+        maintainer_judgment:
+          role: advisory
+          always_review_on_unsure: true
+
+named_queries:
+  roadmap_item_context:
+    mode: traversal
+    description: Starting from a roadmap item, inspect dependencies, dependents, delivery placement, work, decisions, risks, and open questions.
+    entry_point: RoadmapItem
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: roadmap_item_depends_on_roadmap_item
+        direction: outgoing
+        as: upstream_dependency
+        required: false
+    include:
+      downstream_dependents:
+        from: $entry
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: incoming
+        many: true
+      release_lines:
+        from: $entry
+        relationship: roadmap_item_in_release
+        direction: outgoing
+        many: true
+      milestones:
+        from: $entry
+        relationship: roadmap_item_in_milestone
+        direction: outgoing
+        many: true
+      work_items:
+        from: $entry
+        relationship: work_item_implements_roadmap_item
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_affects_roadmap_item
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_blocks_roadmap_item
+        direction: incoming
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_blocks_roadmap_item
+        direction: incoming
+        many: true
+      product_areas:
+        from: $entry
+        relationship: roadmap_item_targets_area
+        direction: outgoing
+        many: true
+      capabilities:
+        from: $entry
+        relationship: roadmap_item_targets_capability
+        direction: outgoing
+        many: true
+
+  work_items_for_area:
+    mode: traversal
+    description: Flat work items attached to a product area for agents that need a scannable area work queue.
+    entry_point: ProductArea
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_targets_area
+        direction: incoming
+        as: work_item
+
+  area_work_items:
+    mode: traversal
+    description: Work items reachable from a product area directly, through capabilities, or through roadmap items.
+    entry_point: ProductArea
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_targets_area
+          - roadmap_item_targets_area
+          - capability_in_area
+          - roadmap_item_targets_capability
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: area_work
+        max_depth: 3
+        where:
+          candidate.properties.status:
+            not_in: [closed]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  area_change_context:
+    mode: traversal
+    description: Starting from a product area, inspect roadmap items, work, decisions, risks, and open questions before editing the subsystem.
+    entry_point: ProductArea
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: roadmap_item_targets_area
+        direction: incoming
+        as: roadmap_item
+    include:
+      work_items:
+        from: $entry
+        relationship: work_item_targets_area
+        direction: incoming
+        many: true
+      decisions:
+        from: $entry
+        relationship: decision_affects_area
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_attaches_to_area
+        direction: incoming
+        many: true
+      open_questions:
+        from: $result
+        relationship: open_question_blocks_roadmap_item
+        direction: incoming
+        many: true
+      capabilities:
+        from: $entry
+        relationship: capability_in_area
+        direction: incoming
+        many: true
+
+  release_readiness_context:
+    mode: traversal
+    description: Starting from a release line, inspect active, planned, or blocked work plus roadmap items, including roadmap items that have not yet been decomposed into work.
+    entry_point: ReleaseLine
+    returns: AnyEntity
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - work_item_in_release
+          - roadmap_item_in_release
+        direction: incoming
+        as: release_context
+        where:
+          candidate.properties.status:
+            in: [active, planned, blocked]
+    include:
+      roadmap_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
+      milestones:
+        from: $result
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_work_dependencies:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $result
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      decisions:
+        from: $result
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+      risks:
+        from: $result
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      open_questions:
+        from: $result
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      implementing_work_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_milestones:
+        from: $result
+        relationship: roadmap_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_roadmap_dependencies:
+        from: $result
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: outgoing
+        many: true
+      downstream_roadmap_dependents:
+        from: $result
+        relationship: roadmap_item_depends_on_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_decisions:
+        from: $result
+        relationship: decision_affects_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_risks:
+        from: $result
+        relationship: risk_blocks_roadmap_item
+        direction: incoming
+        many: true
+      roadmap_open_questions:
+        from: $result
+        relationship: open_question_blocks_roadmap_item
+        direction: incoming
+        many: true
+
+  release_work_items:
+    mode: traversal
+    description: Work items reachable from a release line directly, through release milestones, or through release roadmap items.
+    entry_point: ReleaseLine
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_in_release
+          - milestone_in_release
+          - roadmap_item_in_release
+          - work_item_in_milestone
+          - roadmap_item_in_milestone
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: release_work
+        max_depth: 3
+        where:
+          candidate.properties.status:
+            not_in: [closed]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  milestone_work_items:
+    mode: traversal
+    description: Work items reachable from a milestone directly or through roadmap items in the milestone.
+    entry_point: Milestone
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship:
+          - work_item_in_milestone
+          - roadmap_item_in_milestone
+          - work_item_implements_roadmap_item
+        direction: incoming
+        as: milestone_work
+        max_depth: 2
+        where:
+          candidate.properties.status:
+            not_in: [closed]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  roadmap_item_work_items:
+    mode: traversal
+    description: Work items that implement a roadmap item.
+    entry_point: RoadmapItem
+    returns: WorkItem
+    result_shape: entity
+    traversal:
+      - relationship: work_item_implements_roadmap_item
+        direction: incoming
+        as: roadmap_work
+        where:
+          candidate.properties.status:
+            not_in: [closed]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      status: $result.properties.status
+      priority: $result.properties.priority
+      owner: $result.properties.owner
+      type: $result.properties.type
+
+  deferred_release_gating_work_items:
+    mode: traversal
+    description: Deferred work items that are still attached to a release line and an active, planned, or blocked milestone.
+    entry_point: ReleaseLine
+    returns: WorkItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship: work_item_in_release
+        direction: incoming
+        as: release_work
+        where:
+          candidate.properties.status:
+            eq: deferred
+    include:
+      gating_milestones:
+        from: $result
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+        required: true
+        where:
+          target.properties.status:
+            in: [active, planned, blocked]
+      roadmap_items:
+        from: $result
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
+
+  decision_impact_context:
+    mode: traversal
+    description: Starting from a decision, inspect affected roadmap, constrained work, answered questions, and supersession context.
+    entry_point: Decision
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - decision_affects_roadmap_item
+          - decision_constrains_work_item
+          - decision_affects_capability
+          - decision_affects_area
+          - decision_answers_open_question
+          - decision_supersedes_decision
+        direction: outgoing
+        as: impact_context
+    include:
+      affected_roadmap_items:
+        from: $entry
+        relationship: decision_affects_roadmap_item
+        direction: outgoing
+        many: true
+      affected_capabilities:
+        from: $entry
+        relationship: decision_affects_capability
+        direction: outgoing
+        many: true
+      affected_areas:
+        from: $entry
+        relationship: decision_affects_area
+        direction: outgoing
+        many: true
+      answered_questions:
+        from: $entry
+        relationship: decision_answers_open_question
+        direction: outgoing
+        many: true
+      superseded_decisions:
+        from: $entry
+        relationship: decision_supersedes_decision
+        direction: outgoing
+        many: true
+      superseding_decisions:
+        from: $entry
+        relationship: decision_supersedes_decision
+        direction: incoming
+        many: true
+
+  # work_item_change_context traverses the domain seam edges (roadmap/area/
+  # release/milestone). The base work_item_context uses include: all_adjacent,
+  # but all_adjacent is expanded at the BASE's load time -- before composition --
+  # so it freezes to base-only edges and never picks up the overlay seam edges.
+  # Re-declared here so the domain-aware work-item context exists. Reproduced
+  # from project-state.
+  work_item_change_context:
+    mode: traversal
+    description: Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions.
+    entry_point: WorkItem
+    returns: AnyEntity
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - work_item_implements_roadmap_item
+          - work_item_targets_area
+          - work_item_in_release
+          - work_item_in_milestone
+          - work_item_depends_on_work_item
+          - work_item_part_of_work_item
+          - work_item_spawned_from_work_item
+          - work_item_mitigates_risk
+          - work_item_answers_open_question
+          - decision_constrains_work_item
+          - risk_blocks_work_item
+          - open_question_blocks_work_item
+        direction: both
+        as: context
+    include:
+      roadmap_items:
+        from: $entry
+        relationship: work_item_implements_roadmap_item
+        direction: outgoing
+        many: true
+      release_lines:
+        from: $entry
+        relationship: work_item_in_release
+        direction: outgoing
+        many: true
+      milestones:
+        from: $entry
+        relationship: work_item_in_milestone
+        direction: outgoing
+        many: true
+      upstream_work_dependencies:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: outgoing
+        many: true
+      downstream_dependents:
+        from: $entry
+        relationship: work_item_depends_on_work_item
+        direction: incoming
+        many: true
+      parent_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: outgoing
+        many: true
+      child_items:
+        from: $entry
+        relationship: work_item_part_of_work_item
+        direction: incoming
+        many: true
+      spawned_from:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
+        direction: outgoing
+        many: true
+      spawned_items:
+        from: $entry
+        relationship: work_item_spawned_from_work_item
+        direction: incoming
+        many: true
+      constraining_decisions:
+        from: $entry
+        relationship: decision_constrains_work_item
+        direction: incoming
+        many: true
+      risks:
+        from: $entry
+        relationship: risk_blocks_work_item
+        direction: incoming
+        many: true
+      risk_mitigations:
+        from: $entry
+        relationship: work_item_mitigates_risk
+        direction: outgoing
+        many: true
+      open_questions:
+        from: $entry
+        relationship: open_question_blocks_work_item
+        direction: incoming
+        many: true
+      answered_questions:
+        from: $entry
+        relationship: work_item_answers_open_question
+        direction: outgoing
+        many: true
+      product_areas:
+        from: $entry
+        relationship: work_item_targets_area
+        direction: outgoing
+        many: true
+
+  # open_question_context traverses the domain edge open_question_blocks_roadmap_item,
+  # so it is a domain query (no base equivalent). Reproduced from project-state.
+  open_question_context:
+    mode: traversal
+    description: Starting from an open question, inspect blocked and answered roadmap, work, and decision context.
+    entry_point: OpenQuestion
+    returns: RoadmapItem
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    max_paths: 500
+    max_paths_per_result: 25
+    traversal:
+      - relationship:
+          - open_question_blocks_roadmap_item
+          - open_question_blocks_work_item
+          - open_question_blocks_decision
+        direction: outgoing
+        as: blocked_context
+    include:
+      blocked_roadmap_items:
+        from: $entry
+        relationship: open_question_blocks_roadmap_item
+        direction: outgoing
+        many: true
+      blocked_decisions:
+        from: $entry
+        relationship: open_question_blocks_decision
+        direction: outgoing
+        many: true
+      answering_work_items:
+        from: $entry
+        relationship: work_item_answers_open_question
+        direction: incoming
+        many: true
+      answering_decisions:
+        from: $entry
+        relationship: decision_answers_open_question
+        direction: incoming
+        many: true
+
+  # Operational queries absent from the agent-operation base, reproduced for
+  # parity with standalone project-state. They reference only base entities, so
+  # they are new keys (no composer collision). The base provides the rest of
+  # the operational queue surface (review_queue, blocked_work_items,
+  # active_risks, open_questions_needing_review, etc.).
+  work_queue:
+    mode: collection
+    description: Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active.
+    returns: WorkItem
+    result_shape: entity
+    where:
+      result.properties.status:
+        in: [active]
+    select:
+      work_item_id: $result.entity_id
+      title: $result.properties.title
+      priority: $result.properties.priority
+      type: $result.properties.type
+      summary: $result.properties.summary
+    limit: 100
+
+  changes_requested_reviews:
+    mode: collection
+    description: Review requests sent back with changes requested.
+    result_shape: entity
+    returns: ReviewRequest
+    where:
+      result.properties.status:
+        eq: changes_requested
+    limit: 100
+
+mutation_guards: []
+
+quality_checks:
+  - name: roadmap_items_target_area
+    kind: cardinality
+    description: Roadmap items should be grounded in at least one product area.
+    severity: warning
+    entity_type: RoadmapItem
+    relationship_type: roadmap_item_targets_area
+    direction: outgoing
+    min_count: 1
+
+  - name: work_items_target_area
+    kind: cardinality
+    description: Work items should be grounded in at least one product area when they are not only roadmap-derived.
+    severity: warning
+    entity_type: WorkItem
+    relationship_type: work_item_targets_area
+    direction: outgoing
+    min_count: 1
+
+  - name: roadmap_dependencies_have_basis
+    kind: property
+    description: Roadmap dependency proposals should include a short domain explanation.
+    severity: warning
+    target: relationship
+    relationship_type: roadmap_item_depends_on_roadmap_item
+    property: dependency_basis
+    rule: non_empty
+
+  - name: decision_roadmap_impacts_have_type
+    kind: property
+    description: Decision-to-roadmap impacts should identify whether the decision prioritizes, blocks, scopes, or otherwise affects the item.
+    severity: warning
+    target: relationship
+    relationship_type: decision_affects_roadmap_item
+    property: impact_type
+    rule: required
+
+  - name: deferred_release_work_not_gating_0_2
+    kind: named_query_result_count
+    description: Deferred work should not remain attached to active, planned, or blocked 0.2 gating milestones.
+    severity: error
+    query_name: deferred_release_gating_work_items
+    params:
+      release_line_id: release-0.2
+    max_count: 0
