@@ -101,10 +101,13 @@ default behavior.
 
 ## Direct Write Conflicts
 
-Direct writes are available for explicit state updates. When a direct
-relationship write overlaps a member of a pending or applying group, Cruxible
-keeps the write permissive and annotates the affected group with direct-write
-conflict metadata.
+Direct writes are available for explicit state updates where the domain permits
+them — a governed `proposal_only` entity or relationship type (or the
+instance-wide `refuse_direct_writes` kill-switch) refuses direct writes and
+forces state in through the proposal/workflow path instead. When a direct
+relationship write is permitted and overlaps a member of a pending or applying
+group, Cruxible keeps the write permissive and annotates the affected group with
+direct-write conflict metadata.
 
 The group is not auto-approved, rejected, or mutated into a different status.
 The reviewer sees that live state changed while the group was pending and can
@@ -115,13 +118,21 @@ decide whether to approve, reject, refresh, or use `stamp_existing`.
 Cruxible distinguishes domain properties from system lifecycle metadata.
 
 Use lifecycle state when an entity or relationship should stop participating in
-normal live reads:
+normal live reads. Set it with `cruxible entity update --lifecycle-status ...`
+and `cruxible relationship update --lifecycle-status ...`. The status
+vocabularies are distinct by kind:
 
-- retire or supersede stale entities instead of deleting them;
-- retract, supersede, or inactivate stale relationships instead of rewriting
+- entities are `live`, `superseded`, or `retired` — retire or supersede stale
+  entities instead of deleting them;
+- relationships are `active`, `inactive`, `superseded`, or `retracted` —
+  retract, supersede, or inactivate stale relationships instead of rewriting
   history;
 - keep receipts and provenance intact so future agents can inspect what
   happened.
+
+The typed lifecycle write touches only the lifecycle slice; it cannot approve or
+reject the edge or alter group state. It is a direct-write verb, so a governed
+`proposal_only` domain refuses it just as it refuses other direct writes.
 
 Deletion should be reserved for bad imports, test data, or invalid state that
 should not be preserved as operational history.
@@ -132,19 +143,32 @@ should not be preserved as operational history.
 such as orphan entities, coverage gaps, constraint violations, quality check
 failures, governed support warnings, and unreviewed co-member prompts.
 
-State health is broader. A health surface should aggregate deterministic
-maintenance signals across:
+State health is broader. `cruxible state health` (also `GET
+/api/v1/{instance_id}/state/health`) aggregates deterministic, read-only
+maintenance signals into four sections, alongside a `captured_at` timestamp and
+the current `head_snapshot_id`:
 
-- graph evaluation findings;
-- pending and applying group counts and age;
-- direct-write versus group-backed edge ratios;
-- source artifact drift and stale evidence;
-- provider and trace freshness;
-- config, lock, generated-view, or seed-data drift;
-- unused relationship types or high orphan rates by entity type.
+- **groups** — candidate-group counts by status (pending_review, applying,
+  auto_resolved, resolved, total) plus the age span of the *unresolved* backlog
+  (`oldest_unresolved_age_seconds` / `newest_unresolved_age_seconds`, scoped to
+  pending_review and applying groups; resolved groups only accumulate age and are
+  not an actionable signal);
+- **provenance** — every live edge tallied by the class of its provenance
+  source: direct-write, group-backed, or other;
+- **freshness** — source-artifact and provider-trace counts and oldest ages,
+  plus `config_compatible` and any config-compatibility warnings;
+- **integrity** — orphan entity count, unused entity and relationship types, and
+  whether the configuration is locked.
 
-Core health signals should be deterministic and defensible. Agents can then
-interpret those signals, rank maintenance work, and propose repairs.
+Like `evaluate`, health reports raw metrics (counts, ages, timestamps) and
+binary deterministic facts only — there is no scoring, grading, ranking, or
+severity. The core signals are deterministic and defensible; agents interpret
+those signals, rank maintenance work, and propose repairs.
+
+Some maintenance signals the surface does not yet aggregate, and which remain
+future work, include source-artifact drift versus the tracked upstream, deeper
+provider and trace staleness, lock or generated-view or seed-data drift, and
+per-entity-type orphan rates.
 
 ## Maintenance Workflow
 
