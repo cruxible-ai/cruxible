@@ -944,6 +944,36 @@ def test_guard_where_passthrough() -> None:
     assert guard["where"] == {"candidate.properties.type": {"eq": "research"}}
 
 
+def test_guard_where_related_passthrough() -> None:
+    config = _expand(
+        _GUARD_HEADER,
+        """
+        mutation_guards:
+          - g:
+              when: WorkItem.status -> closed
+              require: {allowed_actors: [reviewer]}
+              where_related:
+                - relationship: work_item_owned_by_actor
+                  direction: outgoing
+              where_not_related:
+                - relationship: work_item_blocked_by
+                  direction: outgoing
+                  target: {properties.status: {eq: open}}
+        """,
+    )
+    guard = config["mutation_guards"][0]
+    assert guard["where_related"] == [
+        {"relationship": "work_item_owned_by_actor", "direction": "outgoing"}
+    ]
+    assert guard["where_not_related"] == [
+        {
+            "relationship": "work_item_blocked_by",
+            "direction": "outgoing",
+            "target": {"properties.status": {"eq": "open"}},
+        }
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Quality checks
 # ---------------------------------------------------------------------------

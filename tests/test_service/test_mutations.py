@@ -1421,6 +1421,103 @@ def _where_scoped_instance(tmp_path: Path) -> CruxibleInstance:
     return CruxibleInstance.init(tmp_path, "config.yaml")
 
 
+WHERE_RELATED_SCOPED_GUARD_YAML = """\
+version: "1.0"
+name: where_related_scoped_guard_state
+
+enums:
+  lifecycle_status:
+    values: [planned, active, closed]
+
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+  Blocker:
+    properties:
+      blocker_id:
+        type: string
+        primary_key: true
+
+relationships:
+  - name: work_item_blocked_by
+    from: WorkItem
+    to: Blocker
+
+mutation_guards:
+  - name: close_requires_blocker_link
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: actor
+      allowed_actor_ids: [robert]
+    where_related:
+      - relationship: work_item_blocked_by
+        direction: outgoing
+    message: "Work items linked to a blocker need an authorized actor to close."
+  - name: close_forbidden_while_blocked
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: actor
+      allowed_actor_ids: [robert]
+    where_not_related:
+      - relationship: work_item_blocked_by
+        direction: outgoing
+    message: "Unblocked work items need an authorized actor to close."
+"""
+
+
+def _where_related_scoped_instance(tmp_path: Path) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(dedent(WHERE_RELATED_SCOPED_GUARD_YAML))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+def _seed_blocked_work_item(
+    instance: CruxibleInstance,
+    work_item_id: str,
+    *,
+    status: str = "planned",
+) -> None:
+    service_add_entity_inputs(
+        instance,
+        [
+            EntityWriteInput(
+                entity_type="WorkItem",
+                entity_id=work_item_id,
+                properties={"work_item_id": work_item_id, "status": status},
+            ),
+            EntityWriteInput(
+                entity_type="Blocker",
+                entity_id=f"blk-{work_item_id}",
+                properties={"blocker_id": f"blk-{work_item_id}"},
+            ),
+        ],
+    )
+    service_add_relationship_inputs(
+        instance,
+        [
+            RelationshipWriteInput(
+                from_type="WorkItem",
+                from_id=work_item_id,
+                relationship_type="work_item_blocked_by",
+                to_type="Blocker",
+                to_id=f"blk-{work_item_id}",
+            )
+        ],
+        source="test",
+        source_ref="seed_blocked_work_item",
+    )
+
+
 class TestWhereScopedMutationGuard:
     """An entity-property guard with a candidate-scoped ``where`` fires only when
     the mutated entity matches the predicate; otherwise the same write proceeds."""
@@ -1540,6 +1637,149 @@ class TestWhereScopedMutationGuard:
         entity = instance.load_graph().get_entity("WorkItem", "wi-born-feature")
         assert entity is not None
         assert entity.properties["status"] == "closed"
+
+
+class TestWhereRelatedScopedMutationGuard:
+    """An entity-property guard with ``where_related``/``where_not_related`` fires
+    only when the mutated entity's proposed-graph edges match the related
+    predicates (evaluated at ``live`` visibility, anchored on the mutated entity).
+
+    Both guards in the fixture share the same trigger and condition; only their
+    related-edge scoping differs (``where_related`` on one, ``where_not_related``
+    on the other). Each test asserts EXACTLY which guard fired and that the other
+    did not, so the related-edge gate -- not the shared trigger -- is what is
+    under test.
+    """
+
+    @staticmethod
+    def _fired_guards(exc: DataValidationError) -> set[str]:
+        return {
+            name
+            for name in ("close_requires_blocker_link", "close_forbidden_while_blocked")
+            if any(name in error for error in exc.errors)
+        }
+
+    def test_where_related_update_fires_only_when_edge_present(self, tmp_path: Path) -> None:
+        instance = _where_related_scoped_instance(tmp_path)
+        _seed_blocked_work_item(instance, "wi-blocked")
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-blocked",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        # Blocker edge exists: only the where_related guard fires.
+        assert self._fired_guards(exc_info.value) == {"close_requires_blocker_link"}
+        entity = instance.load_graph().get_entity("WorkItem", "wi-blocked")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+
+    def test_where_related_update_silent_when_edge_absent(self, tmp_path: Path) -> None:
+        instance = _where_related_scoped_instance(tmp_path)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-unblocked",
+                    properties={"work_item_id": "wi-unblocked", "status": "planned"},
+                )
+            ],
+        )
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-unblocked",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        # No blocker edge: the where_related guard does NOT fire; only
+        # where_not_related fires.
+        assert self._fired_guards(exc_info.value) == {"close_forbidden_while_blocked"}
+
+    def test_where_not_related_update_fires_only_when_edge_absent(self, tmp_path: Path) -> None:
+        instance = _where_related_scoped_instance(tmp_path)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-free",
+                    properties={"work_item_id": "wi-free", "status": "planned"},
+                )
+            ],
+        )
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-free",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        assert self._fired_guards(exc_info.value) == {"close_forbidden_while_blocked"}
+        entity = instance.load_graph().get_entity("WorkItem", "wi-free")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+
+    def test_where_not_related_update_silent_when_edge_present(self, tmp_path: Path) -> None:
+        instance = _where_related_scoped_instance(tmp_path)
+        _seed_blocked_work_item(instance, "wi-has-blocker")
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-has-blocker",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        # Blocker edge exists: the where_not_related guard does NOT fire; only
+        # where_related fires.
+        assert self._fired_guards(exc_info.value) == {"close_requires_blocker_link"}
+
+    def test_create_fires_only_where_not_related(self, tmp_path: Path) -> None:
+        # A created entity has no edges in the proposed graph, so the
+        # where_related guard never fires on a bare create; only the
+        # where_not_related guard does.
+        instance = _where_related_scoped_instance(tmp_path)
+
+        with pytest.raises(DataValidationError) as exc_info:
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-closed",
+                        properties={"work_item_id": "wi-born-closed", "status": "closed"},
+                    )
+                ],
+            )
+
+        assert self._fired_guards(exc_info.value) == {"close_forbidden_while_blocked"}
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
 
 
 class TestCoWriteMutationGuard:

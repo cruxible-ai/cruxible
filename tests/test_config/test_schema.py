@@ -1815,6 +1815,47 @@ class TestMutationGuardSchema:
                 where={"candidate.properties.type": {"eq": "research"}},
             )
 
+    def test_guard_parses_where_related(self):
+        guard = MutationGuardSchema.model_validate(
+            {
+                "name": "blocked_close_requires_no_open_blocker",
+                "entity_type": "WorkItem",
+                "property": "status",
+                "new_value": "closed",
+                "condition": {"type": "actor", "allowed_actor_ids": ["robert"]},
+                "where_related": [
+                    {
+                        "relationship": "work_item_owned_by_actor",
+                        "direction": "outgoing",
+                    }
+                ],
+                "where_not_related": [
+                    {
+                        "relationship": "work_item_blocked_by",
+                        "direction": "outgoing",
+                        "target": {"properties.status": {"eq": "open"}},
+                    }
+                ],
+            }
+        )
+
+        assert guard.where_related[0].relationship == "work_item_owned_by_actor"
+        assert guard.where_not_related[0].target is not None
+
+    def test_guard_where_related_rejected_on_relationship_evidence_guard(self):
+        with pytest.raises(ValidationError, match="do not support related-edge scoping"):
+            MutationGuardSchema.model_validate(
+                {
+                    "name": "evidence_with_where_related",
+                    "relationship_type": "fits",
+                    "condition": {
+                        "type": "evidence",
+                        "require_evidence": "source_evidence",
+                    },
+                    "where_related": [{"relationship": "asset_owned_by"}],
+                }
+            )
+
     def test_guard_parses_list_new_value(self):
         guard = MutationGuardSchema(
             name="terminal_status_requires_review",

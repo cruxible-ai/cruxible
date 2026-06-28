@@ -1293,6 +1293,8 @@ class MutationGuardSchema(BaseModel):
     condition: MutationGuardConditionSchema
     message: str | None = None
     where: QueryPredicateSpec | None = None
+    where_related: list[RelatedPredicateSpec] = Field(default_factory=list)
+    where_not_related: list[RelatedPredicateSpec] = Field(default_factory=list)
 
     model_config = {"extra": "forbid"}
 
@@ -1312,6 +1314,10 @@ class MutationGuardSchema(BaseModel):
                 raise ValueError("relationship evidence guards require relationship_type")
             if self.where is not None:
                 raise ValueError("relationship evidence guards do not support 'where' scoping")
+            if self.where_related or self.where_not_related:
+                raise ValueError(
+                    "relationship evidence guards do not support related-edge scoping"
+                )
             forbidden_fields = [
                 field
                 for field in ("entity_type", "property", "new_value")

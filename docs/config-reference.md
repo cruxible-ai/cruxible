@@ -1179,6 +1179,8 @@ mutation_guards:
 | `condition` | discriminated union on `type` | **yes** | — | Condition that must pass (see types below) |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
 | `where` | predicate map | no | `null` | Entity-property guards only: scopes the trigger so the guard fires only when the mutated entity matches (candidate scope) |
+| `where_related` | list | no | `[]` | Entity-property guards only: related-edge predicates; the guard fires only when every listed edge exists (and matches its inner predicates) on the mutated entity |
+| `where_not_related` | list | no | `[]` | Entity-property guards only: related-edge predicates; the guard fires only when no listed edge exists on the mutated entity |
 
 The optional `where` predicate scopes *when* an entity-property guard fires. It
 uses the same predicate vocabulary as query `where` (`eq`/`in`/`not_in`/`lt`/`gt`/…)
@@ -1187,6 +1189,16 @@ but is restricted to the `candidate` scope — both predicate paths and any
 (proposed) entity. The guard fires only when the proposed entity matches;
 otherwise the write is allowed regardless of the condition. `where` is rejected
 on relationship evidence guards.
+
+Guards may also carry `where_related` / `where_not_related` (related-edge trigger
+scoping, the same `RelatedPredicateSpec` shape as query traversal steps —
+`relationship`/`direction` plus per-scope `edge`/`source`/`target`/`current`/
+`candidate`/`entry` predicates). They are anchored on the mutated entity and
+evaluated against the proposed graph at `live` visibility (the canonical visible
+state; there is no per-guard visibility knob). The guard fires only when every
+`where_related` edge exists (and matches its inner predicates) and no
+`where_not_related` edge exists. Like `where`, they are entity-property guards
+only and are rejected on relationship evidence guards.
 
 The `condition.type` discriminator selects the condition variant:
 

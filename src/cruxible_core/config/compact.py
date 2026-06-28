@@ -1207,7 +1207,10 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
         ``{query:..., params:..., min_count/max_count:...}`` -> type query
     Optional ``where:`` is a structured predicate map (candidate scope only) that
     scopes the trigger -- the guard fires only when the mutated entity matches. It
-    passes through unchanged (same shape as ``QueryPredicateSpec``).
+    passes through unchanged (same shape as ``QueryPredicateSpec``). Optional
+    ``where_related:``/``where_not_related:`` are lists of related-edge predicates
+    (same ``RelatedPredicateSpec`` shape as query traversal steps) that further
+    scope the trigger; they pass through unchanged.
     """
     out: list[dict[str, Any]] = []
     for item in raw_guards:
@@ -1239,6 +1242,10 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
             guard["message"] = body["message"]
         if "where" in body:
             guard["where"] = body["where"]
+        if "where_related" in body:
+            guard["where_related"] = body["where_related"]
+        if "where_not_related" in body:
+            guard["where_not_related"] = body["where_not_related"]
         out.append(guard)
     return out
 

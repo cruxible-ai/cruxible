@@ -242,14 +242,13 @@ def evaluate_query_predicates(
     return True
 
 
-def entity_matches_predicates(
-    config: CoreConfig,
-    predicates: QueryPredicateSpec,
-    entity: EntityInstance,
-    *,
-    params: dict[str, Any] | None = None,
-) -> bool:
-    """Evaluate candidate-scoped predicates against a single entity (no traversal)."""
+def _guard_self_context(entity: EntityInstance) -> PredicateContext:
+    """Build a candidate-scoped predicate context anchored on a single entity.
+
+    A synthetic ``$guard_self`` self-segment makes every scope (entry/current/
+    candidate, and edge endpoints) resolve to the same entity, so guard
+    predicates evaluate against the mutated entity with no traversal.
+    """
     self_segment = QueryPathSegment(
         relationship_type="$guard_self",
         from_type=entity.entity_type,
@@ -259,13 +258,67 @@ def entity_matches_predicates(
         edge_key=None,
         properties={},
     )
-    context = build_predicate_context(
+    return build_predicate_context(
         entry=entity,
         current=entity,
         candidate=entity,
         segment=self_segment,
     )
+
+
+def entity_matches_predicates(
+    config: CoreConfig,
+    predicates: QueryPredicateSpec,
+    entity: EntityInstance,
+    *,
+    params: dict[str, Any] | None = None,
+) -> bool:
+    """Evaluate candidate-scoped predicates against a single entity (no traversal)."""
+    context = _guard_self_context(entity)
     return evaluate_query_predicates(config, predicates, context, params or {})
+
+
+def entity_matches_related_predicates(
+    config: CoreConfig,
+    graph: EntityGraph,
+    entity: EntityInstance,
+    where_related: list[RelatedPredicateSpec],
+    where_not_related: list[RelatedPredicateSpec],
+    *,
+    relationship_state: QueryVisibilityState,
+    params: dict[str, Any] | None = None,
+) -> bool:
+    """Evaluate related-edge predicates against an entity's proposed-graph edges.
+
+    Anchored on ``entity`` (the mutated/proposed entity, reused as the predicate
+    candidate). Returns True only when every ``where_related`` edge exists and
+    matches its inner predicates AND no ``where_not_related`` edge exists. Pure
+    reuse of :func:`evaluate_related_predicate`, which anchors on
+    ``context.candidate``.
+    """
+    context = _guard_self_context(entity)
+    resolved_params = params or {}
+    for related in where_related:
+        if not evaluate_related_predicate(
+            graph,
+            related,
+            context,
+            resolved_params,
+            config=config,
+            relationship_state=relationship_state,
+        ):
+            return False
+    for related in where_not_related:
+        if evaluate_related_predicate(
+            graph,
+            related,
+            context,
+            resolved_params,
+            config=config,
+            relationship_state=relationship_state,
+        ):
+            return False
+    return True
 
 
 def evaluate_related_predicate(
@@ -715,6 +768,7 @@ __all__ = [
     "PredicateContext",
     "build_predicate_context",
     "entity_matches_predicates",
+    "entity_matches_related_predicates",
     "evaluate_query_predicates",
     "evaluate_related_predicate",
     "iter_step_relationships",

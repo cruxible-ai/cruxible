@@ -28,7 +28,10 @@ from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationshi
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.engine import execute_query
-from cruxible_core.query.predicates import entity_matches_predicates
+from cruxible_core.query.predicates import (
+    entity_matches_predicates,
+    entity_matches_related_predicates,
+)
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 _MISSING = object()
@@ -108,7 +111,9 @@ def mutation_guard_errors(
         if proposed is None:
             continue
         for guard in config.mutation_guards:
-            context = _matching_guard_context(config, guard, entity, current, proposed)
+            context = _matching_guard_context(
+                config, guard, entity, current, proposed, proposed_graph
+            )
             if context is None:
                 continue
             if not _guard_condition_passes(
@@ -197,6 +202,7 @@ def _matching_guard_context(
     validated: ValidatedEntity,
     current: EntityInstance | None,
     proposed: EntityInstance,
+    proposed_graph: EntityGraph,
 ) -> _GuardEntityContext | None:
     entity = validated.entity
     if guard.entity_type != entity.entity_type:
@@ -218,6 +224,19 @@ def _matching_guard_context(
     if old_value == new_value:
         return None
     if guard.where is not None and not entity_matches_predicates(config, guard.where, proposed):
+        return None
+    # Related-edge trigger scoping: the guard fires only when the proposed
+    # entity's edges satisfy the related predicates. Edges are evaluated at the
+    # canonical visible ("live") relationship state -- the chosen default; there
+    # is intentionally no per-guard visibility knob.
+    if (guard.where_related or guard.where_not_related) and not entity_matches_related_predicates(
+        config,
+        proposed_graph,
+        proposed,
+        guard.where_related,
+        guard.where_not_related,
+        relationship_state="live",
+    ):
         return None
     return _GuardEntityContext(
         current=current,
