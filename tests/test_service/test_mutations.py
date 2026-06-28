@@ -1379,6 +1379,169 @@ class TestEntityMutationGuards:
         assert instance.load_graph().get_entity("WorkItem", "wi-born-closed") is None
 
 
+WHERE_SCOPED_GUARD_YAML = """\
+version: "1.0"
+name: where_scoped_guard_state
+
+enums:
+  lifecycle_status:
+    values: [planned, active, closed]
+
+entity_types:
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+      status:
+        type: string
+        enum_ref: lifecycle_status
+      type:
+        type: string
+        optional: true
+
+mutation_guards:
+  - name: research_close_requires_authorized_actor
+    entity_type: WorkItem
+    property: status
+    new_value: closed
+    condition:
+      type: actor
+      allowed_actor_ids: [robert]
+    where:
+      candidate.properties.type:
+        eq: research
+    message: "Research work items require an authorized actor to close."
+"""
+
+
+def _where_scoped_instance(tmp_path: Path) -> CruxibleInstance:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(dedent(WHERE_SCOPED_GUARD_YAML))
+    return CruxibleInstance.init(tmp_path, "config.yaml")
+
+
+class TestWhereScopedMutationGuard:
+    """An entity-property guard with a candidate-scoped ``where`` fires only when
+    the mutated entity matches the predicate; otherwise the same write proceeds."""
+
+    def test_update_fires_when_where_matches(self, tmp_path: Path) -> None:
+        instance = _where_scoped_instance(tmp_path)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-research",
+                    properties={
+                        "work_item_id": "wi-research",
+                        "status": "planned",
+                        "type": "research",
+                    },
+                )
+            ],
+        )
+
+        with pytest.raises(
+            DataValidationError,
+            match="research_close_requires_authorized_actor",
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-research",
+                        properties={"status": "closed"},
+                    )
+                ],
+            )
+
+        entity = instance.load_graph().get_entity("WorkItem", "wi-research")
+        assert entity is not None
+        assert entity.properties["status"] == "planned"
+
+    def test_update_allowed_when_where_does_not_match(self, tmp_path: Path) -> None:
+        instance = _where_scoped_instance(tmp_path)
+        service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-feature",
+                    properties={
+                        "work_item_id": "wi-feature",
+                        "status": "planned",
+                        "type": "feature",
+                    },
+                )
+            ],
+        )
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-feature",
+                    properties={"status": "closed"},
+                )
+            ],
+        )
+
+        assert result.updated == 1
+        entity = instance.load_graph().get_entity("WorkItem", "wi-feature")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+    def test_create_fires_when_where_matches(self, tmp_path: Path) -> None:
+        instance = _where_scoped_instance(tmp_path)
+
+        with pytest.raises(
+            DataValidationError,
+            match="research_close_requires_authorized_actor",
+        ):
+            service_add_entity_inputs(
+                instance,
+                [
+                    EntityWriteInput(
+                        entity_type="WorkItem",
+                        entity_id="wi-born-research",
+                        properties={
+                            "work_item_id": "wi-born-research",
+                            "status": "closed",
+                            "type": "research",
+                        },
+                    )
+                ],
+            )
+
+        assert instance.load_graph().get_entity("WorkItem", "wi-born-research") is None
+
+    def test_create_allowed_when_where_does_not_match(self, tmp_path: Path) -> None:
+        instance = _where_scoped_instance(tmp_path)
+
+        result = service_add_entity_inputs(
+            instance,
+            [
+                EntityWriteInput(
+                    entity_type="WorkItem",
+                    entity_id="wi-born-feature",
+                    properties={
+                        "work_item_id": "wi-born-feature",
+                        "status": "closed",
+                        "type": "feature",
+                    },
+                )
+            ],
+        )
+
+        assert result.added == 1
+        entity = instance.load_graph().get_entity("WorkItem", "wi-born-feature")
+        assert entity is not None
+        assert entity.properties["status"] == "closed"
+
+
 class TestCoWriteMutationGuard:
     """co_write guards reject a guarded transition unless THIS write co-creates
     the required linked entity in the same write delta."""

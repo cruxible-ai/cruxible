@@ -1205,6 +1205,9 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
         ``{co_write: <Entity> via <relationship>, kind: ...}`` -> type co_write
         ``{allowed_actors: [...]}``  -> type actor, allowed_actor_ids (literal passthrough)
         ``{query:..., params:..., min_count/max_count:...}`` -> type query
+    Optional ``where:`` is a structured predicate map (candidate scope only) that
+    scopes the trigger -- the guard fires only when the mutated entity matches. It
+    passes through unchanged (same shape as ``QueryPredicateSpec``).
     """
     out: list[dict[str, Any]] = []
     for item in raw_guards:
@@ -1234,6 +1237,8 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
 
         if "message" in body:
             guard["message"] = body["message"]
+        if "where" in body:
+            guard["where"] = body["where"]
         out.append(guard)
     return out
 

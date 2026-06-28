@@ -242,6 +242,32 @@ def evaluate_query_predicates(
     return True
 
 
+def entity_matches_predicates(
+    config: CoreConfig,
+    predicates: QueryPredicateSpec,
+    entity: EntityInstance,
+    *,
+    params: dict[str, Any] | None = None,
+) -> bool:
+    """Evaluate candidate-scoped predicates against a single entity (no traversal)."""
+    self_segment = QueryPathSegment(
+        relationship_type="$guard_self",
+        from_type=entity.entity_type,
+        from_id=entity.entity_id,
+        to_type=entity.entity_type,
+        to_id=entity.entity_id,
+        edge_key=None,
+        properties={},
+    )
+    context = build_predicate_context(
+        entry=entity,
+        current=entity,
+        candidate=entity,
+        segment=self_segment,
+    )
+    return evaluate_query_predicates(config, predicates, context, params or {})
+
+
 def evaluate_related_predicate(
     graph: EntityGraph,
     related: RelatedPredicateSpec,
@@ -688,6 +714,7 @@ __all__ = [
     "QUERY_PREDICATE_SCOPES",
     "PredicateContext",
     "build_predicate_context",
+    "entity_matches_predicates",
     "evaluate_query_predicates",
     "evaluate_related_predicate",
     "iter_step_relationships",

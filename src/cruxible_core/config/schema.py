@@ -1292,6 +1292,7 @@ class MutationGuardSchema(BaseModel):
     relationship_type: str | None = None
     condition: MutationGuardConditionSchema
     message: str | None = None
+    where: QueryPredicateSpec | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -1309,6 +1310,8 @@ class MutationGuardSchema(BaseModel):
         if isinstance(self.condition, EvidenceRequirementGuardCondition):
             if self.relationship_type is None:
                 raise ValueError("relationship evidence guards require relationship_type")
+            if self.where is not None:
+                raise ValueError("relationship evidence guards do not support 'where' scoping")
             forbidden_fields = [
                 field
                 for field in ("entity_type", "property", "new_value")
@@ -1332,6 +1335,27 @@ class MutationGuardSchema(BaseModel):
             raise ValueError(f"entity mutation guards require: {joined}")
         if self.relationship_type is not None:
             raise ValueError("entity mutation guards may not define relationship_type")
+        return self
+
+    @model_validator(mode="after")
+    def validate_where_scope(self) -> MutationGuardSchema:
+        if self.where is None:
+            return self
+        for path, operators in self.where.root.items():
+            scope = path.split(".", 1)[0]
+            if scope != "candidate":
+                raise ValueError(
+                    f"guard where predicate path '{path}' must use the 'candidate' scope"
+                )
+            # Operand values may also be scope-bearing refs ($scope.path); they
+            # resolve against the same context, so they must be candidate-scoped
+            # too -- otherwise a $current/$edge/etc. operand escapes the contract.
+            for ref in _collect_query_refs(operators):
+                ref_scope = ref[1:].split(".", 1)[0]
+                if ref_scope != "candidate":
+                    raise ValueError(
+                        f"guard where predicate operand '{ref}' must use the 'candidate' scope"
+                    )
         return self
 
 

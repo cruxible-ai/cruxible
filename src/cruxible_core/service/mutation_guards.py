@@ -28,6 +28,7 @@ from cruxible_core.graph.operations import ValidatedEntity, ValidatedRelationshi
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.query.engine import execute_query
+from cruxible_core.query.predicates import entity_matches_predicates
 from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
 
 _MISSING = object()
@@ -215,6 +216,8 @@ def _matching_guard_context(
     if new_value not in guarded_values:
         return None
     if old_value == new_value:
+        return None
+    if guard.where is not None and not entity_matches_predicates(config, guard.where, proposed):
         return None
     return _GuardEntityContext(
         current=current,

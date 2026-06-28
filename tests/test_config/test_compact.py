@@ -928,6 +928,22 @@ def test_guard_query_condition() -> None:
     assert condition["min_count"] == 1
 
 
+def test_guard_where_passthrough() -> None:
+    config = _expand(
+        _GUARD_HEADER,
+        """
+        mutation_guards:
+          - g:
+              when: WorkItem.status -> closed
+              require: {allowed_actors: [reviewer]}
+              where:
+                candidate.properties.type: {eq: research}
+        """,
+    )
+    guard = config["mutation_guards"][0]
+    assert guard["where"] == {"candidate.properties.type": {"eq": "research"}}
+
+
 # ---------------------------------------------------------------------------
 # Quality checks
 # ---------------------------------------------------------------------------

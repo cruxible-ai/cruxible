@@ -1178,6 +1178,15 @@ mutation_guards:
 | `relationship_type` | string | relationship evidence guards | — | Relationship type the write applies to |
 | `condition` | discriminated union on `type` | **yes** | — | Condition that must pass (see types below) |
 | `message` | string | no | `null` | Optional user-facing rejection detail |
+| `where` | predicate map | no | `null` | Entity-property guards only: scopes the trigger so the guard fires only when the mutated entity matches (candidate scope) |
+
+The optional `where` predicate scopes *when* an entity-property guard fires. It
+uses the same predicate vocabulary as query `where` (`eq`/`in`/`not_in`/`lt`/`gt`/…)
+but is restricted to the `candidate` scope — both predicate paths and any
+`$`-reference operands must start with `candidate.` and read only the mutated
+(proposed) entity. The guard fires only when the proposed entity matches;
+otherwise the write is allowed regardless of the condition. `where` is rejected
+on relationship evidence guards.
 
 The `condition.type` discriminator selects the condition variant:
 

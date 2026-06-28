@@ -1752,6 +1752,69 @@ class TestMutationGuardSchema:
         assert guard.condition.requires.via_relationship == "review_for_work_item"
         assert guard.condition.requires.kind is None
 
+    def test_guard_parses_candidate_scoped_where(self):
+        guard = MutationGuardSchema(
+            name="research_close_requires_review",
+            entity_type="WorkItem",
+            property="status",
+            new_value="closed",
+            condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert"]),
+            where={"candidate.properties.type": {"eq": "research"}},
+        )
+
+        assert guard.where is not None
+        assert guard.where.root == {"candidate.properties.type": {"eq": "research"}}
+
+    def test_guard_where_rejects_non_candidate_scope(self):
+        with pytest.raises(ValidationError, match="must use the 'candidate' scope"):
+            MutationGuardSchema(
+                name="bad_scope_where",
+                entity_type="WorkItem",
+                property="status",
+                new_value="closed",
+                condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert"]),
+                where={"current.properties.type": {"eq": "research"}},
+            )
+
+    def test_guard_where_rejects_non_candidate_operand_ref(self):
+        # The path key is candidate-scoped, but the operand smuggles in $current.
+        with pytest.raises(ValidationError, match="operand .* must use the 'candidate' scope"):
+            MutationGuardSchema(
+                name="bad_operand_where",
+                entity_type="WorkItem",
+                property="status",
+                new_value="closed",
+                condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert"]),
+                where={"candidate.properties.type": {"eq": "$current.properties.type"}},
+            )
+
+    def test_guard_where_allows_candidate_operand_ref(self):
+        guard = MutationGuardSchema(
+            name="candidate_operand_where",
+            entity_type="WorkItem",
+            property="status",
+            new_value="closed",
+            condition=ActorIdentityGuardCondition(type="actor", allowed_actor_ids=["robert"]),
+            where={"candidate.properties.type": {"eq": "$candidate.properties.kind"}},
+        )
+
+        assert guard.where is not None
+        assert guard.where.root == {
+            "candidate.properties.type": {"eq": "$candidate.properties.kind"}
+        }
+
+    def test_guard_where_rejected_on_relationship_evidence_guard(self):
+        with pytest.raises(ValidationError, match="do not support 'where' scoping"):
+            MutationGuardSchema(
+                name="evidence_with_where",
+                relationship_type="fits",
+                condition=EvidenceRequirementGuardCondition(
+                    type="evidence",
+                    require_evidence="source_evidence",
+                ),
+                where={"candidate.properties.type": {"eq": "research"}},
+            )
+
     def test_guard_parses_list_new_value(self):
         guard = MutationGuardSchema(
             name="terminal_status_requires_review",
