@@ -97,6 +97,23 @@ def test_shipped_catalog_is_overridden_by_local_kits(monkeypatch: pytest.MonkeyP
     assert get_kit_catalog()["kev-reference"] == "file:///tmp/local-kev-reference"
 
 
+def test_shipped_catalog_resolves_every_featured_kit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every kit advertised in the public READMEs must resolve from the shipped
+    # alias catalog so `cruxible init --kit <name>` works without a source
+    # checkout (local discovery disabled). Guards against advertising a kit that
+    # only exists in the dev tree.
+    monkeypatch.setattr("cruxible_core.kits._discover_local_kit_catalog", lambda: {})
+    catalog = get_kit_catalog()
+    for kit in (
+        "agent-operation",
+        "kev-reference",
+        "kev-triage",
+        "supply-chain-blast-radius",
+        "case-law-monitoring",
+    ):
+        assert kit in catalog, f"{kit} is featured in the README but not in the shipped catalog"
+
+
 def test_alias_oci_resolution_uses_shipped_ref(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

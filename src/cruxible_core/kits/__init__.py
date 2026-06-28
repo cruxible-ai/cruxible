@@ -31,6 +31,7 @@ _IGNORED_DIRS = {"__pycache__", ".cruxible", ".ruff_cache", ".pytest_cache"}
 _IGNORED_FILES = {".DS_Store"}
 _IGNORED_SUFFIXES = {".pyc"}
 _SHIPPED_KIT_CATALOG: dict[str, str] = {
+    "agent-operation": "oci://ghcr.io/cruxible-ai/kits/agent-operation:0.2.0",
     "case-law-monitoring": "oci://ghcr.io/cruxible-ai/kits/case-law-monitoring:0.2.0",
     "kev-reference": "oci://ghcr.io/cruxible-ai/kits/kev-reference:0.2.0",
     "kev-triage": "oci://ghcr.io/cruxible-ai/kits/kev-triage:0.2.0",
