@@ -2200,6 +2200,26 @@ class CoreConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_mutation_guard_related_exclusions(self) -> CoreConfig:
+        """Check that mutation-guard related-edge specs use declared relationships."""
+        declared_relationships = {rel.name for rel in self.relationships}
+        for guard in self.mutation_guards:
+            for field_name, related_specs in (
+                ("where_related", guard.where_related),
+                ("where_not_related", guard.where_not_related),
+            ):
+                for related in related_specs:
+                    if related.relationship not in declared_relationships:
+                        if self.extends is not None:
+                            continue
+                        msg = (
+                            f"Mutation guard '{guard.name}' references unknown "
+                            f"relationship '{related.relationship}' in {field_name}"
+                        )
+                        raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def validate_query_order_enum_refs(self) -> CoreConfig:
         """Check that query ordering enum refs target declared ordered enums."""
         for query_name, query in self.named_queries.items():

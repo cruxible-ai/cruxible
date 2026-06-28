@@ -1217,6 +1217,148 @@ class TestNamedQuerySchema:
                 },
             )
 
+    def test_mutation_guard_where_related_unknown_relationship_fails(self):
+        with pytest.raises(
+            ValidationError,
+            match="references unknown relationship 'missing_relationship' in where_related",
+        ):
+            CoreConfig(
+                name="guard-related-predicate-validation",
+                entity_types={
+                    "WorkItem": EntityTypeSchema(
+                        properties={"work_item_id": PropertySchema(type="string", primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(
+                        name="work_item_owned_by_actor",
+                        from_entity="WorkItem",
+                        to_entity="WorkItem",
+                    )
+                ],
+                mutation_guards=[
+                    MutationGuardSchema.model_validate(
+                        {
+                            "name": "guarded_close",
+                            "entity_type": "WorkItem",
+                            "property": "status",
+                            "new_value": "closed",
+                            "condition": {"type": "actor", "allowed_actor_ids": ["robert"]},
+                            "where_related": [
+                                {
+                                    "relationship": "missing_relationship",
+                                    "direction": "outgoing",
+                                }
+                            ],
+                        }
+                    )
+                ],
+            )
+
+    def test_mutation_guard_where_not_related_unknown_relationship_fails(self):
+        with pytest.raises(
+            ValidationError,
+            match="references unknown relationship 'missing_relationship' in where_not_related",
+        ):
+            CoreConfig(
+                name="guard-related-predicate-validation",
+                entity_types={
+                    "WorkItem": EntityTypeSchema(
+                        properties={"work_item_id": PropertySchema(type="string", primary_key=True)}
+                    ),
+                },
+                relationships=[
+                    RelationshipSchema(
+                        name="work_item_owned_by_actor",
+                        from_entity="WorkItem",
+                        to_entity="WorkItem",
+                    )
+                ],
+                mutation_guards=[
+                    MutationGuardSchema.model_validate(
+                        {
+                            "name": "guarded_close",
+                            "entity_type": "WorkItem",
+                            "property": "status",
+                            "new_value": "closed",
+                            "condition": {"type": "actor", "allowed_actor_ids": ["robert"]},
+                            "where_not_related": [
+                                {
+                                    "relationship": "missing_relationship",
+                                    "direction": "outgoing",
+                                }
+                            ],
+                        }
+                    )
+                ],
+            )
+
+    def test_mutation_guard_where_related_declared_relationship_validates(self):
+        config = CoreConfig(
+            name="guard-related-predicate-validation",
+            entity_types={
+                "WorkItem": EntityTypeSchema(
+                    properties={"work_item_id": PropertySchema(type="string", primary_key=True)}
+                ),
+            },
+            relationships=[
+                RelationshipSchema(
+                    name="work_item_owned_by_actor",
+                    from_entity="WorkItem",
+                    to_entity="WorkItem",
+                )
+            ],
+            mutation_guards=[
+                MutationGuardSchema.model_validate(
+                    {
+                        "name": "guarded_close",
+                        "entity_type": "WorkItem",
+                        "property": "status",
+                        "new_value": "closed",
+                        "condition": {"type": "actor", "allowed_actor_ids": ["robert"]},
+                        "where_related": [
+                            {
+                                "relationship": "work_item_owned_by_actor",
+                                "direction": "outgoing",
+                            }
+                        ],
+                    }
+                )
+            ],
+        )
+
+        assert config.mutation_guards[0].where_related[0].relationship == (
+            "work_item_owned_by_actor"
+        )
+
+    def test_mutation_guard_where_related_unknown_relationship_tolerated_with_extends(self):
+        # Overlay configs tolerate unknown relationship names; the base layer
+        # declares them and the reference is validated post-composition.
+        config = CoreConfig(
+            name="guard-related-predicate-overlay",
+            extends="base.yaml",
+            mutation_guards=[
+                MutationGuardSchema.model_validate(
+                    {
+                        "name": "guarded_close",
+                        "entity_type": "WorkItem",
+                        "property": "status",
+                        "new_value": "closed",
+                        "condition": {"type": "actor", "allowed_actor_ids": ["robert"]},
+                        "where_related": [
+                            {
+                                "relationship": "missing_relationship",
+                                "direction": "outgoing",
+                            }
+                        ],
+                    }
+                )
+            ],
+        )
+
+        assert config.extends == "base.yaml"
+        assert config.mutation_guards[0].where_related[0].relationship == "missing_relationship"
+
 
 def _config_with_contract_json_schema(schema_yaml: str, *, enums: str = "") -> str:
     return f"""
