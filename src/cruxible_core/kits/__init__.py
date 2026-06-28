@@ -34,7 +34,6 @@ _SHIPPED_KIT_CATALOG: dict[str, str] = {
     "case-law-monitoring": "oci://ghcr.io/cruxible-ai/kits/case-law-monitoring:0.2.0",
     "kev-reference": "oci://ghcr.io/cruxible-ai/kits/kev-reference:0.2.0",
     "kev-triage": "oci://ghcr.io/cruxible-ai/kits/kev-triage:0.2.0",
-    "retail-catalog": "oci://ghcr.io/cruxible-ai/kits/retail-catalog:0.2.0",
     "supply-chain-blast-radius": ("oci://ghcr.io/cruxible-ai/kits/supply-chain-blast-radius:0.2.0"),
 }
 

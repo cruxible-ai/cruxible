@@ -138,7 +138,7 @@ flowchart LR
 ```
 
 In this shape, the KEV kit owns the domain facts: an asset runs a product, and a
-vulnerability affects that product. The project-state kit owns the operating
+vulnerability affects that product. The agent-operation kit owns the operating
 facts: Agent A has a work item to patch the asset, a decision constrains how the
 work happens, and Agent B or a human reviewer resolves the review request.
 Evidence refs and receipts connect both layers back to scanner output, source
@@ -332,7 +332,7 @@ uv tool install "cruxible-core[server,mcp]"
 ### Initialize A Kit
 
 ```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit project-state
+cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation
 ```
 
 The returned `instance_id` is the handle used by CLI, MCP, HTTP clients, and UI
@@ -412,12 +412,11 @@ expose only the client, HTTP, or MCP surface. See
 
 | Kit | Kind | What it models |
 |-----|------|----------------|
-| [project-state](kits/project-state/) | Agent operating state | Work items, review requests, decisions, risks, open questions, release lines, milestones, and dependency context. |
+| [agent-operation](kits/agent-operation/) | Agent operating state | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
 | [kev-reference](kits/kev-reference/) | Domain reference state | Public known-exploited vulnerability reference data. |
 | [kev-triage](kits/kev-triage/) | Domain overlay state | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
 | [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Domain state | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
 | [case-law-monitoring](kits/case-law-monitoring/) | Domain state | Matter-centered case-law monitoring and authority impact. |
-| [retail-catalog](kits/retail-catalog/) | Domain state | Product catalog relationships, substitutes, complements, and retail planning surfaces. |
 
 Standalone kits can define a full state model. Overlay kits can extend an
 upstream state model with local state, governed proposals, and local workflows.

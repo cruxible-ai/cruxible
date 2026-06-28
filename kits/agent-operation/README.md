@@ -19,8 +19,7 @@ structural truth. Everything outside those marker blocks is authored explanation
 
 ## Modeling Notes
 
-This kit keeps the good part of the project-state dogfooding pass: work
-relationships need separate axes.
+Work relationships need separate axes:
 
 - `work_item_depends_on_work_item` is sequencing: B before A.
 - `risk_blocks_work_item` and `open_question_blocks_work_item` are impediments.

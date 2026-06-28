@@ -218,7 +218,7 @@ def _require_review_promotion_actor(
     promotion must carry a resolved actor identity so a lower tier cannot rubber-stamp
     a review edge anonymously. When auth is off there is no tier boundary or governed
     identity to enforce, so unattributed local promotion stays allowed (matching the
-    project-state review-gate stance). Legitimate ``correct``/``flag``/``reject``
+    agent-operation review-gate stance). Legitimate ``correct``/``flag``/``reject``
     actions are untouched.
     """
     from cruxible_core.feedback.applier import REVIEW_PROMOTION_ACTIONS

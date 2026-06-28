@@ -33,7 +33,7 @@ from cruxible_core.service.snapshots import service_backup_instance
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PROJECT_STATE_CONFIG = REPO_ROOT / "kits" / "project-state" / "config.yaml"
+AGENT_OPERATION_CONFIG = REPO_ROOT / "kits" / "agent-operation" / "config.yaml"
 KEV_REFERENCE_KIT_DIR = REPO_ROOT / "kits" / "kev-reference"
 KEV_KIT_DIR = REPO_ROOT / "kits" / "kev-triage"
 KEV_PUBLIC_DATA_FILES = (
@@ -1047,20 +1047,35 @@ def test_runtime_credential_matching_actor_context_keeps_credential_identity(
     assert actor_context["request_id"] == "req_correlation"
 
 
-def test_runtime_credential_review_approval_is_ungated_but_close_gate_remains(
+def test_runtime_credential_review_approval_is_gated_and_close_gate_remains(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_root = tmp_path / "project-state"
+    # agent-operation gates ReviewRequest approval (unlike the retired
+    # project-state kit, where approval was ungated). Approval over HTTP must:
+    #   * come from the authorized-reviewer actor — here the runtime credential
+    #     whose label (and therefore credential-derived actor_id) is
+    #     "authorized-reviewer"; a writer credential cannot approve, AND
+    #   * co-write a StateNote(kind=review_note) linked via
+    #     state_note_about_review_request in the same write (the batch endpoint).
+    # The WorkItem close gate then remains: close is rejected until the approved
+    # review exists, then allowed.
+    project_root = tmp_path / "agent-operation"
     project_root.mkdir()
-    (project_root / "config.yaml").write_text(PROJECT_STATE_CONFIG.read_text())
+    (project_root / "config.yaml").write_text(AGENT_OPERATION_CONFIG.read_text())
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, project_root)
-    codex_headers = _runtime_credential_headers(
+    writer_headers = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
         permission_mode=PermissionMode.GRAPH_WRITE,
         label="codex-core",
+    )
+    reviewer_headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="authorized-reviewer",
     )
 
     seed = client.post(
@@ -1100,7 +1115,7 @@ def test_runtime_credential_review_approval_is_ungated_but_close_gate_remains(
                 ],
             }
         },
-        headers=codex_headers,
+        headers=writer_headers,
     )
     assert seed.status_code == 200
 
@@ -1115,24 +1130,61 @@ def test_runtime_credential_review_approval_is_ungated_but_close_gate_remains(
                 }
             ]
         },
-        headers=codex_headers,
+        headers=writer_headers,
     )
     assert close_before_approval.status_code == 400
     assert close_before_approval.json()["error_type"] == "DataValidationError"
     assert "work_item_closed_requires_approved_review" in close_before_approval.text
 
-    approved = client.post(
-        f"/api/v1/{instance_id}/entities",
-        json={
+    approval_payload = {
+        "payload": {
             "entities": [
                 {
                     "entity_type": "ReviewRequest",
                     "entity_id": "rr-approval-guard",
                     "properties": {"status": "approved"},
+                },
+                {
+                    "entity_type": "StateNote",
+                    "entity_id": "sn-approval-guard",
+                    "properties": {
+                        "note_id": "sn-approval-guard",
+                        "kind": "review_note",
+                        "title": "Approval rationale",
+                        "summary": "Approved after review.",
+                        "body": "Approval guard review approved.",
+                        "created_at": "2026-06-05T12:00:00Z",
+                    },
+                },
+            ],
+            "relationships": [
+                {
+                    "from_type": "StateNote",
+                    "from_id": "sn-approval-guard",
+                    "relationship_type": "state_note_about_review_request",
+                    "to_type": "ReviewRequest",
+                    "to_id": "rr-approval-guard",
                 }
-            ]
-        },
-        headers=codex_headers,
+            ],
+        }
+    }
+
+    # A writer credential (actor_id="codex-core") cannot approve: the authorized
+    # actor guard rejects it.
+    writer_approval = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json=approval_payload,
+        headers=writer_headers,
+    )
+    assert writer_approval.status_code == 400
+    assert writer_approval.json()["error_type"] == "DataValidationError"
+    assert "review_request_approval_requires_authorized_actor" in writer_approval.text
+
+    # The authorized-reviewer credential, co-writing the review_note, approves.
+    approved = client.post(
+        f"/api/v1/{instance_id}/direct-writes/batch",
+        json=approval_payload,
+        headers=reviewer_headers,
     )
     assert approved.status_code == 200
 
@@ -1147,7 +1199,7 @@ def test_runtime_credential_review_approval_is_ungated_but_close_gate_remains(
                 }
             ]
         },
-        headers=codex_headers,
+        headers=writer_headers,
     )
     assert closed.status_code == 200
 
@@ -1157,13 +1209,13 @@ def test_runtime_credential_cannot_spoof_actor_to_pass_approval_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # G3 end-to-end: a "codex-core" runtime credential supplies an
-    # actor_context claiming actor_id="robert" (an authorized reviewer) to try
-    # to approve its own review. The credential identity is authoritative, so
-    # the spoofed actor_context is rejected before reaching the approval guard,
-    # and the ReviewRequest is NOT approved.
-    project_root = tmp_path / "project-state"
+    # actor_context claiming actor_id="authorized-reviewer" (the authorized
+    # reviewer actor) to try to approve its own review. The credential identity
+    # is authoritative, so the spoofed actor_context is rejected before reaching
+    # the approval guard, and the ReviewRequest is NOT approved.
+    project_root = tmp_path / "agent-operation"
     project_root.mkdir()
-    (project_root / "config.yaml").write_text(PROJECT_STATE_CONFIG.read_text())
+    (project_root / "config.yaml").write_text(AGENT_OPERATION_CONFIG.read_text())
     client = _make_app_client(tmp_path, monkeypatch)
     instance_id = _init_instance(client, project_root)
     codex_headers = _runtime_credential_headers(
@@ -1226,7 +1278,7 @@ def test_runtime_credential_cannot_spoof_actor_to_pass_approval_guard(
             ],
             "actor_context": {
                 "actor_type": "human_user",
-                "actor_id": "robert",
+                "actor_id": "authorized-reviewer",
                 "org_id": instance_id,
                 "operation_id": "op_spoof",
                 "timestamp": "2026-06-05T12:00:00Z",

@@ -36,22 +36,6 @@ jobs:
       - name: Test
         run: uv run pytest --tb=short
 
-      - name: Cruxible review handoff preflight
-        if: matrix.python-version == '3.12'
-        env:
-          CRUXIBLE_SERVER_URL: ${{ vars.CRUXIBLE_STATE_URL }}
-          CRUXIBLE_INSTANCE_ID: ${{ vars.CRUXIBLE_INSTANCE_ID }}
-          CRUXIBLE_SERVER_BEARER_TOKEN: ${{ secrets.CRUXIBLE_STATE_READER_TOKEN }}
-          CRUXIBLE_CHANGE_REPO: ${{ github.repository }}
-          CRUXIBLE_CHANGE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          CRUXIBLE_EXPECTED_CONFIG_NAME: project_state
-        run: |
-          if [ -z "$CRUXIBLE_SERVER_URL" ] || [ -z "$CRUXIBLE_INSTANCE_ID" ] || [ -z "$CRUXIBLE_SERVER_BEARER_TOKEN" ]; then
-            echo "Skipping Cruxible review handoff preflight; state endpoint/token not configured."
-            exit 0
-          fi
-          uv run python scripts/check_review_handoff.py
-
   docker-image-test:
     runs-on: ubuntu-latest
 

@@ -42,7 +42,7 @@ uv run mypy src
 
 ## Review Request Conventions
 
-- For code-change ReviewRequests in the project-state kit, include structured
+- For code-change ReviewRequests in the agent-operation kit, include structured
   `change_repo`, `change_base`, and `change_head` fields. `change_head` is the
   exact reviewed commit SHA; reviewers and merge tooling should not infer it
   from the branch tip.

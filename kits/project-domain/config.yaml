@@ -10,12 +10,12 @@ description: >
   roadmap items, release lines, and milestones as typed entities, product
   areas and capabilities as lightweight tag-role classification, and the
   domain-internal plus seam relationships that connect operation entities to
-  domain structure. It re-expresses the standalone project-state kit with
-  functional parity. Markdown docs, plans, chats, review reports, and
+  domain structure. It composes the project/product domain on top of the
+  agent-operation base. Markdown docs, plans, chats, review reports, and
   transcripts remain source evidence for proposals; they are not modeled as
   entities here.
 
-  Notes on parity vs the standalone project-state kit:
+  Notes on the overlay vs the agent-operation base:
   - ProductArea and Capability are tag-role only (classification read by
     queries and warning-severity checks). Nothing gates on them: no
     mutation_guard and no error-severity check references them. An overlay
@@ -714,8 +714,8 @@ named_queries:
   # release/milestone). The base work_item_context uses include: all_adjacent,
   # but all_adjacent is expanded at the BASE's load time -- before composition --
   # so it freezes to base-only edges and never picks up the overlay seam edges.
-  # Re-declared here so the domain-aware work-item context exists. Reproduced
-  # from project-state.
+  # Re-declared here so the domain-aware work-item context exists, replacing the
+  # base work_item_context with a domain-aware traversal.
   work_item_change_context:
     mode: traversal
     description: Starting from a work item, inspect product area, roadmap, release, milestone, upstream and downstream work, constraining decisions, risks, and open questions.
@@ -819,7 +819,7 @@ named_queries:
         many: true
 
   # open_question_context traverses the domain edge open_question_blocks_roadmap_item,
-  # so it is a domain query (no base equivalent). Reproduced from project-state.
+  # so it is a domain query (no base equivalent).
   open_question_context:
     mode: traversal
     description: Starting from an open question, inspect blocked and answered roadmap, work, and decision context.
@@ -858,11 +858,11 @@ named_queries:
         direction: incoming
         many: true
 
-  # Operational queries absent from the agent-operation base, reproduced for
-  # parity with standalone project-state. They reference only base entities, so
-  # they are new keys (no composer collision). The base provides the rest of
-  # the operational queue surface (review_queue, blocked_work_items,
-  # active_risks, open_questions_needing_review, etc.).
+  # Operational queries absent from the agent-operation base, added here for the
+  # project-management queue surface. They reference only base entities, so they
+  # are new keys (no composer collision). The base provides the rest of the
+  # operational queue surface (review_queue, blocked_work_items, active_risks,
+  # open_questions_needing_review, etc.).
   work_queue:
     mode: collection
     description: Active work items dispatched for implementation -- the queue an implementer or agentic loop pulls from. Curate by setting a work item's status to active.

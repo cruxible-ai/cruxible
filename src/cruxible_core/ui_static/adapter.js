@@ -191,12 +191,6 @@ export function detectKitShape(schema = {}, queryList = {}) {
   const hasEntities = (...names) => names.every((name) => entityTypes.includes(name));
   const hasQuery = (name) => queryNames.includes(name);
 
-  if (
-    hasEntities("RoadmapItem", "ReleaseLine", "Milestone", "ProductArea", "WorkItem") ||
-    hasQuery("release_work_items")
-  ) {
-    return "project-state";
-  }
   if (hasEntities("Actor", "SubjectRef", "StateNote", "WorkItem") || hasQuery("actor_work_queue")) {
     return "agent-operation";
   }
@@ -208,25 +202,16 @@ export function selectOverviewQueries(queryList = {}, schema = {}) {
   const queryByName = new Map(queries.map((query) => [query.name, query]));
   const shape = detectKitShape(schema, queryList);
   const preferredNames =
-    shape === "project-state"
+    shape === "agent-operation"
       ? [
           "review_queue",
-          "changes_requested_reviews",
+          "recent_state_notes",
           "blocked_work_items",
           "active_risks",
           "open_questions_needing_review",
-          "superseded_decisions",
+          "proposed_decisions",
         ]
-      : shape === "agent-operation"
-        ? [
-            "review_queue",
-            "recent_state_notes",
-            "blocked_work_items",
-            "active_risks",
-            "open_questions_needing_review",
-            "proposed_decisions",
-          ]
-        : [];
+      : [];
   const preferred = preferredNames.map((name) => queryByName.get(name)).filter(Boolean);
   const fallback = queries
     .filter((query) => query.mode === "collection" && !preferred.includes(query))

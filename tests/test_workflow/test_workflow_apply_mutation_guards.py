@@ -14,7 +14,7 @@ that clone shared the nested ``properties`` dicts with the live cache, so an
 in-place ``update_entity_properties`` during preview silently mutated live
 state.
 
-These tests build a real instance from the shipped project-state kit config
+These tests build a real instance from the shipped agent-operation kit config
 (real guard + named query), append a canonical close-work-item workflow, and
 exercise ``execute_workflow`` in preview and apply modes.
 """
@@ -40,9 +40,9 @@ from cruxible_core.service import (
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.executor import execute_workflow
 
-KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "project-state" / "config.yaml"
+KIT_CONFIG = Path(__file__).resolve().parents[2] / "kits" / "agent-operation" / "config.yaml"
 
-# A canonical close-work-item workflow appended to the project-state kit config.
+# A canonical close-work-item workflow appended to the agent-operation kit config.
 # make_entities builds the WorkItem upsert (status from input); apply_entities
 # commits it on the cloned canonical graph, which is exactly the path the G1 fix
 # wires the mutation guard into.
@@ -88,7 +88,7 @@ def _instance_with_close_workflow(tmp_path: Path) -> CruxibleInstance:
     return instance
 
 
-def _actor_context(actor_id: str = "robert") -> GovernedActorContext:
+def _actor_context(actor_id: str = "authorized-reviewer") -> GovernedActorContext:
     return GovernedActorContext(
         actor_type="human_user",
         actor_id=actor_id,
@@ -118,7 +118,15 @@ def _seed_work_item(instance: CruxibleInstance, status: str = "active") -> None:
 
 
 def _seed_approved_review(instance: CruxibleInstance) -> None:
-    """Add an approved ReviewRequest linked to wi-gated in one governed batch."""
+    """Add an approved ReviewRequest linked to wi-gated in one governed batch.
+
+    agent-operation gates approval with two stricter guards than the legacy
+    project-state kit: the approving actor must be ``authorized-reviewer``
+    (``review_request_approval_requires_authorized_actor``) and the verdict must
+    co-write a ``StateNote(kind=review_note)`` linked via
+    ``state_note_about_review_request`` in the same write
+    (``review_verdict_requires_rationale_note``). The batch below satisfies both.
+    """
     service_batch_direct_write(
         instance,
         BatchDirectWriteInput(
@@ -131,7 +139,19 @@ def _seed_approved_review(instance: CruxibleInstance) -> None:
                         "title": "Review gated work item",
                         "status": "approved",
                     },
-                )
+                ),
+                EntityWriteInput(
+                    entity_type="StateNote",
+                    entity_id="sn-gated",
+                    properties={
+                        "note_id": "sn-gated",
+                        "kind": "review_note",
+                        "title": "Approval rationale",
+                        "summary": "Approved after review.",
+                        "body": "Gated work item reviewed and approved.",
+                        "created_at": utc_now(),
+                    },
+                ),
             ],
             relationships=[
                 BatchRelationshipWriteInput(
@@ -140,7 +160,14 @@ def _seed_approved_review(instance: CruxibleInstance) -> None:
                     relationship_type="review_request_for_work_item",
                     to_type="WorkItem",
                     to_id="wi-gated",
-                )
+                ),
+                BatchRelationshipWriteInput(
+                    from_type="StateNote",
+                    from_id="sn-gated",
+                    relationship_type="state_note_about_review_request",
+                    to_type="ReviewRequest",
+                    to_id="rr-gated",
+                ),
             ],
         ),
         actor_context=_actor_context(),

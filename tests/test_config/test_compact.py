@@ -1159,7 +1159,7 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
     """The loader's compact detector is True for the compact kit, False for explicit.
 
     Explicit (engine) configs must stay on the unchanged load path, so the detector
-    must not fire on the explicit project-state kit config.
+    must not fire on the explicit kev-reference kit config.
     """
     import yaml as _yaml
 
@@ -1169,7 +1169,7 @@ def test_looks_compact_distinguishes_compact_from_explicit() -> None:
     assert looks_compact(compact) is True
 
     explicit = _yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "kits" / "project-state" / "config.yaml").read_text(
+        (Path(__file__).resolve().parents[2] / "kits" / "kev-reference" / "config.yaml").read_text(
             encoding="utf-8"
         )
     )

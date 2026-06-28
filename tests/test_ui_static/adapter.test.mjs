@@ -124,32 +124,22 @@ test("fixture adapter implements the live adapter method contract", async () => 
 });
 
 test("kit detection and overview selection prefer known zero-param queues", () => {
-  const projectSchema = {
-    entity_types: {
-      RoadmapItem: {},
-      ReleaseLine: {},
-      Milestone: {},
-      ProductArea: {},
-      WorkItem: {},
-    },
-  };
   const agentSchema = {
     entity_types: { Actor: {}, SubjectRef: {}, StateNote: {}, WorkItem: {} },
   };
   const queryList = {
     items: [
-      { name: "release_work_items", required_params: ["release_line_id"], mode: "traversal" },
+      { name: "actor_work_queue", required_params: ["actor_id"], mode: "traversal" },
       { name: "review_queue", required_params: [], mode: "collection", returns: "ReviewRequest" },
       { name: "blocked_work_items", required_params: [], mode: "collection", returns: "WorkItem" },
       { name: "generic_collection", required_params: [], mode: "collection", returns: "AnyEntity" },
     ],
   };
 
-  assert.equal(adapter.detectKitShape(projectSchema, queryList), "project-state");
   assert.equal(adapter.detectKitShape(agentSchema, { items: [] }), "agent-operation");
   assert.equal(adapter.detectKitShape({ entity_types: { Vehicle: {} } }, { items: [] }), "generic");
   assert.deepEqual(
-    adapter.selectOverviewQueries(queryList, projectSchema).map((query) => query.name),
+    adapter.selectOverviewQueries(queryList, agentSchema).map((query) => query.name),
     ["review_queue", "blocked_work_items", "generic_collection"],
   );
 });

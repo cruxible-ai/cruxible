@@ -1688,7 +1688,7 @@ def test_instance_backup_and_restore_routes(
     tmp_path: Path,
 ) -> None:
     instance_id = _init_instance(app_client, server_project)
-    artifact = tmp_path / "project-state.cruxible.zip"
+    artifact = tmp_path / "car-parts.cruxible.zip"
 
     backup = app_client.post(
         f"/api/v1/{instance_id}/instance/backup",
