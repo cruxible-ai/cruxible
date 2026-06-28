@@ -188,15 +188,18 @@ def apply_entity(
     # top-level import would be circular. Importing the resolver module here
     # breaks that cycle.
     from cruxible_core.service.direct_write_policy import (
+        TOKEN_MINT_SOURCE,
         effective_entity_write_policy,
         is_governed_source,
     )
 
     entity_type = validated.entity.entity_type
-    if (
-        not is_governed_source(source)
-        and effective_entity_write_policy(config, entity_type) == "proposal_only"
-    ):
+    policy = effective_entity_write_policy(config, entity_type)
+    if policy == "mint_only" and source != TOKEN_MINT_SOURCE:
+        # mint_only is exclusive to token_mint: refuse EVERY other source,
+        # including the governed verbs that proposal_only would have admitted.
+        raise DirectWriteRefusedError("entity", entity_type, source)
+    if not is_governed_source(source) and policy == "proposal_only":
         raise DirectWriteRefusedError("entity", entity_type, source)
 
     if validated.is_update:

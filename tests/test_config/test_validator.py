@@ -753,6 +753,106 @@ class TestValidatePrimaryKeys:
         assert any("primary_key" in e for e in exc_info.value.errors)
 
 
+class TestMintOnlyEntityWrites:
+    """``validate_mint_only_entity_writes`` static-rejects make_entities steps
+    targeting a mint_only type — the runtime chokepoint cannot see this because
+    make_entities -> apply_entities is applied under the governed workflow_apply
+    source that BYPASSES the refusal path."""
+
+    def _entity_types(self) -> dict[str, EntityTypeSchema]:
+        return {
+            "Token": EntityTypeSchema(
+                properties={"id": PropertySchema(type="string", primary_key=True)},
+                write_policy="mint_only",
+            ),
+            "Plain": EntityTypeSchema(
+                properties={"id": PropertySchema(type="string", primary_key=True)},
+            ),
+        }
+
+    def _make_entities_step(self, entity_type: str) -> WorkflowStepSchema:
+        return WorkflowStepSchema(
+            id="build",
+            make_entities={
+                "entity_type": entity_type,
+                "items": [{"id": "T-1"}],
+                "entity_id": "$item.id",
+                "properties": {"id": "$item.id"},
+            },
+            **{"as": "built"},
+        )
+
+    def test_make_entities_targeting_mint_only_rejected(self):
+        with pytest.raises(
+            ValidationError,
+            match="make_entities targets mint_only type 'Token'",
+        ):
+            _minimal_config(
+                entity_types=self._entity_types(),
+                relationships=[],
+                workflows={
+                    "wf": WorkflowSchema(
+                        steps=[self._make_entities_step("Token")],
+                        returns="built",
+                    )
+                },
+            )
+
+    def test_make_entities_targeting_non_mint_only_passes(self):
+        config = _minimal_config(
+            entity_types=self._entity_types(),
+            relationships=[],
+            workflows={
+                "wf": WorkflowSchema(
+                    steps=[self._make_entities_step("Plain")],
+                    returns="built",
+                )
+            },
+        )
+        # Plain is not mint_only; the validator must not reject it.
+        assert "wf" in config.workflows
+
+    def test_extends_overlay_referencing_mint_only_not_declared_does_not_raise(self):
+        # An overlay (``extends`` set) that references a mint_only type it does not
+        # itself DECLARE must not fail pre-composition — mirror the overlay skip.
+        config = _minimal_config(
+            extends="base",
+            entity_types={
+                "Plain": EntityTypeSchema(
+                    properties={"id": PropertySchema(type="string", primary_key=True)},
+                ),
+            },
+            relationships=[],
+            workflows={
+                "wf": WorkflowSchema(
+                    # 'Token' is declared mint_only in the base, not in this overlay,
+                    # so it is not in this config's mint_only set anyway; but pin that
+                    # even a declared-here mint_only target is skipped under extends.
+                    steps=[self._make_entities_step("Plain")],
+                    returns="built",
+                )
+            },
+        )
+        assert config.extends == "base"
+
+    def test_extends_overlay_with_declared_mint_only_target_skipped(self):
+        # The overlay skip is per-occurrence: even when THIS overlay declares the
+        # mint_only type AND wires it into make_entities, ``extends`` set means we
+        # defer to post-composition validation rather than raising here.
+        config = _minimal_config(
+            extends="base",
+            entity_types=self._entity_types(),
+            relationships=[],
+            workflows={
+                "wf": WorkflowSchema(
+                    steps=[self._make_entities_step("Token")],
+                    returns="built",
+                )
+            },
+        )
+        assert config.extends == "base"
+
+
 class TestValidateWorkflowExecution:
     def _workflow_config(self, **overrides) -> CoreConfig:
         defaults = dict(

@@ -125,6 +125,32 @@ relationships:
 constraints: []
 """
 
+# A synthetic ``mint_only`` entity type (``Token``). mint_only is stricter than
+# proposal_only: it refuses EVERY source except ``token_mint`` — including the
+# governed verbs ``workflow_apply`` / ``group_resolve``. (Synthetic only; the
+# real Actor type is NOT marked mint_only until Stage 2.)
+MINT_ONLY_CONFIG = """\
+version: "1.0"
+name: refuse_direct_writes_mint_only_test
+description: mint_only governance fixture
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id: {type: string, primary_key: true}
+  Part:
+    properties:
+      part_number: {type: string, primary_key: true}
+      name: {type: string, optional: true}
+  Token:
+    write_policy: mint_only
+    properties:
+      token_id: {type: string, primary_key: true}
+      label: {type: string, optional: true}
+
+constraints: []
+"""
+
 # All types direct (no per-type or instance-default proposal_only) — only the
 # env kill-switch can make this refuse.
 ALL_DIRECT_CONFIG = """\
@@ -193,6 +219,11 @@ def instance_default_instance(tmp_path: Path) -> CruxibleInstance:
 @pytest.fixture
 def all_direct_instance(tmp_path: Path) -> CruxibleInstance:
     return _instance(tmp_path, ALL_DIRECT_CONFIG)
+
+
+@pytest.fixture
+def mint_only_instance(tmp_path: Path) -> CruxibleInstance:
+    return _instance(tmp_path, MINT_ONLY_CONFIG)
 
 
 def _fits_input(*, pending: bool = False, lifecycle=None) -> RelationshipWriteInput:
@@ -632,3 +663,93 @@ def test_direct_write_refused_error_maps_to_403() -> None:
         "type_name": "fits",
         "source": "add_relationship",
     }
+
+
+# ---------------------------------------------------------------------------
+# mint_only: writable ONLY by token_mint — stricter than proposal_only
+# (governed verbs workflow_apply / group_resolve are REFUSED, not allowed)
+# ---------------------------------------------------------------------------
+
+
+def _token_entity(entity_id: str = "TK-1") -> EntityWriteInput:
+    return EntityWriteInput(
+        entity_type="Token",
+        entity_id=entity_id,
+        properties={"token_id": entity_id},
+    )
+
+
+def test_mint_only_direct_entity_add_refused(mint_only_instance: CruxibleInstance) -> None:
+    # The direct add path uses source="add_entity" — not token_mint — so refused.
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        service_add_entity_inputs(mint_only_instance, [_token_entity()])
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"
+
+
+def test_mint_only_batch_entity_write_refused(mint_only_instance: CruxibleInstance) -> None:
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        service_batch_direct_write(
+            mint_only_instance,
+            BatchDirectWriteInput(entities=[_token_entity()]),
+        )
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"
+
+
+def test_mint_only_mcp_write_refused(mint_only_instance: CruxibleInstance) -> None:
+    # The MCP add tool funnels through the same chokepoint with a non-token_mint
+    # source; pin it directly at the chokepoint.
+    config = mint_only_instance.load_config()
+    graph = mint_only_instance.load_graph()
+    validated = validate_entity(config, graph, "Token", "TK-1", {"token_id": "TK-1"})
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        apply_entity(graph, validated, config=config, source="mcp_add")
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"
+
+
+def test_mint_only_token_mint_source_allowed(mint_only_instance: CruxibleInstance) -> None:
+    # token_mint is the sole permitted source — the chokepoint must let it write.
+    config = mint_only_instance.load_config()
+    graph = mint_only_instance.load_graph()
+    validated = validate_entity(config, graph, "Token", "TK-1", {"token_id": "TK-1"})
+    apply_entity(graph, validated, config=config, source="token_mint")
+    assert graph.has_entity("Token", "TK-1")
+
+
+def test_mint_only_workflow_apply_source_refused(mint_only_instance: CruxibleInstance) -> None:
+    # KEY difference from proposal_only: the governed ``workflow_apply`` verb is
+    # REFUSED for a mint_only type (it would be allowed for proposal_only).
+    config = mint_only_instance.load_config()
+    graph = mint_only_instance.load_graph()
+    validated = validate_entity(config, graph, "Token", "TK-1", {"token_id": "TK-1"})
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        apply_entity(graph, validated, config=config, source="workflow_apply")
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"
+    assert not graph.has_entity("Token", "TK-1")
+
+
+def test_mint_only_group_resolve_source_refused(mint_only_instance: CruxibleInstance) -> None:
+    # KEY difference from proposal_only: the governed ``group_resolve`` verb is
+    # REFUSED for a mint_only type as well.
+    config = mint_only_instance.load_config()
+    graph = mint_only_instance.load_graph()
+    validated = validate_entity(config, graph, "Token", "TK-1", {"token_id": "TK-1"})
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        apply_entity(graph, validated, config=config, source="group_resolve")
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"
+    assert not graph.has_entity("Token", "TK-1")
+
+
+def test_mint_only_admin_mode_does_not_bypass(
+    mint_only_instance: CruxibleInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # mint_only is independent of the permission tier ladder — admin is refused.
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    with pytest.raises(DirectWriteRefusedError) as exc:
+        service_add_entity_inputs(mint_only_instance, [_token_entity()])
+    assert exc.value.kind == "entity"
+    assert exc.value.type_name == "Token"

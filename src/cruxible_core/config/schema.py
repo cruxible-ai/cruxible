@@ -192,14 +192,19 @@ class EntityTypeSchema(BaseModel):
     description: str | None = None
     properties: dict[str, PropertySchema]
     constraints: list[str] = Field(default_factory=list)
-    write_policy: Literal["direct", "proposal_only"] | None = None
+    write_policy: Literal["direct", "proposal_only", "mint_only"] | None = None
     """Per-type direct-write governance.
 
     ``None`` inherits ``runtime.default_write_policy``; ``"direct"`` explicitly
     opts out of the instance default (but not the env kill-switch);
-    ``"proposal_only"`` refuses direct entity adds for this type. Resolved by
-    ``service/direct_write_policy.py`` and enforced at the
-    ``graph/operations.py`` chokepoint.
+    ``"proposal_only"`` refuses direct entity adds for this type but still admits
+    the governed verbs (``workflow_apply`` / ``group_resolve``); ``"mint_only"``
+    is writable ONLY by the ``token_mint`` source and refuses ALL other sources,
+    INCLUDING ``workflow_apply`` / ``group_resolve``, intended for auth-managed
+    identity types. Resolved by ``service/direct_write_policy.py`` and enforced
+    at the ``graph/operations.py`` chokepoint; ``mint_only`` config-declared
+    write targets are additionally static-rejected at config load (see
+    ``CoreConfig.validate_mint_only_entity_writes``).
     """
 
     @model_validator(mode="after")
@@ -2217,6 +2222,45 @@ class CoreConfig(BaseModel):
                             f"relationship '{related.relationship}' in {field_name}"
                         )
                         raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_mint_only_entity_writes(self) -> CoreConfig:
+        """Reject config-declared entity writes targeting a ``mint_only`` type.
+
+        A ``mint_only`` entity type may be written ONLY by the ``token_mint``
+        source. The runtime chokepoint enforces that for direct/batch/MCP/governed
+        writes, but a workflow ``make_entities`` step builds entities that are
+        later applied with the governed ``workflow_apply`` source — which BYPASSES
+        the chokepoint refusal path. The only place to catch a config that wires a
+        ``mint_only`` type into ``make_entities`` is here, fail-closed at load.
+
+        Read the DECLARED ``write_policy`` directly (not the env-resolved policy):
+        config verification is about the static config, not a runtime env state.
+        ``make_entities`` is the complete config surface that creates entities —
+        ``apply_entities`` / ``apply_all`` only re-reference a prior
+        ``make_entities`` alias, and there is no seed-data config field.
+        """
+        mint_only_types = {
+            name
+            for name, schema in self.entity_types.items()
+            if schema.write_policy == "mint_only"
+        }
+        if not mint_only_types:
+            return self
+        for wf, workflow in self.workflows.items():
+            for i, step in enumerate(workflow.steps):
+                if step.make_entities is None:
+                    continue
+                t = step.make_entities.entity_type
+                if t in mint_only_types:
+                    if self.extends is not None:
+                        continue
+                    msg = (
+                        f"Workflow '{wf}' step {i} make_entities targets mint_only "
+                        f"type '{t}', which may only be written by the token_mint source"
+                    )
+                    raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

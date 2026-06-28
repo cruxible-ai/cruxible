@@ -163,3 +163,41 @@ def test_unknown_relationship_type_uses_default() -> None:
         default_write_policy="direct",
     )
     assert effective_relationship_write_policy(config, "nope", environ={}) == "direct"
+
+
+# ---------------------------------------------------------------------------
+# mint_only is ABSOLUTE — the env kill-switch must NOT downgrade it
+# ---------------------------------------------------------------------------
+
+
+def test_mint_only_resolves_to_mint_only_env_unset() -> None:
+    config = _build_config(
+        entity_write_policy="mint_only",
+        relationship_write_policy=None,
+        default_write_policy="direct",
+    )
+    assert effective_entity_write_policy(config, "Asset", environ={}) == "mint_only"
+
+
+def test_mint_only_is_absolute_over_env_kill_switch() -> None:
+    # The kill-switch downgrades to proposal_only, which is WEAKER than mint_only
+    # (it would admit governed verbs). mint_only must win, not be downgraded.
+    config = _build_config(
+        entity_write_policy="mint_only",
+        relationship_write_policy=None,
+        default_write_policy="proposal_only",
+    )
+    assert effective_entity_write_policy(config, "Asset", environ={ENV_KEY: "1"}) == "mint_only"
+
+
+def test_mint_only_is_absolute_over_monkeypatched_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ENV_KEY, "1")
+    config = _build_config(
+        entity_write_policy="mint_only",
+        relationship_write_policy=None,
+        default_write_policy="direct",
+    )
+    # environ=None reads os.environ, which monkeypatch has set.
+    assert effective_entity_write_policy(config, "Asset") == "mint_only"

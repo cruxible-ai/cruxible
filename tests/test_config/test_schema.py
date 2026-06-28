@@ -257,7 +257,7 @@ class TestEntityTypeSchema:
         entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
         assert entity.write_policy is None
 
-    @pytest.mark.parametrize("policy", ["direct", "proposal_only"])
+    @pytest.mark.parametrize("policy", ["direct", "proposal_only", "mint_only"])
     def test_write_policy_accepts_enum_values(self, policy):
         entity = EntityTypeSchema(
             properties={"name": PropertySchema(type="string")},

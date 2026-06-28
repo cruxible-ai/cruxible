@@ -12,9 +12,15 @@ reads process env, and ``CoreConfig`` must stay env-agnostic and snapshot-stable
 Env is read per-call (no process-global cache) so ``monkeypatch.setenv`` works in
 tests and a daemon picks up a flipped kill-switch without a restart.
 
-Effective precedence (union — any path to ``proposal_only`` wins):
+Effective precedence:
 
-    proposal_only  if  env kill-switch set (HARD, wins over everything)
+    mint_only      if  the type's explicit ``write_policy == "mint_only"``
+                   (ABSOLUTE — wins over everything, including the env
+                    kill-switch; an auth-managed type stays writable ONLY by the
+                    ``token_mint`` source and must not be downgraded to the
+                    weaker ``proposal_only`` by the kill-switch)
+    proposal_only  elif env kill-switch set (HARD, wins over the per-type
+                        opt-outs and the default below)
                    OR  the type's explicit ``write_policy == "proposal_only"``
                    OR  (type ``write_policy is None``
                         AND ``runtime.default_write_policy == "proposal_only"``)
@@ -24,8 +30,11 @@ env kill-switch.
 
 The chokepoint (``graph/operations.py``) only enforces this for writes whose
 ``source`` is NOT a governed verb. Governed verbs funnel state in through the
-audited proposal/workflow machinery and are always permitted; add new governed
-verbs to ``_GOVERNED_SOURCES`` below.
+audited proposal/workflow machinery and are always permitted for
+``proposal_only`` types; add new governed verbs to ``_GOVERNED_SOURCES`` below.
+A ``mint_only`` type is stricter still: it refuses EVERY source except
+``TOKEN_MINT_SOURCE`` — including the governed verbs — so ``_GOVERNED_SOURCES``
+does NOT apply to it.
 """
 
 from __future__ import annotations
@@ -35,17 +44,25 @@ from typing import Literal, Mapping
 
 from cruxible_core.config.schema import CoreConfig
 
-WritePolicy = Literal["direct", "proposal_only"]
+WritePolicy = Literal["direct", "proposal_only", "mint_only"]
 
 # Sources that funnel state in through governed, audited machinery. A write
-# carrying one of these is always permitted regardless of write_policy. Keep this
-# an ALLOWLIST (not a denylist of direct verbs): every write funnels through the
-# chokepoint, so an allowlist means a future direct verb cannot silently bypass
-# governance — it is refused until it is deliberately added here.
+# carrying one of these is always permitted for a ``proposal_only`` type. Keep
+# this an ALLOWLIST (not a denylist of direct verbs): every write funnels through
+# the chokepoint, so an allowlist means a future direct verb cannot silently
+# bypass governance — it is refused until it is deliberately added here.
 #   - "workflow_apply": canonical workflow apply_entities / apply_relationships
 #   - "group_resolve":  proposal group resolution (group propose -> resolve)
 # Add any future governed verb here, with a comment naming it.
+# NOTE: this set governs ``proposal_only`` ONLY. A ``mint_only`` type refuses
+# every source except ``TOKEN_MINT_SOURCE`` — the governed verbs included — so
+# ``TOKEN_MINT_SOURCE`` is deliberately NOT a member here.
 _GOVERNED_SOURCES: frozenset[str] = frozenset({"workflow_apply", "group_resolve"})
+
+# The sole source permitted to write a ``mint_only`` (auth-managed) entity type.
+# Exclusive: a ``mint_only`` type refuses ALL other sources, including the
+# governed verbs in ``_GOVERNED_SOURCES``.
+TOKEN_MINT_SOURCE = "token_mint"
 
 # Env kill-switch: daemon-wide override forcing proposal_only for the direct-write
 # verbs at the chokepoint (overrides per-type opt-outs + the default). Scope: governs
@@ -80,6 +97,12 @@ def _resolve(
     *,
     environ: Mapping[str, str] | None,
 ) -> WritePolicy:
+    if explicit == "mint_only":
+        # ABSOLUTE: a mint_only (auth-managed) type stays mint_only regardless of
+        # the env kill-switch. The kill-switch only downgrades to proposal_only,
+        # which is WEAKER than mint_only (it would let governed verbs through), so
+        # honoring it here would loosen, not tighten, the constraint.
+        return "mint_only"
     if env_refuses_direct_writes(environ):
         # HARD kill-switch wins over every per-type opt-out and the default.
         return "proposal_only"
