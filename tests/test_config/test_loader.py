@@ -102,6 +102,7 @@ relationships: []
         assert pfv.traversal[0].relationship == "fits"
         assert pfv.traversal[0].direction == "incoming"
 
+
 class TestSaveConfig:
     def test_save_config_round_trip(self, configs_dir: Path, tmp_path: Path):
         """Load car_parts.yaml, save to tmp, reload, assert equality."""

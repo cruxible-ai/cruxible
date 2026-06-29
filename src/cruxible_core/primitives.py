@@ -23,6 +23,7 @@ _JSON_TYPE_NAMES: dict[type[Any], str] = {
     float: "number",
 }
 
+
 def canonical_json(value: Any, *, default: Callable[[Any], Any] | None = None) -> str:
     """Serialize a JSON-compatible value to a deterministic, RFC-compliant string.
 

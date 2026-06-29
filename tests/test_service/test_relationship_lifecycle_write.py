@@ -126,9 +126,7 @@ def test_lifecycle_write_cannot_mutate_review_state(
     """
     # Stamp an approved review + group_override directly on the stored edge.
     graph = populated_instance.load_graph()
-    rel = graph.get_relationship(
-        "Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits"
-    )
+    rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
     assert rel is not None
     rel.metadata = rel.metadata.model_copy(
         update={
@@ -155,9 +153,7 @@ def test_lifecycle_write_cannot_mutate_review_state(
     )
     populated_instance.save_graph(graph)
 
-    review_before = _get_fits(populated_instance).metadata.assertion.review.model_dump(
-        mode="json"
-    )
+    review_before = _get_fits(populated_instance).metadata.assertion.review.model_dump(mode="json")
     override_before = _get_fits(populated_instance).metadata.assertion.group_override
     assert review_before["status"] == "approved"
     assert override_before is True

@@ -1307,6 +1307,7 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
 # Quality checks
 # ---------------------------------------------------------------------------
 
+
 def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
     """Expand compact ``quality_checks:`` to explicit discriminated checks.
 

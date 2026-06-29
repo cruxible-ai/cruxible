@@ -270,8 +270,7 @@ def validate_entity_projection_fields(
         field_list = ", ".join(unknown_fields)
         known = ", ".join(sorted(known_fields))
         raise ConfigError(
-            f"Unknown field(s) for entity type '{entity_type}': {field_list}. "
-            f"Known fields: {known}"
+            f"Unknown field(s) for entity type '{entity_type}': {field_list}. Known fields: {known}"
         )
 
 
@@ -285,9 +284,7 @@ def project_entity_fields(
         return entity
     property_fields = [field for field in fields if field not in _IDENTITY_PROJECTION_FIELDS]
     projected = {
-        field: entity.properties[field]
-        for field in property_fields
-        if field in entity.properties
+        field: entity.properties[field] for field in property_fields if field in entity.properties
     }
     return entity.model_copy(update={"properties": projected})
 

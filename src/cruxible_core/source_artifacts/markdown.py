@@ -160,9 +160,7 @@ def _heading_path_by_line(
         if event is not None:
             level, title = event
             stack = [
-                (existing_level, value)
-                for existing_level, value in stack
-                if existing_level < level
+                (existing_level, value) for existing_level, value in stack if existing_level < level
             ]
             stack.append((level, title))
         result[line_number] = [value for _level, value in stack]

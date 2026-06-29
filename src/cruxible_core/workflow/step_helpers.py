@@ -139,11 +139,7 @@ def extract_read_metadata(step_output: Any) -> dict[str, Any]:
     """Extract direct or propagated read metadata from a workflow step output."""
     if not isinstance(step_output, dict):
         return {}
-    direct = {
-        key: step_output[key]
-        for key in READ_METADATA_KEYS
-        if key in step_output
-    }
+    direct = {key: step_output[key] for key in READ_METADATA_KEYS if key in step_output}
     if direct:
         return direct
     source_metadata = step_output.get("source_metadata")
@@ -164,18 +160,12 @@ def merge_read_metadata(*metadata_items: dict[str, Any]) -> dict[str, Any]:
         if isinstance(reason, str)
     )
     query_receipt_ids = _ordered_unique(
-        receipt_id
-        for metadata in non_empty
-        for receipt_id in _metadata_query_receipt_ids(metadata)
+        receipt_id for metadata in non_empty for receipt_id in _metadata_query_receipt_ids(metadata)
     )
     merged = {
         "truncated": any(bool(metadata.get("truncated")) for metadata in non_empty),
-        "limit_truncated": any(
-            bool(metadata.get("limit_truncated")) for metadata in non_empty
-        ),
-        "path_truncated": any(
-            bool(metadata.get("path_truncated")) for metadata in non_empty
-        ),
+        "limit_truncated": any(bool(metadata.get("limit_truncated")) for metadata in non_empty),
+        "path_truncated": any(bool(metadata.get("path_truncated")) for metadata in non_empty),
         "truncation_reasons": reasons,
     }
     if query_receipt_ids:

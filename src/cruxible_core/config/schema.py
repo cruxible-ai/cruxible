@@ -1320,9 +1320,7 @@ class MutationGuardSchema(BaseModel):
             if self.where is not None:
                 raise ValueError("relationship evidence guards do not support 'where' scoping")
             if self.where_related or self.where_not_related:
-                raise ValueError(
-                    "relationship evidence guards do not support related-edge scoping"
-                )
+                raise ValueError("relationship evidence guards do not support related-edge scoping")
             forbidden_fields = [
                 field
                 for field in ("entity_type", "property", "new_value")
@@ -2242,9 +2240,7 @@ class CoreConfig(BaseModel):
         ``make_entities`` alias, and there is no seed-data config field.
         """
         mint_only_types = {
-            name
-            for name, schema in self.entity_types.items()
-            if schema.write_policy == "mint_only"
+            name for name, schema in self.entity_types.items() if schema.write_policy == "mint_only"
         }
         if not mint_only_types:
             return self

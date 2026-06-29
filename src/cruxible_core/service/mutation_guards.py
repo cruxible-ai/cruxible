@@ -153,6 +153,8 @@ def relationship_mutation_guard_errors(
         for relationship in relationships:
             for guard in evidence_guards:
                 condition = guard.condition
+                if not isinstance(condition, EvidenceRequirementGuardCondition):
+                    continue
                 if guard.relationship_type != relationship.relationship.relationship_type:
                     continue
                 evidence = _resulting_relationship_evidence(current_graph, relationship)
@@ -488,10 +490,7 @@ def _source_artifact_ref_round_trips(
         return False
 
     artifact_content_hash = ref.metadata.get("artifact_content_hash")
-    if (
-        artifact_content_hash is not None
-        and artifact_content_hash != artifact.content_hash
-    ):
+    if artifact_content_hash is not None and artifact_content_hash != artifact.content_hash:
         return False
 
     return True

@@ -91,9 +91,7 @@ def validate_edge_where_property_fields(
     for field in property_names:
         if field not in known_fields:
             known = ", ".join(sorted(known_fields)) or "(none)"
-            raise ConfigError(
-                f"Unknown where field for {subject}: {field}. Known fields: {known}"
-            )
+            raise ConfigError(f"Unknown where field for {subject}: {field}. Known fields: {known}")
 
 
 @dataclass(frozen=True)
@@ -469,9 +467,7 @@ def _split_predicate_path(path: str, *, base_scope: str | None) -> tuple[str, li
     if base_scope is not None:
         return base_scope, parts
     allowed = ", ".join(QUERY_PREDICATE_SCOPES)
-    raise QueryExecutionError(
-        f"Predicate path '{path}' must start with one of: {allowed}"
-    )
+    raise QueryExecutionError(f"Predicate path '{path}' must start with one of: {allowed}")
 
 
 def _scope_value(context: PredicateContext, scope: str) -> Any:
@@ -496,10 +492,7 @@ def _resolve_predicate_value(
     if isinstance(value, list):
         return [_resolve_predicate_value(item, context, params) for item in value]
     if isinstance(value, dict):
-        return {
-            key: _resolve_predicate_value(item, context, params)
-            for key, item in value.items()
-        }
+        return {key: _resolve_predicate_value(item, context, params) for key, item in value.items()}
     return value
 
 
@@ -577,8 +570,7 @@ def _predicate_path_entity(
         if entity.entity_type == entity_type and entity.entity_id == entity_id:
             return entity
     raise QueryExecutionError(
-        f"Predicate reference '{ref}' points to missing path entity "
-        f"{entity_type}:{entity_id}"
+        f"Predicate reference '{ref}' points to missing path entity {entity_type}:{entity_id}"
     )
 
 

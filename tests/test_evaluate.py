@@ -38,9 +38,7 @@ def _review_metadata(status: str, source: str = "human") -> RelationshipMetadata
 
 
 def _group_metadata(group_id: str = "GRP-test") -> RelationshipMetadata:
-    return RelationshipMetadata(
-        provenance=RelationshipProvenance(source_ref=f"group:{group_id}")
-    )
+    return RelationshipMetadata(provenance=RelationshipProvenance(source_ref=f"group:{group_id}"))
 
 
 def _minimal_config(**overrides) -> CoreConfig:
@@ -424,9 +422,7 @@ class TestGovernedSupportRelationships:
         )
         store = GroupStore(":memory:")
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "missing_support_evidence"
         assert findings[0].detail["support_state"] == "direct_without_evidence"
@@ -456,9 +452,7 @@ class TestGovernedSupportRelationships:
         )
         store = GroupStore(":memory:")
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert findings == []
 
     def test_rationale_only_evidence_still_warns_without_group_trail(self):
@@ -479,9 +473,7 @@ class TestGovernedSupportRelationships:
         )
         store = GroupStore(":memory:")
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "missing_support_evidence"
 
@@ -499,9 +491,7 @@ class TestGovernedSupportRelationships:
             )
         )
         report = evaluate_graph(config, graph)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert "Pending review" in findings[0].message
         assert findings[0].detail["reason"] == "pending_review"
@@ -519,13 +509,9 @@ class TestGovernedSupportRelationships:
                 metadata=_group_metadata(),
             )
         )
-        store = _store_with_member(
-            [CandidateSignal(signal_source="detector", signal="support")]
-        )
+        store = _store_with_member([CandidateSignal(signal_source="detector", signal="support")])
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "missing_required_signal"
         assert findings[0].detail["signal_sources"] == ["reviewer"]
@@ -550,9 +536,7 @@ class TestGovernedSupportRelationships:
             ]
         )
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "required_unsure"
 
@@ -576,9 +560,7 @@ class TestGovernedSupportRelationships:
             ]
         )
         report = evaluate_graph(config, graph, group_store=store)
-        findings = [
-            f for f in report.findings if f.category == "governed_support_relationship"
-        ]
+        findings = [f for f in report.findings if f.category == "governed_support_relationship"]
         assert len(findings) == 1
         assert findings[0].detail["reason"] == "blocking_contradict"
 
@@ -1812,9 +1794,7 @@ class TestFindingOrderingDeterminism:
             )
             for i in range(30)
         ]
-        forward = _filter_and_order_findings(
-            findings, severity_filter=None, category_filter=None
-        )
+        forward = _filter_and_order_findings(findings, severity_filter=None, category_filter=None)
         reversed_ = _filter_and_order_findings(
             list(reversed(findings)), severity_filter=None, category_filter=None
         )

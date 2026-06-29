@@ -372,9 +372,7 @@ class TestResolutions:
         assert store.find_resolution("fits", "sig1", confirmed=True) is not None
 
     def test_find_with_both_filters(self, store: GroupStore) -> None:
-        store.save_resolution(
-            "fits", "sig1", "approve", "", "", {}, {}, "human", confirmed=False
-        )
+        store.save_resolution("fits", "sig1", "approve", "", "", {}, {}, "human", confirmed=False)
         store.save_resolution("fits", "sig1", "reject", "", "", {}, {}, "human", confirmed=True)
         # Only confirmed approvals
         assert store.find_resolution("fits", "sig1", action="approve", confirmed=True) is None

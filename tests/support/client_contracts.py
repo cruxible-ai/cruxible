@@ -197,9 +197,7 @@ def _compare_field(
     new_types = _schema_types(new_field.get("schema", {}))
     if old_types and new_types:
         removed_types = {
-            old_type
-            for old_type in old_types
-            if not _type_is_still_accepted(old_type, new_types)
+            old_type for old_type in old_types if not _type_is_still_accepted(old_type, new_types)
         }
         added_types = {
             new_type

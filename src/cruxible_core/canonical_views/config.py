@@ -106,9 +106,7 @@ def _render_workflow_steps_readme(config: CoreConfig) -> str:
 
 
 def _render_workflow_dependencies(config: CoreConfig) -> str:
-    return _as_rendered_text(
-        render_workflow_dependency_mermaid(build_workflow_view(config))
-    )
+    return _as_rendered_text(render_workflow_dependency_mermaid(build_workflow_view(config)))
 
 
 def _render_queries(config: CoreConfig) -> str:
@@ -116,9 +114,7 @@ def _render_queries(config: CoreConfig) -> str:
 
 
 def _render_query_map(config: CoreConfig) -> str:
-    return _as_rendered_text(
-        render_query_map_mermaid(build_query_view(config, query_infos=[]))
-    )
+    return _as_rendered_text(render_query_map_mermaid(build_query_view(config, query_infos=[])))
 
 
 def _render_query_catalog(config: CoreConfig) -> str:
@@ -343,9 +339,7 @@ def update_readme_file(
     selected_keys: tuple[str, ...],
 ) -> None:
     """Replace CRUXIBLE marker blocks in a README file."""
-    readme_path.write_text(
-        render_readme_update(readme_path.read_text(), config, selected_keys)
-    )
+    readme_path.write_text(render_readme_update(readme_path.read_text(), config, selected_keys))
 
 
 def _render_readme_block(*, spec: ViewSpec, config: CoreConfig) -> str:

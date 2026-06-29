@@ -49,9 +49,7 @@ def _parse_where_options(values: tuple[str, ...]) -> dict[str, dict[str, Any]] |
             field, value = raw.split("=", 1)
             operator = "eq"
         else:
-            raise click.BadParameter(
-                "where must use FIELD=VALUE, FIELD~VALUE, or FIELD:in=A,B"
-            )
+            raise click.BadParameter("where must use FIELD=VALUE, FIELD~VALUE, or FIELD:in=A,B")
         if not field:
             raise click.BadParameter("where field must be non-empty")
         operators = where.setdefault(field, {})

@@ -386,8 +386,7 @@ class TestSQLiteReceiptStore:
 
     def test_trace_payload_blob_table_is_not_created(self, store: SQLiteReceiptStore):
         row = store._conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name = 'trace_payload_blobs'",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trace_payload_blobs'",
         ).fetchone()
         assert row is None
 

@@ -17,7 +17,5 @@ def compute_group_signature(
     Only thesis_facts is hashed, not analysis_state. This ensures signature
     stability — LLM rationales and varying centroids don't break auto-resolve.
     """
-    payload = canonical_json(
-        {"relationship_type": relationship_type, "thesis_facts": thesis_facts}
-    )
+    payload = canonical_json({"relationship_type": relationship_type, "thesis_facts": thesis_facts})
     return f"sigv1:{hashlib.sha256(payload.encode()).hexdigest()}"

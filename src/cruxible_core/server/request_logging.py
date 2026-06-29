@@ -6,7 +6,7 @@ import io
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, cast
 
 import structlog
 from fastapi import Request
@@ -140,7 +140,7 @@ def configure_request_logging(
             structlog.processors.add_log_level,
             structlog.processors.JSONRenderer(),
         ],
-        logger_factory=structlog.PrintLoggerFactory(file=sink),
+        logger_factory=structlog.PrintLoggerFactory(file=cast(TextIO, sink)),
         # Not cached: a cache-bound logger survives later structlog.configure
         # calls, which permanently detaches request logs from any
         # reconfiguration (observed as test-order-dependent log capture).

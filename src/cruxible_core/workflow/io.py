@@ -97,9 +97,7 @@ def _read_output_metadata(
     """Build consistent workflow read-step metadata."""
     reasons = list(truncation_reasons or [])
     is_truncated = (
-        truncated
-        if truncated is not None
-        else limit_truncated or path_truncated or bool(reasons)
+        truncated if truncated is not None else limit_truncated or path_truncated or bool(reasons)
     )
     metadata: dict[str, Any] = {
         "total_results": total_results,
@@ -466,9 +464,7 @@ def execute_assert_not_truncated_step(
         "path_truncated": bool(metadata.get("path_truncated")),
     }
     reasons = [
-        reason
-        for reason in metadata.get("truncation_reasons", [])
-        if isinstance(reason, str)
+        reason for reason in metadata.get("truncation_reasons", []) if isinstance(reason, str)
     ]
     active_flags = [name for name, active in flags.items() if active]
     passed = not active_flags
@@ -559,8 +555,7 @@ def execute_assert_exists_step(
         resolution_error = str(exc)
     present = resolution_error is None and _value_is_present(resolved)
     message = spec.message or (
-        f"assert_exists step '{compiled_step.step_id}' failed: "
-        f"reference '{spec.ref}' is required"
+        f"assert_exists step '{compiled_step.step_id}' failed: reference '{spec.ref}' is required"
     )
     detail: dict[str, Any] = {
         "guard": "assert_exists",
@@ -591,8 +586,7 @@ def _get_guard_source_output(
 ) -> Any:
     if source_step not in step_outputs:
         raise QueryExecutionError(
-            f"Workflow guard step '{guard_step_id}' references unknown step output "
-            f"'{source_step}'"
+            f"Workflow guard step '{guard_step_id}' references unknown step output '{source_step}'"
         )
     return step_outputs[source_step]
 

@@ -371,9 +371,7 @@ class TestWorkflowDataflowSteps:
         assert result.output["input_count"] == 1
         assert result.output["items"] == [{"id": "A", "severity": "high", "score": 0.9}]
 
-    def test_execute_filter_items_honors_typed_temporal_comparisons(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_filter_items_honors_typed_temporal_comparisons(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -413,9 +411,7 @@ class TestWorkflowDataflowSteps:
             }
         ]
 
-    def test_execute_filter_and_dedupe_items_preserve_read_metadata(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_filter_and_dedupe_items_preserve_read_metadata(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -470,9 +466,7 @@ class TestWorkflowDataflowSteps:
         assert deduped_metadata["truncated"] is True
         assert deduped_metadata["truncation_reasons"] == ["limit"]
 
-    def test_execute_aggregate_items_grouped_counts_and_ordering(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_aggregate_items_grouped_counts_and_ordering(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -584,9 +578,7 @@ class TestWorkflowDataflowSteps:
 
         assert empty_result.output["items"] == [{"row_count": 0, "max_score": None}]
 
-    def test_execute_aggregate_items_rollups_and_typed_coercion(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_aggregate_items_rollups_and_typed_coercion(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -633,9 +625,7 @@ class TestWorkflowDataflowSteps:
             }
         ]
 
-    def test_execute_aggregate_items_rejects_invalid_numeric_values(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_aggregate_items_rejects_invalid_numeric_values(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -681,9 +671,7 @@ class TestWorkflowDataflowSteps:
         with pytest.raises(QueryExecutionError, match="sum requires finite numeric values"):
             execute_workflow(instance, instance.load_config(), "dataflow", {})
 
-    def test_execute_aggregate_items_rejects_non_finite_typed_min_max(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_aggregate_items_rejects_non_finite_typed_min_max(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -749,8 +737,7 @@ class TestWorkflowDataflowSteps:
         aggregate_step = next(
             node
             for node in result.receipt.nodes
-            if node.node_type == "plan_step"
-            and node.detail.get("step_id") == "summary"
+            if node.node_type == "plan_step" and node.detail.get("step_id") == "summary"
         )
         assert aggregate_step.detail["kind"] == "aggregate_items"
         assert aggregate_step.detail["input_count"] == 1
@@ -758,9 +745,7 @@ class TestWorkflowDataflowSteps:
         assert aggregate_step.detail["measures"] == {"row_count": "count"}
         assert aggregate_step.detail["source_metadata"]["truncated"] is True
 
-    def test_execute_assert_honors_typed_datetime_comparison(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_assert_honors_typed_datetime_comparison(self, tmp_path: Path) -> None:
         instance = dataflow_instance(
             tmp_path,
             steps_yaml="""
@@ -784,8 +769,7 @@ class TestWorkflowDataflowSteps:
 
         assert result.output["items"] == [{"id": "A"}]
         assert any(
-            node.node_type == "plan_step"
-            and node.detail.get("value_type") == "datetime"
+            node.node_type == "plan_step" and node.detail.get("value_type") == "datetime"
             for node in result.receipt.nodes
         )
 

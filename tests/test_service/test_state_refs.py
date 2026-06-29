@@ -55,8 +55,12 @@ def test_state_ref_specific_release_still_tracks_latest(monkeypatch: pytest.Monk
     resolved = resolve_state_source(state_ref="kev-reference@2026-03-27")
 
     assert resolved.source_ref == "kev-reference@2026-03-27"
-    assert resolved.pull_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:2026-03-27"
-    assert resolved.tracking_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:latest"
+    assert (
+        resolved.pull_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:2026-03-27"
+    )
+    assert (
+        resolved.tracking_transport_ref == "oci://ghcr.io/cruxible-ai/models/kev-reference:latest"
+    )
     assert resolved.requested_release == "2026-03-27"
 
 

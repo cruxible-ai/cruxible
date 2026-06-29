@@ -33,9 +33,7 @@ def _creation_path_label(workflow_names: list[str]) -> str:
 
 
 def _matching_policy_label(auto_resolve_when: str, prior_trust_policy: str) -> str:
-    return (
-        f"{humanize_label(auto_resolve_when)}; prior trust: {humanize_label(prior_trust_policy)}"
-    )
+    return f"{humanize_label(auto_resolve_when)}; prior trust: {humanize_label(prior_trust_policy)}"
 
 
 def _decision_policy_label(policies: list[Any]) -> str:

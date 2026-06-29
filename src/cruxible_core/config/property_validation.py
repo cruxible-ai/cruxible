@@ -121,9 +121,7 @@ def validate_property_payload(
     if primary_key_name is not None and primary_key_name in source:
         supplied = source.pop(primary_key_name)
         if entity_id is not None and str(supplied) != str(entity_id):
-            errors.append(
-                f"property '{primary_key_name}': must match entity_id '{entity_id}'"
-            )
+            errors.append(f"property '{primary_key_name}': must match entity_id '{entity_id}'")
 
     extra = sorted(set(source) - set(property_schemas))
     for prop_name in extra:

@@ -12,10 +12,7 @@ class TestCanonicalJson:
         assert canonical_json({"b": 1, "a": 2}) == '{"a":2,"b":1}'
 
     def test_sorts_nested_keys(self) -> None:
-        assert (
-            canonical_json({"outer": {"z": 1, "a": 2}})
-            == '{"outer":{"a":2,"z":1}}'
-        )
+        assert canonical_json({"outer": {"z": 1, "a": 2}}) == '{"outer":{"a":2,"z":1}}'
 
     def test_byte_equal_across_insertion_orders(self) -> None:
         a = canonical_json({"x": 1, "y": 2, "z": 3})

@@ -118,11 +118,7 @@ def _write_minimal_text_pdf(path: Path, text: str) -> None:
             "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\n"
             "endobj\n"
         ),
-        (
-            "4 0 obj\n"
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\n"
-            "endobj\n"
-        ),
+        ("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"),
         f"5 0 obj\n<< /Length {len(stream.encode())} >>\nstream\n{stream}\nendstream\nendobj\n",
     ]
     header = "%PDF-1.4\n"

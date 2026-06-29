@@ -27,6 +27,7 @@ from cruxible_core.graph.operations import (
 from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE, provenance_group_id
 from cruxible_core.graph.types import (
     EntityInstance,
+    EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
 )
@@ -456,7 +457,7 @@ def _entity_from_input(value: EntityWriteInput) -> EntityInstance:
         entity_type=value.entity_type,
         entity_id=value.entity_id,
         properties=value.properties,
-        metadata=value.metadata,
+        metadata=EntityMetadata.from_metadata(value.metadata),
     )
 
 

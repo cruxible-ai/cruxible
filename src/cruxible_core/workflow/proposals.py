@@ -218,9 +218,7 @@ def _query_source_evidence(
             if isinstance(source_step, str):
                 lineage_evidence["source_step"] = source_step
             lineage_row = source.get("row")
-            row_evidence = (
-                _query_row_evidence(lineage_row) if isinstance(lineage_row, dict) else {}
-            )
+            row_evidence = _query_row_evidence(lineage_row) if isinstance(lineage_row, dict) else {}
             if row_evidence:
                 lineage_evidence.update(row_evidence)
             else:
@@ -341,10 +339,7 @@ def _bounded_json_value(value: Any) -> Any:
             for key in sorted(value, key=str)[:MAX_QUERY_EVIDENCE_DICT_ITEMS]
         }
     if isinstance(value, list):
-        return [
-            _bounded_json_value(item)
-            for item in value[:MAX_QUERY_EVIDENCE_LIST_ITEMS]
-        ]
+        return [_bounded_json_value(item) for item in value[:MAX_QUERY_EVIDENCE_LIST_ITEMS]]
     return value
 
 
@@ -600,9 +595,7 @@ def build_relationship_group_proposal(
             properties=candidate.properties,
             evidence_refs=candidate.evidence_refs,
             evidence_rationale=candidate.evidence_rationale,
-            source_query_evidence=candidate.source_query_evidence[
-                :MAX_QUERY_EVIDENCE_PER_MEMBER
-            ],
+            source_query_evidence=candidate.source_query_evidence[:MAX_QUERY_EVIDENCE_PER_MEMBER],
         )
         for candidate in candidate_set.candidates
     }
@@ -622,8 +615,7 @@ def build_relationship_group_proposal(
                 )
             member = members_by_pair[key]
             if any(
-                existing.signal_source == signal_batch.signal_source
-                for existing in member.signals
+                existing.signal_source == signal_batch.signal_source for existing in member.signals
             ):
                 raise QueryExecutionError(
                     f"Workflow step '{step_id}' produced duplicate signal source "

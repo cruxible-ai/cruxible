@@ -65,8 +65,7 @@ state_option = click.option(
     type=click.Choice(["live", "accepted", "all", "not-live", "pending", "reviewable"]),
     default=None,
     help=(
-        "Read-visibility state: live (default), accepted, all, not-live, "
-        "pending, or reviewable."
+        "Read-visibility state: live (default), accepted, all, not-live, pending, or reviewable."
     ),
 )
 

@@ -92,12 +92,8 @@ def evaluate_graph(
        and cardinality rules
     """
     findings: list[EvaluationFinding] = []
-    constraint_summary: dict[str, int] = {
-        constraint.name: 0 for constraint in config.constraints
-    }
-    quality_summary: dict[str, int] = {
-        check.name: 0 for check in config.quality_checks
-    }
+    constraint_summary: dict[str, int] = {constraint.name: 0 for constraint in config.constraints}
+    quality_summary: dict[str, int] = {check.name: 0 for check in config.quality_checks}
 
     _check_orphans(graph, findings, exclude_types=exclude_orphan_types)
     _check_coverage_gaps(config, graph, findings)
@@ -244,9 +240,7 @@ def _check_constraint_violations(
             to_entity = graph.get_entity(to_type, to_id)
 
             from_props = (
-                entity_properties_with_identity(
-                    config, from_type, from_id, from_entity.properties
-                )
+                entity_properties_with_identity(config, from_type, from_id, from_entity.properties)
                 if from_entity
                 else {}
             )
@@ -269,9 +263,7 @@ def _check_constraint_violations(
                     value_type=constraint.value_type,
                 )
             ):
-                constraint_summary[constraint.name] = (
-                    constraint_summary.get(constraint.name, 0) + 1
-                )
+                constraint_summary[constraint.name] = constraint_summary.get(constraint.name, 0) + 1
                 findings.append(
                     EvaluationFinding(
                         category="constraint_violation",
@@ -490,9 +482,7 @@ def _governed_support_finding(
     return EvaluationFinding(
         category="governed_support_relationship",
         severity="warning",
-        message=(
-            f"{message}: {from_type}:{from_id} —[{relationship_type}]→ {to_type}:{to_id}"
-        ),
+        message=(f"{message}: {from_type}:{from_id} —[{relationship_type}]→ {to_type}:{to_id}"),
         detail=detail,
     )
 
@@ -725,8 +715,7 @@ def _run_property_quality_check(
                 quality_summary,
                 check,
                 message=(
-                    f"Quality check '{check.name}' failed for "
-                    f"{target['label']}.{check.property}"
+                    f"Quality check '{check.name}' failed for {target['label']}.{check.property}"
                 ),
                 detail={
                     "reason": reason,
@@ -755,8 +744,7 @@ def _run_json_content_quality_check(
                 quality_summary,
                 check,
                 message=(
-                    f"Quality check '{check.name}' failed for "
-                    f"{target['label']}.{check.property}"
+                    f"Quality check '{check.name}' failed for {target['label']}.{check.property}"
                 ),
                 detail={
                     "reason": "not_array",
@@ -808,8 +796,10 @@ def _run_json_content_quality_check(
                 continue
 
             populated_keys = [key for key in check.keys if not _is_empty_value(item.get(key))]
-            is_valid = bool(populated_keys) if check.match == "any" else len(populated_keys) == len(
-                check.keys
+            is_valid = (
+                bool(populated_keys)
+                if check.match == "any"
+                else len(populated_keys) == len(check.keys)
             )
             if not is_valid:
                 _append_quality_finding(
@@ -1076,8 +1066,7 @@ def _append_relationship_property_consistency_finding(
         quality_summary,
         check,
         message=(
-            f"Quality check '{check.name}' failed for "
-            f"{entity.entity_type}:{entity.entity_id}"
+            f"Quality check '{check.name}' failed for {entity.entity_type}:{entity.entity_id}"
         ),
         detail={
             "reason": reason,

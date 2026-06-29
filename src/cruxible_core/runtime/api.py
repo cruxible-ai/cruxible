@@ -9,7 +9,7 @@ import shutil
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -969,7 +969,7 @@ def restore_instance(
     )
     validate_root_dir(str(target_root))
 
-    registry_status = "registered"
+    registry_status: Literal["registered", "repaired", "unchanged"] = "registered"
     if record is not None:
         registered_root = Path(record.location)
         if _registry_record_points_to_healthy_instance(registered_root):

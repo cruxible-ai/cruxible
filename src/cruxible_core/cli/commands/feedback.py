@@ -50,8 +50,8 @@ def _parse_corrections(corrections: str | None) -> dict[str, Any] | None:
 def _result_payload(result: Any) -> dict[str, Any]:
     if hasattr(result, "model_dump"):
         return cast(dict[str, Any], result.model_dump(mode="json"))
-    if is_dataclass(result):
-        return cast(dict[str, Any], asdict(result))
+    if is_dataclass(result) and not isinstance(result, type):
+        return asdict(result)
     return cast(dict[str, Any], dict(result))
 
 

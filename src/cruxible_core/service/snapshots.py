@@ -9,7 +9,7 @@ import tempfile
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 from zipfile import ZipInfo
 
 from pydantic import ValidationError
@@ -200,9 +200,7 @@ def service_restore_instance(
             contents[_INSTANCE_BACKUP_METADATA],
             instance_mode=instance_mode,
         )
-        (instance_dir / "instance.json").write_text(
-            json.dumps(metadata, indent=2, sort_keys=True)
-        )
+        (instance_dir / "instance.json").write_text(json.dumps(metadata, indent=2, sort_keys=True))
         (instance_dir / "state.db").write_bytes(contents[_INSTANCE_BACKUP_STATE_DB])
         lock_bytes = contents.get(LOCK_FILE_NAME)
         if lock_bytes is not None:
@@ -269,9 +267,7 @@ def service_relocate_instance(
             f"Relocate target {target_root} is nested inside the source {source_root}"
         )
     if overlap == "contains":
-        raise ConfigError(
-            f"Relocate target {target_root} contains the source {source_root}"
-        )
+        raise ConfigError(f"Relocate target {target_root} contains the source {source_root}")
 
     # 1. Back up the healthy instance to a throwaway artifact. Keep it under the
     #    target's parent so the temp + restore staging share a filesystem.
@@ -341,9 +337,14 @@ def _backup_sqlite_db(source: Path, target: Path) -> None:
     backup_sqlite_database(source, target)
 
 
+class _InstanceBackupBundle(TypedDict):
+    manifest: InstanceBackupManifest
+    contents: dict[str, bytes]
+
+
 def _read_verified_instance_backup(
     artifact: Path,
-) -> dict[str, InstanceBackupManifest | dict[str, bytes]]:
+) -> _InstanceBackupBundle:
     try:
         with zipfile.ZipFile(artifact) as archive:
             _validate_zip_names(archive)
@@ -355,19 +356,14 @@ def _read_verified_instance_backup(
                 )
             manifest = _parse_manifest(archive.read(_INSTANCE_BACKUP_MANIFEST))
             missing_required_artifacts = sorted(
-                (_INSTANCE_BACKUP_REQUIRED - {_INSTANCE_BACKUP_MANIFEST})
-                - set(manifest.artifacts)
+                (_INSTANCE_BACKUP_REQUIRED - {_INSTANCE_BACKUP_MANIFEST}) - set(manifest.artifacts)
             )
             if missing_required_artifacts:
                 raise ConfigError(
                     "Instance backup manifest is missing required artifact digest(s): "
                     + ", ".join(missing_required_artifacts)
                 )
-            contents = {
-                name: archive.read(name)
-                for name in manifest.artifacts
-                if name in names
-            }
+            contents = {name: archive.read(name) for name in manifest.artifacts if name in names}
     except ConfigError:
         raise
     except (OSError, KeyError, zipfile.BadZipFile) as exc:

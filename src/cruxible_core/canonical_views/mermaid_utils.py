@@ -42,10 +42,7 @@ def render_mermaid_inline_legend(items: Sequence[MermaidLegendItem]) -> list[str
     """Render a single-line Markdown legend for compact pages."""
     if not items:
         return []
-    parts = [
-        f"{item.visual} = {item.meaning.rstrip('.')}"
-        for item in items
-    ]
+    parts = [f"{item.visual} = {item.meaning.rstrip('.')}" for item in items]
     return [f"**Diagram legend:** {'; '.join(parts)}."]
 
 

@@ -81,8 +81,7 @@ def test_client_wraps_transport_error_as_server_unreachable(
     err = excinfo.value
     assert err.target == "http://server.invalid"
     assert str(err) == (
-        "could not reach Cruxible server at http://server.invalid: "
-        "Name or service not known"
+        "could not reach Cruxible server at http://server.invalid: Name or service not known"
     )
 
 

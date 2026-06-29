@@ -131,9 +131,7 @@ def test_stamp_modified_preserves_creation_correlation_fields() -> None:
 def test_backfill_on_touch_stamps_existing_provenance() -> None:
     existing = make_provenance("ingest", "fitments", receipt_id="RCP-create")
 
-    result = backfill_provenance_on_touch(
-        existing, "cli_add", "add_relationship", "cli_add"
-    )
+    result = backfill_provenance_on_touch(existing, "cli_add", "add_relationship", "cli_add")
 
     # Existing provenance is stamped, not replaced: creation fields survive.
     assert result.source == "ingest"

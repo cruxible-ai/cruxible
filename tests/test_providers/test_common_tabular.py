@@ -27,9 +27,7 @@ def _provider_context(path: Path) -> ProviderContext:
 def test_load_tabular_artifact_bundle_reads_csv_and_jsonl_with_provenance(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "assets.csv").write_text(
-        "Asset ID,Host Name\nasset-1,api-01\nasset-2,api-02\n"
-    )
+    (tmp_path / "assets.csv").write_text("Asset ID,Host Name\nasset-1,api-01\nasset-2,api-02\n")
     (tmp_path / "software_inventory.jsonl").write_text(
         '{"Asset ID":"asset-1","Software Name":"Apache HTTP Server"}\n'
         '{"Asset ID":"asset-2","Software Name":"Google Chrome"}\n'

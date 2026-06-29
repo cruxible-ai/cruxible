@@ -30,6 +30,7 @@ from cruxible_core.graph.provenance import (
 )
 from cruxible_core.graph.types import (
     EntityInstance,
+    EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
 )
@@ -59,7 +60,7 @@ def validate_entity(
     entity_id: str,
     properties: dict[str, Any] | None = None,
     *,
-    metadata: dict[str, Any] | None = None,
+    metadata: EntityMetadata | dict[str, Any] | None = None,
 ) -> ValidatedEntity:
     """Validate an entity against config and graph state.
 
@@ -89,7 +90,7 @@ def validate_entity(
         entity_type=entity_type,
         entity_id=entity_id,
         properties=validation.properties,
-        metadata=dict(metadata or {}),
+        metadata=EntityMetadata.from_metadata(metadata or {}),
     )
     return ValidatedEntity(entity=entity, is_update=is_update)
 

@@ -275,9 +275,7 @@ def _validate_constraints(
         to_prop = parsed.to_property
         rel = relationships.get(rel_name)
         if rel is None:
-            errors.append(
-                f"Constraint '{constraint.name}': relationship '{rel_name}' not defined"
-            )
+            errors.append(f"Constraint '{constraint.name}': relationship '{rel_name}' not defined")
             continue
 
         from_entity = config.get_entity_type(rel.from_entity)
@@ -477,9 +475,7 @@ def _validate_decision_policies(config: CoreConfig, errors: list[str]) -> None:
 
         if policy.applies_to == "query":
             if policy.query_name is None:
-                errors.append(
-                    f"Decision policy '{policy.name}': query policies require query_name"
-                )
+                errors.append(f"Decision policy '{policy.name}': query policies require query_name")
                 continue
             if policy.query_name not in query_names:
                 errors.append(
@@ -1359,9 +1355,7 @@ def _validate_workflows(config: CoreConfig, errors: list[str]) -> None:
             )
 
         if uses_apply_steps and workflow.type != "canonical":
-            errors.append(
-                f"Workflow '{workflow_name}': apply_* steps require type: canonical"
-            )
+            errors.append(f"Workflow '{workflow_name}': apply_* steps require type: canonical")
         if workflow.type == "canonical" and not uses_apply_steps:
             errors.append(
                 f"Workflow '{workflow_name}': canonical workflows require at least one apply_* step"

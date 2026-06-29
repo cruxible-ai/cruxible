@@ -178,8 +178,7 @@ def compile_workflow(
     expected_lock_digest = compute_lock_digest(lock)
     if lock.lock_digest != expected_lock_digest:
         raise ConfigError(
-            "Lock file digest does not match current lock contents. "
-            "Run `cruxible lock`."
+            "Lock file digest does not match current lock contents. Run `cruxible lock`."
         )
 
     workflow = config.workflows.get(workflow_name)

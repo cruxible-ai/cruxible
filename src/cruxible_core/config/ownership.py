@@ -26,9 +26,7 @@ def check_upstream_type_ownership(
             blocked_types=blocked_entities,
         )
 
-    blocked_relationships = sorted(
-        set(relationship_types) & set(upstream.owned_relationship_types)
-    )
+    blocked_relationships = sorted(set(relationship_types) & set(upstream.owned_relationship_types))
     if blocked_relationships:
         names = ", ".join(blocked_relationships)
         raise OwnershipError(

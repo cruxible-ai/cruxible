@@ -104,9 +104,7 @@ class JsonItems(BaseModel):
 
 def evidence_ref(source: str, source_record_id: str, **extra: Any) -> dict[str, Any]:
     """Build a generic evidence reference payload."""
-    return evidence_ref_payload(
-        {"source": source, "source_record_id": source_record_id, **extra}
-    )
+    return evidence_ref_payload({"source": source, "source_record_id": source_record_id, **extra})
 
 
 def _normalize_table_payload(

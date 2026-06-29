@@ -2477,10 +2477,7 @@ def test_governed_write_clients_serialize_actor_context_when_supplied():
 
     assert captured["/api/v1/inst_123/feedback"]["actor_context"] == actor_context
     assert captured["/api/v1/inst_123/workflows/run"]["actor_context"] == actor_context
-    assert (
-        captured["/api/v1/inst_123/source-artifacts/register"]["actor_context"]
-        == actor_context
-    )
+    assert captured["/api/v1/inst_123/source-artifacts/register"]["actor_context"] == actor_context
     assert captured["/api/v1/inst_123/groups/propose"]["actor_context"] == actor_context
 
 

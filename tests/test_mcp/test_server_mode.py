@@ -228,6 +228,7 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
         parent_snapshot_id=None,
         origin_snapshot_id=None,
     )
+
     class StubClient:
         def stats(self, instance_id):
             assert instance_id == "inst_123"
@@ -466,9 +467,7 @@ def test_new_admin_and_governed_handlers_delegate_to_client(monkeypatch: pytest.
         == "inst_clone"
     )
     assert (
-        handlers.handle_instance_relocate(
-            "inst_123", "/srv/new", remove_source=True
-        ).to_dir
+        handlers.handle_instance_relocate("inst_123", "/srv/new", remove_source=True).to_dir
         == "/srv/new"
     )
 

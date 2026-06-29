@@ -177,9 +177,7 @@ def _ownership_from_extends(
         upstream_relationship_types=upstream_relationship_types,
         local_relationship_types=local_relationship_types,
         upstream_named_queries=set(upstream_layer.named_queries),
-        local_named_queries={
-            name for layer in local_layers for name in layer.named_queries
-        },
+        local_named_queries={name for layer in local_layers for name in layer.named_queries},
         upstream_workflows=set(upstream_layer.workflows),
         local_workflows={name for layer in local_layers for name in layer.workflows},
         upstream_providers=set(upstream_layer.providers),

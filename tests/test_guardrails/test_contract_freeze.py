@@ -85,9 +85,9 @@ def test_openapi_query_tool_result_items_are_typed() -> None:
 
 def test_openapi_stats_route_declares_status_counts() -> None:
     spec = generate_openapi_spec()
-    schema = spec["paths"]["/api/v1/{instance_id}/stats"]["get"]["responses"]["200"][
-        "content"
-    ]["application/json"]["schema"]
+    schema = spec["paths"]["/api/v1/{instance_id}/stats"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
     assert _component_ref_name(schema) == "StatsResult"
 
     status_counts_schema = spec["components"]["schemas"]["StatsResult"]["properties"][

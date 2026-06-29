@@ -72,9 +72,7 @@ def pdf_to_markdown(
     - ``firecrawl``: hosted Firecrawl document parser, requires a URL.
     """
     backend = str(
-        input_payload.get("backend")
-        or context.provider_config.get("backend")
-        or "docling"
+        input_payload.get("backend") or context.provider_config.get("backend") or "docling"
     )
     if backend == "docling":
         return _pdf_to_markdown_docling(input_payload, context)
@@ -160,9 +158,8 @@ def _pdf_to_markdown_docling(
     max_pages = input_payload.get("max_pages") or context.provider_config.get("max_pages")
     if isinstance(max_pages, int):
         conversion_options["max_num_pages"] = max_pages
-    max_file_size = (
-        input_payload.get("max_file_size")
-        or context.provider_config.get("max_file_size")
+    max_file_size = input_payload.get("max_file_size") or context.provider_config.get(
+        "max_file_size"
     )
     if isinstance(max_file_size, int):
         conversion_options["max_file_size"] = max_file_size
@@ -199,10 +196,7 @@ def _pdf_to_markdown_firecrawl(
     input_payload: dict[str, Any],
     context: ProviderContext,
 ) -> dict[str, Any]:
-    source_url = (
-        _string_or_none(input_payload.get("source_url"))
-        or _http_artifact_uri(context)
-    )
+    source_url = _string_or_none(input_payload.get("source_url")) or _http_artifact_uri(context)
     if source_url is None:
         raise ValueError(
             "Firecrawl PDF parsing requires input.source_url or an http(s) artifact URI"

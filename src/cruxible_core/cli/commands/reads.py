@@ -75,7 +75,7 @@ from cruxible_core.cli.main import handle_errors
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import CoreError
 from cruxible_core.errors import QueryNotFoundError as CoreQueryNotFoundError
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.types import EntityInstance, EntityMetadata, RelationshipInstance
 from cruxible_core.query.types import ProjectedQueryRow, dump_query_row
 from cruxible_core.service import (
     InspectEntityResult,
@@ -1359,7 +1359,7 @@ def inspect_entity_cmd(
                     entity_type=inspect_result.entity_type,
                     entity_id=inspect_result.entity_id,
                     properties=inspect_result.properties,
-                    metadata=inspect_result.metadata,
+                    metadata=EntityMetadata.from_metadata(inspect_result.metadata),
                 )
             ],
             inspect_result.entity_type,
@@ -1552,7 +1552,7 @@ def get_entity_cmd(entity_type: str, entity_id: str, output_json: bool) -> None:
             entity_type=result.entity_type,
             entity_id=result.entity_id,
             properties=result.properties,
-            metadata=result.metadata,
+            metadata=EntityMetadata.from_metadata(result.metadata),
         )
     else:
         if result is None:

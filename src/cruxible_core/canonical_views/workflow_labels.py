@@ -117,11 +117,7 @@ def _workflow_table_role(workflow: WorkflowSummaryView) -> str:
 
 def _workflow_table_input_context(workflow: WorkflowSummaryView) -> str:
     queries = _workflow_step_details(workflow, {"query"})
-    context = _format_surface_groups(
-        (
-            ("Query context", queries),
-        )
-    )
+    context = _format_surface_groups((("Query context", queries),))
     if context == "-":
         if workflow.mode == "canonical":
             return "None (seeds canonical state)"

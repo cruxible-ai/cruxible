@@ -48,8 +48,7 @@ def project_query_row(
     """Build a projected row while preserving the base source row."""
     return ProjectedQueryRow(
         values={
-            key: _resolve_projection_value(value, context, params)
-            for key, value in select.items()
+            key: _resolve_projection_value(value, context, params) for key, value in select.items()
         },
         source=context.row,
     )
@@ -162,8 +161,7 @@ def _resolve_projection_value(
         return [_resolve_projection_value(item, context, params) for item in value]
     if isinstance(value, dict):
         return {
-            key: _resolve_projection_value(item, context, params)
-            for key, item in value.items()
+            key: _resolve_projection_value(item, context, params) for key, item in value.items()
         }
     return value
 
@@ -186,8 +184,7 @@ def coerce_query_order_value(
         enum_schema = config.enums.get(order.enum_ref)
         if enum_schema is None or enum_schema.ordered != "low_to_high":
             raise QueryExecutionError(
-                f"Order reference '{label}' uses unordered or unknown enum_ref "
-                f"'{order.enum_ref}'"
+                f"Order reference '{label}' uses unordered or unknown enum_ref '{order.enum_ref}'"
             )
         if value not in enum_schema.values:
             raise QueryExecutionError(

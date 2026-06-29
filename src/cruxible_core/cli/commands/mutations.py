@@ -173,9 +173,7 @@ def _emit_direct_write_group_notices(result_payload: dict[str, Any], *, prefix: 
 def _require_server_client(command_name: str) -> tuple[Any, str]:
     client = _common._get_client()
     if client is None:
-        raise click.UsageError(
-            f"Local mutation disabled for {command_name}; use server mode."
-        )
+        raise click.UsageError(f"Local mutation disabled for {command_name}; use server mode.")
     return client, _require_instance_id()
 
 
@@ -280,8 +278,7 @@ def _batch_direct_write_result_payload(result: Any) -> dict[str, Any]:
         "validation_warnings": list(result.validation_warnings),
         "evidence_sources_used": list(result.evidence_sources_used),
         "pending_conflicts": [
-            _direct_write_group_interaction_payload(item)
-            for item in result.pending_conflicts
+            _direct_write_group_interaction_payload(item) for item in result.pending_conflicts
         ],
         "updated_group_backed_edges": [
             _direct_write_group_interaction_payload(item)
@@ -375,7 +372,10 @@ def _run_batch_payload(
     command_name: str,
 ) -> contracts.BatchDirectWriteResult:
     client, instance_id = _require_server_client(command_name)
-    return client.batch_direct_write(instance_id, payload, dry_run=dry_run)
+    return cast(
+        contracts.BatchDirectWriteResult,
+        client.batch_direct_write(instance_id, payload, dry_run=dry_run),
+    )
 
 
 def _entity_exists(
@@ -800,8 +800,7 @@ def add_relationship_cmd(
     _emit_batch_write_result(
         result,
         action_label=(
-            f"Add relationship {from_type}:{from_id} "
-            f"-[{relationship_type}]-> {to_type}:{to_id}"
+            f"Add relationship {from_type}:{from_id} -[{relationship_type}]-> {to_type}:{to_id}"
         ),
         dry_run=dry_run,
         output_json=output_json,
@@ -911,9 +910,7 @@ def update_relationship_cmd(
     properties = _parse_property_inputs(props, set_values, set_json_values)
     _validate_relationship_evidence(evidence_refs, source_evidence)
     lifecycle = _build_relationship_lifecycle_input(lifecycle_status, lifecycle_reason)
-    if not (
-        properties or evidence_refs or source_evidence or evidence_rationale or lifecycle
-    ):
+    if not (properties or evidence_refs or source_evidence or evidence_rationale or lifecycle):
         raise click.UsageError(
             "update relationship requires at least one --set, --set-json, "
             "--evidence-ref, --source-evidence, --evidence-rationale, or --lifecycle-status"
@@ -949,8 +946,7 @@ def update_relationship_cmd(
     _emit_batch_write_result(
         result,
         action_label=(
-            f"Update relationship {from_type}:{from_id} "
-            f"-[{relationship_type}]-> {to_type}:{to_id}"
+            f"Update relationship {from_type}:{from_id} -[{relationship_type}]-> {to_type}:{to_id}"
         ),
         dry_run=dry_run,
         output_json=output_json,

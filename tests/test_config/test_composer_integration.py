@@ -28,9 +28,7 @@ def test_kev_triage_composes_reference_and_overlay_configs() -> None:
     )
     assert "Incident" not in composed.entity_types
     assert "Finding" not in composed.entity_types
-    assert "vulnerability_affects_product" in {
-        rel.name for rel in composed.relationships
-    }
+    assert "vulnerability_affects_product" in {rel.name for rel in composed.relationships}
     assert "asset_runs_product" in {rel.name for rel in composed.relationships}
     assert "build_public_kev_reference" in composed.workflows
     assert "build_local_state" in composed.workflows

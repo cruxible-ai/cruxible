@@ -52,8 +52,7 @@ def test_source_register_outputs_registered_artifact_json(
     assert payload["label"] == "workspace evidence"
     assert payload["archived"] is False
     assert any(
-        chunk["heading_path"] == ["Evidence"]
-        and chunk["block_selector"] == "paragraph:1"
+        chunk["heading_path"] == ["Evidence"] and chunk["block_selector"] == "paragraph:1"
         for chunk in payload["chunks"]
     )
 
@@ -82,9 +81,7 @@ def test_source_dereference_returns_registered_source_text(
     assert register.exit_code == 0, register.output
     registered: dict[str, Any] = json.loads(register.output)
     paragraph_chunk = next(
-        chunk
-        for chunk in registered["chunks"]
-        if chunk["block_selector"] == "paragraph:1"
+        chunk for chunk in registered["chunks"] if chunk["block_selector"] == "paragraph:1"
     )
 
     by_chunk = runner.invoke(

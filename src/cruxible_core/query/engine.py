@@ -1129,9 +1129,7 @@ def _validate_effective_query_options(
         "pending",
         "reviewable",
     }:
-        raise QueryExecutionError(
-            f"Unsupported visibility state '{effective_relationship_state}'"
-        )
+        raise QueryExecutionError(f"Unsupported visibility state '{effective_relationship_state}'")
     if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
         raise QueryExecutionError(
             f"Named query '{query_name}' with result_shape 'entity' requires dedupe 'entity'"

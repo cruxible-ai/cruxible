@@ -12,9 +12,7 @@ class TestParseConstraintRule:
         result = parse_constraint_rule(
             "classified_as.FROM.Category == classified_as.TO.CategoryName"
         )
-        assert result == ParsedConstraintRule(
-            "classified_as", "Category", "==", "CategoryName"
-        )
+        assert result == ParsedConstraintRule("classified_as", "Category", "==", "CategoryName")
 
     def test_valid_rule_with_spaces(self):
         result = parse_constraint_rule("fits.FROM.make  ==  fits.TO.make")
@@ -54,9 +52,7 @@ class TestParseConstraintRule:
         result = parse_constraint_rule(
             "classified-as.FROM.sub-category == classified-as.TO.sub-category"
         )
-        assert result == ParsedConstraintRule(
-            "classified-as", "sub-category", "==", "sub-category"
-        )
+        assert result == ParsedConstraintRule("classified-as", "sub-category", "==", "sub-category")
 
     def test_underscores_in_identifiers(self):
         result = parse_constraint_rule("has_part.FROM.part_type == has_part.TO.part_type")

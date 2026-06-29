@@ -52,9 +52,7 @@ def test_parsed_tabular_bundle_rejects_non_list_table_rows() -> None:
 
 def test_parsed_tabular_bundle_rejects_non_dict_rows() -> None:
     with pytest.raises(ValueError, match="entry 0 to be an object"):
-        ParsedTabularBundle.from_payload(
-            {"artifact": {}, "tables": {"assets": {"rows": ["A-1"]}}}
-        )
+        ParsedTabularBundle.from_payload({"artifact": {}, "tables": {"assets": {"rows": ["A-1"]}}})
 
 
 def test_parsed_tabular_bundle_require_table_rejects_missing_table() -> None:

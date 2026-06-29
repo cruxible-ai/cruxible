@@ -971,9 +971,7 @@ workflows:
 
     workflow_text = (project / "wiki" / "reference" / "workflows" / "canonical-load.md").read_text()
     assert "Apply steps commit previously built records or links" in workflow_text
-    assert (
-        "| apply_assets | Apply records to state | assets | apply_assets |" in workflow_text
-    )
+    assert "| apply_assets | Apply records to state | assets | apply_assets |" in workflow_text
 
 
 def test_render_wiki_local_scope_projects_layered_state(tmp_path: Path) -> None:
@@ -1095,9 +1093,7 @@ def test_render_wiki_pending_review_filters_members_for_current_subject(tmp_path
                     {"vulnerability_id": "CVE-2021-41773", "subject": "mixed-assets"},
                 ),
                 status="pending_review",
-                thesis_text=(
-                    "Mixed review group should only render relevant members per subject"
-                ),
+                thesis_text=("Mixed review group should only render relevant members per subject"),
                 thesis_facts={"vulnerability_id": "CVE-2021-41773"},
                 analysis_state={"priority": "review"},
                 signal_sources_used=["inventory"],

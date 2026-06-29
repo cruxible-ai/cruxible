@@ -351,8 +351,7 @@ def _table_from_frame(
     normalize_headers: bool,
 ) -> _ParsedTable:
     columns = [
-        _normalize_column_name(column) if normalize_headers else column
-        for column in frame.columns
+        _normalize_column_name(column) if normalize_headers else column for column in frame.columns
     ]
     unique_columns = _deduplicate_columns(columns)
     if unique_columns != frame.columns:

@@ -334,9 +334,7 @@ class TestRelationshipStateWrites:
                 to_type="Vehicle",
                 to_id="V-1",
                 properties={"confidence": 0.9},
-                metadata=RelationshipMetadata(
-                    provenance=RelationshipProvenance(source="ingest")
-                ),
+                metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
             )
         )
         updated = graph.update_relationship_state(
@@ -353,9 +351,7 @@ class TestRelationshipStateWrites:
         assert rel.metadata.provenance is not None
         assert rel.metadata.provenance.source == "ingest"
 
-    def test_replace_relationship_state_replaces_properties_and_metadata(
-        self, graph: EntityGraph
-    ):
+    def test_replace_relationship_state_replaces_properties_and_metadata(self, graph: EntityGraph):
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
         graph.add_relationship(
@@ -411,9 +407,7 @@ class TestRelationshipStateWrites:
                 to_type="Vehicle",
                 to_id="V-1",
                 properties={"confidence": 0.9},
-                metadata=RelationshipMetadata(
-                    provenance=RelationshipProvenance(source="ingest")
-                ),
+                metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
             )
         )
         updated = graph.update_relationship_state(
@@ -862,16 +856,15 @@ class TestIterEdges:
             assert relationship.to_type == edge_dict["to_type"]
             assert relationship.to_id == edge_dict["to_id"]
             assert relationship.properties == edge_dict["properties"]
-            assert relationship.metadata.model_dump(mode="json", exclude_none=True) == edge_dict[
-                "metadata"
-            ]
+            assert (
+                relationship.metadata.model_dump(mode="json", exclude_none=True)
+                == edge_dict["metadata"]
+            )
 
     def test_iter_edges_empty_graph(self, graph: EntityGraph):
         assert list(graph.iter_edges()) == []
 
-    def test_iter_edges_rejects_missing_relationship_type(
-        self, populated_graph: EntityGraph
-    ):
+    def test_iter_edges_rejects_missing_relationship_type(self, populated_graph: EntityGraph):
         data = populated_graph.to_dict()
         del data["edges"][0]["relationship_type"]
         restored = EntityGraph.from_dict(data)

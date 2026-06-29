@@ -109,9 +109,7 @@ def _parse_state_ref(state_ref: str) -> tuple[str, str | None]:
 
 def _validate_state_ref_part(value: str, *, label: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9._-]+", value):
-        raise ConfigError(
-            f"state_ref {label} must match [A-Za-z0-9._-]+"
-        )
+        raise ConfigError(f"state_ref {label} must match [A-Za-z0-9._-]+")
 
 
 def _compose_release_ref(base_transport_ref: str, release_id: str) -> str:

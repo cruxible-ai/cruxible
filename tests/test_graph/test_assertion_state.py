@@ -51,9 +51,7 @@ def test_relationship_metadata_contains_typed_assertion_and_provenance() -> None
             True,
         ),
         (
-            RelationshipAssertion(
-                review=RelationshipReviewState(status="pending", source="human")
-            ),
+            RelationshipAssertion(review=RelationshipReviewState(status="pending", source="human")),
             False,
         ),
         (

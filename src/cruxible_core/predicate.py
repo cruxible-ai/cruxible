@@ -19,9 +19,7 @@ PredicateValueType = Literal[
     "datetime",
 ]
 
-COMPARISON_SYMBOL_PATTERN = (
-    r"(on_or_before\b|on_or_after\b|before\b|after\b|>=|<=|==|!=|>|<)"
-)
+COMPARISON_SYMBOL_PATTERN = r"(on_or_before\b|on_or_after\b|before\b|after\b|>=|<=|==|!=|>|<)"
 CONSTRAINT_RULE_SYNTAX = (
     "RELATIONSHIP.FROM.property <op> RELATIONSHIP.TO.property "
     "where <op> is one of ==, !=, >, >=, <, <=, "

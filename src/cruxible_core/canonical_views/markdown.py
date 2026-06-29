@@ -103,8 +103,7 @@ def _render_enum_vocabularies(enums: list[OntologyEnumView]) -> list[str]:
         lines.append("No configured enums.")
         return lines
     lines.append(
-        "Complete allowed values for enum-typed properties. "
-        "Ordered enums list values low to high."
+        "Complete allowed values for enum-typed properties. Ordered enums list values low to high."
     )
     lines.append("")
     lines.append(
@@ -424,8 +423,7 @@ def render_query_catalog_markdown(view: QueryView) -> str:
                             humanize_label(query.returns),
                             query.relationship_state,
                             " -> ".join(
-                                humanize_traversal_summary(step)
-                                for step in query.traversal_summary
+                                humanize_traversal_summary(step) for step in query.traversal_summary
                             ),
                             query.description.strip() if query.description else "",
                         )

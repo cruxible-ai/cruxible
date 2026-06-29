@@ -125,9 +125,7 @@ def _build_and_persist_mutation_receipt(mode: str):
     and return ``(store, receipt_id, raw_row)`` where raw_row is the raw SQLite
     ``receipts`` row (parameters column + receipt_json column)."""
     builder = ReceiptBuilder(operation_type="add_entity", parameters=dict(_LARGE_PAYLOAD))
-    builder.record_entity_write(
-        entity_type="Vehicle", entity_id="V-RAW", is_update=False
-    )
+    builder.record_entity_write(entity_type="Vehicle", entity_id="V-RAW", is_update=False)
     builder.mark_committed()
     builder.apply_mutation_payload_retention(retention=mode)
     receipt = builder.build()

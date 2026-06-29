@@ -206,9 +206,7 @@ class TestAddRelationshipReceipts:
         finally:
             store.close()
         assert receipt is not None
-        write_nodes = [
-            node for node in receipt.nodes if node.node_type == "relationship_write"
-        ]
+        write_nodes = [node for node in receipt.nodes if node.node_type == "relationship_write"]
         assert len(write_nodes) == 1
         assert write_nodes[0].detail["evidence_refs"] == [
             {
