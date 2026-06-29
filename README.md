@@ -104,7 +104,7 @@ These state types can be used separately. They are strongest together: a domain
 kit models the thing the agent is working on, while an operating-state kit tracks
 the work, decisions, evidence, reviews, and lifecycle around that domain.
 
-### Example: KEV Domain State Plus Project Operating State
+### Example: KEV Domain State Plus Agent Operating State
 
 ```mermaid
 flowchart LR
@@ -114,7 +114,7 @@ flowchart LR
     CVE["Vulnerability: CVE-2021-41773"]
   end
 
-  subgraph Project["Project-state operating layer"]
+  subgraph Ops["Agent operating layer"]
     Work["WorkItem: patch ASSET-42"]
     Review["ReviewRequest: verify remediation"]
     Decision["DesignDecision: emergency patch window"]
