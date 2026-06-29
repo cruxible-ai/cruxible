@@ -10,12 +10,14 @@ from cruxible_core.config.schema import (
     RelationshipSchema,
     TraversalStep,
 )
-from cruxible_core.errors import DataValidationError, EdgeAmbiguityError
+from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.applier import apply_feedback
 from cruxible_core.feedback.store import FeedbackStore
-from cruxible_core.feedback.types import EdgeTarget, FeedbackRecord, OutcomeRecord
+from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.graph.provenance import RelationshipProvenance
+from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.query.engine import execute_query
 
 # ---------------------------------------------------------------------------
@@ -24,11 +26,11 @@ from cruxible_core.query.engine import execute_query
 
 
 @pytest.fixture
-def target() -> EdgeTarget:
-    return EdgeTarget(
+def target() -> RelationshipInstance:
+    return RelationshipInstance(
         from_type="Part",
         from_id="P-1",
-        relationship="fits",
+        relationship_type="fits",
         to_type="Vehicle",
         to_id="V-1",
     )
@@ -61,24 +63,56 @@ def graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-1",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-1",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={"verified": True, "confidence": 0.9},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="P-2",
-            to_entity_type="Vehicle",
-            to_entity_id="V-1",
+            from_type="Part",
+            from_id="P-2",
+            to_type="Vehicle",
+            to_id="V-1",
             properties={"verified": True, "confidence": 0.4},
         )
     )
     return g
+
+
+def assert_review_state(
+    rel: RelationshipInstance,
+    *,
+    status: str,
+    source: str,
+) -> None:
+    assert rel.metadata.assertion.review.status == status
+    assert rel.metadata.assertion.review.source == source
+    assert rel.metadata.assertion.lifecycle.status == "active"
+
+
+def set_edge_provenance(graph: EntityGraph, *, part_id: str = "P-1") -> None:
+    graph.update_relationship_state(
+        "Part",
+        part_id,
+        "Vehicle",
+        "V-1",
+        "fits",
+        metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
+    )
+
+
+def actor_context() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="usr_feedback",
+        org_id="org_1",
+        operation_id="op_feedback",
+        timestamp="2026-06-05T12:00:00Z",
+    )
 
 
 @pytest.fixture
@@ -108,12 +142,12 @@ def config() -> CoreConfig:
                 properties={
                     "verified": PropertySchema(type="bool"),
                     "confidence": PropertySchema(type="float", optional=True),
-                    "review_status": PropertySchema(type="string", optional=True),
                 },
             ),
         ],
         named_queries={
             "parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find parts that fit a vehicle",
                 entry_point="Vehicle",
                 traversal=[
@@ -124,8 +158,10 @@ def config() -> CoreConfig:
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
             "approved_parts_for_vehicle": NamedQuerySchema(
+                mode="traversal",
                 description="Find approved parts that fit a vehicle",
                 entry_point="Vehicle",
                 traversal=[
@@ -133,11 +169,12 @@ def config() -> CoreConfig:
                         relationship="fits",
                         direction="incoming",
                         filter={
-                            "review_status": ["human_approved", "auto_approved"],
+                            "verified": True,
                         },
                     )
                 ],
                 returns="list[Part]",
+                result_shape="entity",
             ),
         },
     )
@@ -149,20 +186,20 @@ def store() -> FeedbackStore:
 
 
 # ---------------------------------------------------------------------------
-# EdgeTarget
+# RelationshipInstance (feedback target)
 # ---------------------------------------------------------------------------
 
 
-class TestEdgeTarget:
-    def test_roundtrip(self, target: EdgeTarget):
+class TestFeedbackTarget:
+    def test_roundtrip(self, target: RelationshipInstance):
         json_str = target.model_dump_json()
-        restored = EdgeTarget.model_validate_json(json_str)
+        restored = RelationshipInstance.model_validate_json(json_str)
         assert restored == target
 
-    def test_fields(self, target: EdgeTarget):
+    def test_fields(self, target: RelationshipInstance):
         assert target.from_type == "Part"
         assert target.from_id == "P-1"
-        assert target.relationship == "fits"
+        assert target.relationship_type == "fits"
         assert target.to_type == "Vehicle"
         assert target.to_id == "V-1"
 
@@ -173,7 +210,7 @@ class TestEdgeTarget:
 
 
 class TestApplier:
-    def test_approve(self, graph: EntityGraph, target: EdgeTarget):
+    def test_approve(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -182,9 +219,9 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
-    def test_reject(self, graph: EntityGraph, target: EdgeTarget):
+    def test_reject(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
@@ -194,9 +231,9 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_rejected"
+        assert_review_state(rel, status="rejected", source="human")
 
-    def test_flag(self, graph: EntityGraph, target: EdgeTarget):
+    def test_flag(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="flag",
@@ -205,9 +242,9 @@ class TestApplier:
         assert apply_feedback(graph, fb) is True
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "pending_review"
+        assert_review_state(rel, status="pending", source="human")
 
-    def test_correct(self, graph: EntityGraph, target: EdgeTarget):
+    def test_correct(self, graph: EntityGraph, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
@@ -219,16 +256,16 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["confidence"] == 0.95
         assert rel.properties["fitment_notes"] == "confirmed"
-        assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_missing_edge(self, graph: EntityGraph):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-999",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),
@@ -238,7 +275,7 @@ class TestApplier:
     def test_preserves_existing_properties(
         self,
         graph: EntityGraph,
-        target: EdgeTarget,
+        target: RelationshipInstance,
     ):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
@@ -250,106 +287,79 @@ class TestApplier:
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["verified"] is True
         assert rel.properties["confidence"] == 0.9
-        assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
-    def test_ai_review_with_model_id(
+    def test_agent_with_model_id(
         self,
         graph: EntityGraph,
-        target: EdgeTarget,
+        target: RelationshipInstance,
     ):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
             target=target,
-            source="ai_review",
+            source="agent",
             model_id="claude-opus-4-6",
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "ai_approved"
+        assert_review_state(rel, status="approved", source="agent")
 
-    def test_ai_review_reject(
+    def test_agent_reject(
         self,
         graph: EntityGraph,
-        target: EdgeTarget,
+        target: RelationshipInstance,
     ):
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
             target=target,
-            source="ai_review",
+            source="agent",
             reason="AI flagged wrong fitment",
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "ai_rejected"
+        assert_review_state(rel, status="rejected", source="agent")
 
-    def test_correct_string_confidence_rejected(self, graph: EntityGraph, target: EdgeTarget):
-        """Corrections with string confidence are rejected at applier level."""
+    def test_correct_applies_domain_corrections(
+        self, graph: EntityGraph, target: RelationshipInstance
+    ):
+        """Corrections are domain properties; assertion state still comes from feedback."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
             target=target,
-            corrections={"confidence": "high"},
-        )
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
-            apply_feedback(graph, fb)
-
-    def test_correct_bool_confidence_rejected(self, graph: EntityGraph, target: EdgeTarget):
-        """Corrections with bool confidence are rejected."""
-        fb = FeedbackRecord(
-            receipt_id="RCP-test",
-            action="correct",
-            target=target,
-            corrections={"confidence": True},
-        )
-        with pytest.raises(DataValidationError, match="confidence must be numeric"):
-            apply_feedback(graph, fb)
-
-    def test_correct_numeric_confidence_accepted(self, graph: EntityGraph, target: EdgeTarget):
-        """Corrections with valid numeric confidence are accepted."""
-        fb = FeedbackRecord(
-            receipt_id="RCP-test",
-            action="correct",
-            target=target,
-            corrections={"confidence": 0.95},
+            corrections={"review_note": "checked by reviewer", "fitment_notes": "checked"},
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["confidence"] == 0.95
+        assert rel.properties["review_note"] == "checked by reviewer"
+        assert_review_state(rel, status="approved", source="human")
+        assert rel.properties["fitment_notes"] == "checked"
 
-    def test_approve_updates_provenance(self, graph: EntityGraph, target: EdgeTarget):
-        """Feedback actions update _provenance with modification fields."""
-        # First add provenance to the edge
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+    def test_approve_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
+        """Feedback actions update provenance metadata with modification fields."""
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
             target=target,
+            actor_context=actor_context(),
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["source"] == "ingest"
-        assert "last_modified_at" in prov
-        assert prov["last_modified_by"] == "feedback:approve"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "ingest"
+        assert prov.last_modified_at is not None
+        assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_actor_context is not None
+        assert prov.last_modified_actor_context.actor_id == "usr_feedback"
+        assert rel.metadata.assertion.review.actor_context is not None
+        assert rel.metadata.assertion.review.actor_context.operation_id == "op_feedback"
 
-    def test_reject_updates_provenance(self, graph: EntityGraph, target: EdgeTarget):
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+    def test_reject_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
@@ -358,18 +368,12 @@ class TestApplier:
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["last_modified_by"] == "feedback:reject"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.last_modified_by == "feedback:reject"
 
-    def test_correct_updates_provenance(self, graph: EntityGraph, target: EdgeTarget):
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+    def test_correct_updates_provenance(self, graph: EntityGraph, target: RelationshipInstance):
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
@@ -378,36 +382,39 @@ class TestApplier:
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        assert prov["last_modified_by"] == "feedback:correct"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.last_modified_by == "feedback:correct"
 
-    def test_correct_strips_provenance_from_corrections(
-        self, graph: EntityGraph, target: EdgeTarget
+    def test_correct_metadata_looking_keys_do_not_mutate_metadata(
+        self, graph: EntityGraph, target: RelationshipInstance
     ):
-        """_provenance in corrections is stripped — system-owned field."""
-        graph.update_edge_properties(
-            "Part",
-            "P-1",
-            "Vehicle",
-            "V-1",
-            "fits",
-            {"_provenance": {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}},
-        )
+        """Low-level corrections cannot spoof first-class metadata."""
+        set_edge_provenance(graph)
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
             target=target,
-            corrections={"confidence": 0.99, "_provenance": {"source": "spoofed"}},
+            corrections={
+                "confidence": 0.99,
+                "_provenance": {"source": "spoofed"},
+                "_assertion": {"review": {"status": "rejected", "source": "human"}},
+            },
         )
         apply_feedback(graph, fb)
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        prov = rel.properties["_provenance"]
-        # Should NOT be spoofed — should be original provenance with modification
-        assert prov["source"] == "ingest"
-        assert prov["last_modified_by"] == "feedback:correct"
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "ingest"
+        assert prov.last_modified_by == "feedback:correct"
+        assert_review_state(rel, status="approved", source="human")
+        assert rel.properties["_provenance"] == {"source": "spoofed"}
+        assert rel.properties["_assertion"] == {"review": {"status": "rejected", "source": "human"}}
 
-    def test_no_provenance_no_crash(self, graph: EntityGraph, target: EdgeTarget):
-        """Feedback on edges without _provenance works fine (no crash)."""
+    def test_no_provenance_backfilled_on_touch(
+        self, graph: EntityGraph, target: RelationshipInstance
+    ):
+        """Feedback on a null-provenance edge backfills provenance instead of staying null."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
@@ -415,60 +422,66 @@ class TestApplier:
         )
         assert apply_feedback(graph, fb) is True
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["review_status"] == "human_approved"
-        # No _provenance added when there was none to begin with
-        assert "_provenance" not in rel.properties
+        assert_review_state(rel, status="approved", source="human")
+        prov = rel.metadata.provenance
+        assert prov is not None
+        assert prov.source == "human"
+        assert prov.source_ref == "feedback:approve"
+        assert prov.last_modified_by == "feedback:approve"
+        assert prov.last_modified_at is not None
 
     def test_ambiguous_target_requires_edge_key(self, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": True, "confidence": 0.8},
             )
         )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-1",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),
         )
-        with pytest.raises(EdgeAmbiguityError):
+        with pytest.raises(RelationshipAmbiguityError):
             apply_feedback(graph, fb)
 
     def test_apply_with_edge_key_targets_single_edge(self, graph: EntityGraph):
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"verified": True, "confidence": 0.8},
             )
         )
-        refs = graph.get_neighbors_with_edge_refs(
+        refs = graph.get_neighbors_with_relationship_refs(
             "Part",
             "P-1",
             relationship_type="fits",
             direction="outgoing",
         )
-        edge_key = next(edge_key for _, props, edge_key in refs if props.get("confidence") == 0.8)
+        edge_key = next(
+            edge_key for _, props, _metadata, edge_key in refs if props.get("confidence") == 0.8
+        )
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="approve",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-1",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
                 edge_key=edge_key,
@@ -483,7 +496,7 @@ class TestApplier:
 
 
 class TestFeedbackStore:
-    def test_save_and_get(self, store: FeedbackStore, target: EdgeTarget):
+    def test_save_and_get(self, store: FeedbackStore, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-1",
             action="reject",
@@ -499,10 +512,24 @@ class TestFeedbackStore:
         assert loaded.target == target
         assert loaded.reason == "Bad fitment"
 
+    def test_save_and_get_without_source_receipt(
+        self,
+        store: FeedbackStore,
+        target: RelationshipInstance,
+    ) -> None:
+        fb = FeedbackRecord(action="approve", target=target, reason="Reviewed coordinates")
+        fid = store.save_feedback(fb)
+
+        loaded = store.get_feedback(fid)
+
+        assert loaded is not None
+        assert loaded.receipt_id is None
+        assert loaded.reason == "Reviewed coordinates"
+
     def test_get_nonexistent(self, store: FeedbackStore):
         assert store.get_feedback("FB-nope") is None
 
-    def test_list_by_receipt(self, store: FeedbackStore, target: EdgeTarget):
+    def test_list_by_receipt(self, store: FeedbackStore, target: RelationshipInstance):
         fb1 = FeedbackRecord(receipt_id="RCP-1", action="approve", target=target)
         fb2 = FeedbackRecord(receipt_id="RCP-2", action="reject", target=target)
         store.save_feedback(fb1)
@@ -512,7 +539,7 @@ class TestFeedbackStore:
         assert len(items) == 1
         assert items[0].receipt_id == "RCP-1"
 
-    def test_list_all(self, store: FeedbackStore, target: EdgeTarget):
+    def test_list_all(self, store: FeedbackStore, target: RelationshipInstance):
         for i in range(3):
             store.save_feedback(
                 FeedbackRecord(
@@ -523,20 +550,20 @@ class TestFeedbackStore:
             )
         assert len(store.list_feedback()) == 3
 
-    def test_model_id_persisted(self, store: FeedbackStore, target: EdgeTarget):
+    def test_model_id_persisted(self, store: FeedbackStore, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-1",
             action="approve",
             target=target,
-            source="ai_review",
+            source="agent",
             model_id="claude-opus-4-6",
         )
         store.save_feedback(fb)
         loaded = store.get_feedback(fb.feedback_id)
         assert loaded.model_id == "claude-opus-4-6"
-        assert loaded.source == "ai_review"
+        assert loaded.source == "agent"
 
-    def test_corrections_persisted(self, store: FeedbackStore, target: EdgeTarget):
+    def test_corrections_persisted(self, store: FeedbackStore, target: RelationshipInstance):
         fb = FeedbackRecord(
             receipt_id="RCP-1",
             action="correct",
@@ -547,15 +574,52 @@ class TestFeedbackStore:
         loaded = store.get_feedback(fb.feedback_id)
         assert loaded.corrections == {"confidence": 0.99}
 
-    def test_list_feedback_by_entity_ids(self, store: FeedbackStore, target: EdgeTarget):
+    def test_structured_feedback_fields_persisted(
+        self, store: FeedbackStore, target: RelationshipInstance
+    ):
+        fb = FeedbackRecord(
+            receipt_id="RCP-1",
+            action="reject",
+            source="agent",
+            target=target,
+            reason="Legacy unsupported",
+            reason_code="legacy_unsupported",
+            reason_remediation_hint="decision_policy",
+            scope_hints={"category": "brakes"},
+            feedback_profile_key="fits",
+            feedback_profile_version=2,
+            decision_context={
+                "surface_type": "query",
+                "surface_name": "parts_for_vehicle",
+                "operation_type": "query",
+            },
+            context_snapshot={
+                "from": {"entity_id": "P-1", "properties": {"category": "brakes"}},
+                "to": {"entity_id": "V-1", "properties": {}},
+                "edge": {"relationship": "fits", "properties": {}},
+                "context": {"surface_type": "query"},
+            },
+        )
+        store.save_feedback(fb)
+        loaded = store.get_feedback(fb.feedback_id)
+        assert loaded is not None
+        assert loaded.reason_code == "legacy_unsupported"
+        assert loaded.reason_remediation_hint == "decision_policy"
+        assert loaded.scope_hints == {"category": "brakes"}
+        assert loaded.feedback_profile_key == "fits"
+        assert loaded.feedback_profile_version == 2
+        assert loaded.decision_context["surface_name"] == "parts_for_vehicle"
+        assert loaded.context_snapshot["from"]["properties"] == {"category": "brakes"}
+
+    def test_list_feedback_by_entity_ids(self, store: FeedbackStore, target: RelationshipInstance):
         fb1 = FeedbackRecord(receipt_id="RCP-1", action="approve", target=target)
         fb2 = FeedbackRecord(
             receipt_id="RCP-2",
             action="reject",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-2",
             ),
@@ -567,7 +631,7 @@ class TestFeedbackStore:
         assert fb1.feedback_id in ids
         assert fb2.feedback_id in ids
 
-    def test_count_feedback(self, store: FeedbackStore, target: EdgeTarget):
+    def test_count_feedback(self, store: FeedbackStore, target: RelationshipInstance):
         store.save_feedback(FeedbackRecord(receipt_id="RCP-1", action="approve", target=target))
         store.save_feedback(FeedbackRecord(receipt_id="RCP-2", action="reject", target=target))
         assert store.count_feedback() == 2
@@ -580,10 +644,35 @@ class TestFeedbackStore:
 
 
 class TestOutcomeStore:
+    def test_resolution_outcome_requires_anchor_id(self):
+        with pytest.raises(ValueError, match="resolution outcomes require anchor_id"):
+            OutcomeRecord(
+                receipt_id="RCP-1",
+                anchor_type="resolution",
+                outcome="correct",
+            )
+
     def test_save_and_get(self, store: FeedbackStore):
         out = OutcomeRecord(
             receipt_id="RCP-1",
+            anchor_type="receipt",
             outcome="correct",
+            outcome_code="bad_result",
+            outcome_remediation_hint="provider_fix",
+            scope_hints={"surface": "parts_for_vehicle"},
+            outcome_profile_key="query_quality",
+            outcome_profile_version=2,
+            decision_context={
+                "surface_type": "query",
+                "surface_name": "parts_for_vehicle",
+                "operation_type": "query",
+            },
+            lineage_snapshot={
+                "receipt": {"receipt_id": "RCP-1", "operation_type": "query"},
+                "surface": {"type": "query", "name": "parts_for_vehicle"},
+                "trace_set": {"trace_ids": [], "provider_names": [], "trace_count": 0},
+            },
+            source="agent",
             detail={"installed": True},
         )
         oid = store.save_outcome(out)
@@ -591,6 +680,11 @@ class TestOutcomeStore:
 
         assert loaded is not None
         assert loaded.outcome == "correct"
+        assert loaded.anchor_id == "RCP-1"
+        assert loaded.outcome_code == "bad_result"
+        assert loaded.outcome_remediation_hint == "provider_fix"
+        assert loaded.outcome_profile_key == "query_quality"
+        assert loaded.decision_context["surface_name"] == "parts_for_vehicle"
         assert loaded.detail == {"installed": True}
 
     def test_get_nonexistent(self, store: FeedbackStore):
@@ -628,12 +722,12 @@ class TestOutcomeStore:
 
 
 class TestFeedbackQueryIntegration:
-    def test_reject_excludes_from_approved_query(
+    def test_reject_excludes_from_live_query(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """The gate test: reject an edge, re-query with review_status filter."""
+        """Rejecting an edge removes it from canonical live traversal."""
         # Both parts fit V-1 initially
         result = execute_query(
             config,
@@ -643,25 +737,14 @@ class TestFeedbackQueryIntegration:
         )
         assert len(result.results) == 2
 
-        # Set both edges to auto_approved first
-        for part_id in ["P-1", "P-2"]:
-            graph.update_edge_properties(
-                "Part",
-                part_id,
-                "Vehicle",
-                "V-1",
-                "fits",
-                {"review_status": "auto_approved"},
-            )
-
         # Reject P-2's edge
         fb = FeedbackRecord(
             receipt_id=result.receipt.receipt_id,
             action="reject",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),
@@ -669,32 +752,31 @@ class TestFeedbackQueryIntegration:
         )
         apply_feedback(graph, fb)
 
-        # Re-query with approved-only filter
         result2 = execute_query(
             config,
             graph,
-            "approved_parts_for_vehicle",
+            "parts_for_vehicle",
             {"vehicle_id": "V-1"},
         )
         result_ids = {r.entity_id for r in result2.results}
         assert "P-1" in result_ids
         assert "P-2" not in result_ids
 
-    def test_approve_includes_in_approved_query(
+    def test_approve_keeps_edge_live(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Approved edges pass the review_status filter."""
+        """Approved active edges pass canonical live traversal."""
         # Approve both edges
         for part_id in ["P-1", "P-2"]:
             fb = FeedbackRecord(
                 receipt_id="RCP-test",
                 action="approve",
-                target=EdgeTarget(
+                target=RelationshipInstance(
                     from_type="Part",
                     from_id=part_id,
-                    relationship="fits",
+                    relationship_type="fits",
                     to_type="Vehicle",
                     to_id="V-1",
                 ),
@@ -704,7 +786,7 @@ class TestFeedbackQueryIntegration:
         result = execute_query(
             config,
             graph,
-            "approved_parts_for_vehicle",
+            "parts_for_vehicle",
             {"vehicle_id": "V-1"},
         )
         assert len(result.results) == 2
@@ -714,14 +796,14 @@ class TestFeedbackQueryIntegration:
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Corrected edges get human_approved status and updated properties."""
+        """Corrected edges get approved assertion state and updated properties."""
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="correct",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-1",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),
@@ -731,15 +813,14 @@ class TestFeedbackQueryIntegration:
 
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
         assert rel.properties["confidence"] == 0.99
-        assert rel.properties["review_status"] == "human_approved"
+        assert_review_state(rel, status="approved", source="human")
 
     def test_rejected_edge_excluded_without_filter(
         self,
         config: CoreConfig,
         graph: EntityGraph,
     ):
-        """Hard safety check: rejected edges are excluded even from queries
-        that have no review_status filter."""
+        """Hard safety check: rejected edges are excluded from live queries."""
         # Both parts returned initially
         result = execute_query(
             config,
@@ -753,10 +834,10 @@ class TestFeedbackQueryIntegration:
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
-            target=EdgeTarget(
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),
@@ -764,8 +845,7 @@ class TestFeedbackQueryIntegration:
         )
         apply_feedback(graph, fb)
 
-        # parts_for_vehicle only filters on verified, not review_status —
-        # but the engine hard-skips human_rejected and ai_rejected edges
+        # parts_for_vehicle only filters on verified; relationship metadata controls liveness.
         result2 = execute_query(
             config,
             graph,
@@ -776,7 +856,7 @@ class TestFeedbackQueryIntegration:
         assert "P-1" in result_ids
         assert "P-2" not in result_ids
 
-    def test_ai_rejected_edge_excluded_without_filter(
+    def test_agent_rejected_edge_excluded_without_filter(
         self,
         config: CoreConfig,
         graph: EntityGraph,
@@ -793,11 +873,11 @@ class TestFeedbackQueryIntegration:
         fb = FeedbackRecord(
             receipt_id="RCP-test",
             action="reject",
-            source="ai_review",
-            target=EdgeTarget(
+            source="agent",
+            target=RelationshipInstance(
                 from_type="Part",
                 from_id="P-2",
-                relationship="fits",
+                relationship_type="fits",
                 to_type="Vehicle",
                 to_id="V-1",
             ),

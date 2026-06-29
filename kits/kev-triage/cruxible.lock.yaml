@@ -1,0 +1,54 @@
+version: '1'
+config_digest: sha256:04c836ac669c2954116f109f94abff118c2fba9c52c91be8a0d10dd608e16bab
+lock_digest: sha256:eb003aa51094d58101a08fa8ed97cdab9a5b5d368981df8b37223f03a2b48d8c
+generated_at: 2026-05-30 17:36:22.651134+00:00
+artifacts:
+  local_seed_bundle:
+    kind: directory
+    uri: ./data/seed
+    digest: sha256:eb5675109ea4b2fc44f1a59419aa4e294aa605df95f9a0fc941d9f0d4af3a073
+    metadata:
+      description: Synthetic seed data representing CMDB, service catalog, operational
+        system exports, and review material for governed proposals.
+providers:
+  parse_local_seed_bundle:
+    version: 1.0.0
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    provider_entrypoint_digest: sha256:1da755356e3caf564db1c4d88d56dcb3e24cc0aabacd42c4679c5f85164a65e8
+    runtime: python
+    deterministic: true
+    side_effects: false
+    artifact: local_seed_bundle
+    config: {}
+  match_software_to_products:
+    version: 1.0.0
+    ref: kit://providers/matching.py::match_software_to_products
+    provider_entrypoint_digest: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_asset_affected:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_asset_affected
+    provider_entrypoint_digest: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_asset_exposure:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_asset_exposure
+    provider_entrypoint_digest: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}
+  assess_exposure_reconciliation:
+    version: 1.0.0
+    ref: kit://providers/assessment.py::assess_exposure_reconciliation
+    provider_entrypoint_digest: sha256:36c56203389c3702475d1b4cc536bbbaff924afd9bef3f6808ea57a96dd4fc94
+    runtime: python
+    deterministic: true
+    side_effects: false
+    config: {}

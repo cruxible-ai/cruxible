@@ -1,5 +1,25 @@
-"""SQLite persistence for receipts, feedback, and outcomes."""
+"""Storage backend interfaces and SQLite implementation exports."""
 
-from cruxible_core.storage.sqlite import SQLiteStore
+from cruxible_core.storage.protocols import (
+    GraphRepositoryProtocol,
+    StorageBackendProtocol,
+    UnitOfWorkProtocol,
+)
+from cruxible_core.storage.sqlite import (
+    SQLiteGraphRepository,
+    SQLiteStorageBackend,
+    SQLiteUnitOfWork,
+    StorageDatabaseError,
+    StorageIntegrityError,
+)
 
-__all__ = ["SQLiteStore"]
+__all__ = [
+    "GraphRepositoryProtocol",
+    "SQLiteGraphRepository",
+    "SQLiteStorageBackend",
+    "SQLiteUnitOfWork",
+    "StorageBackendProtocol",
+    "StorageDatabaseError",
+    "StorageIntegrityError",
+    "UnitOfWorkProtocol",
+]

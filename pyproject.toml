@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxible-core"
-version = "0.1.5"
+version = "0.2.0"
 description = "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof."
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "cruxible-client==0.2.0",
     "pydantic>=2.0",
     "networkx>=3.0",
     "polars>=1.0",
@@ -31,20 +32,33 @@ dependencies = [
     "structlog>=24.0",
     "click>=8.0",
     "rich>=13.0",
+    "httpx>=0.24",
+    "docling>=2.0",
+    "pypdf>=5.0",
+    "markdown-it-py>=4.0",
 ]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0"]
+server = [
+    "fastapi>=0.100",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.20",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "ruff>=0.7",
     "mypy>=1.10",
+    "fastapi>=0.100",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 cruxible = "cruxible_core.cli.main:cli"
 cruxible-mcp = "cruxible_core.mcp.server:main"
+# The daemon launches only via `cruxible server start`; there is no separate
+# `cruxible-server` console-script (removed in wi-server-cli-verb-consistency).
 
 [project.urls]
 Homepage = "https://github.com/cruxible-ai/cruxible-core"
@@ -54,12 +68,22 @@ Repository = "https://github.com/cruxible-ai/cruxible-core"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]
 
+[tool.uv.workspace]
+members = ["packages/cruxible-client"]
+
+[tool.uv.sources]
+cruxible-client = { workspace = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "packages/cruxible-client/src"]
+markers = [
+    "docker: requires a working Docker daemon and may build or run container images",
+    "wheel: builds and installs the distribution wheel into a throwaway venv; requires build tooling",
+]
 
 [tool.ruff]
-src = ["src", "tests"]
+src = ["src", "packages/cruxible-client/src", "tests"]
 line-length = 100
 
 [tool.ruff.lint]
@@ -68,8 +92,8 @@ select = ["E", "F", "I", "W"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-mypy_path = "src"
-packages = ["cruxible_core"]
+mypy_path = "src:packages/cruxible-client/src"
+packages = ["cruxible_core", "cruxible_client"]
 
 [dependency-groups]
 dev = [

@@ -27,8 +27,7 @@ def load_config(source: str | Path) -> CoreConfig:
         ConfigError: If the file can't be read or YAML is invalid.
     """
     raw_yaml = _read_source(source)
-    data = _parse_yaml(raw_yaml)
-    return _validate_config(data)
+    return _validate_config(_parse_config_yaml(raw_yaml))
 
 
 def load_config_from_string(yaml_str: str) -> CoreConfig:
@@ -47,8 +46,25 @@ def load_config_from_string(yaml_str: str) -> CoreConfig:
     Raises:
         ConfigError: If the YAML is invalid or fails validation.
     """
-    data = _parse_yaml(yaml_str)
-    return _validate_config(data)
+    return _validate_config(_parse_config_yaml(yaml_str))
+
+
+def _parse_config_yaml(raw_yaml: str) -> dict[str, Any]:
+    """Parse config YAML, expanding the compact authoring grammar if present.
+
+    The compact form (kits authored as ``config.yaml``) expands deterministically to
+    the explicit ``CoreConfig`` shape. Expansion runs from the raw TEXT (relationship
+    descriptions are carried as trailing comments), so there is no separate committed
+    expanded artifact -- the compact source is the single source of truth and the
+    explicit form exists only transiently in memory. Explicit configs are untouched.
+    """
+    data = _parse_yaml(raw_yaml)
+    # Imported lazily: compact.py imports the schema, and this keeps loader import-light.
+    from cruxible_core.config.compact import expand_compact, looks_compact
+
+    if looks_compact(data):
+        return expand_compact(raw_yaml)
+    return data
 
 
 def _read_source(source: str | Path) -> str:

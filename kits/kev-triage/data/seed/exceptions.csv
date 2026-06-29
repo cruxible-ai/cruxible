@@ -1,0 +1,6 @@
+exception_id,reason,review_due_at,status
+EXC-LEGACY-001,Legacy partner integration blocks immediate Apache upgrade,2026-05-15,approved
+EXC-PARTNER-002,Partner certification freeze delays WebLogic patch rollout,2026-04-29,approved
+EXC-BILLING-003,Billing quarter close freeze requires scoped review before patching batch workers,2026-05-10,approved
+EXC-CHROME-OLD-004,Expired browser patch exception retained for audit only,2026-02-28,expired
+EXC-LEGACY-REVOKED-005,Revoked legacy waiver after internet exposure was confirmed,2026-03-31,revoked

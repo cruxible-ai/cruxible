@@ -1,0 +1,42 @@
+name: Publish KEV Reference World
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-kev-reference
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - uses: oras-project/setup-oras@v1
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Compute release ID
+        id: release
+        run: echo "release_id=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish KEV reference world
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: >
+          uv run python scripts/publish_kev_release.py
+          --transport-ref oci://ghcr.io/cruxible-ai/models/kev-reference
+          --release-id ${{ steps.release.outputs.release_id }}

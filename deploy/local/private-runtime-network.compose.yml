@@ -1,0 +1,47 @@
+services:
+  runtime:
+    build:
+      context: ../..
+      dockerfile: deploy/runtime/Dockerfile
+    image: cruxible-core-runtime:local
+    environment:
+      CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET: ${CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET:-bootstrap-secret}
+    volumes:
+      - ${CRUXIBLE_RUNTIME_STATE_DIR:?set CRUXIBLE_RUNTIME_STATE_DIR to a writable host directory}:/var/lib/cruxible/server
+    expose:
+      - "8100"
+    networks:
+      runtime-private:
+        aliases:
+          - runtime
+
+  runtime-probe:
+    image: python:3.11-slim
+    depends_on:
+      - runtime
+    command:
+      - python
+      - -c
+      - |
+        import json
+        import time
+        from urllib.request import urlopen
+
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                with urlopen("http://runtime:8100/health", timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if payload == {"status": "ok"}:
+                    print("runtime private health ok")
+                    raise SystemExit(0)
+            except Exception:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.5)
+    networks:
+      - runtime-private
+
+networks:
+  runtime-private:
+    internal: true

@@ -1,0 +1,1622 @@
+{
+  "candidate_count": 50,
+  "group": {
+    "analysis_state": {
+      "match_summary": [
+        {
+          "affected_assets": 27,
+          "match_count": 46,
+          "matched_products": 17,
+          "verdict": "support"
+        },
+        {
+          "affected_assets": 4,
+          "match_count": 4,
+          "matched_products": 4,
+          "verdict": "unsure"
+        }
+      ]
+    },
+    "member_count": 50,
+    "relationship_type": "asset_runs_product",
+    "review_priority": "review",
+    "signal_sources_used": [
+      "software_product_match"
+    ],
+    "source_query_receipt_ids": [
+      "<RECEIPT_1>"
+    ],
+    "source_step_ids": [
+      "proposal",
+      "signals"
+    ],
+    "source_workflow_name": "propose_asset_products",
+    "status": "pending_review",
+    "thesis_facts": {
+      "candidates": {
+        "from_alias": "candidates"
+      },
+      "origin": {
+        "evidence_mode": "workflow_generated",
+        "kind": "workflow",
+        "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+        "step_id": "proposal",
+        "workflow_name": "propose_asset_products"
+      },
+      "policy": {
+        "auto_resolve_when": "all_support",
+        "proposal_identity": "thesis_signature"
+      },
+      "relationship": {
+        "from_type": "Asset",
+        "to_type": "Product",
+        "type": "asset_runs_product"
+      },
+      "signals": {
+        "blocking": [],
+        "required": [
+          "software_product_match"
+        ],
+        "used": [
+          "software_product_match"
+        ]
+      }
+    }
+  },
+  "group_id": "<GROUP_1>",
+  "group_status": "pending_review",
+  "member_count": 50,
+  "members": [
+    {
+      "properties": {
+        "installed_version": "2.4.49",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-20",
+        "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+        "observed_software_name": "Apache HTTP Server",
+        "observed_vendor": "Apache"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-20"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:2"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-1",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "apache-http-server",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "14.1.1.0.0",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-20",
+        "match_basis": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
+        "observed_software_name": "Oracle WebLogic Server",
+        "observed_vendor": "Oracle"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-20"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:18"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-10",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "oracle-weblogic-server",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "19.20",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-22",
+        "match_basis": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
+        "observed_software_name": "Oracle Database",
+        "observed_vendor": "Oracle"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "unsure_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.7273
+          },
+          "evidence": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-22"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:20"
+            }
+          ],
+          "signal": "unsure",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-11",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "oracle-rest-data-services",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "5.15.9",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-19",
+        "match_basis": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
+        "observed_software_name": "Apache ActiveMQ",
+        "observed_vendor": "Apache"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-19"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:22"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-12",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "apache-activemq",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "9.0.85",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-19",
+        "match_basis": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
+        "observed_software_name": "Apache Tomcat",
+        "observed_vendor": "Apache"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-19"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:23"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-12",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "apache-tomcat",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "2019",
+        "inventory_source": "endpoint_inventory",
+        "last_seen_at": "2026-03-21",
+        "match_basis": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
+        "observed_software_name": "Microsoft Windows Server",
+        "observed_vendor": "Microsoft"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.8
+          },
+          "evidence": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-21"
+              },
+              "source": "endpoint_inventory",
+              "source_record_id": "software_inventory.csv:24"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-13",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "microsoft-windows-2003-server",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "2.3.32",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-18",
+        "match_basis": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
+        "observed_software_name": "Apache Struts",
+        "observed_vendor": "Apache"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-18"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:26"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-14",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "apache-struts",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "2.4.49",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-18",
+        "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+        "observed_software_name": "Apache HTTP Server",
+        "observed_vendor": "Apache"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-18"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:28"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-15",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "apache-http-server",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "7.4.33",
+        "inventory_source": "qualys",
+        "last_seen_at": "2026-03-18",
+        "match_basis": "PHP from PHP matched reference product Php from Php based on vendor and product-name similarity.",
+        "observed_software_name": "PHP",
+        "observed_vendor": "PHP"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.99
+          },
+          "evidence": "PHP from PHP matched reference product Php from Php based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-18"
+              },
+              "source": "qualys",
+              "source_record_id": "software_inventory.csv:29"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-15",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "php-php",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "123.0.6312.86",
+        "inventory_source": "endpoint_inventory",
+        "last_seen_at": "2026-03-22",
+        "match_basis": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
+        "observed_software_name": "Google Chrome",
+        "observed_vendor": "Google"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-22"
+              },
+              "source": "endpoint_inventory",
+              "source_record_id": "software_inventory.csv:30"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-16",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "google-chrome",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "124.0",
+        "inventory_source": "endpoint_inventory",
+        "last_seen_at": "2026-03-22",
+        "match_basis": "Mozilla Firefox from Mozilla matched reference product Firefox from Mozilla based on vendor and product-name similarity.",
+        "observed_software_name": "Mozilla Firefox",
+        "observed_vendor": "Mozilla"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Mozilla Firefox from Mozilla matched reference product Firefox from Mozilla based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-22"
+              },
+              "source": "endpoint_inventory",
+              "source_record_id": "software_inventory.csv:31"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-16",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "mozilla-firefox",
+        "to_type": "Product"
+      }
+    },
+    {
+      "properties": {
+        "installed_version": "120.0.6099.129",
+        "inventory_source": "endpoint_inventory",
+        "last_seen_at": "2026-03-22",
+        "match_basis": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
+        "observed_software_name": "Google Chrome",
+        "observed_vendor": "Google"
+      },
+      "signals": [
+        {
+          "basis": {
+            "matched": "support_gte",
+            "mode": "score",
+            "path": "match_score",
+            "value": 0.952
+          },
+          "evidence": "Google Chrome from Google matched reference product Chrome from Google based on vendor and product-name similarity.",
+          "evidence_refs": [
+            {
+              "metadata": {
+                "observed_at": "2026-03-22"
+              },
+              "source": "endpoint_inventory",
+              "source_record_id": "software_inventory.csv:32"
+            }
+          ],
+          "signal": "support",
+          "signal_source": "software_product_match"
+        }
+      ],
+      "source_query_evidence": [
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        },
+        {
+          "feedback_addressable": false,
+          "query_receipt_id": "<RECEIPT_1>",
+          "row_shape": "unknown",
+          "source_step": "matches"
+        }
+      ],
+      "tuple": {
+        "from_id": "ASSET-17",
+        "from_type": "Asset",
+        "relationship_type": "asset_runs_product",
+        "to_id": "google-chrome",
+        "to_type": "Product"
+      }
+    }
+  ],
+  "output": {
+    "analysis_state": {
+      "match_summary": [
+        {
+          "affected_assets": 27,
+          "match_count": 46,
+          "matched_products": 17,
+          "verdict": "support"
+        },
+        {
+          "affected_assets": 4,
+          "match_count": 4,
+          "matched_products": 4,
+          "verdict": "unsure"
+        }
+      ]
+    },
+    "candidate_count": 50,
+    "candidates_from": "candidates",
+    "group_created": null,
+    "members": [
+      {
+        "edge_key": null,
+        "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-20"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:2"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-1",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "2.4.49",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-20",
+          "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+          "observed_software_name": "Apache HTTP Server",
+          "observed_vendor": "Apache"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-20"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:2"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "apache-http-server",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-20"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:18"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-10",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "14.1.1.0.0",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-20",
+          "match_basis": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
+          "observed_software_name": "Oracle WebLogic Server",
+          "observed_vendor": "Oracle"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Oracle WebLogic Server from Oracle matched reference product Weblogic Server from Oracle based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-20"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:18"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "oracle-weblogic-server",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-22"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:20"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-11",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "19.20",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-22",
+          "match_basis": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
+          "observed_software_name": "Oracle Database",
+          "observed_vendor": "Oracle"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "unsure_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.7273
+            },
+            "evidence": "Oracle Database from Oracle matched reference product Rest Data Services from Oracle based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-22"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:20"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "unsure",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "oracle-rest-data-services",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-19"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:22"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-12",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "5.15.9",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-19",
+          "match_basis": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
+          "observed_software_name": "Apache ActiveMQ",
+          "observed_vendor": "Apache"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Apache ActiveMQ from Apache matched reference product Activemq from Apache based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-19"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:22"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "apache-activemq",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-19"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:23"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-12",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "9.0.85",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-19",
+          "match_basis": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
+          "observed_software_name": "Apache Tomcat",
+          "observed_vendor": "Apache"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Apache Tomcat from Apache matched reference product Tomcat from Apache based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-19"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:23"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "apache-tomcat",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-21"
+            },
+            "source": "endpoint_inventory",
+            "source_record_id": "software_inventory.csv:24"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-13",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "2019",
+          "inventory_source": "endpoint_inventory",
+          "last_seen_at": "2026-03-21",
+          "match_basis": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
+          "observed_software_name": "Microsoft Windows Server",
+          "observed_vendor": "Microsoft"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.8
+            },
+            "evidence": "Microsoft Windows Server from Microsoft matched reference product Windows 2003 Server from Microsoft based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-21"
+                },
+                "source": "endpoint_inventory",
+                "source_record_id": "software_inventory.csv:24"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "microsoft-windows-2003-server",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-18"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:26"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-14",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "2.3.32",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-18",
+          "match_basis": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
+          "observed_software_name": "Apache Struts",
+          "observed_vendor": "Apache"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Apache Struts from Apache matched reference product Struts from Apache based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-18"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:26"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "apache-struts",
+        "to_type": "Product"
+      },
+      {
+        "edge_key": null,
+        "evidence_rationale": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+        "evidence_refs": [
+          {
+            "metadata": {
+              "observed_at": "2026-03-18"
+            },
+            "source": "qualys",
+            "source_record_id": "software_inventory.csv:28"
+          }
+        ],
+        "evidence_refs_count": 1,
+        "from_id": "ASSET-15",
+        "from_type": "Asset",
+        "metadata": {
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "closed_at": null,
+              "closed_by": null,
+              "effective_from": null,
+              "effective_until": null,
+              "reason": null,
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "actor_context": null,
+              "source": "system",
+              "status": "unreviewed",
+              "updated_at": null,
+              "updated_by": null
+            }
+          },
+          "evidence": null,
+          "provenance": null
+        },
+        "properties": {
+          "installed_version": "2.4.49",
+          "inventory_source": "qualys",
+          "last_seen_at": "2026-03-18",
+          "match_basis": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+          "observed_software_name": "Apache HTTP Server",
+          "observed_vendor": "Apache"
+        },
+        "relationship_type": "asset_runs_product",
+        "signals": [
+          {
+            "basis": {
+              "matched": "support_gte",
+              "mode": "score",
+              "path": "match_score",
+              "value": 0.952
+            },
+            "evidence": "Apache HTTP Server from Apache matched reference product Http Server from Apache based on vendor and product-name similarity.",
+            "evidence_refs": [
+              {
+                "metadata": {
+                  "observed_at": "2026-03-18"
+                },
+                "source": "qualys",
+                "source_record_id": "software_inventory.csv:28"
+              }
+            ],
+            "evidence_refs_count": 1,
+            "signal": "support",
+            "signal_source": "software_product_match"
+          }
+        ],
+        "signals_count": 1,
+        "source_query_evidence": [
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          },
+          {
+            "feedback_addressable": false,
+            "query_receipt_id": "<RECEIPT_1>",
+            "row_shape": "unknown",
+            "source_step": "matches"
+          }
+        ],
+        "source_query_evidence_count": 2,
+        "to_id": "apache-http-server",
+        "to_type": "Product"
+      }
+    ],
+    "on_empty": null,
+    "pending_refresh_mode": "retain_missing",
+    "proposal_step_id": "proposal",
+    "query_receipt_ids": [
+      "<RECEIPT_1>"
+    ],
+    "relationship_type": "asset_runs_product",
+    "signal_sources_used": [
+      "software_product_match"
+    ],
+    "status": "ready",
+    "suggested_priority": null,
+    "thesis_facts": {
+      "candidates": {
+        "from_alias": "candidates"
+      },
+      "origin": {
+        "evidence_mode": "workflow_generated",
+        "kind": "workflow",
+        "proposal_logic_digest": "sha256:af49a037a96e83a85a91748f4e3ddb077979bb1d09671e0357fb5caefdd7a323",
+        "step_id": "proposal",
+        "workflow_name": "propose_asset_products"
+      },
+      "policy": {
+        "auto_resolve_when": "all_support",
+        "proposal_identity": "thesis_signature"
+      },
+      "relationship": {
+        "from_type": "Asset",
+        "to_type": "Product",
+        "type": "asset_runs_product"
+      },
+      "signals": {
+        "blocking": [],
+        "required": [
+          "software_product_match"
+        ],
+        "used": [
+          "software_product_match"
+        ]
+      }
+    },
+    "thesis_text": "Fuzzy software-to-product matching from CMDB inventory\n"
+  },
+  "query_receipt_ids": [
+    "<RECEIPT_1>"
+  ],
+  "read_metadata": {
+    "any_query_truncated": false,
+    "any_read_truncated": false,
+    "query_receipt_ids": [
+      "<RECEIPT_1>"
+    ],
+    "read_steps": [
+      {
+        "alias": "reference_products",
+        "counts": {
+          "returned_results": 3195,
+          "total_results": 3195
+        },
+        "kind": "query",
+        "metadata": {
+          "dedupe": "entity",
+          "limit": null,
+          "limit_truncated": false,
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "path_truncated": false,
+          "policy_summary": {},
+          "receipt_id": "<RECEIPT_1>",
+          "relationship_state": "live",
+          "result_shape": "entity",
+          "retained_path_count": null,
+          "returned_results": 3195,
+          "total_path_count": null,
+          "total_results": 3195,
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "reference_products"
+      },
+      {
+        "alias": "matches",
+        "counts": {},
+        "kind": "provider",
+        "metadata": {
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>"
+          ],
+          "receipt_id": "<RECEIPT_1>",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "step_id": "matches"
+      },
+      {
+        "alias": "match_summary",
+        "counts": {
+          "group_count": 2,
+          "input_count": 50,
+          "output_count": 2
+        },
+        "kind": "aggregate_items",
+        "metadata": {
+          "input_ref": "$steps.matches.items",
+          "limit_truncated": false,
+          "path_truncated": false,
+          "query_receipt_ids": [
+            "<RECEIPT_1>"
+          ],
+          "receipt_id": "<RECEIPT_1>",
+          "source_ref": "$steps.matches.items",
+          "source_step": "matches",
+          "truncated": false,
+          "truncation_reasons": []
+        },
+        "source_ref": "$steps.matches.items",
+        "source_step": "matches",
+        "step_id": "match_summary"
+      },
+      {
+        "alias": "candidates",
+        "counts": {},
+        "kind": "make_candidates",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>"
+          ]
+        },
+        "step_id": "candidates"
+      },
+      {
+        "alias": "signals",
+        "counts": {},
+        "kind": "map_signals",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>"
+          ]
+        },
+        "step_id": "signals"
+      },
+      {
+        "alias": "proposal",
+        "counts": {},
+        "kind": "propose_relationship_group",
+        "metadata": {
+          "query_receipt_ids": [
+            "<RECEIPT_1>"
+          ]
+        },
+        "step_id": "proposal"
+      }
+    ],
+    "step_counts": {
+      "match_summary": {
+        "group_count": 2,
+        "input_count": 50,
+        "output_count": 2
+      },
+      "reference_products": {
+        "returned_results": 3195,
+        "total_results": 3195
+      }
+    },
+    "truncation_reasons": []
+  },
+  "relationship_type": "asset_runs_product",
+  "review_priority": "review",
+  "suppressed": false,
+  "workflow": "propose_asset_products"
+}

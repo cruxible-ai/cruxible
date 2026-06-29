@@ -22,16 +22,57 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-packages --all-extras
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src packages/cruxible-client/src tests
 
       - name: Format check
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check src packages/cruxible-client/src tests
 
       - name: Type check
-        run: uv run mypy src
+        run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
         run: uv run pytest --tb=short
+
+  docker-image-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras
+
+      - name: Verify Docker daemon
+        run: docker info
+
+      - name: Test Docker image
+        env:
+          CRUXIBLE_RUN_DOCKER_TESTS: "1"
+        run: uv run pytest tests/test_image -m docker --tb=short
+
+  wheel-install-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras
+
+      - name: Build and verify installed wheel console scripts
+        env:
+          CRUXIBLE_RUN_WHEEL_TESTS: "1"
+        run: uv run pytest tests/test_packaging -m wheel --tb=short

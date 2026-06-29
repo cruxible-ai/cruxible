@@ -9,6 +9,8 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
+from cruxible_core.mcp.handlers import reset_client_cache
+from cruxible_core.server.registry import reset_registry
 
 CAR_PARTS_YAML = """\
 version: "1.0"
@@ -52,7 +54,7 @@ relationships:
       source:
         type: string
         optional: true
-    inverse: fitted_parts
+    reverse_name: fitted_parts
   - name: replaces
     from: Part
     to: Part
@@ -65,6 +67,7 @@ relationships:
 
 named_queries:
   parts_for_vehicle:
+    mode: traversal
     description: Find all parts that fit a specific vehicle
     entry_point: Vehicle
     traversal:
@@ -74,6 +77,7 @@ named_queries:
           verified: true
     returns: "list[Part]"
   vehicles_for_part:
+    mode: traversal
     description: Find all vehicles a part fits
     entry_point: Part
     traversal:
@@ -83,18 +87,24 @@ named_queries:
 
 constraints: []
 
-ingestion:
-  vehicles:
-    entity_type: Vehicle
-    id_column: vehicle_id
-  parts:
-    entity_type: Part
-    id_column: part_number
-  fitments:
-    relationship_type: fits
-    from_column: part_number
-    to_column: vehicle_id
 """
+
+
+@pytest.fixture(autouse=True)
+def reset_server_mode_env(monkeypatch):
+    """Clear server-mode env and caches between CLI tests."""
+    monkeypatch.delenv("CRUXIBLE_REQUIRE_SERVER", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_STATE_DIR", raising=False)
+    reset_client_cache()
+    reset_registry()
+    yield
+    reset_client_cache()
+    reset_registry()
 
 
 @pytest.fixture
@@ -172,30 +182,30 @@ def populated_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1001",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-CIVIC-EX",
+            from_type="Part",
+            from_id="BP-1001",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
             properties={"verified": True, "source": "catalog"},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1001",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-ACCORD-SPORT",
+            from_type="Part",
+            from_id="BP-1001",
+            to_type="Vehicle",
+            to_id="V-2024-ACCORD-SPORT",
             properties={"verified": True, "source": "catalog"},
         )
     )
     g.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1002",
-            to_entity_type="Vehicle",
-            to_entity_id="V-2024-CIVIC-EX",
+            from_type="Part",
+            from_id="BP-1002",
+            to_type="Vehicle",
+            to_id="V-2024-CIVIC-EX",
             properties={"verified": True, "source": "user_report"},
         )
     )
@@ -204,10 +214,10 @@ def populated_graph() -> EntityGraph:
     g.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-1002",
-            to_entity_type="Part",
-            to_entity_id="BP-1001",
+            from_type="Part",
+            from_id="BP-1002",
+            to_type="Part",
+            to_id="BP-1001",
             properties={"direction": "upgrade", "confidence": 0.95},
         )
     )

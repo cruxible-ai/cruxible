@@ -1,0 +1,508 @@
+{
+  "trusted_all_support": {
+    "candidate_count": 1,
+    "group": {
+      "analysis_state": {
+        "classification_summary": [
+          {
+            "class_id": "path_traversal",
+            "proposal_count": 1,
+            "verdict": "support",
+            "vulnerabilities": 1
+          }
+        ]
+      },
+      "member_count": 1,
+      "relationship_type": "vulnerability_classified_as",
+      "review_priority": "normal",
+      "signal_sources_used": [
+        "vulnerability_classification"
+      ],
+      "source_query_receipt_ids": [],
+      "source_step_ids": [
+        "proposal",
+        "classification_signals"
+      ],
+      "source_workflow_name": "propose_vulnerability_classification",
+      "status": "auto_resolved",
+      "thesis_facts": {
+        "candidates": {
+          "from_alias": "candidates"
+        },
+        "origin": {
+          "evidence_mode": "workflow_generated",
+          "kind": "workflow",
+          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "step_id": "proposal",
+          "workflow_name": "propose_vulnerability_classification"
+        },
+        "policy": {
+          "auto_resolve_when": "all_support",
+          "proposal_identity": "thesis_signature"
+        },
+        "relationship": {
+          "from_type": "Vulnerability",
+          "to_type": "VulnerabilityClass",
+          "type": "vulnerability_classified_as"
+        },
+        "signals": {
+          "blocking": [],
+          "required": [
+            "vulnerability_classification"
+          ],
+          "used": [
+            "vulnerability_classification"
+          ]
+        }
+      }
+    },
+    "group_id": "<GROUP_1>",
+    "group_status": "auto_resolved",
+    "member_count": 1,
+    "members": [
+      {
+        "properties": {
+          "basis": "Golden fixture classification branch with support.",
+          "source": "golden_fixture"
+        },
+        "signals": [
+          {
+            "basis": {
+              "matched": "support",
+              "mode": "enum",
+              "path": "verdict",
+              "value": "support"
+            },
+            "evidence": "Golden fixture classification branch with support.",
+            "evidence_refs": [],
+            "signal": "support",
+            "signal_source": "vulnerability_classification"
+          }
+        ],
+        "source_query_evidence": [],
+        "tuple": {
+          "from_id": "CVE-2021-41773",
+          "from_type": "Vulnerability",
+          "relationship_type": "vulnerability_classified_as",
+          "to_id": "path_traversal",
+          "to_type": "VulnerabilityClass"
+        }
+      }
+    ],
+    "output": {
+      "analysis_state": {
+        "classification_summary": [
+          {
+            "class_id": "path_traversal",
+            "proposal_count": 1,
+            "verdict": "support",
+            "vulnerabilities": 1
+          }
+        ]
+      },
+      "candidate_count": 1,
+      "candidates_from": "candidates",
+      "group_created": null,
+      "members": [
+        {
+          "edge_key": null,
+          "evidence_rationale": null,
+          "evidence_refs": [],
+          "evidence_refs_count": 0,
+          "from_id": "CVE-2021-41773",
+          "from_type": "Vulnerability",
+          "metadata": {
+            "assertion": {
+              "group_override": false,
+              "lifecycle": {
+                "closed_at": null,
+                "closed_by": null,
+                "effective_from": null,
+                "effective_until": null,
+                "reason": null,
+                "status": "active",
+                "superseded_by": null,
+                "supersedes": null
+              },
+              "review": {
+                "actor_context": null,
+                "source": "system",
+                "status": "unreviewed",
+                "updated_at": null,
+                "updated_by": null
+              }
+            },
+            "evidence": null,
+            "provenance": null
+          },
+          "properties": {
+            "basis": "Golden fixture classification branch with support.",
+            "source": "golden_fixture"
+          },
+          "relationship_type": "vulnerability_classified_as",
+          "signals": [
+            {
+              "basis": {
+                "matched": "support",
+                "mode": "enum",
+                "path": "verdict",
+                "value": "support"
+              },
+              "evidence": "Golden fixture classification branch with support.",
+              "evidence_refs": [],
+              "evidence_refs_count": 0,
+              "signal": "support",
+              "signal_source": "vulnerability_classification"
+            }
+          ],
+          "signals_count": 1,
+          "source_query_evidence": [],
+          "source_query_evidence_count": 0,
+          "to_id": "path_traversal",
+          "to_type": "VulnerabilityClass"
+        }
+      ],
+      "on_empty": null,
+      "pending_refresh_mode": "retain_missing",
+      "proposal_step_id": "proposal",
+      "query_receipt_ids": [],
+      "relationship_type": "vulnerability_classified_as",
+      "signal_sources_used": [
+        "vulnerability_classification"
+      ],
+      "status": "ready",
+      "suggested_priority": null,
+      "thesis_facts": {
+        "candidates": {
+          "from_alias": "candidates"
+        },
+        "origin": {
+          "evidence_mode": "workflow_generated",
+          "kind": "workflow",
+          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "step_id": "proposal",
+          "workflow_name": "propose_vulnerability_classification"
+        },
+        "policy": {
+          "auto_resolve_when": "all_support",
+          "proposal_identity": "thesis_signature"
+        },
+        "relationship": {
+          "from_type": "Vulnerability",
+          "to_type": "VulnerabilityClass",
+          "type": "vulnerability_classified_as"
+        },
+        "signals": {
+          "blocking": [],
+          "required": [
+            "vulnerability_classification"
+          ],
+          "used": [
+            "vulnerability_classification"
+          ]
+        }
+      },
+      "thesis_text": "Agent-selected operational vulnerability classification\n"
+    },
+    "prior_resolution": {
+      "action": "approve",
+      "confirmed": true,
+      "relationship_type": "vulnerability_classified_as",
+      "trust_status": "trusted"
+    },
+    "query_receipt_ids": [],
+    "read_metadata": {
+      "any_query_truncated": false,
+      "any_read_truncated": false,
+      "query_receipt_ids": [],
+      "read_steps": [
+        {
+          "alias": "candidates",
+          "counts": {},
+          "kind": "make_candidates",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "candidates"
+        },
+        {
+          "alias": "classification_signals",
+          "counts": {},
+          "kind": "map_signals",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "classification_signals"
+        },
+        {
+          "alias": "proposal",
+          "counts": {},
+          "kind": "propose_relationship_group",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "proposal"
+        }
+      ],
+      "step_counts": {},
+      "truncation_reasons": []
+    },
+    "relationship_type": "vulnerability_classified_as",
+    "review_priority": "normal",
+    "suppressed": false,
+    "workflow": "propose_vulnerability_classification"
+  },
+  "trusted_unsure_always_review": {
+    "candidate_count": 1,
+    "group": {
+      "analysis_state": {
+        "classification_summary": [
+          {
+            "class_id": "path_traversal",
+            "proposal_count": 1,
+            "verdict": "unsure",
+            "vulnerabilities": 1
+          }
+        ]
+      },
+      "member_count": 1,
+      "relationship_type": "vulnerability_classified_as",
+      "review_priority": "review",
+      "signal_sources_used": [
+        "vulnerability_classification"
+      ],
+      "source_query_receipt_ids": [],
+      "source_step_ids": [
+        "proposal",
+        "classification_signals"
+      ],
+      "source_workflow_name": "propose_vulnerability_classification",
+      "status": "pending_review",
+      "thesis_facts": {
+        "candidates": {
+          "from_alias": "candidates"
+        },
+        "origin": {
+          "evidence_mode": "workflow_generated",
+          "kind": "workflow",
+          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "step_id": "proposal",
+          "workflow_name": "propose_vulnerability_classification"
+        },
+        "policy": {
+          "auto_resolve_when": "all_support",
+          "proposal_identity": "thesis_signature"
+        },
+        "relationship": {
+          "from_type": "Vulnerability",
+          "to_type": "VulnerabilityClass",
+          "type": "vulnerability_classified_as"
+        },
+        "signals": {
+          "blocking": [],
+          "required": [
+            "vulnerability_classification"
+          ],
+          "used": [
+            "vulnerability_classification"
+          ]
+        }
+      }
+    },
+    "group_id": "<GROUP_1>",
+    "group_status": "pending_review",
+    "member_count": 1,
+    "members": [
+      {
+        "properties": {
+          "basis": "Golden fixture classification branch with unsure.",
+          "source": "golden_fixture"
+        },
+        "signals": [
+          {
+            "basis": {
+              "matched": "unsure",
+              "mode": "enum",
+              "path": "verdict",
+              "value": "unsure"
+            },
+            "evidence": "Golden fixture classification branch with unsure.",
+            "evidence_refs": [],
+            "signal": "unsure",
+            "signal_source": "vulnerability_classification"
+          }
+        ],
+        "source_query_evidence": [],
+        "tuple": {
+          "from_id": "CVE-2021-41773",
+          "from_type": "Vulnerability",
+          "relationship_type": "vulnerability_classified_as",
+          "to_id": "path_traversal",
+          "to_type": "VulnerabilityClass"
+        }
+      }
+    ],
+    "output": {
+      "analysis_state": {
+        "classification_summary": [
+          {
+            "class_id": "path_traversal",
+            "proposal_count": 1,
+            "verdict": "unsure",
+            "vulnerabilities": 1
+          }
+        ]
+      },
+      "candidate_count": 1,
+      "candidates_from": "candidates",
+      "group_created": null,
+      "members": [
+        {
+          "edge_key": null,
+          "evidence_rationale": null,
+          "evidence_refs": [],
+          "evidence_refs_count": 0,
+          "from_id": "CVE-2021-41773",
+          "from_type": "Vulnerability",
+          "metadata": {
+            "assertion": {
+              "group_override": false,
+              "lifecycle": {
+                "closed_at": null,
+                "closed_by": null,
+                "effective_from": null,
+                "effective_until": null,
+                "reason": null,
+                "status": "active",
+                "superseded_by": null,
+                "supersedes": null
+              },
+              "review": {
+                "actor_context": null,
+                "source": "system",
+                "status": "unreviewed",
+                "updated_at": null,
+                "updated_by": null
+              }
+            },
+            "evidence": null,
+            "provenance": null
+          },
+          "properties": {
+            "basis": "Golden fixture classification branch with unsure.",
+            "source": "golden_fixture"
+          },
+          "relationship_type": "vulnerability_classified_as",
+          "signals": [
+            {
+              "basis": {
+                "matched": "unsure",
+                "mode": "enum",
+                "path": "verdict",
+                "value": "unsure"
+              },
+              "evidence": "Golden fixture classification branch with unsure.",
+              "evidence_refs": [],
+              "evidence_refs_count": 0,
+              "signal": "unsure",
+              "signal_source": "vulnerability_classification"
+            }
+          ],
+          "signals_count": 1,
+          "source_query_evidence": [],
+          "source_query_evidence_count": 0,
+          "to_id": "path_traversal",
+          "to_type": "VulnerabilityClass"
+        }
+      ],
+      "on_empty": null,
+      "pending_refresh_mode": "retain_missing",
+      "proposal_step_id": "proposal",
+      "query_receipt_ids": [],
+      "relationship_type": "vulnerability_classified_as",
+      "signal_sources_used": [
+        "vulnerability_classification"
+      ],
+      "status": "ready",
+      "suggested_priority": null,
+      "thesis_facts": {
+        "candidates": {
+          "from_alias": "candidates"
+        },
+        "origin": {
+          "evidence_mode": "workflow_generated",
+          "kind": "workflow",
+          "proposal_logic_digest": "sha256:b95cc239c167605eea7233ab5210b250184dce6caaa045c9f944ac5d8135418e",
+          "step_id": "proposal",
+          "workflow_name": "propose_vulnerability_classification"
+        },
+        "policy": {
+          "auto_resolve_when": "all_support",
+          "proposal_identity": "thesis_signature"
+        },
+        "relationship": {
+          "from_type": "Vulnerability",
+          "to_type": "VulnerabilityClass",
+          "type": "vulnerability_classified_as"
+        },
+        "signals": {
+          "blocking": [],
+          "required": [
+            "vulnerability_classification"
+          ],
+          "used": [
+            "vulnerability_classification"
+          ]
+        }
+      },
+      "thesis_text": "Agent-selected operational vulnerability classification\n"
+    },
+    "prior_resolution": {
+      "action": "approve",
+      "confirmed": true,
+      "relationship_type": "vulnerability_classified_as",
+      "trust_status": "trusted"
+    },
+    "query_receipt_ids": [],
+    "read_metadata": {
+      "any_query_truncated": false,
+      "any_read_truncated": false,
+      "query_receipt_ids": [],
+      "read_steps": [
+        {
+          "alias": "candidates",
+          "counts": {},
+          "kind": "make_candidates",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "candidates"
+        },
+        {
+          "alias": "classification_signals",
+          "counts": {},
+          "kind": "map_signals",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "classification_signals"
+        },
+        {
+          "alias": "proposal",
+          "counts": {},
+          "kind": "propose_relationship_group",
+          "metadata": {
+            "query_receipt_ids": []
+          },
+          "step_id": "proposal"
+        }
+      ],
+      "step_counts": {},
+      "truncation_reasons": []
+    },
+    "relationship_type": "vulnerability_classified_as",
+    "review_priority": "review",
+    "suppressed": false,
+    "workflow": "propose_vulnerability_classification"
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "pending_marker": "Golden fixture pending reviewable posture proof.",
+  "query": "asset_vulnerability_postures_requiring_action",
+  "states": {
+    "accepted": {
+      "pending_fixture_count": 0,
+      "pending_fixture_matches": [],
+      "receipt": {
+        "dedupe": "none",
+        "operation_type": "query",
+        "present": true,
+        "query_name": "asset_vulnerability_postures_requiring_action",
+        "receipt_id": "<RECEIPT_1>",
+        "relationship_state": "accepted",
+        "relationship_state_source": "runtime_override",
+        "result_shape": "relationship"
+      },
+      "relationship_state": "accepted",
+      "total_results": 59
+    },
+    "live": {
+      "pending_fixture_count": 0,
+      "pending_fixture_matches": [],
+      "receipt": {
+        "dedupe": "none",
+        "operation_type": "query",
+        "present": true,
+        "query_name": "asset_vulnerability_postures_requiring_action",
+        "receipt_id": "<RECEIPT_2>",
+        "relationship_state": "live",
+        "relationship_state_source": "runtime_override",
+        "result_shape": "relationship"
+      },
+      "relationship_state": "live",
+      "total_results": 59
+    },
+    "pending": {
+      "pending_fixture_count": 1,
+      "pending_fixture_matches": [
+        {
+          "alias": null,
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "source": "agent",
+              "status": "pending"
+            }
+          },
+          "from_entity": {
+            "entity_id": "ASSET-1",
+            "entity_type": "Asset",
+            "properties": {
+              "asset_id": "ASSET-1",
+              "asset_type": "server",
+              "criticality": "critical",
+              "environment": "production",
+              "hostname": "prod-web-01",
+              "internet_exposed": true
+            }
+          },
+          "from_id": "ASSET-1",
+          "from_type": "Asset",
+          "properties": {
+            "affected_basis": "Golden fixture pending reviewable posture proof.",
+            "control_basis": "Golden fixture pending reviewable posture proof.",
+            "exposure_basis": "Golden fixture pending reviewable posture proof.",
+            "installed_version": "2.4.49",
+            "priority": "high",
+            "product_id": "apache-http-server",
+            "review_due_at": "2026-06-20",
+            "status": "exposed"
+          },
+          "relationship_type": "asset_vulnerability_posture",
+          "review_status": "pending",
+          "to_entity": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "to_id": "CVE-2021-41773",
+          "to_type": "Vulnerability"
+        }
+      ],
+      "receipt": {
+        "dedupe": "none",
+        "operation_type": "query",
+        "present": true,
+        "query_name": "asset_vulnerability_postures_requiring_action",
+        "receipt_id": "<RECEIPT_3>",
+        "relationship_state": "pending",
+        "relationship_state_source": "runtime_override",
+        "result_shape": "relationship"
+      },
+      "relationship_state": "pending",
+      "total_results": 1
+    },
+    "reviewable": {
+      "pending_fixture_count": 1,
+      "pending_fixture_matches": [
+        {
+          "alias": null,
+          "assertion": {
+            "group_override": false,
+            "lifecycle": {
+              "status": "active",
+              "superseded_by": null,
+              "supersedes": null
+            },
+            "review": {
+              "source": "agent",
+              "status": "pending"
+            }
+          },
+          "from_entity": {
+            "entity_id": "ASSET-1",
+            "entity_type": "Asset",
+            "properties": {
+              "asset_id": "ASSET-1",
+              "asset_type": "server",
+              "criticality": "critical",
+              "environment": "production",
+              "hostname": "prod-web-01",
+              "internet_exposed": true
+            }
+          },
+          "from_id": "ASSET-1",
+          "from_type": "Asset",
+          "properties": {
+            "affected_basis": "Golden fixture pending reviewable posture proof.",
+            "control_basis": "Golden fixture pending reviewable posture proof.",
+            "exposure_basis": "Golden fixture pending reviewable posture proof.",
+            "installed_version": "2.4.49",
+            "priority": "high",
+            "product_id": "apache-http-server",
+            "review_due_at": "2026-06-20",
+            "status": "exposed"
+          },
+          "relationship_type": "asset_vulnerability_posture",
+          "review_status": "pending",
+          "to_entity": {
+            "entity_id": "CVE-2021-41773",
+            "entity_type": "Vulnerability",
+            "properties": {
+              "cve_id": "CVE-2021-41773",
+              "cvss_score": 9.8,
+              "cvss_severity": "CRITICAL",
+              "cwes": [
+                "CWE-22"
+              ],
+              "date_added_to_kev": "2021-11-03",
+              "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives. If files outside of these directories are not protected by the usual default configuration \"require all denied\", these requests can succeed. If CGI scripts are also enabled for these aliased pathes, this could allow for remote code execution. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions. The fix in Apache HTTP Server 2.4.50 was found to be incomplete, see CVE-2021-42013.",
+              "epss_percentile": 0.99985,
+              "epss_score": 0.94433,
+              "kev_due_date": "2021-11-17",
+              "known_ransomware_use": "Known",
+              "required_action": "Apply updates per vendor instructions.",
+              "vulnerability_name": "Apache HTTP Server Path Traversal Vulnerability"
+            }
+          },
+          "to_id": "CVE-2021-41773",
+          "to_type": "Vulnerability"
+        }
+      ],
+      "receipt": {
+        "dedupe": "none",
+        "operation_type": "query",
+        "present": true,
+        "query_name": "asset_vulnerability_postures_requiring_action",
+        "receipt_id": "<RECEIPT_4>",
+        "relationship_state": "reviewable",
+        "relationship_state_source": "runtime_override",
+        "result_shape": "relationship"
+      },
+      "relationship_state": "reviewable",
+      "total_results": 60
+    }
+  }
+}

@@ -15,8 +15,32 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
-      - name: Build
-        run: uv build
+      - name: Verify package versions are locked
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          root = tomllib.loads(Path("pyproject.toml").read_text())
+          client = tomllib.loads(Path("packages/cruxible-client/pyproject.toml").read_text())
+          core_version = root["project"]["version"]
+          client_version = client["project"]["version"]
+          expected = f"cruxible-client=={client_version}"
+          dependencies = root["project"]["dependencies"]
+
+          if core_version != client_version:
+              raise SystemExit(
+                  f"Version mismatch: cruxible-core={core_version} cruxible-client={client_version}"
+              )
+          if expected not in dependencies:
+              raise SystemExit(f"Missing exact dependency pin: {expected}")
+          PY
+
+      - name: Build cruxible-client
+        run: uv build --package cruxible-client
+
+      - name: Build cruxible-core
+        run: uv build --package cruxible-core
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

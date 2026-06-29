@@ -13,20 +13,38 @@ errors (runtime data), making it easy to catch by category.
     ├── GraphError (runtime data problems)
     │   ├── EntityNotFoundError
     │   ├── DataValidationError
+    │   ├── RelationshipAmbiguityError
     │   └── ConstraintViolationError
     ├── ExecutionError (operation failures)
     │   ├── IngestionError
-    │   └── QueryExecutionError
-    └── PermissionDeniedError (MCP permission mode)
+    │   ├── MutationError
+    │   ├── QueryExecutionError
+    │   ├── CustomerCodeExecutionUnsupportedError
+    │   └── TransportError
+    ├── OwnershipError (overlay type-level ownership)
+    ├── ReceiptNotFoundError (receipt store lookup)
+    ├── TraceNotFoundError (trace store lookup)
+    ├── OutcomeNotFoundError (feedback store lookup)
+    ├── InstanceNotFoundError (instance registry lookup)
+    ├── GroupNotFoundError (group store lookup)
+    ├── RuntimeCredentialNotFoundError (server credential store lookup)
+    ├── AuthenticationError (HTTP/API credential failure)
+    ├── InstanceScopeError (HTTP/API credential scope mismatch)
+    ├── PermissionDeniedError (MCP permission mode)
+    └── DirectWriteRefusedError (governed proposal_only direct-write refusal)
 """
 
 from __future__ import annotations
 
+from cruxible_client.errors import CoreError as _ClientCoreError
 
-class CoreError(Exception):
-    """Base exception for all Cruxible Core errors."""
 
-    pass
+class CoreError(_ClientCoreError):
+    """Base exception for all Cruxible Core errors.
+
+    Inherits the client base so one `except cruxible_client.errors.CoreError`
+    catches local and remote failures alike — no parallel hierarchies.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -43,34 +61,48 @@ class SchemaError(CoreError):
 _MAX_DISPLAY_ERRORS = 10
 
 
+def _format_capped_errors(errors: list[str]) -> str:
+    shown = errors[:_MAX_DISPLAY_ERRORS]
+    detail = "; ".join(shown)
+    if len(errors) > _MAX_DISPLAY_ERRORS:
+        detail += f" ... and {len(errors) - _MAX_DISPLAY_ERRORS} more error(s)"
+    return detail
+
+
 class ConfigError(SchemaError):
     """Invalid configuration YAML.
 
     Raised when config fails schema validation or cross-reference checks.
     """
 
-    def __init__(self, message: str, errors: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary
-        shown = self.errors[:_MAX_DISPLAY_ERRORS]
-        detail = "; ".join(shown)
-        suffix = ""
-        if len(self.errors) > _MAX_DISPLAY_ERRORS:
-            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}"
+            return self.summary + self._receipt_suffix()
+        detail = _format_capped_errors(self.errors)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
 class EntityTypeNotFoundError(SchemaError):
     """Entity type not defined in config schema."""
 
-    def __init__(self, entity_type: str):
+    def __init__(self, entity_type: str, *, known_entity_types: list[str] | None = None):
         self.entity_type = entity_type
-        super().__init__(f"Entity type '{entity_type}' not found in schema")
+        self.known_entity_types = sorted(known_entity_types or [])
+        message = f"Entity type '{entity_type}' not found in schema"
+        if self.known_entity_types:
+            message += f". Known entity types: {', '.join(self.known_entity_types)}"
+        super().__init__(message)
 
 
 class RelationshipNotFoundError(SchemaError):
@@ -116,23 +148,25 @@ class DataValidationError(GraphError):
     property definitions in the config (wrong columns, bad types, etc.).
     """
 
-    def __init__(self, message: str, errors: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary
-        shown = self.errors[:_MAX_DISPLAY_ERRORS]
-        detail = "; ".join(shown)
-        suffix = ""
-        if len(self.errors) > _MAX_DISPLAY_ERRORS:
-            suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}"
+            return self.summary + self._receipt_suffix()
+        detail = _format_capped_errors(self.errors)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
-class EdgeAmbiguityError(GraphError):
+class RelationshipAmbiguityError(GraphError):
     """A relationship target is ambiguous and needs a stable edge key."""
 
     def __init__(
@@ -141,11 +175,16 @@ class EdgeAmbiguityError(GraphError):
         from_id: str,
         to_type: str,
         to_id: str,
-        relationship: str,
+        relationship_type: str,
     ):
+        self.from_type = from_type
+        self.from_id = from_id
+        self.to_type = to_type
+        self.to_id = to_id
+        self.relationship_type = relationship_type
         super().__init__(
-            "Ambiguous edge target for "
-            f"{from_type}:{from_id}:{relationship}:{to_type}:{to_id}; "
+            "Ambiguous relationship target for "
+            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
             "specify edge_key to target a single edge"
         )
 
@@ -153,16 +192,22 @@ class EdgeAmbiguityError(GraphError):
 class ConstraintViolationError(GraphError):
     """Constraint rule was violated."""
 
-    def __init__(self, message: str, violations: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        violations: list[str] | None = None,
+        *,
+        mutation_receipt_id: str | None = None,
+    ):
         self.summary = message
         self.violations = violations or []
-        super().__init__(message)
+        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
 
     def __str__(self) -> str:
         if not self.violations:
-            return self.summary
-        detail = "; ".join(self.violations)
-        return f"{self.summary}: {detail}"
+            return self.summary + self._receipt_suffix()
+        detail = _format_capped_errors(self.violations)
+        return f"{self.summary}: {detail}" + self._receipt_suffix()
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +230,16 @@ class IngestionError(ExecutionError):
     pass
 
 
+class MutationError(ExecutionError):
+    """Unexpected failure during a graph mutation.
+
+    Raised when durable writes (save_graph, store writes) fail for reasons
+    other than data validation (OSError, sqlite3 errors, etc.).
+    """
+
+    pass
+
+
 class QueryExecutionError(ExecutionError):
     """Error during query execution.
 
@@ -194,6 +249,29 @@ class QueryExecutionError(ExecutionError):
     """
 
     def __init__(self, message: str):
+        super().__init__(message)
+
+
+class CustomerCodeExecutionUnsupportedError(ExecutionError):
+    """Customer code execution is unavailable in the current hosted runtime."""
+
+    error_code = "customer_code_execution_unsupported"
+
+    def __init__(self) -> None:
+        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
+
+
+class TransportError(ExecutionError):
+    """Error during state release transport operations."""
+
+    pass
+
+
+class OwnershipError(CoreError):
+    """Write rejected because the target type is upstream-owned in a overlay instance."""
+
+    def __init__(self, message: str, *, blocked_types: list[str] | None = None):
+        self.blocked_types = blocked_types or []
         super().__init__(message)
 
 
@@ -208,6 +286,14 @@ class ReceiptNotFoundError(CoreError):
     def __init__(self, receipt_id: str):
         self.receipt_id = receipt_id
         super().__init__(f"Receipt '{receipt_id}' not found")
+
+
+class TraceNotFoundError(CoreError):
+    """Execution trace ID not found in store."""
+
+    def __init__(self, trace_id: str):
+        self.trace_id = trace_id
+        super().__init__(f"Trace '{trace_id}' not found")
 
 
 class OutcomeNotFoundError(CoreError):
@@ -226,6 +312,40 @@ class InstanceNotFoundError(CoreError):
         super().__init__(f"Instance '{instance_id}' not found")
 
 
+class GroupNotFoundError(CoreError):
+    """Group ID not found in store."""
+
+    def __init__(self, group_id: str):
+        self.group_id = group_id
+        super().__init__(f"Group '{group_id}' not found")
+
+
+class RuntimeCredentialNotFoundError(CoreError):
+    """Runtime credential ID not found in the server credential store."""
+
+    def __init__(self, credential_id: str):
+        self.credential_id = credential_id
+        super().__init__(f"Runtime credential '{credential_id}' not found")
+
+
+class AuthenticationError(CoreError):
+    """HTTP/API request is unauthenticated or uses an invalid credential."""
+
+    pass
+
+
+class InstanceScopeError(CoreError):
+    """Runtime credential scope does not match the requested instance."""
+
+    def __init__(self, instance_id: str, credential_scope: str):
+        self.instance_id = instance_id
+        self.credential_scope = credential_scope
+        super().__init__(
+            f"Credential scoped to instance '{credential_scope}' cannot access "
+            f"instance '{instance_id}'"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Permission errors
 # ---------------------------------------------------------------------------
@@ -241,4 +361,35 @@ class PermissionDeniedError(CoreError):
         super().__init__(
             f"Tool '{tool_name}' requires {required_mode} mode, "
             f"but server is running in {current_mode} mode"
+        )
+
+
+class DirectWriteRefusedError(CoreError):
+    """Direct graph write refused because the target is governed proposal_only.
+
+    A HARD governance constraint, independent of permission tier (even
+    ``CRUXIBLE_MODE=admin`` is refused). State for a ``proposal_only`` type may
+    only enter through the governed proposal/workflow path; relationship writes
+    may also be staged with ``pending=true``.
+    """
+
+    error_code = "direct_write_refused"
+
+    def __init__(self, kind: str, type_name: str, source: str):
+        self.kind = kind
+        self.type_name = type_name
+        self.source = source
+        if kind == "relationship":
+            forward = (
+                "Use 'group propose' to stage a governed proposal, or pass "
+                "pending=true to stage the edge for review."
+            )
+        else:
+            forward = (
+                "Add it through a governed canonical workflow (apply_entities) "
+                "instead of a direct write."
+            )
+        super().__init__(
+            f"Direct write to {kind} '{type_name}' is refused "
+            f"(write_policy=proposal_only). {forward}"
         )

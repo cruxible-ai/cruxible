@@ -1,0 +1,8 @@
+service_id,name,criticality
+SVC-1,Billing,critical
+SVC-2,Customer Portal,critical
+SVC-3,Partner API,high
+SVC-4,Identity,critical
+SVC-5,Analytics Platform,high
+SVC-6,Internal Operations,medium
+SVC-7,Legacy Partner Portal,medium

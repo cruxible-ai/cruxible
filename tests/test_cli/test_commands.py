@@ -4,13 +4,41 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
+from cruxible_core.cli.formatting import groups_table, query_definitions_table
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.cli.main import cli
+from cruxible_core.config.schema import NamedQuerySchema
+from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.types import EntityInstance
+from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal
+from cruxible_core.provider.types import ExecutionTrace
+from cruxible_core.service import (
+    service_add_entities,
+    service_init,
+    service_propose_group,
+    service_resolve_group,
+)
+
+STATUS_HISTORY_YAML = """\
+version: '1.0'
+name: status_history_demo
+entity_types:
+  Task:
+    properties:
+      task_id: {type: string, primary_key: true}
+      status:
+        type: string
+        enum: [planned, active, closed]
+      title: {type: string, optional: true}
+relationships: []
+"""
 
 
 @pytest.fixture
@@ -28,6 +56,107 @@ def _chdir_run(runner: CliRunner, directory: Path, args: list[str]) -> object:
         os.chdir(original)
 
 
+def _compact_rendered_table(value: str) -> str:
+    return "".join(ch for ch in value if ch.isalnum() or ch in "_-")
+
+
+def _assert_chunks_present(output: str, chunks: list[str]) -> None:
+    for chunk in chunks:
+        assert chunk in output
+
+
+def _assert_local_mutation_disabled(
+    runner: CliRunner,
+    directory: Path,
+    args: list[str],
+    label: str,
+) -> None:
+    result = _chdir_run(runner, directory, args)
+    assert result.exit_code == 2
+    assert f"Local mutation disabled for {label}" in result.output
+
+
+def _status_history_instance(tmp_path: Path) -> CruxibleInstance:
+    result = service_init(tmp_path, config_yaml=STATUS_HISTORY_YAML)
+    assert isinstance(result.instance, CruxibleInstance)
+    return result.instance
+
+
+def _save_trace(instance: CruxibleInstance, trace_id: str = "TRC-cli-001") -> str:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trace = ExecutionTrace(
+        trace_id=trace_id,
+        workflow_name="wf",
+        step_id="step",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload={"input": True},
+        output_payload={"rows": 5},
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
+    return trace.trace_id
+
+
+def _save_large_trace(instance: CruxibleInstance) -> tuple[str, dict[str, str]]:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    payload = {"body": "x" * 40000}
+    trace = ExecutionTrace(
+        trace_id="TRC-cli-large",
+        workflow_name="wf",
+        step_id="large",
+        provider_name="provider",
+        provider_version="1.0.0",
+        provider_ref="tests.support.workflow_test_providers.provider",
+        runtime="python",
+        deterministic=True,
+        side_effects=False,
+        input_payload=payload,
+        output_payload=payload,
+        started_at=started_at,
+        finished_at=started_at,
+        duration_ms=0.0,
+    )
+    with instance.write_transaction() as uow:
+        uow.receipts.save_trace(trace)
+    return trace.trace_id, payload
+
+
+@pytest.fixture
+def governed_view_instance(
+    tmp_path: Path,
+    proposal_workflow_config_yaml: str,
+) -> CruxibleInstance:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(proposal_workflow_config_yaml)
+    instance = CruxibleInstance.init(tmp_path, "config.yaml")
+    graph = EntityGraph()
+    graph.add_entity(
+        EntityInstance(
+            entity_type="Campaign",
+            entity_id="CMP-1",
+            properties={"campaign_id": "CMP-1", "region": "north"},
+        )
+    )
+    for sku in ("SKU-123", "SKU-456"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id=sku,
+                properties={"sku": sku, "category": "beverages"},
+            )
+        )
+    instance.save_graph(graph)
+    return instance
+
+
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
@@ -35,24 +164,25 @@ def _chdir_run(runner: CliRunner, directory: Path, args: list[str]) -> object:
 
 class TestInit:
     def test_init_creates_instance(self, runner: CliRunner, tmp_project: Path) -> None:
-        result = _chdir_run(runner, tmp_project, ["init", "--config", "config.yaml"])
-        assert result.exit_code == 0
-        assert ".cruxible/" in result.output
-        assert (tmp_project / ".cruxible" / "instance.json").exists()
+        _assert_local_mutation_disabled(
+            runner,
+            tmp_project,
+            ["init", "--config", "config.yaml"],
+            "init",
+        )
 
     def test_init_with_data_dir(self, runner: CliRunner, tmp_project: Path) -> None:
-        result = _chdir_run(
-            runner, tmp_project, ["init", "--config", "config.yaml", "--data-dir", "data"]
+        _assert_local_mutation_disabled(
+            runner,
+            tmp_project,
+            ["init", "--config", "config.yaml", "--data-dir", "data"],
+            "init",
         )
-        assert result.exit_code == 0
-        meta = json.loads((tmp_project / ".cruxible" / "instance.json").read_text())
-        assert meta["data_dir"] == "data"
 
     def test_init_bad_config(self, runner: CliRunner, tmp_path: Path) -> None:
         bad = tmp_path / "bad.yaml"
         bad.write_text("not_valid: true\n")
-        result = _chdir_run(runner, tmp_path, ["init", "--config", "bad.yaml"])
-        assert result.exit_code == 1
+        _assert_local_mutation_disabled(runner, tmp_path, ["init", "--config", "bad.yaml"], "init")
 
 
 # ---------------------------------------------------------------------------
@@ -75,77 +205,44 @@ class TestValidate:
 
 
 # ---------------------------------------------------------------------------
-# ingest
-# ---------------------------------------------------------------------------
-
-
-class TestIngest:
-    def test_ingest_entities(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-    ) -> None:
-        result = _chdir_run(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "vehicles", "--file", str(vehicles_csv)],
-        )
-        assert result.exit_code == 0
-        assert "2 added" in result.output
-
-        # Verify graph was updated
-        graph = initialized_project.load_graph()
-        assert graph.entity_count("Vehicle") == 2
-
-    def test_ingest_relationships(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-        parts_csv: Path,
-        fitments_csv: Path,
-    ) -> None:
-        # First ingest entities
-        _chdir_run(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "vehicles", "--file", str(vehicles_csv)],
-        )
-        _chdir_run(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "parts", "--file", str(parts_csv)],
-        )
-        # Then relationships
-        result = _chdir_run(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "fitments", "--file", str(fitments_csv)],
-        )
-        assert result.exit_code == 0
-        assert "3 added" in result.output
-
-    def test_ingest_bad_mapping(
-        self,
-        runner: CliRunner,
-        initialized_project: CruxibleInstance,
-        vehicles_csv: Path,
-    ) -> None:
-        result = _chdir_run(
-            runner,
-            initialized_project.root,
-            ["ingest", "--mapping", "nonexistent", "--file", str(vehicles_csv)],
-        )
-        assert result.exit_code == 1
-
-
-# ---------------------------------------------------------------------------
 # query
 # ---------------------------------------------------------------------------
 
 
 class TestQuery:
+    def test_bare_query_lists_named_queries(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(runner, populated_instance.root, ["query"])
+
+        assert result.exit_code == 0
+        assert "Named Queries" in result.output
+        assert "parts_for_vehicle" in result.output
+
+    def test_query_list_json_carries_full_envelope(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "list", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        names = {item["name"] for item in payload["items"]}
+        assert "parts_for_vehicle" in names
+        # Full list envelope is carried on the --json surface (R2); the local
+        # path returns the full unpaginated list, matching the server contract.
+        assert payload["total"] == len(payload["items"])
+        assert payload["limit"] is None
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
+
     def test_query_parts_for_vehicle(
         self,
         runner: CliRunner,
@@ -154,10 +251,11 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
         assert "Receipt:" in result.output
+        assert "2 result(s), 1 step(s) executed." in result.output
 
     def test_query_bad_name(
         self,
@@ -167,9 +265,247 @@ class TestQuery:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "nonexistent", "--param", "id=1"],
+            ["query", "run", "nonexistent", "--param", "id=1"],
         )
         assert result.exit_code == 1
+        assert "Run: cruxible query list" in result.output
+        assert "Error: QueryNotFoundError:" in result.output
+        assert "Param hints:" not in result.output
+        assert "Traceback" not in result.output
+
+    def test_query_missing_required_param_prints_hints_without_traceback(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "run", "parts_for_vehicle"],
+        )
+
+        assert result.exit_code == 1
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "Error: QueryExecutionError:" in result.output
+        assert "Traceback" not in result.output
+
+    def test_query_count_mode_prints_summary_and_hints(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "query",
+                "run",
+                "parts_for_vehicle",
+                "--param",
+                "vehicle_id=V-2024-CIVIC-EX",
+                "--count",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "2 result(s), 1 step(s) executed." in result.output
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "Part entities" not in result.output
+
+    def test_query_zero_results_prints_hints(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=UNKNOWN"],
+        )
+        assert result.exit_code == 1
+        assert "Param hints:" in result.output
+        assert "primary_key=vehicle_id" in result.output
+        assert "examples=V-2024-ACCORD-SPORT, V-2024-CIVIC-EX" in result.output
+
+    def test_entryless_query_count_hints_do_not_sample_entry_entity(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        config = populated_instance.load_config()
+        config.named_queries["all_parts"] = NamedQuerySchema(
+            mode="collection",
+            result_shape="entity",
+            returns="Part",
+        )
+        populated_instance.save_config(config)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["query", "run", "all_parts", "--count"],
+        )
+
+        assert result.exit_code == 0
+        assert "Param hints:" in result.output
+        assert "entry_point=None" in result.output
+        assert "primary_key=" not in result.output
+
+    def test_query_list_table_preserves_long_names(self) -> None:
+        long_name = "very_long_named_query_identifier_that_agents_must_copy_exactly"
+        console = Console(record=True, width=50)
+
+        console.print(
+            query_definitions_table(
+                [
+                    {
+                        "name": long_name,
+                        "entry_point": "Vehicle",
+                        "required_params": ["vehicle_id", "model_year"],
+                        "returns": "Part",
+                        "relationship_state": "reviewable",
+                        "description": "A long description may wrap without hiding the query name.",
+                    }
+                ]
+            )
+        )
+
+        output = console.export_text()
+        _assert_chunks_present(
+            output,
+            [
+                "very_long_named_qu",
+                "ery_identifier_tha",
+                "t_agents_must_copy",
+                "_exactly",
+            ],
+        )
+        assert f"{long_name[:20]}..." not in output
+
+
+class TestEvaluate:
+    def test_evaluate_prints_quality_summary(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        project = tmp_path / "quality-project"
+        project.mkdir()
+        (project / "config.yaml").write_text(
+            """\
+version: "1.0"
+name: quality_project
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+      name:
+        type: string
+relationships: []
+quality_checks:
+  - name: product_name_non_empty
+    kind: property
+    severity: error
+    target: entity
+    entity_type: Product
+    property: name
+    rule: non_empty
+"""
+        )
+        instance = CruxibleInstance.init(project, "config.yaml")
+        graph = instance.load_graph()
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Product",
+                entity_id="P-1",
+                properties={"product_id": "P-1", "name": ""},
+            )
+        )
+        instance.save_graph(graph)
+
+        result = _chdir_run(runner, project, ["evaluate"])
+        assert result.exit_code == 0
+        assert "Quality checks:" in result.output
+        assert "product_name_non_empty: 1" in result.output
+
+        json_result = _chdir_run(
+            runner,
+            project,
+            [
+                "evaluate",
+                "--severity",
+                "error",
+                "--category",
+                "quality_check_failed",
+                "--limit",
+                "1",
+                "--json",
+            ],
+        )
+        assert json_result.exit_code == 0
+        payload = json.loads(json_result.output)
+        assert len(payload["findings"]) == 1
+        assert payload["findings"][0]["severity"] == "error"
+        assert payload["findings"][0]["category"] == "quality_check_failed"
+        assert payload["quality_summary"]["product_name_non_empty"] == 1
+
+
+# ---------------------------------------------------------------------------
+# state health
+# ---------------------------------------------------------------------------
+
+
+class TestStateHealth:
+    def _make_project(self, tmp_path: Path) -> Path:
+        project = tmp_path / "health-project"
+        project.mkdir()
+        (project / "config.yaml").write_text(
+            """\
+version: "1.0"
+name: health_project
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+"""
+        )
+        CruxibleInstance.init(project, "config.yaml")
+        return project
+
+    def test_state_health_table_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        project = self._make_project(tmp_path)
+        result = _chdir_run(runner, project, ["state", "health"])
+        assert result.exit_code == 0, result.output
+        assert "Groups:" in result.output
+        assert "Provenance (edges):" in result.output
+        assert "Freshness:" in result.output
+        assert "Integrity:" in result.output
+        assert "configuration_locked:" in result.output
+
+    def test_state_health_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        project = self._make_project(tmp_path)
+        result = _chdir_run(runner, project, ["state", "health", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        # Envelope plus four deterministic sections present and all-zero on empty.
+        assert set(payload) == {
+            "captured_at",
+            "head_snapshot_id",
+            "groups",
+            "provenance",
+            "freshness",
+            "integrity",
+        }
+        assert payload["groups"]["total_count"] == 0
+        assert payload["provenance"]["total_edge_count"] == 0
+        assert payload["freshness"]["config_compatible"] is True
+        assert payload["integrity"]["configuration_locked"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +522,7 @@ class TestExplain:
         result = _chdir_run(
             runner,
             instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         # Extract receipt ID from output
         for line in result.output.splitlines():
@@ -250,6 +586,648 @@ class TestExplain:
         assert result.exit_code == 1
 
 
+class TestStatsInspectReload:
+    def test_stats_outputs_counts(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(runner, populated_instance.root, ["stats"])
+        assert result.exit_code == 0
+        assert "Graph: 4 entities, 4 edges" in result.output
+        assert "Vehicle" in result.output
+        assert "fits" in result.output
+
+    def test_inspect_entity_outputs_neighbors(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["entity", "inspect", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+        )
+        assert result.exit_code == 0
+        assert "Neighbors: 2" in result.output
+        assert "Part:BP-1001" in result.output
+        assert "fits" in result.output
+
+    def test_deprecated_inspect_entity_alias_still_runs(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        # The pre-rename `inspect entity` path is kept as a hidden alias.
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+        )
+        assert result.exit_code == 0
+        assert "Neighbors: 2" in result.output
+
+    def test_inspect_aliases_are_hidden_from_group_help(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(cli, ["inspect", "--help"])
+        assert result.exit_code == 0
+        # View renders stay in the inspect group.
+        assert "ontology" in result.output
+        # Renamed resource reads no longer advertise their old paths.
+        assert "entity-history" not in result.output
+        assert "relationship-lineage" not in result.output
+
+    def test_inspect_entity_json_includes_metadata(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        from cruxible_core.graph.provenance import RelationshipProvenance
+        from cruxible_core.graph.types import RelationshipMetadata
+
+        graph = populated_instance.load_graph()
+        graph.update_entity_metadata("Vehicle", "V-2024-CIVIC-EX", {"source": "fixture"})
+        graph.update_relationship_state(
+            "Part",
+            "BP-1001",
+            "Vehicle",
+            "V-2024-CIVIC-EX",
+            "fits",
+            metadata=RelationshipMetadata(
+                provenance=RelationshipProvenance(source="ingest", source_ref="fixture")
+            ),
+        )
+        populated_instance.save_graph(graph)
+
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "entity",
+                "inspect",
+                "--type",
+                "Vehicle",
+                "--id",
+                "V-2024-CIVIC-EX",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # Free-form entity metadata serializes nested under "extra" in the typed
+        # metadata envelope (the relationship `provenance` below stays typed).
+        assert payload["metadata"] == {"extra": {"source": "fixture"}}
+        assert any(
+            neighbor["metadata"].get("provenance", {}).get("source") == "ingest"
+            for neighbor in payload["neighbors"]
+        )
+
+    def test_inspect_entity_history_json(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned"},
+                )
+            ],
+        )
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "active"},
+                )
+            ],
+        )
+
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["entity", "history", "--type", "Task", "--id", "T-1", "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["entity_type"] == "Task"
+        assert payload["entity_id"] == "T-1"
+        assert payload["total"] == 2
+        # Full list envelope is carried on the --json surface (R1).
+        assert payload["limit"] == 50
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
+        assert payload["items"][0]["change_kind"] == "updated"
+        assert payload["items"][0]["property_changes"] == [
+            {"property": "status", "from_value": "planned", "to_value": "active"}
+        ]
+
+    def test_inspect_entity_history_human_output(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        instance = _status_history_instance(tmp_path)
+        service_add_entities(
+            instance,
+            [
+                EntityInstance(
+                    entity_type="Task",
+                    entity_id="T-1",
+                    properties={"status": "planned"},
+                )
+            ],
+        )
+
+        result = _chdir_run(
+            runner,
+            instance.root,
+            ["entity", "history", "--type", "Task"],
+        )
+
+        assert result.exit_code == 0
+        assert "Entity Change History" in result.output
+        assert "Task:T-1" in result.output
+        assert "planned" in result.output
+
+    def test_inspect_trace_outputs_payload(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id = _save_trace(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "trace", trace_id, "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["trace_id"] == trace_id
+        assert payload["output_payload"]["rows"] == 5
+
+    def test_inspect_trace_returns_large_payload_preview(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id, large_payload = _save_large_trace(populated_instance)
+        preview = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["inspect", "trace", trace_id, "--json"],
+        )
+
+        assert preview.exit_code == 0
+        preview_payload = json.loads(preview.output)
+        assert preview_payload["input_payload"] != large_payload
+        assert preview_payload["input_payload_metadata"]["retention"] == "preview"
+        assert preview_payload["input_payload_metadata"]["stored_inline"] is False
+
+    def test_reload_config_repoints_instance(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+        tmp_path: Path,
+    ) -> None:
+        new_config = tmp_path / "alt-config.yaml"
+        new_config.write_text(
+            (populated_instance.root / "config.yaml")
+            .read_text()
+            .replace("car_parts_compatibility", "alt_name")
+        )
+
+        _assert_local_mutation_disabled(
+            runner,
+            populated_instance.root,
+            ["config", "reload", "--config", str(new_config)],
+            "config reload",
+        )
+
+
+class TestConfigViews:
+    def test_config_views_default_renders_standard_sections(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+
+        result = runner.invoke(cli, ["config", "views", "--config", str(config_path)])
+
+        assert result.exit_code == 0
+        assert "# Cruxible Config Diagrams" in result.output
+        assert f"Source: `{config_path}`" in result.output
+        assert "Recommended For" in result.output
+        assert "Governed proposal" in result.output
+        assert "Creation Path" in result.output
+        assert "| Signal Source | Role | Review Unsure | Used By | Notes |" in result.output
+        assert "No configured constraints." in result.output
+        assert "No configured feedback profiles." in result.output
+        assert "### Entity Types" not in result.output
+
+    def test_config_views_single_bare_view_outputs_raw_mermaid(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+
+        result = runner.invoke(
+            cli,
+            ["config", "views", "--config", str(config_path), "--view", "ontology", "--bare"],
+        )
+
+        assert result.exit_code == 0
+        assert "Recommended For" in result.output
+        assert "classDef governedEntity" in result.output
+        assert "```mermaid" not in result.output
+
+    def test_config_views_updates_readme_markers(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+        readme = tmp_path / "README.md"
+        readme.write_text(
+            "# Demo\n\n<!-- CRUXIBLE:BEGIN ontology -->\n<!-- CRUXIBLE:END ontology -->\n"
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "config",
+                "views",
+                "--config",
+                str(config_path),
+                "--view",
+                "ontology",
+                "--update-readme",
+                str(readme),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert f"Updated {readme}" in result.output
+        updated = readme.read_text()
+        assert "Recommended For" in updated
+        assert "```mermaid" in updated
+
+    def test_config_views_missing_readme_marker_is_usage_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        proposal_workflow_config_yaml: str,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(proposal_workflow_config_yaml)
+        readme = tmp_path / "README.md"
+        readme.write_text("# Demo\n")
+
+        result = runner.invoke(
+            cli,
+            [
+                "config",
+                "views",
+                "--config",
+                str(config_path),
+                "--view",
+                "ontology",
+                "--update-readme",
+                str(readme),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "Missing README marker block(s): ontology" in result.output
+
+    def test_config_views_config_error_uses_typed_cli_renderer(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            """\
+version: "1.0"
+name: invalid
+entity_types: {}
+relationships:
+  - name: invalid_edge
+    from: MissingSource
+    to: MissingTarget
+"""
+        )
+
+        result = runner.invoke(cli, ["config", "views", "--config", str(config_path)])
+
+        assert result.exit_code == 1
+        assert "Error: ConfigError:" in result.output
+        assert "Traceback" not in result.output
+
+    def test_config_views_runtime_composes_extends_without_upstream_build_workflows(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        base = tmp_path / "base.yaml"
+        overlay = tmp_path / "overlay.yaml"
+        base.write_text(
+            """\
+version: "1.0"
+name: base
+entity_types:
+  Product:
+    properties:
+      product_id:
+        type: string
+        primary_key: true
+relationships: []
+contracts:
+  EmptyInput:
+    fields: {}
+  EmptyOutput:
+    fields: {}
+providers:
+  load_reference:
+    kind: function
+    runtime: python
+    ref: tests.support.workflow_test_providers.reference_bundle_loader
+    contract_in: EmptyInput
+    contract_out: EmptyOutput
+    deterministic: true
+    version: 1.0.0
+workflows:
+  build_reference:
+    type: canonical
+    contract_in: EmptyInput
+    returns: apply_products
+    steps:
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: []
+          entity_id: $item.product_id
+          properties: {}
+        as: products
+      - id: apply_products
+        apply_entities:
+          entities_from: products
+        as: apply_products
+"""
+        )
+        overlay.write_text(
+            """\
+version: "1.0"
+name: overlay
+extends: base.yaml
+entity_types:
+  Asset:
+    properties:
+      asset_id:
+        type: string
+        primary_key: true
+relationships:
+  - name: asset_runs_product
+    from_entity: Asset
+    to_entity: Product
+    properties: {}
+    proposal_policy:
+      signals: {}
+workflows:
+  build_overlay:
+    type: canonical
+    contract_in: EmptyInput
+    returns: apply_assets
+    steps:
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: []
+          entity_id: $item.asset_id
+          properties: {}
+        as: assets
+      - id: apply_assets
+        apply_entities:
+          entities_from: assets
+        as: apply_assets
+"""
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "config",
+                "views",
+                "--config",
+                str(overlay),
+                "--runtime",
+                "--view",
+                "workflow-summary",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Build Overlay" in result.output
+        assert "Build Reference" not in result.output
+
+
+class TestCanonicalViews:
+    def test_inspect_ontology_mermaid_outputs_governed_edge(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "ontology", "--format", "mermaid"],
+        )
+        assert result.exit_code == 0
+        assert "classDef canonicalEntity" in result.output
+        assert "classDef governedEntity" in result.output
+        assert "class entity_Campaign,entity_Product governedEntity" in result.output
+        assert "Campaign" in result.output
+        assert "Recommended For" in result.output
+        assert 'entity_Campaign -. "Recommended For" .-> entity_Product' in result.output
+        assert "stroke:#e74c3c" in result.output
+
+    def test_inspect_workflows_json_summarizes_workflow_shape(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["workflow_count"] == 1
+        workflow = payload["workflows"][0]
+        assert workflow["name"] == "propose_campaign_recommendations"
+        assert workflow["queries"] == ["get_campaign_context"]
+        assert workflow["providers"] == ["campaign_recommendations"]
+        assert workflow["proposes_relationships"] == ["recommended_for"]
+
+    def test_inspect_workflows_mermaid_formats(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        story = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid"],
+        )
+        assert story.exit_code == 0
+        assert "Proposes: Recommended For" in story.output
+
+        steps = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid-steps"],
+        )
+        assert steps.exit_code == 0
+        assert "Provider: Campaign Recommendations" in steps.output
+
+        dependencies = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "workflows", "--format", "mermaid-dependencies"],
+        )
+        assert dependencies.exit_code == 0
+        assert "Governed" in dependencies.output
+
+    def test_inspect_queries_json_surfaces_traversal_and_params(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "queries", "--format", "json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["query_count"] == 1
+        query = payload["queries"][0]
+        assert query["name"] == "get_campaign_context"
+        assert query["mode"] == "collection"
+        assert query["entry_point"] is None
+        assert query["required_params"] == ["campaign_id"]
+
+    def test_inspect_queries_mermaid_is_human_readable(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "queries", "--format", "mermaid"],
+        )
+        assert result.exit_code == 0
+        assert "Get Campaign Context" in result.output
+        assert "Entry: Collection Query" in result.output
+        assert "Returns: Campaign" in result.output
+
+    def test_inspect_governance_tracks_pending_and_approved_state(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        proposed = service_propose_group(
+            governed_view_instance,
+            "recommended_for",
+            [
+                CandidateMember(
+                    from_type="Campaign",
+                    from_id="CMP-1",
+                    to_type="Product",
+                    to_id="SKU-123",
+                    relationship_type="recommended_for",
+                    signals=[
+                        CandidateSignal(
+                            signal_source="catalog",
+                            signal="support",
+                            evidence="seasonal match",
+                        )
+                    ],
+                    properties={"reason": "seasonal match"},
+                )
+            ],
+            thesis_text="Recommend products for regional campaign",
+            thesis_facts={"rule_id": "campaign_recommendations", "rule_version": 1},
+        )
+
+        pending_result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "governance", "--format", "json"],
+        )
+        assert pending_result.exit_code == 0
+        pending_payload = json.loads(pending_result.output)
+        assert pending_payload["governed_relationship_count"] == 1
+        assert pending_payload["pending_group_count"] == 1
+        assert pending_payload["relationships"][0]["pending_group_count"] == 1
+
+        service_resolve_group(
+            governed_view_instance,
+            proposed.group_id,
+            "approve",
+            expected_pending_version=1,
+        )
+
+        approved_result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "governance", "--format", "json"],
+        )
+        assert approved_result.exit_code == 0
+        approved_payload = json.loads(approved_result.output)
+        assert approved_payload["pending_group_count"] == 0
+        assert approved_payload["approved_resolution_count"] == 1
+        assert approved_payload["relationships"][0]["approved_resolution_count"] == 1
+
+    def test_inspect_overview_outputs_generated_markdown(
+        self,
+        runner: CliRunner,
+        governed_view_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            governed_view_instance.root,
+            ["inspect", "overview"],
+        )
+        assert result.exit_code == 0
+        assert "# Config Overview" in result.output
+        assert "## Relationship Map" in result.output
+        assert "```mermaid" in result.output
+        assert "**Diagram legend:**" in result.output
+        assert "Blue entity node" in result.output
+        assert "propose_campaign_recommendations" in result.output
+
+
 # ---------------------------------------------------------------------------
 # feedback
 # ---------------------------------------------------------------------------
@@ -265,18 +1243,19 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
             if line.startswith("Receipt:"):
                 receipt_id = line.split(":", 1)[1].strip()
 
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -294,9 +1273,8 @@ class TestFeedback:
                 "--reason",
                 "Verified in catalog",
             ],
+            "feedback record",
         )
-        assert result.exit_code == 0
-        assert "applied" in result.output
 
     def test_feedback_reject(
         self,
@@ -306,18 +1284,19 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
             if line.startswith("Receipt:"):
                 receipt_id = line.split(":", 1)[1].strip()
 
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -335,10 +1314,10 @@ class TestFeedback:
                 "--reason",
                 "Wrong part",
             ],
+            "feedback record",
         )
-        assert result.exit_code == 0
 
-    def test_feedback_ai_review_source(
+    def test_feedback_agent_source(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -346,24 +1325,25 @@ class TestFeedback:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
             if line.startswith("Receipt:"):
                 receipt_id = line.split(":", 1)[1].strip()
 
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
                 "approve",
                 "--source",
-                "ai_review",
+                "agent",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -375,15 +1355,29 @@ class TestFeedback:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
+            "feedback record",
         )
-        assert result.exit_code == 0
-        assert "applied" in result.output
 
-        # Verify the edge has ai_approved status (reload from disk)
-        reloaded = CruxibleInstance.load(populated_instance.root)
-        graph = reloaded.load_graph()
-        rel = graph.get_relationship("Part", "BP-1001", "Vehicle", "V-2024-CIVIC-EX", "fits")
-        assert rel.properties["review_status"] == "ai_approved"
+    def test_feedback_from_query_still_requires_receipt(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "feedback",
+                "from-query",
+                "--result-index",
+                "0",
+                "--action",
+                "approve",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "Missing option '--receipt'" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -400,20 +1394,19 @@ class TestOutcome:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
             if line.startswith("Receipt:"):
                 receipt_id = line.split(":", 1)[1].strip()
 
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
-            ["outcome", "--receipt", receipt_id, "--outcome", "correct"],
+            ["outcome", "record", "--receipt", receipt_id, "--outcome", "correct"],
+            "outcome record",
         )
-        assert result.exit_code == 0
-        assert "recorded" in result.output
 
     def test_outcome_with_detail(
         self,
@@ -423,18 +1416,19 @@ class TestOutcome:
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
             if line.startswith("Receipt:"):
                 receipt_id = line.split(":", 1)[1].strip()
 
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
                 "outcome",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--outcome",
@@ -442,8 +1436,8 @@ class TestOutcome:
                 "--detail",
                 '{"notes": "part did not fit"}',
             ],
+            "outcome record",
         )
-        assert result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +1459,151 @@ class TestList:
         assert result.exit_code == 0
         assert "2 entity" in result.output
 
+    def test_list_entities_json_carries_full_envelope(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        # All rows returned: truncated is False.
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["limit"] == 50
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
+        assert len(payload["items"]) == 2
+
+        # A short page below total reports truncated True (R2).
+        truncated = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--limit", "1", "--json"],
+        )
+        assert truncated.exit_code == 0
+        truncated_payload = json.loads(truncated.output)
+        assert truncated_payload["total"] == 2
+        assert truncated_payload["limit"] == 1
+        assert truncated_payload["offset"] == 0
+        assert truncated_payload["truncated"] is True
+        assert len(truncated_payload["items"]) == 1
+
+    def test_list_entities_json_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "entities",
+                "--type",
+                "Part",
+                "--field",
+                "name",
+                "--field",
+                "category",
+                "--limit",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["items"][0]["entity_type"] == "Part"
+        assert payload["items"][0]["entity_id"] == "BP-1001"
+        assert payload["items"][0]["properties"] == {
+            "category": "brakes",
+            "name": "Ceramic Brake Pads",
+        }
+
+    def test_list_entities_where_filters_and_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "entities",
+                "--type",
+                "Part",
+                "--where",
+                "name~Performance",
+                "--field",
+                "name",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 1
+        assert payload["items"][0]["entity_id"] == "BP-1002"
+        assert payload["items"][0]["properties"] == {"name": "Performance Brake Pads"}
+
+    def test_list_edges_where_filters_relationship_properties(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "list",
+                "edges",
+                "--relationship",
+                "fits",
+                "--where",
+                "source=user_report",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["total"] == 1
+        assert payload["items"][0]["from_id"] == "BP-1002"
+
+    def test_list_entities_human_projects_fields(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "Part", "--field", "name", "--limit", "1"],
+        )
+        assert result.exit_code == 0
+        assert "Ceramic Brake Pads" in result.output
+        assert "price" not in result.output
+
+    def test_list_entities_unknown_type_errors(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "entities", "--type", "TypoType"],
+        )
+
+        assert result.exit_code == 1
+        assert "Entity type 'TypoType' not found in schema" in result.output
+        assert "Known entity types: Part, Vehicle" in result.output
+
     def test_list_receipts(
         self,
         runner: CliRunner,
@@ -474,7 +1613,7 @@ class TestList:
         _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         result = _chdir_run(
             runner,
@@ -483,6 +1622,26 @@ class TestList:
         )
         assert result.exit_code == 0
         assert "1 receipt" in result.output
+
+    def test_list_traces(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        trace_id = _save_trace(populated_instance)
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            ["list", "traces", "--workflow", "wf", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["items"][0]["trace_id"] == trace_id
+        assert payload["total"] == 1
+        # Full list envelope is carried on the --json surface (R2).
+        assert payload["limit"] == 100
+        assert payload["offset"] == 0
+        assert payload["truncated"] is False
 
     def test_list_feedback(
         self,
@@ -550,14 +1709,7 @@ class TestSample:
         )
         assert result.exit_code == 0
 
-
-# ---------------------------------------------------------------------------
-# find-candidates
-# ---------------------------------------------------------------------------
-
-
-class TestFindCandidates:
-    def test_find_candidates_property_match(
+    def test_sample_entities_json_projects_fields(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
@@ -566,21 +1718,24 @@ class TestFindCandidates:
             runner,
             populated_instance.root,
             [
-                "find-candidates",
-                "--relationship",
-                "replaces",
-                "--strategy",
-                "property_match",
-                "--rule",
-                "category=category",
+                "sample",
+                "--type",
+                "Part",
+                "--field",
+                "name",
+                "--limit",
+                "1",
+                "--json",
             ],
         )
         assert result.exit_code == 0
-        assert "candidate" in result.output
+        payload = json.loads(result.output)
+        assert payload["items"][0]["entity_id"] == "BP-1001"
+        assert payload["items"][0]["properties"] == {"name": "Ceramic Brake Pads"}
 
 
 # ---------------------------------------------------------------------------
-# get-entity
+# entity get
 # ---------------------------------------------------------------------------
 
 
@@ -593,7 +1748,7 @@ class TestGetEntity:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["get-entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
+            ["entity", "get", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
         )
         assert result.exit_code == 0
         assert "V-2024-CIVIC-EX" in result.output
@@ -606,14 +1761,14 @@ class TestGetEntity:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["get-entity", "--type", "Vehicle", "--id", "NONEXISTENT"],
+            ["entity", "get", "--type", "Vehicle", "--id", "NONEXISTENT"],
         )
         assert result.exit_code == 0
         assert "Not found." in result.output
 
 
 # ---------------------------------------------------------------------------
-# get-relationship
+# relationship get
 # ---------------------------------------------------------------------------
 
 
@@ -627,7 +1782,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -652,7 +1808,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -681,10 +1838,10 @@ class TestGetRelationship:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1001",
-                to_entity_type="Vehicle",
-                to_entity_id="V-2024-CIVIC-EX",
+                from_type="Part",
+                from_id="BP-1001",
+                to_type="Vehicle",
+                to_id="V-2024-CIVIC-EX",
                 properties={"verified": False, "source": "duplicate"},
             )
         )
@@ -696,7 +1853,8 @@ class TestGetRelationship:
             runner,
             populated_instance.root,
             [
-                "get-relationship",
+                "relationship",
+                "get",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -714,7 +1872,7 @@ class TestGetRelationship:
 
 
 # ---------------------------------------------------------------------------
-# add-entity
+# entity add
 # ---------------------------------------------------------------------------
 
 
@@ -724,11 +1882,12 @@ class TestAddEntity:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-entity",
+                "entity",
+                "add",
                 "--type",
                 "Vehicle",
                 "--id",
@@ -736,28 +1895,20 @@ class TestAddEntity:
                 "--props",
                 '{"vehicle_id": "V-NEW", "year": 2025, "make": "Toyota"}',
             ],
+            "entity add",
         )
-        assert result.exit_code == 0
-        assert "added" in result.output
-        assert "V-NEW" in result.output
-
-        # Verify in graph
-        populated_instance.invalidate_graph_cache()
-        graph = populated_instance.load_graph()
-        entity = graph.get_entity("Vehicle", "V-NEW")
-        assert entity is not None
-        assert entity.properties["make"] == "Toyota"
 
     def test_update(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-entity",
+                "entity",
+                "add",
                 "--type",
                 "Vehicle",
                 "--id",
@@ -765,25 +1916,24 @@ class TestAddEntity:
                 "--props",
                 '{"vehicle_id": "V-2024-CIVIC-EX", "year": 2025}',
             ],
+            "entity add",
         )
-        assert result.exit_code == 0
-        assert "updated" in result.output
 
     def test_bad_type(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
-            ["add-entity", "--type", "NoSuchType", "--id", "X1"],
+            ["entity", "add", "--type", "NoSuchType", "--id", "X1"],
+            "entity add",
         )
-        assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------
-# add-relationship
+# relationship add
 # ---------------------------------------------------------------------------
 
 
@@ -793,11 +1943,12 @@ class TestAddRelationship:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -811,20 +1962,20 @@ class TestAddRelationship:
                 "--props",
                 '{"verified": true, "source": "manual"}',
             ],
+            "relationship add",
         )
-        assert result.exit_code == 0
-        assert "added" in result.output
 
     def test_update(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -838,20 +1989,20 @@ class TestAddRelationship:
                 "--props",
                 '{"verified": true, "source": "updated"}',
             ],
+            "relationship add",
         )
-        assert result.exit_code == 0
-        assert "updated" in result.output
 
     def test_missing_entity(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Part",
                 "--from-id",
@@ -863,19 +2014,20 @@ class TestAddRelationship:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
+            "relationship add",
         )
-        assert result.exit_code == 1
 
     def test_bad_direction(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
-                "add-relationship",
+                "relationship",
+                "add",
                 "--from-type",
                 "Vehicle",
                 "--from-id",
@@ -887,8 +2039,31 @@ class TestAddRelationship:
                 "--to-id",
                 "BP-1001",
             ],
+            "relationship add",
         )
-        assert result.exit_code == 1
+
+    def test_update_rejects_pending_option(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        result = _chdir_run(
+            runner,
+            populated_instance.root,
+            [
+                "relationship",
+                "update",
+                "fits",
+                "Part",
+                "BP-1001",
+                "Vehicle",
+                "V-2024-CIVIC-EX",
+                "--pending",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "No such option: --pending" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -902,10 +2077,11 @@ class TestAddConstraint:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "brake_category_match",
@@ -916,64 +2092,65 @@ class TestAddConstraint:
                 "--description",
                 "Replacement parts must be same category",
             ],
+            "config add-constraint",
         )
-        assert result.exit_code == 0
-        assert "added to config" in result.output
 
-        # Verify config was updated
-        config = populated_instance.load_config()
-        names = [c.name for c in config.constraints]
-        assert "brake_category_match" in names
+    def test_valid_not_equal_rule(
+        self,
+        runner: CliRunner,
+        populated_instance: CruxibleInstance,
+    ) -> None:
+        _assert_local_mutation_disabled(
+            runner,
+            populated_instance.root,
+            [
+                "config",
+                "add-constraint",
+                "--name",
+                "no_self_replacement",
+                "--rule",
+                "replaces.FROM.part_number != replaces.TO.part_number",
+            ],
+            "config add-constraint",
+        )
 
     def test_bad_rule(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "bad",
                 "--rule",
                 "this is not valid syntax",
             ],
+            "config add-constraint",
         )
-        assert result.exit_code == 1
 
     def test_duplicate_name(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        # Add first
-        _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
+                "config",
                 "add-constraint",
                 "--name",
                 "unique_rule",
                 "--rule",
                 "replaces.FROM.category == replaces.TO.category",
             ],
+            "config add-constraint",
         )
-        # Try to add duplicate
-        result = _chdir_run(
-            runner,
-            populated_instance.root,
-            [
-                "add-constraint",
-                "--name",
-                "unique_rule",
-                "--rule",
-                "replaces.FROM.category == replaces.TO.category",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "already exists" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1046,6 +2223,7 @@ class TestExportEdges:
             "relationship_type",
             "edge_key",
             "properties_json",
+            "metadata_json",
         }
         assert set(reader.fieldnames) == expected_fields
 
@@ -1158,19 +2336,25 @@ class TestExportEdges:
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """_provenance in edge properties survives in properties_json."""
-        from cruxible_core.graph.types import RelationshipInstance
+        """Relationship metadata provenance survives in metadata_json."""
+        from cruxible_core.graph.provenance import RelationshipProvenance
+        from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
 
         graph = populated_instance.load_graph()
-        prov = {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1002",
-                to_entity_type="Vehicle",
-                to_entity_id="V-2024-ACCORD-SPORT",
-                properties={"verified": True, "_provenance": prov},
+                from_type="Part",
+                from_id="BP-1002",
+                to_type="Vehicle",
+                to_id="V-2024-ACCORD-SPORT",
+                properties={"verified": True},
+                metadata=RelationshipMetadata(
+                    provenance=RelationshipProvenance(
+                        source="ingest",
+                        created_at="2026-01-01T00:00:00+00:00",
+                    )
+                ),
             )
         )
         populated_instance.save_graph(graph)
@@ -1188,27 +2372,37 @@ class TestExportEdges:
 
         with out.open() as f:
             for row in csv_mod.DictReader(f):
-                props = json.loads(row["properties_json"])
-                if props.get("_provenance"):
-                    assert props["_provenance"] == prov
+                metadata = json.loads(row["metadata_json"])
+                if metadata.get("provenance"):
+                    assert metadata["provenance"]["source"] == "ingest"
+                    assert metadata["provenance"]["created_at"] == "2026-01-01T00:00:00+00:00"
                     return
-        pytest.fail("No edge with _provenance found in exported CSV")
+        pytest.fail("No edge with provenance metadata found in exported CSV")
 
     def test_exclude_rejected(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """--exclude-rejected omits edges with rejected review_status."""
+        """--exclude-rejected omits edges with rejected assertion metadata."""
+        from cruxible_core.graph.assertion_state import (
+            RelationshipAssertion,
+            RelationshipReviewState,
+        )
+        from cruxible_core.graph.types import RelationshipMetadata
+
         graph = populated_instance.load_graph()
-        # Mark one edge as rejected
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC-EX",
             "fits",
-            {"review_status": "human_rejected"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="rejected", source="human")
+                )
+            ),
         )
         populated_instance.save_graph(graph)
         populated_instance.invalidate_graph_cache()
@@ -1237,23 +2431,33 @@ class TestExportEdges:
 
         with out_filtered.open() as f:
             for row in csv_mod.DictReader(f):
-                props = json.loads(row["properties_json"])
-                assert props.get("review_status") != "human_rejected"
+                metadata = json.loads(row["metadata_json"])
+                assert metadata["assertion"]["review"]["status"] != "rejected"
 
     def test_exclude_rejected_ai(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
-        """--exclude-rejected also omits ai_rejected edges."""
+        """--exclude-rejected also omits agent-rejected edges."""
+        from cruxible_core.graph.assertion_state import (
+            RelationshipAssertion,
+            RelationshipReviewState,
+        )
+        from cruxible_core.graph.types import RelationshipMetadata
+
         graph = populated_instance.load_graph()
-        graph.update_edge_properties(
+        graph.update_relationship_state(
             "Part",
             "BP-1001",
             "Vehicle",
             "V-2024-CIVIC-EX",
             "fits",
-            {"review_status": "ai_rejected"},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(status="rejected", source="agent")
+                )
+            ),
         )
         populated_instance.save_graph(graph)
         populated_instance.invalidate_graph_cache()
@@ -1274,27 +2478,28 @@ class TestExportEdges:
 
 
 class TestStoreLifecycle:
-    """Verify stores are closed even when operations raise."""
+    """Verify storage resources are closed even when operations raise."""
 
-    def test_query_closes_receipt_store_on_error(
+    def test_query_closes_unit_of_work_on_error(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from cruxible_core.storage.sqlite import SQLiteStore
+        from cruxible_core.receipt.store import SQLiteReceiptStore
+        from cruxible_core.storage.sqlite import SQLiteUnitOfWork
 
         close_count = 0
-        original_close = SQLiteStore.close
+        original_close = SQLiteUnitOfWork.close
 
-        def counting_close(self: SQLiteStore) -> None:
+        def counting_close(self: SQLiteUnitOfWork) -> None:
             nonlocal close_count
             close_count += 1
             original_close(self)
 
-        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(SQLiteUnitOfWork, "close", counting_close)
         monkeypatch.setattr(
-            SQLiteStore,
+            SQLiteReceiptStore,
             "save_receipt",
             lambda self, r: (_ for _ in ()).throw(RuntimeError("boom")),
         )
@@ -1302,7 +2507,7 @@ class TestStoreLifecycle:
         result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         # The command should fail due to the injected error
         assert result.exit_code == 1
@@ -1314,14 +2519,11 @@ class TestStoreLifecycle:
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from cruxible_core.feedback.store import FeedbackStore
-        from cruxible_core.storage.sqlite import SQLiteStore
-
         # First run a query to get a real receipt ID
         q_result = _chdir_run(
             runner,
             populated_instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         receipt_id = None
         for line in q_result.output.splitlines():
@@ -1329,34 +2531,12 @@ class TestStoreLifecycle:
                 receipt_id = line.split(":", 1)[1].strip()
         assert receipt_id is not None
 
-        receipt_close_count = 0
-        feedback_close_count = 0
-        original_sqlite_close = SQLiteStore.close
-        original_fb_close = FeedbackStore.close
-
-        def counting_sqlite_close(self: SQLiteStore) -> None:
-            nonlocal receipt_close_count
-            receipt_close_count += 1
-            original_sqlite_close(self)
-
-        def counting_fb_close(self: FeedbackStore) -> None:
-            nonlocal feedback_close_count
-            feedback_close_count += 1
-            original_fb_close(self)
-
-        monkeypatch.setattr(SQLiteStore, "close", counting_sqlite_close)
-        monkeypatch.setattr(FeedbackStore, "close", counting_fb_close)
-        monkeypatch.setattr(
-            FeedbackStore,
-            "save_feedback",
-            lambda self, r: (_ for _ in ()).throw(RuntimeError("boom")),
-        )
-
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             [
                 "feedback",
+                "record",
                 "--receipt",
                 receipt_id,
                 "--action",
@@ -1372,10 +2552,8 @@ class TestStoreLifecycle:
                 "--to-id",
                 "V-2024-CIVIC-EX",
             ],
+            "feedback record",
         )
-        assert result.exit_code == 1
-        assert receipt_close_count >= 1
-        assert feedback_close_count >= 1
 
     def test_list_receipts_closes_store_on_error(
         self,
@@ -1383,19 +2561,19 @@ class TestStoreLifecycle:
         populated_instance: CruxibleInstance,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from cruxible_core.storage.sqlite import SQLiteStore
+        from cruxible_core.receipt.store import SQLiteReceiptStore
 
         close_count = 0
-        original_close = SQLiteStore.close
+        original_close = SQLiteReceiptStore.close
 
-        def counting_close(self: SQLiteStore) -> None:
+        def counting_close(self: SQLiteReceiptStore) -> None:
             nonlocal close_count
             close_count += 1
             original_close(self)
 
-        monkeypatch.setattr(SQLiteStore, "close", counting_close)
+        monkeypatch.setattr(SQLiteReceiptStore, "close", counting_close)
         monkeypatch.setattr(
-            SQLiteStore,
+            SQLiteReceiptStore,
             "list_receipts",
             lambda self, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
@@ -1410,19 +2588,19 @@ class TestStoreLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# Feedback validation (confidence + provenance)
+# Feedback validation (property schema + provenance)
 # ---------------------------------------------------------------------------
 
 
 class TestFeedbackValidation:
-    """Verify CLI feedback matches MCP confidence/provenance checks."""
+    """Verify CLI feedback matches MCP property/provenance checks."""
 
     @staticmethod
     def _get_receipt_id(runner: CliRunner, instance: CruxibleInstance) -> str:
         result = _chdir_run(
             runner,
             instance.root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            ["query", "run", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
         )
         for line in result.output.splitlines():
             if line.startswith("Receipt:"):
@@ -1432,6 +2610,7 @@ class TestFeedbackValidation:
     def _feedback_args(self, receipt_id: str, corrections_json: str) -> list[str]:
         return [
             "feedback",
+            "record",
             "--receipt",
             receipt_id,
             "--action",
@@ -1456,13 +2635,12 @@ class TestFeedbackValidation:
         populated_instance: CruxibleInstance,
     ) -> None:
         receipt_id = self._get_receipt_id(runner, populated_instance)
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"confidence": true}'),
+            "feedback record",
         )
-        assert result.exit_code == 1
-        assert "numeric" in result.output
 
     def test_feedback_rejects_string_confidence(
         self,
@@ -1470,36 +2648,25 @@ class TestFeedbackValidation:
         populated_instance: CruxibleInstance,
     ) -> None:
         receipt_id = self._get_receipt_id(runner, populated_instance)
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"confidence": "high"}'),
+            "feedback record",
         )
-        assert result.exit_code == 1
-        assert "numeric" in result.output
 
-    def test_feedback_strips_provenance(
+    def test_feedback_rejects_metadata_key(
         self,
         runner: CliRunner,
         populated_instance: CruxibleInstance,
     ) -> None:
         receipt_id = self._get_receipt_id(runner, populated_instance)
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
             populated_instance.root,
             self._feedback_args(receipt_id, '{"_provenance": "spoofed", "note": "ok"}'),
+            "feedback record",
         )
-        assert result.exit_code == 0
-
-        # Read back from store to verify _provenance was stripped
-        fb_store = populated_instance.get_feedback_store()
-        try:
-            records = fb_store.list_feedback(receipt_id=receipt_id)
-        finally:
-            fb_store.close()
-        assert len(records) == 1
-        assert "_provenance" not in records[0].corrections
-        assert records[0].corrections["note"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1518,95 +2685,457 @@ class TestE2EGate:
         parts_csv: Path,
         fitments_csv: Path,
     ) -> None:
-        root = tmp_project
-
-        # 1. Init
-        result = _chdir_run(runner, root, ["init", "--config", "config.yaml"])
-        assert result.exit_code == 0
-
-        # 2. Ingest vehicles
-        result = _chdir_run(
+        _assert_local_mutation_disabled(
             runner,
-            root,
-            ["ingest", "--mapping", "vehicles", "--file", str(vehicles_csv)],
+            tmp_project,
+            ["init", "--config", "config.yaml"],
+            "init",
         )
-        assert result.exit_code == 0
-        assert "2 added" in result.output
 
-        # 3. Ingest parts
-        result = _chdir_run(
-            runner,
-            root,
-            ["ingest", "--mapping", "parts", "--file", str(parts_csv)],
+
+# ---------------------------------------------------------------------------
+# group commands
+# ---------------------------------------------------------------------------
+
+GROUP_CONFIG_YAML = """\
+version: "1.0"
+name: group_cli_test
+description: For CLI group tests
+
+entity_types:
+  Vehicle:
+    properties:
+      vehicle_id:
+        type: string
+        primary_key: true
+      year:
+        type: int
+      make:
+        type: string
+      model:
+        type: string
+  Part:
+    properties:
+      part_number:
+        type: string
+        primary_key: true
+      name:
+        type: string
+      category:
+        type: string
+        enum: [brakes, suspension, engine, electrical, body, interior]
+
+relationships:
+  - name: fits
+    from: Part
+    to: Vehicle
+    properties:
+      verified:
+        type: bool
+        default: false
+    proposal_policy:
+      signals:
+        check_v1:
+          role: required
+
+constraints: []
+"""
+
+
+@pytest.fixture
+def group_instance(tmp_path: Path) -> CruxibleInstance:
+    """Instance with proposal policy config and seeded entities for group tests."""
+    (tmp_path / "config.yaml").write_text(GROUP_CONFIG_YAML)
+    inst = CruxibleInstance.init(tmp_path, "config.yaml")
+    from cruxible_core.graph.types import EntityInstance
+
+    graph = inst.load_graph()
+    for pid in ("BP-1", "BP-2"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Part",
+                entity_id=pid,
+                properties={"part_number": pid, "name": f"Part {pid}", "category": "brakes"},
+            )
         )
-        assert result.exit_code == 0
-        assert "2 added" in result.output
-
-        # 4. Ingest fitments
-        result = _chdir_run(
-            runner,
-            root,
-            ["ingest", "--mapping", "fitments", "--file", str(fitments_csv)],
+    for vid in ("V-1", "V-2"):
+        graph.add_entity(
+            EntityInstance(
+                entity_type="Vehicle",
+                entity_id=vid,
+                properties={
+                    "vehicle_id": vid,
+                    "year": 2024,
+                    "make": "Honda",
+                    "model": "Civic",
+                },
+            )
         )
-        assert result.exit_code == 0
-        assert "3 added" in result.output
+    inst.save_graph(graph)
+    return inst
 
-        # 5. Query
-        result = _chdir_run(
-            runner,
-            root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+
+def _members_json(from_id: str = "BP-1", to_id: str = "V-1") -> str:
+    return json.dumps(
+        [
+            {
+                "from_type": "Part",
+                "from_id": from_id,
+                "to_type": "Vehicle",
+                "to_id": to_id,
+                "relationship_type": "fits",
+                "signals": [{"signal_source": "check_v1", "signal": "support"}],
+            }
+        ]
+    )
+
+
+def _seed_group(instance: CruxibleInstance, *, resolve: bool = False) -> str:
+    result = service_propose_group(
+        instance,
+        "fits",
+        [
+            CandidateMember(
+                from_type="Part",
+                from_id="BP-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                relationship_type="fits",
+                signals=[CandidateSignal(signal_source="check_v1", signal="support")],
+                properties={},
+            )
+        ],
+        thesis_facts={"k": "v"},
+    )
+    group_id = result.group_id
+    assert group_id is not None
+    if resolve:
+        service_resolve_group(
+            instance,
+            group_id,
+            "approve",
+            resolved_by="human",
+            expected_pending_version=1,
         )
-        assert result.exit_code == 0
-        assert "Receipt:" in result.output
+    return group_id
 
-        # Extract receipt ID
-        receipt_id = None
-        for line in result.output.splitlines():
-            if line.startswith("Receipt:"):
-                receipt_id = line.split(":", 1)[1].strip()
-        assert receipt_id is not None
 
-        # 6. Explain
-        result = _chdir_run(
+class TestGroupProposeCLI:
+    def test_propose_inline(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        _assert_local_mutation_disabled(
             runner,
-            root,
-            ["explain", "--receipt", receipt_id],
-        )
-        assert result.exit_code == 0
-        assert "Receipt" in result.output
-
-        # 7. Feedback
-        result = _chdir_run(
-            runner,
-            root,
+            group_instance.root,
             [
-                "feedback",
-                "--receipt",
-                receipt_id,
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members",
+                _members_json(),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+            "group propose",
+        )
+
+    def test_propose_from_file(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        members_file = group_instance.root / "members.json"
+        members_file.write_text(_members_json())
+        _assert_local_mutation_disabled(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "propose",
+                "--relationship",
+                "fits",
+                "--members-file",
+                str(members_file),
+                "--thesis-facts",
+                '{"k": "v"}',
+            ],
+            "group propose",
+        )
+
+
+class TestGroupResolveCLI:
+    def test_approve(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        group_id = _seed_group(group_instance)
+        _assert_local_mutation_disabled(
+            runner,
+            group_instance.root,
+            [
+                "group",
+                "resolve",
+                "--group",
+                group_id,
                 "--action",
                 "approve",
+                "--expected-pending-version",
+                "1",
+            ],
+            "group resolve",
+        )
+
+
+class TestGroupTrustCLI:
+    def test_update_trust(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        group_id = _seed_group(group_instance, resolve=True)
+
+        # Get resolution_id
+        store = group_instance.get_group_store()
+        try:
+            group = store.get_group(group_id)
+            res_id = group.resolution_id
+        finally:
+            store.close()
+
+        _assert_local_mutation_disabled(
+            runner,
+            group_instance.root,
+            ["group", "trust", "--resolution", res_id, "--status", "trusted", "--reason", "ok"],
+            "group trust",
+        )
+
+
+class TestGroupGetCLI:
+    def test_get(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        group_id = _seed_group(group_instance)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "get", "--group", group_id],
+        )
+        assert result.exit_code == 0
+        assert group_id in result.output
+
+    def test_get_json_includes_review_payload(
+        self,
+        runner: CliRunner,
+        group_instance: CruxibleInstance,
+    ) -> None:
+        group_id = _seed_group(group_instance)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "get", "--group", group_id, "--json"],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["bucket_status"]["pending_group_id"] == group_id
+        assert payload["member_review"][0]["current_edge_count"] == 0
+
+    def test_inspect_relationship_lineage_json(
+        self,
+        runner: CliRunner,
+        group_instance: CruxibleInstance,
+    ) -> None:
+        group_id = _seed_group(group_instance, resolve=True)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            [
+                "relationship",
+                "lineage",
                 "--from-type",
                 "Part",
                 "--from-id",
-                "BP-1001",
+                "BP-1",
                 "--relationship",
                 "fits",
                 "--to-type",
                 "Vehicle",
                 "--to-id",
-                "V-2024-CIVIC-EX",
-                "--reason",
-                "Confirmed via catalog",
+                "V-1",
+                "--json",
             ],
         )
-        assert result.exit_code == 0
-        assert "applied" in result.output
 
-        # 8. Re-query (should still work after feedback)
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["found"] is True
+        assert payload["group"]["group_id"] == group_id
+        assert payload["provenance"]["source_ref"] == f"group:{group_id}"
+        assert "assertion" not in payload
+        assertion = payload["relationship"]["metadata"]["assertion"]
+        assert assertion["review"]["status"] == "approved"
+        assert assertion["review"]["source"] == "group"
+
+
+class TestGroupListCLI:
+    def test_list(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        _seed_group(group_instance)
         result = _chdir_run(
             runner,
-            root,
-            ["query", "--query", "parts_for_vehicle", "--param", "vehicle_id=V-2024-CIVIC-EX"],
+            group_instance.root,
+            ["group", "list"],
         )
         assert result.exit_code == 0
+        assert "1 of 1" in result.output
+
+    def test_group_list_table_preserves_relationship_status_and_thesis(self) -> None:
+        relationship = "very_long_relationship_type_agents_must_read"
+        thesis = (
+            "This thesis is intentionally longer than fifty characters so the "
+            "table must wrap it instead of applying the old hard truncation."
+        )
+        console = Console(record=True, width=80)
+
+        console.print(
+            groups_table(
+                [
+                    CandidateGroup(
+                        group_id="GRP-longtable",
+                        relationship_type=relationship,
+                        signature="abc1234567890defabc1234567890def",
+                        status="pending_review",
+                        review_priority="review",
+                        member_count=3,
+                        thesis_text=thesis,
+                    )
+                ]
+            )
+        )
+
+        output = console.export_text()
+        compact = _compact_rendered_table(output)
+        _assert_chunks_present(
+            output,
+            ["very_long_relationship_t", "ype_agents_must_read"],
+        )
+        assert "pending_review" in compact
+        assert "oldhardtruncation" in compact
+
+
+class TestGroupResolutionsCLI:
+    def test_resolutions(self, runner: CliRunner, group_instance: CruxibleInstance) -> None:
+        _seed_group(group_instance, resolve=True)
+
+        result = _chdir_run(
+            runner,
+            group_instance.root,
+            ["group", "resolutions"],
+        )
+        assert result.exit_code == 0
+        assert "1 of 1" in result.output
+
+
+class TestGroupHelpCLI:
+    def test_group_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["group", "--help"])
+        assert result.exit_code == 0
+        assert "propose" in result.output
+        assert "resolve" in result.output
+        assert "trust" in result.output
+        assert "get" in result.output
+        assert "list" in result.output
+        assert "resolutions" in result.output
+
+
+class TestFeedbackGroupOverrideCLI:
+    def test_feedback_group_override_flag(self, runner: CliRunner) -> None:
+        """--group-override flag appears in help."""
+        result = runner.invoke(cli, ["feedback", "record", "--help"])
+        assert result.exit_code == 0
+        assert "--group-override" in result.output
+
+
+def _extract_group_id(output: str) -> str:
+    """Extract GRP-xxx from CLI output."""
+    for line in output.splitlines():
+        if "GRP-" in line:
+            for word in line.split():
+                if word.startswith("GRP-"):
+                    return word.rstrip(".")
+    raise ValueError(f"No group ID found in output: {output}")
+
+
+class TestNounVerbGrouping:
+    """The flat verb-noun CLI commands now live under noun groups (no aliases)."""
+
+    @pytest.mark.parametrize(
+        "group, subcommands",
+        [
+            ("config", ["reload", "views", "add-constraint", "add-decision-policy"]),
+            ("feedback", ["record", "from-query", "batch", "profile", "analyze"]),
+            ("outcome", ["record", "profile", "analyze"]),
+            ("wiki", ["render"]),
+        ],
+    )
+    def test_group_exposes_expected_subcommands(
+        self,
+        runner: CliRunner,
+        group: str,
+        subcommands: list[str],
+    ) -> None:
+        result = runner.invoke(cli, [group, "--help"])
+        assert result.exit_code == 0, result.output
+        for sub in subcommands:
+            assert sub in result.output, f"{group} help missing subcommand {sub!r}"
+
+    @pytest.mark.parametrize(
+        "command_path",
+        [
+            ["config", "reload", "--help"],
+            ["config", "views", "--help"],
+            ["config", "add-constraint", "--help"],
+            ["config", "add-decision-policy", "--help"],
+            ["feedback", "record", "--help"],
+            ["feedback", "from-query", "--help"],
+            ["feedback", "batch", "--help"],
+            ["feedback", "profile", "--help"],
+            ["feedback", "analyze", "--help"],
+            ["outcome", "record", "--help"],
+            ["outcome", "profile", "--help"],
+            ["outcome", "analyze", "--help"],
+            ["wiki", "render", "--help"],
+        ],
+    )
+    def test_grouped_paths_resolve(
+        self,
+        runner: CliRunner,
+        command_path: list[str],
+    ) -> None:
+        result = runner.invoke(cli, command_path)
+        assert result.exit_code == 0, result.output
+        assert "Usage:" in result.output
+
+    @pytest.mark.parametrize(
+        "old_name",
+        [
+            "reload-config",
+            "config-views",
+            "add-constraint",
+            "add-decision-policy",
+            "feedback-batch",
+            "feedback-from-query",
+            "feedback-profile",
+            "analyze-feedback",
+            "outcome-profile",
+            "analyze-outcomes",
+            "render-wiki",
+        ],
+    )
+    def test_old_flat_names_are_gone(self, old_name: str) -> None:
+        assert old_name not in cli.commands, (
+            f"flat command {old_name!r} must be removed (no legacy aliases)"
+        )
+
+    def test_bare_feedback_and_outcome_are_groups_not_record(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        # The bare nouns are groups now; invoking them with record-only flags must
+        # fail rather than silently recording, since the record verb moved.
+        feedback = runner.invoke(cli, ["feedback", "--action", "approve"])
+        assert feedback.exit_code != 0
+        outcome = runner.invoke(cli, ["outcome", "--receipt", "RCP-1"])
+        assert outcome.exit_code != 0
+
+    def test_batch_direct_write_stays_top_level(self) -> None:
+        # Power-user write verb with no clean noun group; intentionally left flat.
+        assert "batch-direct-write" in cli.commands

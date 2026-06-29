@@ -1,85 +1,602 @@
 # Cruxible Core Configuration Template
-# =====================================
-# Copy this file and fill in your domain-specific entity types,
-# relationships, queries, constraints, and ingestion mappings.
+# ====================================
+#
+# This file is an authoring checklist for a Cruxible world model. It is not a
+# complete domain by itself: copy it, replace the empty maps/lists with your
+# domain objects, and keep only the sections you need.
+#
+# For full field semantics, see docs/config-reference.md.
 
-name: "my_domain"
-description: "Describe your decision domain here"
+version: "1.0"
+name: my_domain
+description: >
+  Describe the decision domain, who maintains it, and what decisions it
+  supports.
+# cruxible_version: "0.2.0"
+# extends: ../base-world/config.yaml
 
-# Entity types define the nodes in your graph.
-# Each entity type has typed properties with optional constraints.
-entity_types:
-  # ExampleEntity:
-  #   description: "What this entity represents"
+# ---------------------------------------------------------------------------
+# Shared Enums
+# ---------------------------------------------------------------------------
+# Use enum_ref when the same vocabulary appears in multiple properties.
+# Add ordered: low_to_high only when the order of values is semantic rank.
+enums: {}
+  # priority:
+  #   description: Shared rank from lowest to highest.
+  #   values: [low, medium, high, critical]
+  #   ordered: low_to_high
+  # lifecycle_status:
+  #   values: [active, inactive, retired]
+
+# ---------------------------------------------------------------------------
+# Entity Types
+# ---------------------------------------------------------------------------
+# Entity properties default to type: string and optional: true.
+# Supported property types:
+#   string, int, integer, float, number, bool, date, datetime, json
+entity_types: {}
+  # EntityA:
+  #   description: Durable thing the graph should remember.
   #   properties:
-  #     id:
+  #     entity_a_id:
   #       type: string
   #       primary_key: true
   #     name:
-  #       type: string
   #       indexed: true
-  #     category:
-  #       type: string
-  #       enum: [option_a, option_b, option_c]
+  #     status:
+  #       enum_ref: lifecycle_status
   #       indexed: true
   #     score:
-  #       type: float
+  #       type: number
   #       optional: true
+  #     tags:
+  #       type: json
+  #       optional: true
+  #       json_schema:
+  #         type: array
+  #         items: {type: string}
+  #   constraints: []
+  #
+  # EntityB:
+  #   properties:
+  #     entity_b_id: {type: string, primary_key: true}
+  #     owner: {}
 
-# Relationships define edges between entity types.
-# Each relationship has a direction (from -> to) and optional properties.
+# ---------------------------------------------------------------------------
+# Relationships
+# ---------------------------------------------------------------------------
+# Relationships are directed from -> to. Add proposal_policy only when the
+# edge is governed and should be proposed/reviewed rather than deterministically
+# applied.
 relationships: []
-  # - name: relates_to
-  #   description: "How EntityA connects to EntityB"
+  # - name: entity_a_relates_to_entity_b
+  #   description: Deterministic or governed relationship description.
   #   from: EntityA
   #   to: EntityB
+  #   inverse: entity_b_related_from_entity_a
+  #   cardinality: many_to_many
   #   properties:
-  #     confidence:
-  #       type: float
-  #     source:
-  #       type: string
-  #       optional: true
-  #     verified:
-  #       type: bool
-  #       default: false
+  #     source: {}
+  #     basis: {}
+  #   # Put durable provenance for accepted facts in relationship metadata via
+  #   # workflow evidence mappings, not generic relationship properties.
+  #
+  # - name: governed_relationship
+  #   from: EntityA
+  #   to: EntityB
+  #   proposal_identity: thesis_signature  # or relationship_tuple
+  #   properties:
+  #     verdict: {enum: [support, unsure, contradict]}
+  #     basis: {}
+  #   proposal_policy:
+  #     auto_resolve_when: all_support
+  #     auto_resolve_requires_prior_trust: trusted_only
+  #     max_group_size: 1000
+  #     signals:
+  #       provider_signal:
+  #         role: required       # required, blocking, advisory
+  #         always_review_on_unsure: true
+  #         note: Explain what this signal means.
 
-# Named queries define reusable traversal patterns.
-# Each query starts at an entry_point entity type and follows traversal steps.
+# ---------------------------------------------------------------------------
+# Named Queries
+# ---------------------------------------------------------------------------
+# Queries are public read surfaces. Use traversal when the caller provides an
+# entry entity. Use collection when the query lists one entity or relationship
+# type without an entry point.
 named_queries: {}
-  # find_related:
-  #   description: "Find entities related to the given one"
+  # entity_b_for_entity_a:
+  #   description: Starting from EntityA, find related EntityB rows.
+  #   mode: traversal
   #   entry_point: EntityA
   #   returns: EntityB
+  #   result_shape: path          # path, entity, relationship
+  #   dedupe: path                # path, entity, none
+  #   relationship_state: live    # live, accepted, all, not-live, pending, reviewable
+  #   allow_relationship_state_override: false
   #   traversal:
-  #     - relationship: relates_to
-  #       direction: outgoing
+  #     - relationship: entity_a_relates_to_entity_b
+  #       direction: outgoing     # outgoing, incoming, both
+  #       alias: relation
+  #       required: true
+  #       max_depth: 1
   #       filter:
-  #         verified: true
+  #         source: system_a
+  #       target_filter:
+  #         status: active
+  #       where:
+  #         candidate.properties.status:
+  #           eq: active
+  #       where_related:
+  #         - relationship: blocked_by
+  #           direction: outgoing
+  #           target:
+  #             entity_id: {eq: $entry.entity_id}
+  #       where_not_related: []
+  #       exclude_if_related: []
+  #   include:
+  #     owners:
+  #       from: $result
+  #       relationship: owned_by
+  #       direction: outgoing
+  #       many: true
+  #       required: false
+  #       relationship_state: live
+  #       where:
+  #         target.properties.status: {eq: active}
+  #       order_by:
+  #         - by: $target.properties.name
+  #           direction: asc
+  #   select:
+  #     source_id: $entry.entity_id
+  #     target_id: $result.entity_id
+  #     relation_source: $path.relation.edge.properties.source
+  #   order_by:
+  #     - by: $result.properties.priority
+  #       direction: desc
+  #       enum_ref: priority
+  #   limit: 100
+  #   max_paths: 1000
+  #   max_paths_per_result: 10
+  #
+  # active_entity_a:
+  #   description: Entryless entity collection.
+  #   mode: collection
+  #   result_shape: entity
+  #   returns: EntityA
+  #   where:
+  #     result.properties.status: {eq: active}
+  #   order_by:
+  #     - by: $result.properties.name
+  #       direction: asc
+  #   limit: 100
+  #
+  # reviewable_governed_edges:
+  #   description: Entryless relationship collection.
+  #   mode: collection
+  #   result_shape: relationship
+  #   returns: governed_relationship
+  #   relationship_state: reviewable
+  #   where:
+  #     edge.properties.verdict: {ne: contradict}
+  #     source.properties.status: {eq: active}
+  #     target.entity_id: {eq: $input.target_id}
 
-# Constraints define rules that should hold in the graph.
-# Checked by cruxible_evaluate. Severity: "warning" logs, "error" blocks.
+# ---------------------------------------------------------------------------
+# Constraints
+# ---------------------------------------------------------------------------
+# Constraints are compact boolean rules evaluated by the graph validation path.
 constraints: []
-  # - name: must_be_same_type
-  #   rule: "relates_to.from.category == relates_to.to.category"
+  # - name: active_entities_need_owner
+  #   description: Active EntityA rows should have an owner value.
+  #   rule: "EntityA.status == 'active' -> EntityA.owner != null"
+  #   value_type: bool
   #   severity: warning
-  #   description: "Related entities should share a category"
 
-# Ingestion mappings tell Core how to load CSV/JSON into the graph.
-# For entities: set entity_type + id_column.
-# For relationships: set relationship_type + from_column + to_column.
-# Use column_map when CSV column names don't match property names.
-ingestion: {}
-  # my_entities:
-  #   description: "Source data for ExampleEntity"
-  #   entity_type: ExampleEntity
-  #   id_column: id
-  #   column_map:
-  #     csv_column_name: property_name
-  # my_edges:
-  #   description: "Source data for relates_to relationships"
-  #   relationship_type: relates_to
-  #   from_column: source_id
-  #   to_column: target_id
-  #   column_map:
-  #     csv_confidence: confidence
-  #     csv_source: source
+# ---------------------------------------------------------------------------
+# Quality Checks
+# ---------------------------------------------------------------------------
+# Quality checks run over graph state and produce diagnostics. They are useful
+# for operational guardrails that do not belong in provider code.
+quality_checks: []
+  # - name: entity_a_has_name
+  #   kind: property
+  #   severity: warning
+  #   target: entity
+  #   entity_type: EntityA
+  #   property: name
+  #   rule: non_empty             # required, non_empty, type, pattern
+  #
+  # - name: unique_entity_a_names
+  #   kind: uniqueness
+  #   entity_type: EntityA
+  #   properties: [name]
+  #
+  # - name: at_least_one_entity_a
+  #   kind: bounds
+  #   target: entity_count
+  #   entity_type: EntityA
+  #   min_count: 1
+  #
+  # - name: entity_a_has_one_owner
+  #   kind: cardinality
+  #   entity_type: EntityA
+  #   relationship_type: owned_by
+  #   direction: outgoing
+  #   min_count: 1
+  #   max_count: 1
+  #
+  # - name: denormalized_owner_matches_edge
+  #   kind: relationship_property_consistency
+  #   severity: warning
+  #   entity_type: EntityA
+  #   relationship_type: owned_by
+  #   direction: outgoing
+  #   source_property: owner_id
+  #   target_property: owner_id
+  #   allow_missing_source: true
+
+# ---------------------------------------------------------------------------
+# Feedback Profiles
+# ---------------------------------------------------------------------------
+# Feedback profiles define bounded reason codes for relationship feedback.
+feedback_profiles: {}
+  # governed_relationship:
+  #   version: 1
+  #   reason_codes:
+  #     wrong_target:
+  #       description: The proposed target entity is incorrect.
+  #       remediation_hint: provider_fix
+  #       required_scope_keys: [source, target]
+  #   scope_keys:
+  #     source: FROM.entity_a_id
+  #     target: TO.entity_b_id
+
+# ---------------------------------------------------------------------------
+# Outcome Profiles
+# ---------------------------------------------------------------------------
+# Outcome profiles define bounded labels/codes for trust and quality analysis.
+outcome_profiles: {}
+  # governed_relationship_resolution:
+  #   anchor_type: resolution
+  #   relationship_type: governed_relationship
+  #   version: 1
+  #   outcome_codes:
+  #     correct:
+  #       description: The accepted relationship remained correct.
+  #       remediation_hint: trust_adjustment
+  #       required_scope_keys: [relationship_type]
+  #   scope_keys:
+  #     relationship_type: RESOLUTION.relationship_type
+  #
+  # entity_query_receipt:
+  #   anchor_type: receipt
+  #   surface_type: query
+  #   surface_name: active_entity_a
+  #   version: 1
+  #   outcome_codes:
+  #     missing_result:
+  #       description: A known relevant entity was missing from the query.
+  #       remediation_hint: graph_fix
+  #       required_scope_keys: [query]
+  #   scope_keys:
+  #     query: SURFACE.name
+
+# ---------------------------------------------------------------------------
+# Decision Policies
+# ---------------------------------------------------------------------------
+# Decision policies apply action-side behavior during query/proposal execution.
+decision_policies: []
+  # - name: suppress_retired_targets
+  #   description: Hide retired relationships from this investigation query.
+  #   applies_to: query
+  #   query_name: reviewable_governed_edges
+  #   relationship_type: governed_relationship
+  #   effect: suppress             # query supports suppress; workflow supports require_review
+  #   rationale: Retired targets are not actionable.
+  #   match:
+  #     from: {}
+  #     to:
+  #       status: retired
+  #     edge: {}
+  #     context: {}
+  #   expires_at: "2026-12-31"
+
+# ---------------------------------------------------------------------------
+# Contracts
+# ---------------------------------------------------------------------------
+# Contracts define provider/workflow payload boundaries.
+# Built-ins:
+#   cruxible.EmptyInput
+#   cruxible.JsonObject
+#   cruxible.JsonItems
+#   cruxible.ParsedTabularBundle
+contracts: {}
+  # RawRows:
+  #   description: Provider output rows.
+  #   allow_extra: false
+  #   fields:
+  #     items:
+  #       type: json
+  #       json_schema:
+  #         type: array
+  #         items: {type: object}
+  #
+  # WorkflowInput:
+  #   fields:
+  #     entity_a_id:
+  #       type: string
+  #     include_inactive:
+  #       type: bool
+  #       optional: true
+
+# ---------------------------------------------------------------------------
+# Artifacts
+# ---------------------------------------------------------------------------
+# Artifacts are pinned files/directories. Only loader/parser providers should
+# declare artifact access; domain transform providers should receive explicit
+# input fields from workflow config.
+artifacts: {}
+  # source_bundle:
+  #   kind: directory
+  #   uri: ./data/seed
+  #   sha256: sha256:<digest>
+  #   metadata:
+  #     owner: data-platform
+
+# ---------------------------------------------------------------------------
+# Providers
+# ---------------------------------------------------------------------------
+# Providers are versioned executable leaves. They still accept/return plain
+# dictionaries; use contracts to document and validate their payloads.
+providers: {}
+  # parse_source_bundle:
+  #   kind: function               # function, model, tool
+  #   description: Parse source files into named tables.
+  #   contract_in: cruxible.JsonObject
+  #   contract_out: cruxible.ParsedTabularBundle
+  #   ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+  #   version: "1.0.0"
+  #   deterministic: true
+  #   runtime: python              # python, http_json, command
+  #   artifact: source_bundle
+  #   side_effects: false
+  #   config: {}
+  #
+  # normalize_rows:
+  #   kind: function
+  #   contract_in: cruxible.JsonObject
+  #   contract_out: RawRows
+  #   ref: kit://providers/normalization.py::normalize_rows
+  #   version: "1.0.0"
+  #   deterministic: true
+  #   runtime: python
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+# Workflows compose query/provider/transform/build/apply steps. Every step must
+# define exactly one step kind. Steps with outputs require "as"; guard steps
+# must not define "as".
+workflows: {}
+  # build_local_state:
+  #   description: Parse source rows and apply deterministic graph facts.
+  #   type: canonical              # utility, canonical, decision_support, proposal
+  #   contract_in: cruxible.EmptyInput
+  #   contract_out: null           # optional; validates only the returned output
+  #   steps:
+  #     - id: raw_tables
+  #       provider: parse_source_bundle
+  #       input:
+  #         expected_tables: [entity_a, entity_b, relationships]
+  #       as: raw_tables
+  #
+  #     - id: entity_a_rows
+  #       shape_items:
+  #         items: $steps.raw_tables.tables.entity_a.rows
+  #         include_input: true
+  #         rename: {}
+  #         fields:
+  #           source: seed
+  #         casts:
+  #           score: float
+  #           tags: json
+  #         required: [entity_a_id]
+  #         on_missing_required: error
+  #       as: entity_a_rows
+  #
+  #     - id: entity_a
+  #       make_entities:
+  #         entity_type: EntityA
+  #         items: $steps.entity_a_rows.items
+  #         entity_id: $item.entity_a_id
+  #         properties:
+  #           entity_a_id: $item.entity_a_id
+  #           name: $item.name
+  #           status: $item.status
+  #       as: entity_a
+  #
+  #     - id: relationships
+  #       make_relationships:
+  #         relationship_type: entity_a_relates_to_entity_b
+  #         items: $steps.raw_tables.tables.relationships.rows
+  #         from_type: EntityA
+  #         from_id: $item.entity_a_id
+  #         to_type: EntityB
+  #         to_id: $item.entity_b_id
+  #         properties:
+  #           source: seed
+  #           basis: $item.rationale
+  #         evidence:
+  #           refs: $item.evidence_refs
+  #           rationale: $item.rationale
+  #       as: relationships
+  #
+  #     - id: apply_state
+  #       apply_all:
+  #         entities_from: [entity_a]
+  #         relationships_from: [relationships]
+  #       as: apply_state
+  #   returns: apply_state
+  #
+  # propose_governed_relationships:
+  #   description: Build and propose governed relationship candidates.
+  #   type: proposal
+  #   contract_in: WorkflowInput
+  #   steps:
+  #     - id: source_context
+  #       query: entity_b_for_entity_a
+  #       params:
+  #         entity_a_id: $input.entity_a_id
+  #       relationship_state: reviewable
+  #       include_source: true
+  #       as: source_context
+  #
+  #     - id: require_complete_context
+  #       assert_not_truncated:
+  #         step: source_context
+  #
+  #     - id: require_some_context
+  #       assert_count:
+  #         step: source_context
+  #         count: returned_results
+  #         op: gt
+  #         value: 0
+  #         message: At least one context row is required.
+  #
+  #     - id: require_first_target
+  #       assert_exists:
+  #         ref: $steps.source_context.results[0].result.entity_id
+  #         message: First result must include a target entity id.
+  #
+  #     - id: shaped_context
+  #       shape_items:
+  #         items: $steps.source_context.results
+  #         fields:
+  #           from_id: $item.entry.entity_id
+  #           to_id: $item.result.entity_id
+  #           basis: $item.relationship.properties.basis
+  #       as: shaped_context
+  #
+  #     - id: filtered_context
+  #       filter_items:
+  #         items: $steps.shaped_context.items
+  #         where:
+  #           from_id: $input.entity_a_id
+  #         comparisons:
+  #           - left: $item.to_id
+  #             op: ne
+  #             right: ""
+  #       as: filtered_context
+  #
+  #     - id: deduped_context
+  #       dedupe_items:
+  #         items: $steps.filtered_context.items
+  #         keys: [$item.from_id, $item.to_id]
+  #         strategy: first
+  #       as: deduped_context
+  #
+  #     - id: summary
+  #       aggregate_items:
+  #         items: $steps.deduped_context.items
+  #         group_by:
+  #           from_id: $item.from_id
+  #         measures:
+  #           candidate_count:
+  #             count: true
+  #       as: summary
+  #
+  #     - id: candidates
+  #       make_candidates:
+  #         relationship_type: governed_relationship
+  #         items: $steps.deduped_context.items
+  #         from_type: EntityA
+  #         from_id: $item.from_id
+  #         to_type: EntityB
+  #         to_id: $item.to_id
+  #         properties:
+  #           basis: $item.basis
+  #         evidence:
+  #           refs: $item.evidence_refs
+  #           rationale: $item.basis
+  #       as: candidates
+  #
+  #     - id: signals
+  #       map_signals:
+  #         signal_source: provider_signal
+  #         items: $steps.deduped_context.items
+  #         from_id: $item.from_id
+  #         to_id: $item.to_id
+  #         evidence: $item.basis
+  #         evidence_refs: $item.evidence_refs
+  #         enum:
+  #           path: $item.verdict
+  #           map:
+  #             support: support
+  #             unsure: unsure
+  #             contradict: contradict
+  #       as: signals
+  #
+  #     - id: proposal
+  #       propose_relationship_group:
+  #         relationship_type: governed_relationship
+  #         candidates_from: candidates
+  #         signals_from: [signals]
+  #         on_empty: complete
+  #         pending_refresh_mode: replace
+  #         thesis_text: >
+  #           Human-readable explanation. This text is not part of the
+  #           proposal signature.
+  #         analysis_state:
+  #           summary: $steps.summary.items
+  #         suggested_priority: review
+  #         proposed_by: agent
+  #       as: proposal
+  #   returns: proposal
+  #
+  # join_and_score:
+  #   description: Utility example showing join_items and provider input.
+  #   type: utility
+  #   steps:
+  #     - id: left
+  #       query:
+  #         mode: collection
+  #         result_shape: entity
+  #         returns: EntityA
+  #       as: left
+  #     - id: right
+  #       query:
+  #         mode: collection
+  #         result_shape: entity
+  #         returns: EntityB
+  #       as: right
+  #     - id: joined
+  #       join_items:
+  #         left_items: $steps.left.results
+  #         right_items: $steps.right.results
+  #         left_key: $item.properties.owner
+  #         right_key: $item.properties.owner
+  #         fields:
+  #           left_id: $left.entity_id
+  #           right_id: $right.entity_id
+  #       as: joined
+  #     - id: scored
+  #       provider: normalize_rows
+  #       input:
+  #         items: $steps.joined.items
+  #       as: scored
+  #   returns: scored
+
+# ---------------------------------------------------------------------------
+# Workflow Tests
+# ---------------------------------------------------------------------------
+# Tests are config-owned smoke checks for workflow behavior.
+tests: []
+  # - name: build_local_state_smoke
+  #   workflow: build_local_state
+  #   input: {}
+  #   expect:
+  #     output_contains:
+  #       total_entities_applied: 1
+  #     receipt_contains_provider: parse_source_bundle
+  #     error_contains: null

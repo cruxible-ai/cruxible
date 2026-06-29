@@ -1,0 +1,6 @@
+patch_window_id,cadence,next_window_at,freeze_status,emergency_patch_allowed,outage_allowed,testing_required,rollback_required,owner_id,change_group
+PW-1,weekly,2026-04-18T02:00:00Z,none,true,true,true,true,OWNER-2,web-platform-cab
+PW-2,biweekly,2026-04-24T03:00:00Z,none,true,false,true,true,OWNER-3,application-cab
+PW-3,monthly,2026-05-02T01:00:00Z,partial_freeze,false,false,true,true,OWNER-4,finance-cab
+PW-4,biweekly,2026-04-22T01:00:00Z,none,true,true,false,true,OWNER-6,internal-apps-cab
+PW-5,monthly,2026-04-27T20:00:00Z,none,true,false,false,true,OWNER-5,endpoint-cab

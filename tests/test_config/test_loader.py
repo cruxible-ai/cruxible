@@ -20,7 +20,6 @@ class TestLoadConfig:
         assert len(config.relationships) == 2
         assert len(config.named_queries) == 3
         assert len(config.constraints) == 1
-        assert len(config.ingestion) == 3
 
     def test_load_from_string(self):
         yaml_str = """
@@ -85,7 +84,7 @@ relationships: []
         assert fits is not None
         assert fits.from_entity == "Part"
         assert fits.to_entity == "Vehicle"
-        assert fits.inverse == "fitted_parts"
+        assert fits.reverse_name == "fitted_parts"
         assert "verified" in fits.properties
 
         replaces = config.get_relationship("replaces")
@@ -102,14 +101,6 @@ relationships: []
         assert len(pfv.traversal) == 1
         assert pfv.traversal[0].relationship == "fits"
         assert pfv.traversal[0].direction == "incoming"
-
-    def test_car_parts_ingestion(self, configs_dir: Path):
-        config = load_config(configs_dir / "car_parts.yaml")
-
-        assert config.ingestion["vehicles"].is_entity
-        assert config.ingestion["vehicles"].entity_type == "Vehicle"
-        assert config.ingestion["fitments"].is_relationship
-        assert config.ingestion["fitments"].from_column == "part_number"
 
 
 class TestSaveConfig:
@@ -170,6 +161,25 @@ class TestSaveConfig:
         reloaded = load_config(out_path)
         names = [c.name for c in reloaded.constraints]
         assert "test_constraint" in names
+
+    def test_save_config_with_entity_constraints(self, tmp_path: Path):
+        yaml_str = (
+            "version: '1.0'\n"
+            "name: entity_constraints\n"
+            "entity_types:\n"
+            "  Thing:\n"
+            "    constraints:\n"
+            "      - thing.id != ''\n"
+            "    properties:\n"
+            "      id: {type: string, primary_key: true}\n"
+            "relationships: []\n"
+        )
+        config = load_config(yaml_str)
+        out_path = tmp_path / "entity_constraints.yaml"
+        save_config(config, out_path)
+
+        reloaded = load_config(out_path)
+        assert reloaded.entity_types["Thing"].constraints == ["thing.id != ''"]
 
     def test_save_config_relationship_aliases(self, tmp_path: Path):
         """Output YAML uses 'from'/'to' not 'from_entity'/'to_entity'."""

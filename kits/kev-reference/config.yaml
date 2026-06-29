@@ -1,0 +1,375 @@
+version: "1.0"
+name: kev_reference
+description: >
+  Published vulnerability reference graph built from public data: CISA KEV,
+  NVD CVE/CPE configurations, and EPSS scores. Products use CPE-based
+  identifiers. Vulnerability-to-product edges carry affected version ranges
+  from NVD CPE match data.
+
+entity_types:
+  Vendor:
+    description: Vendor or software publisher, identified by CPE vendor string.
+    properties:
+      vendor_id: {primary_key: true}
+      name: {indexed: true}
+
+  Product:
+    description: Product identified by CPE vendor and product strings.
+    properties:
+      product_id: {primary_key: true}
+      vendor_id: {}
+      vendor_name: {}
+      product_name: {indexed: true}
+      cpe_vendor: {}
+      cpe_product: {}
+      cpe_part: {}
+
+  Vulnerability:
+    description: Public vulnerability record from CISA KEV catalog.
+    properties:
+      cve_id: {primary_key: true}
+      vulnerability_name: {optional: true}
+      description: {}
+      date_added_to_kev: {type: date, optional: true}
+      kev_due_date: {type: date, optional: true}
+      required_action: {optional: true}
+      known_ransomware_use: {enum: [Known, Unknown], optional: true}
+      cvss_score: {type: number, optional: true}
+      cvss_severity: {optional: true}
+      epss_score: {type: number, optional: true}
+      epss_percentile: {type: number, optional: true}
+      cwes: {type: json, optional: true}
+
+relationships:
+  - name: product_from_vendor
+    description: Deterministic product-to-vendor mapping from CPE structure.
+    from: Product
+    to: Vendor
+
+  - name: vulnerability_affects_product
+    description: >
+      Public reference mapping from vulnerability to affected product.
+      Version ranges aggregated from NVD CPE match configurations.
+    from: Vulnerability
+    to: Product
+    properties:
+      source: {}
+      source_record_id: {}
+      cpe_part: {optional: true}
+      cpe_vendor: {optional: true}
+      cpe_product: {optional: true}
+      affected_versions:
+        type: json
+        description: >
+          List of affected version ranges from NVD CPE match data.
+        json_schema:
+          type: array
+          items:
+            type: object
+            properties:
+              version_start_including: {type: string}
+              version_start_excluding: {type: string}
+              version_end_including: {type: string}
+              version_end_excluding: {type: string}
+              fixed_version: {type: string}
+      fixed_version: {optional: true}
+      default_status: {optional: true}
+      vulnerable: {type: bool}
+      version_logic: {optional: true}
+      source_last_modified_at: {type: datetime, optional: true}
+
+named_queries:
+  vulnerability_products:
+    mode: traversal
+    description: Starting from a vulnerability, return affected products with reference edge evidence.
+    entry_point: Vulnerability
+    returns: Product
+    result_shape: path
+    dedupe: path
+    max_paths: 500
+    traversal:
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: outgoing
+    order_by:
+      - by: $result.properties.vendor_id
+        direction: asc
+      - by: $result.properties.product_name
+        direction: asc
+      - by: $result.entity_id
+        direction: asc
+
+  product_vulnerabilities:
+    mode: traversal
+    description: Starting from a product, return KEV vulnerabilities that affect it.
+    entry_point: Product
+    returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 500
+    traversal:
+      - as: affected_by
+        relationship: vulnerability_affects_product
+        direction: incoming
+    order_by:
+      - by: $result.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $result.entity_id
+        direction: asc
+
+  vendor_products:
+    mode: traversal
+    description: Starting from a vendor, return products published by that vendor.
+    entry_point: Vendor
+    returns: Product
+    result_shape: path
+    dedupe: path
+    max_paths: 500
+    traversal:
+      - as: vendor_product
+        relationship: product_from_vendor
+        direction: incoming
+    order_by:
+      - by: $result.properties.product_name
+        direction: asc
+      - by: $result.entity_id
+        direction: asc
+
+  vendor_vulnerabilities:
+    mode: traversal
+    description: >
+      Starting from a vendor, return vulnerabilities across that vendor's
+      products, preserving the product evidence path.
+    entry_point: Vendor
+    returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 1000
+    max_paths_per_result: 20
+    traversal:
+      - as: vendor_product
+        relationship: product_from_vendor
+        direction: incoming
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: incoming
+    order_by:
+      - by: $result.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $result.properties.epss_score
+        direction: desc
+      - by: $result.entity_id
+        direction: asc
+
+quality_checks:
+  - name: no_empty_affected_version_objects
+    kind: json_content
+    severity: error
+    target: relationship
+    relationship_type: vulnerability_affects_product
+    property: affected_versions
+    rule: no_empty_objects_in_array
+
+  - name: affected_versions_have_useful_keys
+    kind: json_content
+    severity: warning
+    target: relationship
+    relationship_type: vulnerability_affects_product
+    property: affected_versions
+    rule: required_nested_keys
+    keys:
+      - version_start_including
+      - version_start_excluding
+      - version_end_including
+      - version_end_excluding
+      - version_exact
+      - fixed_version
+    match: any
+
+  - name: products_have_exactly_one_vendor
+    kind: cardinality
+    severity: error
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: product_vendor_id_matches_vendor_edge
+    kind: relationship_property_consistency
+    description: Product.vendor_id should match the linked Vendor identity.
+    severity: error
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_id
+    target_property: vendor_id
+    allow_missing_source: false
+
+  - name: product_vendor_name_matches_vendor_edge
+    kind: relationship_property_consistency
+    description: Product.vendor_name, when present, should match the linked Vendor name.
+    severity: warning
+    entity_type: Product
+    relationship_type: product_from_vendor
+    direction: outgoing
+    source_property: vendor_name
+    target_property: name
+    allow_missing_source: true
+
+contracts:
+  PublicKevReferenceInput:
+    description: Public KEV, EPSS, and NVD rows selected by workflow config.
+    fields:
+      kev_rows: {type: json}
+      epss_rows: {type: json}
+      nvd_cpe_rows: {type: json}
+
+artifacts:
+  public_kev_bundle:
+    kind: directory
+    uri: ./data
+    digest: sha256:f884e5f8fad66c6bba54face97863137833ab26035d7a4cda333063d0ab224f9
+
+providers:
+  parse_public_kev_bundle:
+    description: >
+      Parse the pinned public KEV artifact into generic provenance-rich
+      tabular rows. Domain normalization happens in the next workflow step.
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    version: "1.0.0"
+    deterministic: true
+    artifact: public_kev_bundle
+
+  normalize_public_kev_reference:
+    description: >
+      Join parsed KEV catalog, EPSS scores, and NVD CPE configurations on
+      CVE ID, extract CPE-based product identity and version ranges, and
+      emit one row per (CVE, CPE product) pair with aggregated
+      affected_versions.
+    contract_in: PublicKevReferenceInput
+    contract_out: cruxible.JsonItems
+    ref: kit://providers/reference.py::normalize_public_kev_reference
+    version: "1.0.0"
+    deterministic: true
+
+workflows:
+  build_public_kev_reference:
+    type: canonical
+    description: >
+      Build the canonical public KEV reference layer from the bundled
+      hashed public-data artifact including NVD CPE match data.
+    steps:
+      - id: raw_tables
+        provider: parse_public_kev_bundle
+        input:
+          expected_tables:
+            - known_exploited_vulnerabilities
+            - epss_kev_nvd
+            - nvd_kev_cves
+        as: raw_tables
+
+      - id: rows
+        provider: normalize_public_kev_reference
+        input:
+          kev_rows: $steps.raw_tables.tables.known_exploited_vulnerabilities.rows
+          epss_rows: $steps.raw_tables.tables.epss_kev_nvd.rows
+          nvd_cpe_rows: $steps.raw_tables.tables.nvd_kev_cves.rows
+        as: rows
+      - id: require_reference_rows
+        assert_count:
+          step: rows
+          count: items
+          op: gt
+          value: 0
+          message: Public KEV reference normalization produced no rows.
+      - id: vendors
+        make_entities:
+          entity_type: Vendor
+          items: $steps.rows.items
+          entity_id: $item.vendor_id
+          properties:
+            vendor_id: $item.vendor_id
+            name: $item.vendor_name
+        as: vendors
+      - id: products
+        make_entities:
+          entity_type: Product
+          items: $steps.rows.items
+          entity_id: $item.product_id
+          properties:
+            product_id: $item.product_id
+            vendor_id: $item.vendor_id
+            vendor_name: $item.vendor_name
+            product_name: $item.product_name
+            cpe_vendor: $item.cpe_vendor
+            cpe_product: $item.cpe_product
+            cpe_part: $item.cpe_part
+        as: products
+      - id: vulnerabilities
+        make_entities:
+          entity_type: Vulnerability
+          items: $steps.rows.items
+          entity_id: $item.cve_id
+          properties:
+            cve_id: $item.cve_id
+            vulnerability_name: $item.vulnerability_name
+            description: $item.description
+            date_added_to_kev: $item.date_added_to_kev
+            kev_due_date: $item.kev_due_date
+            required_action: $item.required_action
+            known_ransomware_use: $item.known_ransomware_use
+            cvss_score: $item.cvss_score
+            cvss_severity: $item.cvss_severity
+            epss_score: $item.epss_score
+            epss_percentile: $item.epss_percentile
+            cwes: $item.cwes
+        as: vulnerabilities
+      - id: product_vendor
+        make_relationships:
+          relationship_type: product_from_vendor
+          items: $steps.rows.items
+          from_type: Product
+          from_id: $item.product_id
+          to_type: Vendor
+          to_id: $item.vendor_id
+        as: product_vendor
+      - id: vulnerability_product
+        make_relationships:
+          relationship_type: vulnerability_affects_product
+          items: $steps.rows.items
+          from_type: Vulnerability
+          from_id: $item.cve_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            source: $item.source
+            source_record_id: $item.source_record_id
+            cpe_part: $item.cpe_part
+            cpe_vendor: $item.cpe_vendor
+            cpe_product: $item.cpe_product
+            affected_versions: $item.affected_versions
+            fixed_version: $item.fixed_version
+            default_status: $item.default_status
+            vulnerable: $item.vulnerable
+            version_logic: $item.version_logic
+            source_last_modified_at: $item.source_last_modified_at
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.rationale
+        as: vulnerability_product
+      - id: apply_reference_state
+        apply_all:
+          entities_from:
+            - vendors
+            - products
+            - vulnerabilities
+          relationships_from:
+            - product_vendor
+            - vulnerability_product
+        as: apply_reference_state
+    returns: apply_reference_state

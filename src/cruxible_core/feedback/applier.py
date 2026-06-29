@@ -1,32 +1,36 @@
-"""Apply feedback to the entity graph.
-
-Actions:
-- approve: set review_status based on source (human_approved or ai_approved)
-- reject: set review_status based on source (human_rejected or ai_rejected)
-- correct: merge corrections into edge properties, set approved status
-- flag: set review_status to pending_review
-"""
+"""Apply feedback to the entity graph."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.errors import DataValidationError, EdgeAmbiguityError
+from cruxible_core.errors import RelationshipAmbiguityError
 from cruxible_core.feedback.types import FeedbackRecord
+from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.graph.assertion_state import (
+    RelationshipAssertion,
+    RelationshipReviewSource,
+    RelationshipReviewStatus,
+)
+from cruxible_core.graph.provenance import (
+    RelationshipProvenance,
+    backfill_provenance_on_touch,
+)
+from cruxible_core.graph.types import RelationshipMetadata
+from cruxible_core.temporal import utc_now
 
 if TYPE_CHECKING:
     from cruxible_core.graph.entity_graph import EntityGraph
 
 
-def _read_provenance(
+def _read_relationship(
     graph: EntityGraph,
     t: Any,
     relationship: str,
     edge_key: int | None,
-) -> dict[str, Any]:
-    """Read existing _provenance from an edge, returning a mutable copy or empty dict."""
-    existing = graph.get_relationship(
+) -> Any | None:
+    """Read an edge when it exists."""
+    return graph.get_relationship(
         t.from_type,
         t.from_id,
         t.to_type,
@@ -34,37 +38,98 @@ def _read_provenance(
         relationship,
         edge_key=edge_key,
     )
+
+
+def _read_provenance(
+    graph: EntityGraph,
+    t: Any,
+    relationship: str,
+    edge_key: int | None,
+) -> RelationshipProvenance | None:
+    """Read existing provenance from an edge."""
+    existing = _read_relationship(graph, t, relationship, edge_key)
     if existing:
-        old_prov = existing.properties.get("_provenance")
-        if old_prov:
-            return dict(old_prov)
-    return {}
+        provenance = existing.metadata.provenance
+        if isinstance(provenance, RelationshipProvenance):
+            return provenance
+    return None
 
 
-def _stamp_provenance(prov: dict[str, Any], action: str) -> dict[str, Any]:
-    """Add modification timestamp and actor to a provenance dict."""
-    prov["last_modified_at"] = datetime.now(timezone.utc).isoformat()
-    prov["last_modified_by"] = f"feedback:{action}"
-    return prov
+def _apply_feedback_provenance(
+    metadata: RelationshipMetadata,
+    prov: RelationshipProvenance | None,
+    feedback: FeedbackRecord,
+) -> RelationshipMetadata:
+    """Stamp the touched edge's provenance, backfilling it when null.
+
+    A null-provenance edge would otherwise stay null forever; touching it via feedback
+    backfills a fresh provenance so the edge becomes auditable.
+    """
+    return metadata.model_copy(
+        update={
+            "provenance": backfill_provenance_on_touch(
+                prov,
+                _SOURCE_PREFIX[feedback.source],
+                f"feedback:{feedback.action}",
+                f"feedback:{feedback.action}",
+                actor_context=feedback.actor_context,
+            ),
+        }
+    )
 
 
-_SOURCE_PREFIX = {
+_SOURCE_PREFIX: dict[str, RelationshipReviewSource] = {
     "human": "human",
-    "ai_review": "ai",
-    "system": "human",
+    "agent": "agent",
 }
 
-_ACTION_PAST = {"approve": "approved", "reject": "rejected"}
+_ACTION_PAST: dict[str, RelationshipReviewStatus] = {
+    "approve": "approved",
+    "reject": "rejected",
+}
+
+# Feedback actions that promote a relationship's review status to ``approved``,
+# making a previously non-live (pending/rejected) edge live and able to satisfy a
+# review-mediated close-gate precondition. Both ``approve`` and ``correct`` set the
+# status to ``approved`` (the ``correct`` branch in ``apply_feedback`` below calls
+# ``_review_metadata(..., status="approved")``), so both must carry a resolved actor
+# identity under the governed runtime; otherwise a lower
+# (GOVERNED_WRITE) tier could promote a review edge anonymously via ``correct``.
+# See ``runtime.api`` for the enforcement point.
+REVIEW_PROMOTION_ACTIONS: frozenset[str] = frozenset({"approve", "correct"})
+
+
+def _review_metadata(
+    graph: EntityGraph,
+    t: Any,
+    relationship: str,
+    edge_key: int | None,
+    *,
+    status: RelationshipReviewStatus,
+    source: RelationshipReviewSource,
+    actor: str,
+    actor_context: GovernedActorContext | None,
+) -> RelationshipMetadata:
+    existing = _read_relationship(graph, t, relationship, edge_key)
+    metadata = existing.metadata if existing is not None else RelationshipMetadata()
+    current_assertion = metadata.assertion if existing is not None else RelationshipAssertion()
+    review = current_assertion.review.model_copy(
+        update={
+            "status": status,
+            "source": source,
+            "updated_at": utc_now(),
+            "updated_by": actor,
+            "actor_context": actor_context,
+        }
+    )
+    assertion = current_assertion.model_copy(update={"review": review})
+    return metadata.model_copy(update={"assertion": assertion})
 
 
 def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
     """Apply a feedback record to the graph. Returns True if the edge was found.
 
-    review_status is determined by (source, action):
-    - human approve/reject → human_approved/human_rejected
-    - ai_review approve/reject → ai_approved/ai_rejected
-    - flag → pending_review (any source)
-    - correct → merges corrections, sets approved status per source
+    Review state is determined by (source, action) and written through relationship metadata.
     """
     t = feedback.target
     edge_key = t.edge_key
@@ -75,72 +140,88 @@ def apply_feedback(graph: EntityGraph, feedback: FeedbackRecord) -> bool:
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
+            relationship_type=t.relationship_type,
         )
         if match_count > 1:
-            raise EdgeAmbiguityError(
+            raise RelationshipAmbiguityError(
                 from_type=t.from_type,
                 from_id=t.from_id,
                 to_type=t.to_type,
                 to_id=t.to_id,
-                relationship=t.relationship,
+                relationship_type=t.relationship_type,
             )
 
     prefix = _SOURCE_PREFIX[feedback.source]
+    actor = f"feedback:{feedback.action}"
 
     if feedback.action in _ACTION_PAST:
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
-        updates: dict[str, Any] = {"review_status": f"{prefix}_{_ACTION_PAST[feedback.action]}"}
-        if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
-        return graph.update_edge_properties(
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
+        metadata = _review_metadata(
+            graph,
+            t,
+            t.relationship_type,
+            edge_key,
+            status=_ACTION_PAST[feedback.action],
+            source=prefix,
+            actor=actor,
+            actor_context=feedback.actor_context,
+        )
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
+        return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
-            updates=updates,
+            relationship_type=t.relationship_type,
+            metadata=metadata,
             edge_key=edge_key,
         )
 
     if feedback.action == "flag":
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
-        updates = {"review_status": "pending_review"}
-        if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
-        return graph.update_edge_properties(
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
+        metadata = _review_metadata(
+            graph,
+            t,
+            t.relationship_type,
+            edge_key,
+            status="pending",
+            source=prefix,
+            actor=actor,
+            actor_context=feedback.actor_context,
+        )
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
+        return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
-            updates=updates,
+            relationship_type=t.relationship_type,
+            metadata=metadata,
             edge_key=edge_key,
         )
 
     if feedback.action == "correct":
-        # Defensive: validate confidence in corrections
-        confidence = feedback.corrections.get("confidence")
-        if confidence is not None:
-            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-                raise DataValidationError(
-                    f"corrections.confidence must be numeric (float). "
-                    f"Got {confidence!r}. "
-                    f"Suggested: low=0.3, medium=0.5, high=0.7, very_high=0.9"
-                )
-        # Strip _provenance from corrections (prevent spoofing)
-        updates = {k: v for k, v in feedback.corrections.items() if k != "_provenance"}
-        updates["review_status"] = f"{prefix}_approved"
-        prov = _read_provenance(graph, t, t.relationship, edge_key)
-        if prov:
-            updates["_provenance"] = _stamp_provenance(prov, feedback.action)
-        return graph.update_edge_properties(
+        updates = dict(feedback.corrections)
+        metadata = _review_metadata(
+            graph,
+            t,
+            t.relationship_type,
+            edge_key,
+            status="approved",
+            source=prefix,
+            actor=actor,
+            actor_context=feedback.actor_context,
+        )
+        prov = _read_provenance(graph, t, t.relationship_type, edge_key)
+        metadata = _apply_feedback_provenance(metadata, prov, feedback)
+        return graph.update_relationship_state(
             from_type=t.from_type,
             from_id=t.from_id,
             to_type=t.to_type,
             to_id=t.to_id,
-            relationship_type=t.relationship,
-            updates=updates,
+            relationship_type=t.relationship_type,
+            property_updates=updates,
+            metadata=metadata,
             edge_key=edge_key,
         )
 

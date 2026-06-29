@@ -1,0 +1,242 @@
+{
+  "/api/v1/instances": {
+    "POST": "InitResult"
+  },
+  "/api/v1/instances/restore": {
+    "POST": "InstanceRestoreResult"
+  },
+  "/api/v1/runtime/instances": {
+    "POST": "HostedInstanceInitResult"
+  },
+  "/api/v1/server/info": {
+    "GET": "ServerInfoResult"
+  },
+  "/api/v1/server/restart": {
+    "POST": "ServerRestartResult"
+  },
+  "/api/v1/states/overlays": {
+    "POST": "StateOverlayResult"
+  },
+  "/api/v1/validate": {
+    "POST": "ValidateResult"
+  },
+  "/api/v1/{instance_id}/config/reload": {
+    "POST": "ReloadConfigResult"
+  },
+  "/api/v1/{instance_id}/constraints": {
+    "POST": "AddConstraintResult"
+  },
+  "/api/v1/{instance_id}/decision-policies": {
+    "POST": "AddDecisionPolicyResult"
+  },
+  "/api/v1/{instance_id}/decision-records": {
+    "GET": "DecisionRecordListResult",
+    "POST": "DecisionRecordResult"
+  },
+  "/api/v1/{instance_id}/decision-records/events": {
+    "GET": "DecisionEventListResult"
+  },
+  "/api/v1/{instance_id}/decision-records/{decision_record_id}": {
+    "GET": "DecisionRecordResult"
+  },
+  "/api/v1/{instance_id}/decision-records/{decision_record_id}/abandon": {
+    "POST": "DecisionRecordResult"
+  },
+  "/api/v1/{instance_id}/decision-records/{decision_record_id}/finalize": {
+    "POST": "DecisionRecordResult"
+  },
+  "/api/v1/{instance_id}/direct-writes/batch": {
+    "POST": "BatchDirectWriteResult"
+  },
+  "/api/v1/{instance_id}/entities": {
+    "POST": "AddEntityResult"
+  },
+  "/api/v1/{instance_id}/entities/{entity_type}/{entity_id}": {
+    "GET": "GetEntityResult"
+  },
+  "/api/v1/{instance_id}/evaluate": {
+    "POST": "EvaluateResult"
+  },
+  "/api/v1/{instance_id}/feedback": {
+    "POST": "FeedbackResult"
+  },
+  "/api/v1/{instance_id}/feedback/analyze": {
+    "POST": "AnalyzeFeedbackResult"
+  },
+  "/api/v1/{instance_id}/feedback/batch": {
+    "POST": "FeedbackBatchResult"
+  },
+  "/api/v1/{instance_id}/feedback/from-query": {
+    "POST": "FeedbackResult"
+  },
+  "/api/v1/{instance_id}/feedback/profiles/{relationship_type}": {
+    "GET": "FeedbackProfileResult"
+  },
+  "/api/v1/{instance_id}/group-status/{signature}": {
+    "GET": "GroupBucketStatusToolResult"
+  },
+  "/api/v1/{instance_id}/groups": {
+    "GET": "ListGroupsToolResult"
+  },
+  "/api/v1/{instance_id}/groups/propose": {
+    "POST": "ProposeGroupToolResult"
+  },
+  "/api/v1/{instance_id}/groups/{group_id}": {
+    "GET": "GetGroupToolResult"
+  },
+  "/api/v1/{instance_id}/groups/{group_id}/resolve": {
+    "POST": "ResolveGroupToolResult"
+  },
+  "/api/v1/{instance_id}/groups/{group_id}/status": {
+    "GET": "GroupBucketStatusToolResult"
+  },
+  "/api/v1/{instance_id}/inspect/entity-history/{entity_type}": {
+    "GET": "EntityChangeHistoryResult"
+  },
+  "/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}": {
+    "GET": "InspectEntityResult"
+  },
+  "/api/v1/{instance_id}/inspect/{view}": {
+    "GET": "CanonicalViewResult"
+  },
+  "/api/v1/{instance_id}/instance/backup": {
+    "POST": "InstanceBackupResult"
+  },
+  "/api/v1/{instance_id}/instance/relocate": {
+    "POST": "InstanceRelocateResult"
+  },
+  "/api/v1/{instance_id}/lint": {
+    "POST": "LintResult"
+  },
+  "/api/v1/{instance_id}/list/{resource_type}": {
+    "GET": "ListResult"
+  },
+  "/api/v1/{instance_id}/outcome": {
+    "POST": "OutcomeResult"
+  },
+  "/api/v1/{instance_id}/outcome/profile": {
+    "GET": "OutcomeProfileResult"
+  },
+  "/api/v1/{instance_id}/outcomes/analyze": {
+    "POST": "AnalyzeOutcomesResult"
+  },
+  "/api/v1/{instance_id}/queries": {
+    "GET": "QueryListResult"
+  },
+  "/api/v1/{instance_id}/queries/run": {
+    "POST": "QueryToolResult"
+  },
+  "/api/v1/{instance_id}/queries/run-inline": {
+    "POST": "QueryToolResult"
+  },
+  "/api/v1/{instance_id}/queries/{query_name}": {
+    "GET": "NamedQueryInfoResult"
+  },
+  "/api/v1/{instance_id}/receipts/{receipt_id}": {
+    "GET": "Receipt"
+  },
+  "/api/v1/{instance_id}/receipts/{receipt_id}/explain": {
+    "GET": "ReceiptExplanationResult"
+  },
+  "/api/v1/{instance_id}/relationships": {
+    "POST": "AddRelationshipResult"
+  },
+  "/api/v1/{instance_id}/relationships/lineage": {
+    "GET": "RelationshipLineageResult"
+  },
+  "/api/v1/{instance_id}/relationships/lookup": {
+    "GET": "GetRelationshipResult"
+  },
+  "/api/v1/{instance_id}/resolutions": {
+    "GET": "ListResolutionsToolResult"
+  },
+  "/api/v1/{instance_id}/resolutions/{resolution_id}/trust": {
+    "PATCH": "UpdateTrustStatusToolResult"
+  },
+  "/api/v1/{instance_id}/runtime/bootstrap/claim": {
+    "POST": "RuntimeCredentialBootstrapResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials": {
+    "GET": "RuntimeCredentialListResult",
+    "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke": {
+    "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate": {
+    "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/sample/{entity_type}": {
+    "GET": "SampleResult"
+  },
+  "/api/v1/{instance_id}/schema": {
+    "GET": null
+  },
+  "/api/v1/{instance_id}/snapshots": {
+    "GET": "SnapshotListResult",
+    "POST": "SnapshotCreateResult"
+  },
+  "/api/v1/{instance_id}/snapshots/clone": {
+    "POST": "CloneSnapshotResult"
+  },
+  "/api/v1/{instance_id}/source-artifacts/register": {
+    "POST": "RegisterSourceArtifactResult"
+  },
+  "/api/v1/{instance_id}/source-evidence/dereference": {
+    "POST": "DereferenceSourceEvidenceResult"
+  },
+  "/api/v1/{instance_id}/state/health": {
+    "GET": "StateHealthResult"
+  },
+  "/api/v1/{instance_id}/state/publish": {
+    "POST": "StatePublishResult"
+  },
+  "/api/v1/{instance_id}/state/pull/apply": {
+    "POST": "StatePullApplyResult"
+  },
+  "/api/v1/{instance_id}/state/pull/preview": {
+    "POST": "StatePullPreviewResult"
+  },
+  "/api/v1/{instance_id}/state/status": {
+    "GET": "StateStatusResult"
+  },
+  "/api/v1/{instance_id}/stats": {
+    "GET": "StatsResult"
+  },
+  "/api/v1/{instance_id}/traces": {
+    "GET": "TraceListResult"
+  },
+  "/api/v1/{instance_id}/traces/{trace_id}": {
+    "GET": null
+  },
+  "/api/v1/{instance_id}/views/{query_name}": {
+    "GET": "QueryToolResult"
+  },
+  "/api/v1/{instance_id}/wiki/render": {
+    "POST": "WikiRenderResult"
+  },
+  "/api/v1/{instance_id}/workflows/apply": {
+    "POST": "WorkflowApplyResult"
+  },
+  "/api/v1/{instance_id}/workflows/lock": {
+    "POST": "WorkflowLockResult"
+  },
+  "/api/v1/{instance_id}/workflows/plan": {
+    "POST": "WorkflowPlanResult"
+  },
+  "/api/v1/{instance_id}/workflows/propose": {
+    "POST": "WorkflowProposeResult"
+  },
+  "/api/v1/{instance_id}/workflows/run": {
+    "POST": "WorkflowRunResult"
+  },
+  "/api/v1/{instance_id}/workflows/test": {
+    "POST": "WorkflowTestResult"
+  },
+  "/health": {
+    "GET": null
+  },
+  "/version": {
+    "GET": null
+  }
+}

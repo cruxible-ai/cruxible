@@ -8,6 +8,7 @@ import sys
 
 import pytest
 import structlog
+from mcp import types as mcp_types
 
 from cruxible_core.errors import ConfigError, PermissionDeniedError
 from cruxible_core.mcp.permissions import (
@@ -22,13 +23,16 @@ from cruxible_core.mcp.permissions import (
     validate_tool_permissions,
 )
 from cruxible_core.mcp.server import create_server, validate_runtime_tools
+from cruxible_core.mcp.tool_prompts import TOOL_DESCRIPTIONS
 
 # ── PermissionMode ────────────────────────────────────────────────────
 
 
 class TestPermissionMode:
-    def test_default_mode_is_admin(self):
-        assert get_current_mode() == PermissionMode.ADMIN
+    def test_default_mode_is_admin(self, monkeypatch):
+        monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
+        reset_permissions()
+        assert init_permissions() == PermissionMode.ADMIN
 
     def test_read_only_from_env(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -39,6 +43,11 @@ class TestPermissionMode:
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
         reset_permissions()
         assert init_permissions() == PermissionMode.GRAPH_WRITE
+
+    def test_governed_write_from_env(self, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        assert init_permissions() == PermissionMode.GOVERNED_WRITE
 
     def test_admin_from_env(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "admin")
@@ -74,6 +83,16 @@ class TestCheckPermission:
         init_permissions()
         # Should not raise
         check_permission("cruxible_schema")
+        check_permission("cruxible_state_status")
+        check_permission("cruxible_state_pull_preview")
+        check_permission("cruxible_plan_workflow")
+        check_permission("cruxible_stats")
+        check_permission("cruxible_lint")
+        check_permission("cruxible_inspect_entity")
+        check_permission("cruxible_inspect_entity_history")
+        check_permission("cruxible_inspect_overview")
+        check_permission("cruxible_render_wiki")
+        check_permission("cruxible_list_snapshots")
 
     def test_graph_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -82,28 +101,99 @@ class TestCheckPermission:
         with pytest.raises(PermissionDeniedError):
             check_permission("cruxible_add_entity")
 
-    def test_admin_tool_in_read_only(self, monkeypatch):
+    def test_governed_write_tool_in_read_only(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
         reset_permissions()
         init_permissions()
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_ingest")
+            check_permission("cruxible_propose_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_run_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_constraint")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_decision_policy")
+
+    def test_write_tools_denied_in_read_only(self, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+        init_permissions()
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_lock_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_apply_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_state_publish")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_state_pull_apply")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_reload_config")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_create_snapshot")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_clone_snapshot")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_backup")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_restore")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_relocate")
 
     def test_graph_write_tool_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
         reset_permissions()
         init_permissions()
         check_permission("cruxible_add_entity")
+        check_permission("cruxible_apply_workflow")
 
-    def test_admin_tool_in_graph_write(self, monkeypatch):
+    def test_governed_write_tools_in_governed_write(self, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        init_permissions()
+        check_permission("cruxible_feedback")
+        check_permission("cruxible_feedback_batch")
+        check_permission("cruxible_feedback_from_query")
+        check_permission("cruxible_run_workflow")
+        check_permission("cruxible_test_workflow")
+        check_permission("cruxible_propose_workflow")
+        check_permission("cruxible_add_constraint")
+        check_permission("cruxible_add_decision_policy")
+        check_permission("cruxible_create_snapshot")
+        check_permission("cruxible_state_pull_apply")
+
+    def test_graph_write_tools_denied_in_governed_write(self, monkeypatch):
+        monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+        reset_permissions()
+        init_permissions()
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_add_entity")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_resolve_group")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_apply_workflow")
+
+    def test_admin_tool_denied_in_graph_write(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
         reset_permissions()
         init_permissions()
         with pytest.raises(PermissionDeniedError):
-            check_permission("cruxible_ingest")
+            check_permission("cruxible_lock_workflow")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_backup")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_restore")
+        with pytest.raises(PermissionDeniedError):
+            check_permission("cruxible_instance_relocate")
 
     def test_admin_tool_in_admin(self):
-        check_permission("cruxible_ingest")
+        check_permission("cruxible_lock_workflow")
+        check_permission("cruxible_reload_config")
+        check_permission("cruxible_clone_snapshot")
+        check_permission("cruxible_instance_backup")
+        check_permission("cruxible_instance_restore")
+        check_permission("cruxible_instance_relocate")
+        check_permission("cruxible_state_publish")
+        check_permission("cruxible_state_create_overlay")
 
     def test_denial_message_includes_modes(self, monkeypatch):
         monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
@@ -113,16 +203,12 @@ class TestCheckPermission:
             check_permission("cruxible_add_entity")
         assert "READ_ONLY" in str(exc_info.value)
 
-    def test_required_mode_override(self):
-        """required_mode overrides TOOL_PERMISSIONS lookup."""
-        # cruxible_init is READ_ONLY in TOOL_PERMISSIONS
-        # But with required_mode=ADMIN, it should check against ADMIN
+    def test_internal_operation_permission(self):
+        """Runtime-owned internal operation gates can be stricter than public tools."""
         init_permissions(PermissionMode.READ_ONLY)
+        check_permission("cruxible_init")
         with pytest.raises(PermissionDeniedError, match="ADMIN"):
-            check_permission(
-                "cruxible_init",
-                required_mode=PermissionMode.ADMIN,
-            )
+            check_permission("cruxible_init_with_config")
 
     def test_unknown_tool_raises_config_error(self):
         """Misspelled tool name raises ConfigError, not KeyError."""
@@ -205,10 +291,101 @@ class TestValidation:
         actual = {t.name for t in tools}
         assert actual == set(TOOL_PERMISSIONS.keys())
 
+    def test_tools_list_filters_by_read_only_mode(self, monkeypatch):
+        """READ_ONLY sessions only advertise callable read tools."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+        reset_permissions()
+
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+        actual = {tool.name for tool in tools}
+
+        assert actual
+        assert all(TOOL_PERMISSIONS[name] <= PermissionMode.READ_ONLY for name in actual)
+        assert "cruxible_query" in actual
+        assert "cruxible_batch_direct_write" not in actual
+        assert "cruxible_lock_workflow" not in actual
+        validate_runtime_tools(server)
+
+    def test_tools_list_filters_by_profile(self, monkeypatch):
+        """MCP profiles advertise a focused subset without changing registrations."""
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "review")
+        reset_permissions()
+
+        server = create_server()
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
+
+        assert "cruxible_query" in actual
+        assert "cruxible_feedback" in actual
+        assert "cruxible_batch_direct_write" not in actual
+        assert "cruxible_state_publish" not in actual
+        validate_runtime_tools(server)
+
+    def test_tools_list_filters_by_state_authoring_profile(self, monkeypatch):
+        """State authoring profile exposes graph/workflow tools but not review tools."""
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+        reset_permissions()
+
+        server = create_server()
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
+
+        assert "cruxible_query" in actual
+        assert "cruxible_batch_direct_write" in actual
+        assert "cruxible_add_relationship" in actual
+        assert "cruxible_apply_workflow" in actual
+        assert "cruxible_feedback" not in actual
+        assert "cruxible_propose_group" not in actual
+        assert "cruxible_state_publish" not in actual
+        validate_runtime_tools(server)
+
+    def test_tools_list_filters_by_explicit_allowlist(self, monkeypatch):
+        """Explicit allowlists produce the smallest intended catalog."""
+        monkeypatch.setenv(
+            "CRUXIBLE_MCP_TOOLS",
+            "cruxible_query,cruxible_get_entity",
+        )
+        reset_permissions()
+
+        server = create_server()
+        actual = {tool.name for tool in asyncio.run(server.list_tools())}
+
+        assert actual == {"cruxible_query", "cruxible_get_entity"}
+        validate_runtime_tools(server)
+
+    def test_protocol_tools_list_filters_by_mode_profile_and_allowlist(self, monkeypatch):
+        """Low-level MCP tools/list handler applies the advertised catalog filter."""
+        monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+        monkeypatch.setenv(
+            "CRUXIBLE_MCP_TOOLS",
+            "cruxible_query,cruxible_batch_direct_write,cruxible_lock_workflow,cruxible_feedback",
+        )
+        reset_permissions()
+
+        server = create_server()
+        handler = server._mcp_server.request_handlers[mcp_types.ListToolsRequest]
+        result = asyncio.run(handler(mcp_types.ListToolsRequest(method="tools/list")))
+        actual = {tool.name for tool in result.root.tools}
+
+        assert actual == {"cruxible_query", "cruxible_batch_direct_write"}
+        validate_runtime_tools(server)
+
     def test_validate_runtime_tools_succeeds(self):
         """validate_runtime_tools runs without error from sync context."""
         server = create_server()
         validate_runtime_tools(server)
+
+    def test_tool_prompt_descriptions_cover_every_registered_tool(self):
+        """Every MCP tool has a non-coding-client prompt description."""
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+        actual = {tool.name for tool in tools}
+
+        assert set(TOOL_DESCRIPTIONS) == set(TOOL_PERMISSIONS)
+        assert actual == set(TOOL_PERMISSIONS)
+        for tool in tools:
+            assert tool.description is not None
+            assert tool.description.startswith("Use when ")
 
 
 # ── Allowed roots ─────────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+owner_id,name,team,email,pagerduty_schedule
+OWNER-1,Security Engineering,Security,security@example.com,pd-security-primary
+OWNER-2,Web Platform,Platform Engineering,web-platform@example.com,pd-web-platform
+OWNER-3,API Platform,Application Engineering,api-platform@example.com,pd-api-platform
+OWNER-4,Data Platform,Data Engineering,data-platform@example.com,pd-data-platform
+OWNER-5,End User Computing,IT Operations,euc@example.com,pd-it-ops
+OWNER-6,Internal Apps,Application Engineering,internal-apps@example.com,pd-internal-apps
+OWNER-7,Legacy Systems,Infrastructure,legacy-systems@example.com,pd-legacy-systems

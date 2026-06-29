@@ -12,6 +12,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cruxible_core.mcp.server import create_server
+from cruxible_core.runtime.instance import CruxibleInstance
 
 
 @pytest.fixture
@@ -28,6 +29,22 @@ def _get_tool_schemas(server):
 class TestInputSchema:
     """Verify Literal params produce enum constraints."""
 
+    def test_query_tool_description_surfaces_invocation_guidance(self, server):
+        schemas = _get_tool_schemas(server)
+        description = schemas["cruxible_query"].description or ""
+        assert description.startswith("Use when ")
+        assert "cruxible_list_queries" in description
+        assert "cruxible_describe_query" in description
+        assert "entry_point primary-key field" in description
+        assert "cruxible_schema" in description
+
+    def test_feedback_tool_description_surfaces_explicit_coordinate_guidance(self, server):
+        schemas = _get_tool_schemas(server)
+        description = schemas["cruxible_feedback"].description or ""
+        assert description.startswith("Use when ")
+        assert "edge_key" in description
+        assert "receipt_id is optional" in description
+
     def test_feedback_action_enum(self, server):
         schemas = _get_tool_schemas(server)
         action = schemas["cruxible_feedback"].inputSchema["properties"]["action"]
@@ -36,22 +53,66 @@ class TestInputSchema:
     def test_feedback_source_enum(self, server):
         schemas = _get_tool_schemas(server)
         source = schemas["cruxible_feedback"].inputSchema["properties"]["source"]
-        assert source["enum"] == ["human", "ai_review", "system"]
+        assert source["enum"] == ["human", "agent"]
+
+    def test_feedback_receipt_is_optional_for_explicit_coordinates(self, server):
+        schemas = _get_tool_schemas(server)
+        required = set(schemas["cruxible_feedback"].inputSchema["required"])
+        props = schemas["cruxible_feedback"].inputSchema["properties"]
+        assert "receipt_id" in props
+        assert "receipt_id" not in required
+
+    def test_feedback_from_query_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        props = schemas["cruxible_feedback_from_query"].inputSchema["properties"]
+        required = set(schemas["cruxible_feedback_from_query"].inputSchema["required"])
+        assert {"instance_id", "receipt_id", "result_index", "action"} <= required
+        assert props["action"]["enum"] == ["approve", "reject", "correct", "flag"]
+        assert props["source"]["enum"] == ["human", "agent"]
+        assert "reason_code" in props
+        assert "scope_hints" in props
+        assert "path_index" in props
+        assert "path_alias" in props
 
     def test_outcome_outcome_enum(self, server):
         schemas = _get_tool_schemas(server)
         outcome = schemas["cruxible_outcome"].inputSchema["properties"]["outcome"]
         assert outcome["enum"] == ["correct", "incorrect", "partial", "unknown"]
 
-    def test_find_candidates_strategy_enum(self, server):
-        schemas = _get_tool_schemas(server)
-        strategy = schemas["cruxible_find_candidates"].inputSchema["properties"]["strategy"]
-        assert strategy["enum"] == ["property_match", "shared_neighbors"]
-
     def test_list_resource_type_enum(self, server):
         schemas = _get_tool_schemas(server)
         resource_type = schemas["cruxible_list"].inputSchema["properties"]["resource_type"]
         assert resource_type["enum"] == ["entities", "edges", "receipts", "feedback", "outcomes"]
+
+    def test_query_relationship_state_enum(self, server):
+        schemas = _get_tool_schemas(server)
+        relationship_state = schemas["cruxible_query"].inputSchema["properties"][
+            "relationship_state"
+        ]
+        enum_schema = next(
+            item for item in relationship_state["anyOf"] if item.get("type") == "string"
+        )
+        assert enum_schema["enum"] == [
+            "live",
+            "accepted",
+            "all",
+            "not-live",
+            "pending",
+            "reviewable",
+        ]
+
+    def test_query_inline_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_query_inline"].inputSchema
+        required = set(schema["required"])
+        assert {"instance_id", "definition"} <= required
+        assert "params" in schema["properties"]
+        assert "limit" in schema["properties"]
+        definition = schema["properties"]["definition"]
+        ref = definition["$ref"]
+        def_name = ref.split("/")[-1]
+        definition_schema = schema["$defs"][def_name]
+        assert {"name", "mode", "returns"} <= set(definition_schema["required"])
 
     def test_add_relationship_schema(self, server):
         """RelationshipInput fields appear as required in the relationships array schema."""
@@ -63,7 +124,17 @@ class TestInputSchema:
         def_name = ref.split("/")[-1]
         rel_def = schema["$defs"][def_name]
         required = set(rel_def["required"])
-        assert {"from_type", "from_id", "relationship", "to_type", "to_id"} <= required
+        assert {"from_type", "from_id", "relationship_type", "to_type", "to_id"} <= required
+        assert {
+            "evidence_refs",
+            "source_evidence",
+            "evidence_rationale",
+            "pending",
+        } <= set(rel_def["properties"])
+        assert "evidence_refs" not in required
+        assert "source_evidence" not in required
+        assert "evidence_rationale" not in required
+        assert "pending" not in required
 
     def test_add_entity_schema(self, server):
         """EntityInput fields appear as required in the entities array schema."""
@@ -76,6 +147,16 @@ class TestInputSchema:
         ent_def = schema["$defs"][def_name]
         required = set(ent_def["required"])
         assert {"entity_type", "entity_id"} <= required
+
+    def test_batch_direct_write_schema(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_batch_direct_write"].inputSchema
+        assert {"instance_id", "payload"} <= set(schema["required"])
+        assert "dry_run" in schema["properties"]
+        payload_ref = schema["properties"]["payload"]["$ref"]
+        payload_name = payload_ref.split("/")[-1]
+        payload_def = schema["$defs"][payload_name]
+        assert {"entities", "relationships", "shared_evidence"} <= set(payload_def["properties"])
 
     def test_add_constraint_severity_enum(self, server):
         schemas = _get_tool_schemas(server)
@@ -99,33 +180,24 @@ class TestInputSchema:
         assert "config_path" not in required
         assert "config_yaml" not in required
 
-    def test_ingest_optional_data_params(self, server):
-        """cruxible_ingest data params (file_path, data_csv, etc.) are all optional."""
-        schemas = _get_tool_schemas(server)
-        schema = schemas["cruxible_ingest"].inputSchema
-        for param in ("file_path", "data_csv", "data_json", "data_ndjson", "upload_id"):
-            assert param in schema["properties"]
-        required = set(schema.get("required", []))
-        for param in ("file_path", "data_csv", "data_json", "data_ndjson", "upload_id"):
-            assert param not in required
-        # instance_id and mapping_name remain required
-        assert "instance_id" in required
-        assert "mapping_name" in required
-
     def test_list_has_property_filter(self, server):
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_list"].inputSchema["properties"]
         assert "property_filter" in props
+        assert "where" in props
+        assert "fields" in props
 
-    def test_evaluate_has_exclude_orphan_types(self, server):
+    def test_sample_has_fields(self, server):
+        schemas = _get_tool_schemas(server)
+        props = schemas["cruxible_sample"].inputSchema["properties"]
+        assert "fields" in props
+
+    def test_evaluate_has_filters(self, server):
         schemas = _get_tool_schemas(server)
         props = schemas["cruxible_evaluate"].inputSchema["properties"]
         assert "exclude_orphan_types" in props
-
-    def test_find_candidates_has_min_distinct_neighbors(self, server):
-        schemas = _get_tool_schemas(server)
-        props = schemas["cruxible_find_candidates"].inputSchema["properties"]
-        assert "min_distinct_neighbors" in props
+        assert "severity_filter" in props
+        assert "category_filter" in props
 
     def test_init_optional_config_yaml(self, server):
         """cruxible_init has config_yaml in properties, not required."""
@@ -136,6 +208,33 @@ class TestInputSchema:
         assert "config_yaml" not in required
         # root_dir remains required
         assert "root_dir" in required
+
+    def test_create_state_overlay_has_optional_state_ref_and_transport_ref(self, server):
+        schemas = _get_tool_schemas(server)
+        schema = schemas["cruxible_state_create_overlay"].inputSchema
+        props = schema["properties"]
+        required = set(schema.get("required", []))
+        assert "root_dir" in required
+        assert "transport_ref" in props
+        assert "state_ref" in props
+        assert "kit" in props
+        assert "no_kit" in props
+        assert "transport_ref" not in required
+        assert "state_ref" not in required
+        assert "kit" not in required
+        assert "no_kit" not in required
+
+    def test_new_curated_agent_tools_have_expected_inputs(self, server):
+        schemas = _get_tool_schemas(server)
+        assert "limit" in schemas["cruxible_inspect_governance"].inputSchema["properties"]
+        assert "relationship_type" in schemas["cruxible_inspect_entity"].inputSchema["properties"]
+        history_props = schemas["cruxible_inspect_entity_history"].inputSchema["properties"]
+        assert "entity_id" in history_props
+        assert "limit" in history_props
+        assert "offset" in history_props
+        assert "config_yaml" in schemas["cruxible_reload_config"].inputSchema["properties"]
+        assert "snapshot_id" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
+        assert "root_dir" in schemas["cruxible_clone_snapshot"].inputSchema["required"]
 
 
 class TestOutputSchema:
@@ -157,36 +256,256 @@ class TestOutputSchema:
                 },
             ),
             (
-                "cruxible_ingest",
+                "cruxible_query",
                 {
-                    "records_ingested",
-                    "records_updated",
-                    "mapping",
-                    "entity_type",
-                    "relationship_type",
+                    "items",
+                    "receipt_id",
+                    "receipt",
+                    "total",
+                    "limit",
+                    "offset",
+                    "truncated",
+                    "limit_truncated",
+                    "path_truncated",
+                    "truncation_reasons",
+                    "max_paths",
+                    "max_paths_per_result",
+                    "total_path_count",
+                    "retained_path_count",
+                    "steps_executed",
+                    "result_shape",
+                    "dedupe",
+                    "relationship_state",
+                    "param_hints",
+                    "policy_summary",
+                },
+            ),
+            ("cruxible_feedback", {"feedback_id", "applied", "receipt_id"}),
+            ("cruxible_feedback_from_query", {"feedback_id", "applied", "receipt_id"}),
+            ("cruxible_outcome", {"outcome_id"}),
+            ("cruxible_get_outcome_profile", {"found", "profile_key", "anchor_type", "profile"}),
+            ("cruxible_list", {"items", "total", "limit", "offset", "truncated"}),
+            (
+                "cruxible_stats",
+                {
+                    "entity_count",
+                    "edge_count",
+                    "entity_counts",
+                    "relationship_counts",
+                    "status_counts",
+                    "head_snapshot_id",
                 },
             ),
             (
-                "cruxible_query",
+                "cruxible_evaluate",
                 {
-                    "results",
-                    "receipt_id",
-                    "receipt",
-                    "total_results",
-                    "truncated",
-                    "steps_executed",
+                    "entity_count",
+                    "edge_count",
+                    "findings",
+                    "summary",
+                    "constraint_summary",
+                    "quality_summary",
                 },
             ),
-            ("cruxible_feedback", {"feedback_id", "applied"}),
-            ("cruxible_outcome", {"outcome_id"}),
-            ("cruxible_list", {"items", "total"}),
-            ("cruxible_find_candidates", {"candidates", "total"}),
-            ("cruxible_evaluate", {"entity_count", "edge_count", "findings", "summary"}),
-            ("cruxible_sample", {"entities", "entity_type", "count"}),
-            ("cruxible_add_relationship", {"added", "updated"}),
-            ("cruxible_add_entity", {"entities_added", "entities_updated"}),
+            (
+                "cruxible_lint",
+                {
+                    "config_name",
+                    "config_warnings",
+                    "compatibility_warnings",
+                    "evaluation",
+                    "feedback_reports",
+                    "outcome_reports",
+                    "summary",
+                    "has_issues",
+                },
+            ),
+            (
+                "cruxible_sample",
+                {"items", "entity_type", "total", "limit", "offset", "truncated"},
+            ),
+            (
+                "cruxible_inspect_entity",
+                {
+                    "found",
+                    "entity_type",
+                    "entity_id",
+                    "properties",
+                    "metadata",
+                    "neighbors",
+                    "total_neighbors",
+                },
+            ),
+            (
+                "cruxible_inspect_entity_history",
+                {
+                    "entity_type",
+                    "entity_id",
+                    "items",
+                    "total",
+                    "limit",
+                    "offset",
+                    "truncated",
+                    "legacy_entity_write_count",
+                    "warnings",
+                },
+            ),
+            ("cruxible_inspect_ontology", {"view", "payload"}),
+            ("cruxible_inspect_workflows", {"view", "payload"}),
+            ("cruxible_inspect_queries", {"view", "payload"}),
+            ("cruxible_inspect_governance", {"view", "payload"}),
+            ("cruxible_inspect_overview", {"view", "payload"}),
+            ("cruxible_render_wiki", {"pages", "page_count"}),
+            (
+                "cruxible_add_relationship",
+                {
+                    "added",
+                    "updated",
+                    "pending_conflicts",
+                    "updated_group_backed_edges",
+                    "receipt_id",
+                },
+            ),
+            ("cruxible_add_entity", {"entities_added", "entities_updated", "receipt_id"}),
             ("cruxible_add_constraint", {"name", "added", "config_updated", "warnings"}),
-            ("cruxible_get_entity", {"found", "entity_type", "entity_id", "properties"}),
+            ("cruxible_get_feedback_profile", {"found", "relationship_type", "profile"}),
+            (
+                "cruxible_analyze_feedback",
+                {
+                    "relationship_type",
+                    "feedback_count",
+                    "action_counts",
+                    "source_counts",
+                    "reason_code_counts",
+                    "coded_groups",
+                    "uncoded_feedback_count",
+                    "uncoded_examples",
+                    "constraint_suggestions",
+                    "decision_policy_suggestions",
+                    "quality_check_candidates",
+                    "provider_fix_candidates",
+                    "warnings",
+                },
+            ),
+            (
+                "cruxible_analyze_outcomes",
+                {
+                    "anchor_type",
+                    "outcome_count",
+                    "outcome_counts",
+                    "outcome_code_counts",
+                    "coded_groups",
+                    "uncoded_outcome_count",
+                    "uncoded_examples",
+                    "trust_adjustment_suggestions",
+                    "workflow_review_policy_suggestions",
+                    "query_policy_suggestions",
+                    "provider_fix_candidates",
+                    "debug_packages",
+                    "workflow_debug_packages",
+                    "warnings",
+                },
+            ),
+            ("cruxible_add_decision_policy", {"name", "added", "config_updated", "warnings"}),
+            (
+                "cruxible_lock_workflow",
+                {"lock_path", "config_digest", "providers_locked", "artifacts_locked"},
+            ),
+            ("cruxible_plan_workflow", {"plan"}),
+            (
+                "cruxible_run_workflow",
+                {
+                    "workflow",
+                    "output",
+                    "receipt_id",
+                    "mode",
+                    "workflow_type",
+                    "canonical",
+                    "apply_digest",
+                    "head_snapshot_id",
+                    "committed_snapshot_id",
+                    "apply_previews",
+                    "query_receipt_ids",
+                    "read_metadata",
+                    "trace_ids",
+                    "receipt",
+                    "traces",
+                },
+            ),
+            (
+                "cruxible_apply_workflow",
+                {
+                    "workflow",
+                    "output",
+                    "receipt_id",
+                    "mode",
+                    "workflow_type",
+                    "canonical",
+                    "apply_digest",
+                    "head_snapshot_id",
+                    "committed_snapshot_id",
+                    "apply_previews",
+                    "query_receipt_ids",
+                    "read_metadata",
+                    "trace_ids",
+                    "receipt",
+                    "traces",
+                },
+            ),
+            ("cruxible_test_workflow", {"total", "passed", "failed", "cases"}),
+            ("cruxible_reload_config", {"config_path", "updated", "warnings"}),
+            (
+                "cruxible_propose_workflow",
+                {
+                    "workflow",
+                    "output",
+                    "receipt_id",
+                    "mode",
+                    "workflow_type",
+                    "canonical",
+                    "group_id",
+                    "group_status",
+                    "review_priority",
+                    "query_receipt_ids",
+                    "trace_ids",
+                    "prior_resolution",
+                    "suppressed",
+                    "suppressed_members",
+                    "policy_summary",
+                    "read_metadata",
+                    "receipt",
+                    "traces",
+                },
+            ),
+            ("cruxible_create_snapshot", {"snapshot"}),
+            (
+                "cruxible_instance_backup",
+                {"instance_id", "artifact_path", "manifest"},
+            ),
+            (
+                "cruxible_instance_restore",
+                {"instance_id", "root_dir", "manifest", "registry_status"},
+            ),
+            (
+                "cruxible_instance_relocate",
+                {
+                    "instance_id",
+                    "from_dir",
+                    "to_dir",
+                    "manifest",
+                    "source_removed",
+                    "registry_status",
+                },
+            ),
+            (
+                "cruxible_list_snapshots",
+                {"items", "total", "limit", "offset", "truncated"},
+            ),
+            ("cruxible_clone_snapshot", {"instance_id", "snapshot"}),
+            (
+                "cruxible_get_entity",
+                {"found", "entity_type", "entity_id", "properties", "metadata"},
+            ),
             (
                 "cruxible_get_relationship",
                 {
@@ -198,6 +517,7 @@ class TestOutputSchema:
                     "to_id",
                     "edge_key",
                     "properties",
+                    "metadata",
                 },
             ),
         ],
@@ -224,12 +544,7 @@ class TestErrorPropagation:
             asyncio.run(server.call_tool("cruxible_schema", {"instance_id": "/no/such/instance"}))
 
     def test_bad_receipt_raises(self, server, tmp_project):
-        asyncio.run(
-            server.call_tool(
-                "cruxible_init",
-                {"root_dir": str(tmp_project), "config_path": "config.yaml"},
-            )
-        )
+        CruxibleInstance.init(tmp_project, "config.yaml")
         with pytest.raises(ToolError, match="RCP-missing"):
             asyncio.run(
                 server.call_tool(
@@ -237,30 +552,6 @@ class TestErrorPropagation:
                     {"instance_id": str(tmp_project), "receipt_id": "RCP-missing"},
                 )
             )
-
-    def test_ingest_error_includes_details(self, server, tmp_project):
-        """DataValidationError details survive MCP propagation."""
-        asyncio.run(
-            server.call_tool(
-                "cruxible_init",
-                {"root_dir": str(tmp_project), "config_path": "config.yaml"},
-            )
-        )
-        bad_csv = tmp_project / "bad_vehicles.csv"
-        bad_csv.write_text("wrong_col,another_col\nfoo,bar\n")
-        with pytest.raises(ToolError) as exc_info:
-            asyncio.run(
-                server.call_tool(
-                    "cruxible_ingest",
-                    {
-                        "instance_id": str(tmp_project),
-                        "mapping_name": "vehicles",
-                        "file_path": str(bad_csv),
-                    },
-                )
-            )
-        # The error message should contain the specific column name
-        assert "vehicle_id" in str(exc_info.value).lower()
 
     def test_validate_bad_config_raises(self, server, tmp_path):
         """ConfigError details survive MCP propagation."""

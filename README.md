@@ -10,109 +10,359 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Deterministic decision engine with DAG-based receipts.** Build entity graphs, query with MCP, get auditable proof.
+**Cruxible is hard state for AI agents.**
 
-Define entity graphs, queries, and constraints in YAML. Run them locally from CLI or MCP, and get receipts proving exactly why each result was returned.
+Governed, queryable, and durable — state that outlives any single model or session.
 
+LLMs reason over context windows and retrieved text, not shared state. When
+what's true about a project or domain lives only in prompts, files, chat
+history, tickets, or vector-memory summaries, every model invocation has to
+reconstruct it.
+
+Cruxible turns the durable slice of that knowledge into typed, queryable,
+governed state — entities, relationships, lifecycle, and review status that
+agents and humans share instead of re-deriving. It doesn't replace your source
+systems; it points to them, cites specific records or chunks, and keeps only the
+claims worth coordinating around.
+
+The core is deterministic: no LLM inside, no hidden API calls, and every
+important operation can produce a receipt.
+
+## The State Learning Loop
+
+Cruxible is built for teams that want their AI systems to improve and their
+knowledge to compound with use, instead of getting wiped away by every context
+refresh, model swap, or handoff.
+
+You model a surface as an ontology, seed it, and let agents query and write it.
+Three loops then compound the state over time:
+
+1. **Feedback and outcome profiles.** Corrections, missing context, and policy
+   gaps are recorded as feedback; outcomes record whether a decision or workflow
+   result was later correct, incorrect, partial, or unknown — durable signal
+   instead of lessons lost in chat.
+2. **Governed proposals.** Uncertain relationships are proposed, reviewed, and
+   accepted or rejected with provenance, and trust accumulates on the proposal
+   paths that keep being approved.
+3. **Config iteration.** The ontology itself is refined as it's used — new entity
+   types, relationships, guards, and queries — so the model of the domain matures
+   alongside the data.
+
+The model can change. The accumulated state, evidence, review history, feedback,
+outcomes, and ontology stay with the team.
+
+## Two Kinds Of State
+
+Cruxible is useful for two related jobs.
+
+### Domain State
+
+Domain state is the durable model of the world an agent is reasoning about:
+customers, assets, vulnerabilities, suppliers, products, cases, controls,
+policies, dependencies, risks, services, or any other domain-specific entities
+and relationships.
+
+Domain state answers:
+
+> What is true, proposed, reviewed, or constrained about the world?
+
+Examples:
+
+- Which assets are exposed to a known exploited vulnerability?
+- Which supplier incident affects which products and shipments?
+- Which legal matter is constrained by a new case authority?
+- Which products substitute for or complement each other?
+
+### Agent Operating State
+
+Agent operating state is the durable coordination layer for work done by agents
+and humans: work items, review requests, decisions, open questions, risks, state
+notes, actors, dependencies, lineage, and lifecycle status.
+
+Operating state answers:
+
+> What are we doing, why, what blocks it, who reviewed it, and what changed?
+
+Examples:
+
+- What open work items are active, blocked, deferred, or ready for review?
+- Which decision constrains this implementation?
+- Which review request approved closing a work item?
+- Which open question blocks a decision or a downstream work item?
+
+These state types can be used separately. They are strongest together: a domain
+kit models the thing the agent is working on, while an operating-state kit tracks
+the work, decisions, evidence, reviews, and lifecycle around that domain.
+
+### Example: KEV Domain State Plus Agent Operating State
+
+```mermaid
+flowchart LR
+  subgraph KEV["KEV domain state"]
+    Asset["Asset: ASSET-42"]
+    Product["Product: Apache HTTP Server"]
+    CVE["Vulnerability: CVE-2021-41773"]
+  end
+
+  subgraph Ops["Agent operating layer"]
+    Owner["Actor: Agent A"]
+    Reviewer["Actor: human reviewer"]
+    Work["WorkItem: patch ASSET-42"]
+    Review["ReviewRequest: verify remediation"]
+    Decision["Decision: emergency patch window"]
+    Risk["Risk: exposed to active exploit"]
+  end
+
+  Asset -- "runs" --> Product
+  CVE -- "affects" --> Product
+  Work -- "targets" --> Asset
+  Work -- "mitigates" --> Risk
+  Risk -- "attaches to" --> CVE
+  Decision -- "constrains" --> Work
+  Work -- "owned by" --> Owner
+  Review -- "reviews" --> Work
+  Review -- "requested by" --> Owner
+  Review -- "assigned to" --> Reviewer
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  AI Agent (Claude Code, Cursor, Codex, ...)                  │
-│  Writes configs, orchestrates workflows                      │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ calls
-┌──────────────────────▼───────────────────────────────────────┐
-│  MCP Tools                                                   │
-│  init · validate · ingest · query · feedback · evaluate ...  │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ executes
-┌──────────────────────▼───────────────────────────────────────┐
-│  Cruxible Core                                               │
-│  Deterministic. No LLM. No opinions. No API keys.            │
-│  Config → Graph → Query → Receipt → Feedback                 │
-└──────────────────────────────────────────────────────────────┘
+
+The KEV kit owns the domain facts and the agent-operation kit owns the operating
+facts; typed operation-to-domain edges (or `SubjectRef`s across instances)
+compose them into one queryable graph.
+
+## Why Not Markdown, RAG, Or Vector Memory?
+
+Markdown, retrieval, and vector memory give a model text to read. Cruxible gives
+it typed, governed state. What changes:
+
+| Markdown · RAG · vector memory | Cruxible |
+|---|---|
+| No provenance — text doesn't record where a claim came from or whether it was reviewed | Durable claims are designed to carry source evidence, review state, and receipts |
+| Context is rebuilt from text every session, losing relationships and detail | Persisted as typed state — read, not reconstructed |
+| Anything can be edited; nothing enforces what may change | Writes pass guards, review, and lifecycle rules |
+| Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships |
+| Counts and rollups are approximate summaries | Exact, repeatable aggregation — counts and joins |
+| Each read is fresh and can disagree with the last | One accepted state — the same answer for every agent and app |
+| No feedback loop — corrections and whether a decision was right are lost | Feedback and outcomes are recorded against the state as durable signal |
+| Static text that doesn't improve from use | State and ontology iterate with use — claims mature from proposed to accepted |
+| A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
+
+Cruxible does not replace your source systems. It points to records or specific
+chunks in markdown, a database, or a SaaS, and stores only the durable claims,
+relationships, lifecycle, and review decisions agents coordinate around.
+
+## Governance And Workflows
+
+Cruxible separates writing state from accepting it. State enters one of two ways:
+
+| Write mode | Use it for | What happens |
+|---|---|---|
+| **Direct write** | Asserting hard state — imports, deterministic relationships, source evidence | Live and queryable at once, with evidence when supplied, but unreviewed until a governed process approves it |
+| **Governed proposal** | Judgment calls — uncertain or interpretive relationships | Candidates are grouped under one thesis with signal evidence and routed to a human or auto-resolution policy; approval writes accepted state with provenance, rejection records why |
+
+Workflows orchestrate both: a reproducible procedure can query state, call
+providers, shape candidates, then apply direct writes or propose a governed
+group. Providers are version- and content-locked in the kit lockfile, so runs
+replay deterministically; every run also leaves receipts and traces.
+
+## How It Fits
+
+```text
+AI agents and humans
+  write configs, review proposals, run workflows, record outcomes
+          |
+          v
+CLI / HTTP client / MCP tools
+  thin surfaces over the service layer
+          |
+          v
+Cruxible Core
+  deterministic runtime, no LLM inside
+          |
+          v
+state.db
+  graph state, receipts, traces, groups, feedback, outcomes, decisions,
+  snapshots, source artifacts
 ```
 
-## Quick Example
+## Small Example
 
-**1. Define a domain in YAML:**
+A minimal slice of a supply-chain ontology — the kind you author in a kit
+config:
 
 ```yaml
 entity_types:
-  Drug:
+  Supplier:
     properties:
-      drug_id: { type: string, primary_key: true }
-      name:    { type: string }
-  Enzyme:
+      supplier_id: { type: string, primary_key: true }
+      name: { type: string, indexed: true }
+      primary_geography: { type: string, optional: true }
+  Component:
     properties:
-      enzyme_id: { type: string, primary_key: true }
-      name:      { type: string }
+      component_id: { type: string, primary_key: true }
+      name: { type: string, indexed: true }
+      criticality: { type: string, optional: true, enum_ref: criticality }
+  Incident:
+    properties:
+      incident_id: { type: string, primary_key: true }
+      title: { type: string, indexed: true }
+      severity: { type: string, optional: true, enum_ref: incident_severity }
 
 relationships:
-  - name: same_class
-    from: Drug
-    to: Drug
-  - name: metabolized_by
-    from: Drug
-    to: Enzyme
+  - name: supplier_supplies_component
+    from: Supplier
+    to: Component
+  # Governed judgment: an incident materially impacts a supplier.
+  - name: incident_impacts_supplier
+    from: Incident
+    to: Supplier
 
 named_queries:
-  suggest_alternative:
-    entry_point: Drug
-    returns: Drug
+  # Blast radius: from an incident, traverse impacted suppliers to the
+  # components they supply.
+  components_exposed_by_incident:
+    mode: traversal
+    entry_point: Incident
+    returns: Component
     traversal:
-      - relationship: same_class
-        direction: both
-      - relationship: metabolized_by
+      - relationship: incident_impacts_supplier
+        direction: outgoing
+      - relationship: supplier_supplies_component
         direction: outgoing
 ```
 
-**2. Load data and run a deterministic query:**
+An agent (or app) can now ask for the blast radius of an incident — the
+components exposed through its impacted suppliers — without scanning
+spreadsheets or tracing the bill of materials by hand.
 
-> "Suggest an alternative to simvastatin"
-
-**3. Get a receipt — structured proof of every answer:**
-
-*Raw receipt DAG rendered for readability:*
-
+```bash
+cruxible query run components_exposed_by_incident \
+  --param incident_id=INC-42 \
+  --json
 ```
-Receipt RCP-17b864830ada
 
-Query: suggest_alternative for simvastatin
+The query response includes the result rows and a receipt pointer. When receipt
+content is included or fetched later, it explains the deterministic path from
+query parameters to traversed edges to returned results:
 
-Step 1: Entry point lookup
-  simvastatin -> found in graph
-
-Step 2: Traverse same_class (both directions)
-  Found 6 statins in the same therapeutic class:
-  n3  atorvastatin   n4  rosuvastatin   n5  lovastatin
-  n6  pravastatin    n7  fluvastatin    n8  pitavastatin
-
-Step 3: Traverse metabolized_by (outgoing) for each alternative
-  n9   atorvastatin -> CYP3A4   (CYP450 dataset)
-  n10  rosuvastatin -> CYP2C9   (CYP450 dataset, human approved)
-  n11  rosuvastatin -> CYP2C19  (CYP450 dataset)
-  n12  lovastatin -> CYP2C19    (CYP450 dataset)
-  n13  lovastatin -> CYP3A4     (CYP450 dataset)
-  n14  pravastatin -> CYP3A4    (CYP450 dataset)
-  n15  fluvastatin -> CYP2C9    (CYP450 dataset)
-  n16  fluvastatin -> CYP2D6    (CYP450 dataset)
-  n17  pitavastatin -> CYP2C9   (CYP450 dataset)
-
-Results: atorvastatin, rosuvastatin, lovastatin, pravastatin, fluvastatin, pitavastatin
-Duration: 0.41ms | 2 traversal steps
+```json
+{
+  "items": [
+    {
+      "entity_type": "Component",
+      "entity_id": "component-main-board"
+    }
+  ],
+  "receipt_id": "RCP-...",
+  "receipt": {
+    "operation_type": "query",
+    "query_name": "components_exposed_by_incident",
+    "parameters": {
+      "incident_id": "INC-42"
+    },
+    "nodes": [
+      {
+        "node_type": "query",
+        "detail": {
+          "entry_point": "Incident"
+        }
+      },
+      {
+        "node_type": "edge_traversal",
+        "relationship": "incident_impacts_supplier"
+      },
+      {
+        "node_type": "edge_traversal",
+        "relationship": "supplier_supplies_component"
+      },
+      {
+        "node_type": "result",
+        "entity_type": "Component",
+        "entity_id": "component-main-board"
+      }
+    ],
+    "results": [
+      {
+        "entity_type": "Component",
+        "entity_id": "component-main-board"
+      }
+    ]
+  }
+}
 ```
 
 ## Get Started
 
+### Install And Start A Local Daemon
+
+For `0.2`, install from a clone so the bundled starter kits resolve from the
+checkout (versioned OCI kit images are coming; until then the checkout is the
+canonical path):
+
 ```bash
-pip install "cruxible-core[mcp]"
+git clone https://github.com/cruxible-ai/cruxible-core.git
+cd cruxible-core
+uv sync --extra server --extra mcp
+source .venv/bin/activate
+
+CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
-> Or use `uv tool install "cruxible-core[mcp]"` if you prefer [uv](https://docs.astral.sh/uv/).
+The daemon is local-only by default and binds to `127.0.0.1:8100`. Run the
+commands below from the activated checkout environment (or prefix each with
+`uv run`). For a simple local hardening layer, set `CRUXIBLE_SERVER_AUTH=true`
+and `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=...`, then claim the bootstrap secret to
+create runtime credentials.
 
-Add the MCP server to your AI agent:
+### Initialize A Kit
 
-**Claude Code / Cursor** (project `.mcp.json` or `~/.claude.json` / `.cursor/mcp.json`):
+```bash
+cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation
+```
+
+The returned `instance_id` is the handle used by CLI, MCP, HTTP clients, and UI
+surfaces for later queries, workflows, writes, and reviews.
+
+### Query State
+
+```bash
+cruxible --server-url http://127.0.0.1:8100 \
+  --instance-id <instance_id> \
+  query list
+
+cruxible --server-url http://127.0.0.1:8100 \
+  --instance-id <instance_id> \
+  query run actor_work_queue --param actor_id=alice --json
+```
+
+Or call the same query surface from Python:
+
+```python
+from cruxible_client import CruxibleClient
+
+with CruxibleClient(base_url="http://127.0.0.1:8100") as client:
+    result = client.query(
+        "<instance_id>",
+        "actor_work_queue",
+        {"actor_id": "alice"},
+    )
+    for item in result.items:
+        print(item)
+```
+
+## Agent Setup
+
+For agents, prefer a split environment:
+
+- `cruxible-core` runs in a daemon/runtime environment.
+- The agent environment installs `cruxible-client` or uses MCP.
+- `CRUXIBLE_REQUIRE_SERVER=1` keeps the agent on the daemon path.
+- `CRUXIBLE_SERVER_STATE_DIR` lives outside the agent's writable workspace.
+
+```bash
+pip install cruxible-client
+```
+
+MCP example:
 
 ```json
 {
@@ -120,101 +370,73 @@ Add the MCP server to your AI agent:
     "cruxible": {
       "command": "cruxible-mcp",
       "env": {
-        "CRUXIBLE_MODE": "admin"
+        "CRUXIBLE_MODE": "governed_write",
+        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
       }
     }
   }
 }
 ```
 
-**Codex** (`~/.codex/config.toml`):
+Local permission modes are a practical hardening layer, not full sandboxing. If
+trust levels matter, keep the daemon state outside the agent workspace and
+expose only the client, HTTP, or MCP surface. See
+[Isolated Deployment](docs/isolated-deployment.md).
 
-```toml
-[mcp_servers.cruxible]
-command = "cruxible-mcp"
+## Kits
 
-[mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "admin"
-```
+| Kit | Kind | Status | What it models |
+|-----|------|--------|----------------|
+| [agent-operation](kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
+| [kev-reference](kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data. |
+| [kev-triage](kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
+| [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Domain state | in_progress | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
+| [case-law-monitoring](kits/case-law-monitoring/) | Domain state | in_progress | Matter-centered case-law monitoring and authority impact. |
 
-### Try a demo
+Standalone kits can define a full state model. Overlay kits can extend an
+upstream state model with local state, governed proposals, and local workflows.
 
-```bash
-git clone https://github.com/cruxible-ai/cruxible-core
-cd cruxible-core/demos/drug-interactions
-```
-
-Each demo is a starter kit with a config, prebuilt graph, example queries, and receipts. If you're new, start with `drug-interactions`.
-
-First, load the instance:
-
-> "You have access to the cruxible MCP, load the cruxible instance"
-
-Then try:
-
-- "Check interactions for warfarin"
-- "What's the enzyme impact of fluoxetine?"
-- "Suggest an alternative to simvastatin"
-
-Every query produces a receipt you can inspect.
-
-## Why Not Just Write Code?
-
-Cruxible is useful when the same decision logic needs to be reviewed, replayed, adapted, and trusted over time. It gives you:
-
-- A declarative spec surface in YAML
-- Deterministic execution over entity graphs
-- Receipts proving why a result was returned
-- Constraints, evaluation, and feedback without rebuilding custom infrastructure
-
-The same way Terraform replaced hand-rolled infrastructure scripts with plans, state, and diffs, Cruxible replaces ad-hoc decision code with declarative configs, deterministic execution, and auditable receipts.
-
-## Why Cruxible
-
-| LLM agents alone | With Cruxible |
-|---|---|
-| Relationships shift depending on how you ask | Explicit knowledge graph you can inspect |
-| No structured memory between sessions | Persistent entity store across runs |
-| Results vary between identical prompts | Deterministic execution, same input → same output |
-| No audit trail | DAG-based receipt for every decision |
-| Constraints checked by vibes | Declared constraints programmatically validated before results |
-| Discovers relationships only through LLM reasoning | Deterministic candidate detection finds missing relationships at scale — LLM assists where judgment is needed |
-| Learns nothing from outcomes | Feedback loop calibrates edge weights over time |
-
-## Features
-
-- **Receipt-based provenance:** every query produces a DAG-structured proof showing exactly how the answer was derived.
-- **Constraint system:** define validation rules that are checked by `evaluate`. Feedback patterns can be encoded as constraints.
-- **Feedback loop:** approve, reject, correct, or flag individual edges. Rejected edges are excluded from future queries.
-- **Candidate detection:** property matching and shared-neighbor strategies for discovering missing relationships at scale.
-- **YAML-driven config:** define entity types, relationships, queries, constraints, and ingestion mappings in one file.
-- **Zero LLM dependencies:** purely deterministic runtime. No API keys, no token costs during execution.
-- **Full MCP server:** complete lifecycle via [Model Context Protocol](docs/mcp-tools.md) for AI agent orchestration.
-- **CLI mirror:** core MCP tools have [CLI equivalents](docs/cli-reference.md) for terminal workflows.
-- **Permission modes:** READ_ONLY, GRAPH_WRITE, ADMIN tiers control what tools a session can access.
-
-## Demos
-
-| Demo | Domain | What it demonstrates |
-|------|--------|---------------------|
-| [sanctions-screening](demos/sanctions-screening/) | Fintech / RegTech | OFAC screening with beneficial ownership chain traversal. |
-| [drug-interactions](demos/drug-interactions/) | Healthcare | Multi-drug interaction checking with CYP450 enzyme data. |
-| [mitre-attack](demos/mitre-attack/) | Cybersecurity | Threat modeling with ATT&CK technique and group analysis. |
+**Status** — *ready* kits ship working providers (KEV also ships public reference
+data), so their workflows execute end to end. *in_progress* means the ontology,
+governance, named queries, and feedback/outcome loops are complete and validated,
+but the data-ingest and assessment providers are placeholders — implement them or
+wire your own data before running the workflows.
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — 5-minute install to first query
-- [Concepts](docs/concepts.md) — Architecture and primitives
-- [Config Reference](docs/config-reference.md) — Every YAML field explained
-- [MCP Tools Reference](docs/mcp-tools.md) — All tools with parameters and return types
-- [CLI Reference](docs/cli-reference.md) — Terminal commands
-- [AI Agent Guide](docs/for-ai-agents.md) — Orchestration workflows for Claude Code, Cursor, Codex, and other MCP clients
+**Getting started**
+- [Quickstart](docs/quickstart.md) — install to first query
+- [Concepts](docs/concepts.md) — architecture and primitives
+
+**Modeling and authoring**
+- [Modeling State](docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
+- [Config Reference](docs/config-reference.md) — the YAML config schema
+- [Kit Authoring](docs/kit-authoring.md) — kit manifest, structure, and packaging
+- [Kit Walkthroughs](docs/kit-walkthroughs.md) — building standalone and overlay kits
+- [Common Providers And Dataflow Steps](docs/common-providers.md) — provider and workflow building blocks
+
+**Reference**
+- [CLI Reference](docs/cli-reference.md) — terminal commands
+- [MCP Tools Reference](docs/mcp-tools.md) — agent tool surface
+- [AI Agent Guide](docs/for-ai-agents.md) — orchestration patterns
+
+**Operating and deploying**
+- [Local State And Backups](docs/local-state-and-backups.md) — SQLite, daemon state, and portability
+- [Runtime Auth And Agent Roles](docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
+- [State Resolution And Maintenance](docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
+- [Isolated Deployment](docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
+- [Hosted Runtime Image](docs/hosted-runtime-image.md) — the runtime container image
+
+**Guides**
+- [Skill Classification At Scale](docs/skill-classification-at-scale.md) — a worked governed-classification agent playbook
 
 ## Technology
 
-Built on [Pydantic](https://docs.pydantic.dev/) (validation), [NetworkX](https://networkx.org/) (graph), [Polars](https://pola.rs/) (data ops), [SQLite](https://sqlite.org/) (persistence), and [FastMCP](https://github.com/jlowin/fastmcp) (MCP server).
-
-**Cruxible Cloud:** Managed deployment with expert support. [Coming soon.](https://cruxible.ai)
+Cruxible Core uses [Pydantic](https://docs.pydantic.dev/) for validation,
+[NetworkX](https://networkx.org/) for in-memory graph operations,
+[Polars](https://pola.rs/) for data operations, [SQLite](https://sqlite.org/)
+for local durable state, [FastAPI](https://fastapi.tiangolo.com/) for the daemon,
+and [FastMCP](https://github.com/jlowin/fastmcp) for MCP tools.
 
 ## License
 

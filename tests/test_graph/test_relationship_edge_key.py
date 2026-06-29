@@ -12,10 +12,10 @@ class TestRelationshipEdgeKey:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={"source": "catalog"},
             )
         )
@@ -33,20 +33,20 @@ class TestRelationshipEdgeKey:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={"source": "catalog"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P1",
-                to_entity_type="Vehicle",
-                to_entity_id="V1",
+                from_type="Part",
+                from_id="P1",
+                to_type="Vehicle",
+                to_id="V1",
                 properties={"source": "user_report"},
             )
         )

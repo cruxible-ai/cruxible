@@ -1,0 +1,2017 @@
+version: "1.0"
+name: kev_triage
+extends: ../kev-reference/config.yaml
+description: >
+  Local of the KEV reference world model for internal vulnerability triage.
+  The reference layer (Vendor, Product, Vulnerability) comes from public
+  feeds and is read-only. This overlay adds internal assets, services,
+  controls, and the accepted judgment relationships that link public
+  vulnerabilities to internal operational impact.
+
+# ─── Shared enum vocabularies ────────────────────────────────────────
+
+enums:
+  criticality:
+    values: [low, medium, high, critical]
+    ordered: low_to_high
+    description: Shared low-to-critical rank for materiality, severity, and priority.
+  asset_type:
+    values: [server, laptop]
+    description: Asset form factor from CMDB or inventory.
+  asset_environment:
+    values: [production, staging, corporate]
+    description: Operational environment where an asset runs.
+  control_type:
+    values: [waf, endpoint_detection, network_acl]
+    description: Security control implementation category.
+  control_status:
+    values: [active, inactive]
+    description: Operational status for a security control.
+  control_effect:
+    values: [blocks, reduces, detects, compensates]
+    description: How a control affects a vulnerability class.
+  vulnerability_posture_status:
+    values: [exposed, mitigated, not_affected, unknown]
+    description: Current accepted posture for an asset-vulnerability pair.
+  attack_vector:
+    values: [network, adjacent, local, physical]
+    description: Operational attack vector bucket for vulnerability classes.
+  exception_status:
+    values: [approved, expired, revoked]
+    description: Lifecycle status for a patch or remediation exception.
+  patch_cadence:
+    values: [weekly, biweekly, monthly]
+    description: Normal cadence for an operational patch window.
+  patch_freeze_status:
+    values: [none, partial_freeze]
+    description: Change-freeze state for a patch window.
+  remediation_type:
+    values: [patch, mitigation, exception, product_mapping_changed, reference_changed, not_affected]
+    description: Closure mechanism for an asset-vulnerability pair.
+
+# ─── Local: internal entity types ─────────────────────────────────────
+
+entity_types:
+  Asset:
+    description: Internal asset from CMDB, cloud inventory, or endpoint tooling.
+    properties:
+      asset_id: {primary_key: true}
+      hostname: {indexed: true}
+      asset_type: {enum_ref: asset_type}
+      criticality: {enum_ref: criticality}
+      environment: {enum_ref: asset_environment}
+      internet_exposed:
+        type: bool
+
+  BusinessService:
+    description: Internal business or technical service depending on assets.
+    properties:
+      service_id: {primary_key: true}
+      name: {indexed: true}
+      criticality: {enum_ref: criticality}
+
+  Owner:
+    description: Team or person responsible for an asset or service.
+    properties:
+      owner_id: {primary_key: true}
+      name: {}
+      team: {}
+      email: {}
+
+  CompensatingControl:
+    description: Control that can reduce or block exploitability.
+    properties:
+      control_id: {primary_key: true}
+      name: {}
+      control_type: {enum_ref: control_type}
+      status: {enum_ref: control_status}
+
+  VulnerabilityClass:
+    description: >
+      Operational vulnerability category used by local controls, policy,
+      and scenario analysis. This is local-layer classification rather than
+      reference-layer public data.
+    properties:
+      class_id: {primary_key: true}
+      name: {indexed: true}
+      description: {}
+      attack_vector: {enum_ref: attack_vector}
+
+  Exception:
+    description: Approved patch or remediation exception.
+    properties:
+      exception_id: {primary_key: true}
+      reason: {}
+      review_due_at: {type: date}
+      status: {enum_ref: exception_status}
+
+  PatchWindow:
+    description: Operational patching schedule or change window.
+    properties:
+      patch_window_id: {primary_key: true}
+      cadence: {enum_ref: patch_cadence}
+      next_window_at: {type: datetime}
+      freeze_status: {enum_ref: patch_freeze_status}
+      emergency_patch_allowed: {type: bool}
+      outage_allowed: {type: bool}
+      testing_required: {type: bool}
+      rollback_required: {type: bool}
+      owner_id: {}
+
+# ─── Local: deterministic internal mappings ────────────────────────────
+
+relationships:
+  - name: service_depends_on_asset
+    description: Internal dependency mapping from services to assets.
+    from: BusinessService
+    to: Asset
+
+  - name: asset_owned_by
+    description: Ownership or routing mapping for assets.
+    from: Asset
+    to: Owner
+
+  - name: asset_has_control
+    description: Internal mapping from assets to compensating controls.
+    from: Asset
+    to: CompensatingControl
+
+  - name: asset_has_exception
+    description: Internal mapping from assets to approved exceptions.
+    from: Asset
+    to: Exception
+
+  - name: asset_patch_window
+    description: Internal patching schedule mapping.
+    from: Asset
+    to: PatchWindow
+
+# ─── Local: governed relationships ─────────────────────────────────────
+#
+# These relationships are created through the proposal/group resolution
+# flow, not direct writes. Each has a proposal_policy block that defines
+# which signal sources provide evidence and how auto-resolution works.
+
+  - name: asset_runs_product
+    description: >
+      Governed mapping from an internal asset to a reference-layer product.
+      Internal systems describe software by display name and version;
+      the reference layer uses CPE-derived product IDs. Fuzzy matching
+      goes through the proposal flow.
+    from: Asset
+    to: Product
+    properties:
+      observed_software_name: {}
+      observed_vendor: {}
+      installed_version: {}
+      inventory_source: {}
+      last_seen_at: {type: date}
+      match_basis: {}
+    proposal_policy:
+      signals:
+        software_product_match:
+          role: required
+          always_review_on_unsure: true
+      auto_resolve_when: all_support
+
+  - name: asset_vulnerability_posture
+    description: >
+      Accepted current-truth judgment for an asset-vulnerability pair. The
+      status records whether the asset is exposed, mitigated, not affected,
+      or still unknown; exposed rows drive action queues.
+    from: Asset
+    to: Vulnerability
+    properties:
+      status: {enum_ref: vulnerability_posture_status}
+      priority: {enum_ref: criticality}
+      product_id: {}
+      installed_version: {}
+      affected_basis: {}
+      exposure_basis: {}
+      control_basis: {}
+      review_due_at: {type: date, optional: true}
+    proposal_policy:
+      signals:
+        product_version_evidence:
+          role: required
+          always_review_on_unsure: true
+        exploitability_signal:
+          role: required
+          always_review_on_unsure: true
+        control_effectiveness:
+          role: required
+          always_review_on_unsure: true
+
+  - name: asset_patch_exception_for
+    description: >
+      Accepted judgment that a specific asset-vulnerability pair is covered
+      by an approved exception. The broader asset_has_exception edge only
+      says the asset has an exception.
+    from: Asset
+    to: Vulnerability
+    properties:
+      exception_id: {}
+      review_due_at: {type: date}
+      scope_basis: {}
+    proposal_policy:
+      signals:
+        policy_review:
+          role: required
+
+  - name: vulnerability_classified_as
+    description: >
+      Local-layer classification of a public vulnerability into an
+      operational category used by local controls and stress scenarios.
+    from: Vulnerability
+    to: VulnerabilityClass
+    properties:
+      basis: {}
+      source: {}
+    proposal_policy:
+      signals:
+        vulnerability_classification:
+          role: required
+          always_review_on_unsure: true
+
+  - name: control_mitigates_class
+    description: >
+      Curated local control-coverage knowledge that says a compensating
+      control mitigates a vulnerability class. Operators maintain this as
+      deterministic local state; agents consume it when assessing posture
+      and should raise data/config corrections when it is missing or wrong.
+    from: CompensatingControl
+    to: VulnerabilityClass
+    properties:
+      effect: {enum_ref: control_effect, optional: false}
+      validation_basis: {}
+      verified_at: {type: date, optional: true}
+      expires_at: {type: date, optional: true}
+
+  - name: asset_remediated_vulnerability
+    description: >
+      Verification or closure fact for an asset-vulnerability pair after
+      remediation, mitigation, exception approval, product mapping change,
+      or reference update. It is not a general remediation history log.
+    from: Asset
+    to: Vulnerability
+    properties:
+      remediation_type: {enum_ref: remediation_type}
+      verified_at: {type: date, optional: true}
+      ticket_id: {optional: true}
+      verification_basis: {}
+    proposal_policy:
+      signals:
+        remediation_verification:
+          role: required
+          always_review_on_unsure: true
+
+# ─── Named queries (local-specific, read across both layers) ──────────
+
+named_queries:
+  vulnerability_asset_context:
+    mode: traversal
+    description: >
+      Starting from a vulnerability, return internal assets that run affected
+      products, with the relationship evidence needed to tell whether each
+      asset is only a candidate, has pending or accepted exposure state,
+      has remediation state, or is covered by operational context such as
+      owners, services, exceptions, controls, and patch windows.
+    entry_point: Vulnerability
+    returns: Asset
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 1000
+    max_paths_per_result: 10
+    traversal:
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: outgoing
+      - as: installed_product
+        relationship: asset_runs_product
+        direction: incoming
+    include:
+      owners:
+        from: $result
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      services:
+        from: $result
+        relationship: service_depends_on_asset
+        direction: incoming
+        many: true
+        limit: 10
+        order_by:
+          - by: $source.properties.criticality
+            direction: asc
+            enum_ref: criticality
+          - by: $source.properties.name
+            direction: asc
+      approved_exceptions:
+        from: $result
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $result
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+        order_by:
+          - by: $target.properties.status
+            direction: asc
+          - by: $target.properties.name
+            direction: asc
+      patch_windows:
+        from: $result
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+      exposure:
+        from: $result
+        relationship: asset_vulnerability_posture
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+          edge.properties.status:
+            eq: exposed
+        order_by:
+          - by: $edge.metadata.assertion.review.status
+            direction: desc
+          - by: $edge.properties.priority
+            direction: desc
+            enum_ref: criticality
+      remediation:
+        from: $result
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
+      vulnerability_exceptions:
+        from: $result
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $entry.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+    order_by:
+      - by: $result.properties.environment
+        direction: asc
+      - by: $result.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $result.properties.hostname
+        direction: asc
+
+  product_asset_context:
+    mode: traversal
+    description: >
+      Starting from a reference product, return assets that run that product,
+      with product-mapping evidence and side context for affected
+      vulnerabilities, exposure state, owners, services, exceptions, controls,
+      and patch windows.
+    entry_point: Product
+    returns: Asset
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 500
+    traversal:
+      - as: installed_product
+        relationship: asset_runs_product
+        direction: incoming
+    include:
+      owners:
+        from: $result
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      services:
+        from: $result
+        relationship: service_depends_on_asset
+        direction: incoming
+        many: true
+        limit: 10
+      approved_exceptions:
+        from: $result
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $result
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $result
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+      affected_vulnerabilities:
+        from: $entry
+        relationship: vulnerability_affects_product
+        direction: incoming
+        many: true
+        limit: 20
+        order_by:
+          - by: $source.properties.kev_due_date
+            direction: asc
+            value_type: date
+          - by: $source.properties.epss_score
+            direction: desc
+            value_type: number
+          - by: $source.entity_id
+            direction: asc
+      relevant_exposures:
+        from: $result
+        relationship: asset_vulnerability_posture
+        direction: outgoing
+        many: true
+        limit: 20
+        where:
+          edge.properties.product_id:
+            eq: $entry.entity_id
+          edge.properties.status:
+            eq: exposed
+        order_by:
+          - by: $edge.metadata.assertion.review.status
+            direction: desc
+          - by: $edge.properties.priority
+            direction: desc
+            enum_ref: criticality
+          - by: $target.entity_id
+            direction: asc
+    order_by:
+      - by: $result.properties.hostname
+        direction: asc
+
+  asset_vulnerability_postures_requiring_action:
+    mode: collection
+    description: >
+      Return existing asset-vulnerability posture relationships that represent
+      exposed work needing attention. This is a work-queue read surface for
+      current posture facts, not candidate discovery.
+    returns: asset_vulnerability_posture
+    result_shape: relationship
+    dedupe: none
+    relationship_state: reviewable
+    allow_relationship_state_override: true
+    where:
+      edge.properties.status:
+        eq: exposed
+    order_by:
+      - by: $relationship.properties.priority
+        direction: desc
+        enum_ref: criticality
+      - by: $from_entity.properties.criticality
+        direction: desc
+        enum_ref: criticality
+      - by: $to_entity.properties.kev_due_date
+        direction: asc
+        value_type: date
+      - by: $from_entity.properties.hostname
+        direction: asc
+      - by: $to_entity.entity_id
+        direction: asc
+
+  owner_patch_queue:
+    mode: traversal
+    description: >
+      Starting from an owner, return approved asset-vulnerability exposures
+      across the owner's assets, excluding pairs already closed or covered by
+      a scoped exception, and decorated with service, broad exception, control,
+      and patch-window context for prioritization.
+    entry_point: Owner
+    returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    max_paths: 1000
+    max_paths_per_result: 20
+    traversal:
+      - as: owned_asset
+        relationship: asset_owned_by
+        direction: incoming
+      - as: exposure
+        relationship: asset_vulnerability_posture
+        direction: outgoing
+        where:
+          edge.metadata.assertion.review.status:
+            eq: approved
+          edge.properties.status:
+            eq: exposed
+        exclude_if_related:
+          - relationship: asset_remediated_vulnerability
+            direction: outgoing
+          - relationship: asset_patch_exception_for
+            direction: outgoing
+    include:
+      services:
+        from: $path.owned_asset.source
+        relationship: service_depends_on_asset
+        direction: incoming
+        many: true
+        limit: 10
+        order_by:
+          - by: $source.properties.criticality
+            direction: asc
+            enum_ref: criticality
+          - by: $source.properties.name
+            direction: asc
+      approved_exceptions:
+        from: $path.owned_asset.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $path.owned_asset.source
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $path.owned_asset.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+        order_by:
+          - by: $target.properties.next_window_at
+            direction: asc
+    order_by:
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
+      - by: $path.owned_asset.source.properties.hostname
+        direction: asc
+
+  vendor_service_impact:
+    mode: traversal
+    description: >
+      Starting from a vendor, trace through affected products, reviewable
+      asset-vulnerability posture, and service dependencies to find business
+      services in the blast radius. This broad investigation query keeps
+      accepted, unreviewed, pending, remediated, and exception-covered context
+      visible so agents can triage from the first result instead of treating it
+      as a strict action queue.
+    entry_point: Vendor
+    returns: BusinessService
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 2000
+    max_paths_per_result: 20
+    traversal:
+      - as: vendor_product
+        relationship: product_from_vendor
+        direction: incoming
+      - as: affected_product
+        relationship: vulnerability_affects_product
+        direction: incoming
+      - as: exposure
+        relationship: asset_vulnerability_posture
+        direction: incoming
+      - as: service_dependency
+        relationship: service_depends_on_asset
+        direction: incoming
+    include:
+      owners:
+        from: $path.exposure.source
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      approved_exceptions:
+        from: $path.exposure.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      controls:
+        from: $path.exposure.source
+        relationship: asset_has_control
+        direction: outgoing
+        many: true
+        limit: 10
+      patch_windows:
+        from: $path.exposure.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+      scoped_exceptions:
+        from: $path.exposure.source
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+      remediations:
+        from: $path.exposure.source
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
+    order_by:
+      - by: $result.properties.criticality
+        direction: asc
+        enum_ref: criticality
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
+
+  control_coverage_gap:
+    mode: traversal
+    description: >
+      Starting from a compensating control, find the business services
+      with asset-vulnerability posture tied to classes this control covers.
+      This broad investigation query exposes the mitigation effect for agent
+      interpretation: blocks/compensates are stronger mitigation coverage,
+      reduces is risk-reduction coverage, and detects is monitoring rather
+      than blocking mitigation. It keeps accepted, unreviewed, and pending
+      posture/classification context visible where reviewable query visibility
+      allows.
+    entry_point: CompensatingControl
+    returns: BusinessService
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 2000
+    max_paths_per_result: 20
+    traversal:
+      - as: mitigated_class
+        relationship: control_mitigates_class
+        direction: outgoing
+      - as: classified_vulnerability
+        relationship: vulnerability_classified_as
+        direction: incoming
+      - as: exposure
+        relationship: asset_vulnerability_posture
+        direction: incoming
+      - as: service_dependency
+        relationship: service_depends_on_asset
+        direction: incoming
+    include:
+      owners:
+        from: $path.exposure.source
+        relationship: asset_owned_by
+        direction: outgoing
+        many: true
+        limit: 5
+      approved_exceptions:
+        from: $path.exposure.source
+        relationship: asset_has_exception
+        direction: outgoing
+        many: true
+        limit: 10
+        where:
+          target.properties.status:
+            eq: approved
+      patch_windows:
+        from: $path.exposure.source
+        relationship: asset_patch_window
+        direction: outgoing
+        many: true
+        limit: 5
+      scoped_exceptions:
+        from: $path.exposure.source
+        relationship: asset_patch_exception_for
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.review_due_at
+            direction: asc
+            value_type: date
+      remediations:
+        from: $path.exposure.source
+        relationship: asset_remediated_vulnerability
+        direction: outgoing
+        many: true
+        limit: 5
+        where:
+          target.entity_id:
+            eq: $path.exposure.target.entity_id
+        order_by:
+          - by: $edge.properties.verified_at
+            direction: desc
+            value_type: date
+    order_by:
+      - by: $result.properties.criticality
+        direction: asc
+        enum_ref: criticality
+      - by: $path.exposure.edge.properties.priority
+        direction: desc
+        enum_ref: criticality
+
+  vulnerability_class_context:
+    mode: traversal
+    description: >
+      Starting from a vulnerability class, return reviewable vulnerability
+      classifications in the class and include the compensating controls
+      mapped to that class.
+    entry_point: VulnerabilityClass
+    returns: Vulnerability
+    result_shape: path
+    dedupe: path
+    relationship_state: reviewable
+    max_paths: 500
+    traversal:
+      - as: classification
+        relationship: vulnerability_classified_as
+        direction: incoming
+    include:
+      controls:
+        from: $entry
+        relationship: control_mitigates_class
+        direction: incoming
+        many: true
+        limit: 20
+    order_by:
+      - by: $result.entity_id
+        direction: asc
+
+# ─── Constraints ──────────────────────────────────────────────────────
+
+constraints: []
+
+# ─── Quality checks ──────────────────────────────────────────────────
+
+quality_checks:
+  - name: assets_have_one_owner
+    kind: cardinality
+    description: Every asset should have exactly one owner.
+    severity: warning
+    entity_type: Asset
+    relationship_type: asset_owned_by
+    direction: outgoing
+    min_count: 1
+    max_count: 1
+
+  - name: minimum_assets_loaded
+    kind: bounds
+    description: Sanity check that the CMDB load produced a non-trivial asset set.
+    severity: warning
+    target: entity_count
+    entity_type: Asset
+    min_count: 5
+
+  - name: assets_have_hostname
+    kind: property
+    description: Every asset should have a non-empty hostname.
+    severity: warning
+    target: entity
+    entity_type: Asset
+    property: hostname
+    rule: non_empty
+
+# ─── Contracts ────────────────────────────────────────────────────────
+
+contracts:
+  SoftwareMatchInput:
+    description: Software inventory rows plus canonical reference products to match against.
+    fields:
+      inventory_items: {type: json}
+      reference_products: {type: json}
+
+  SoftwareMatchResults:
+    description: Fuzzy match results mapping software inventory rows to reference products.
+    fields:
+      items: {type: json}
+
+  AssetAffectedAssessmentInput:
+    description: Joined asset-product and vulnerability-product rows for version applicability assessment.
+    fields:
+      joined_product_edges: {type: json}
+
+  AssetAffectedAssessmentResults:
+    description: Candidate asset-vulnerability judgments derived from version-range comparison.
+    fields:
+      items: {type: json}
+
+  AssetExposureAssessmentInput:
+    description: >
+      Transient affected candidates joined to asset posture plus active control
+      bindings and config-owned assessment policy.
+    fields:
+      affected_asset_context: {type: json}
+      active_control_bindings: {type: json}
+      vulnerability_classification_edges: {type: json, optional: true}
+      control_mitigation_edges: {type: json, optional: true}
+      assessment_policy: {type: json}
+
+  AssetExposureAssessmentResults:
+    description: Candidate asset exposure judgments with exploitability and control signals.
+    fields:
+      items: {type: json}
+
+  VulnerabilityClassificationProposalInput:
+    description: Agent-selected vulnerability classification proposals.
+    fields:
+      items: {type: json}
+
+  ExposureReconciliationInput:
+    description: Accepted exposure state plus product-derived current affected candidates.
+    fields:
+      accepted_exposure_edges: {type: json}
+      affected_items: {type: json}
+      asset_product_edges: {type: json}
+      vulnerability_product_edges: {type: json}
+      remediated_edges: {type: json}
+
+  ExposureReconciliationResults:
+    description: Closure proposals for accepted exposure edges no longer supported by current product-derived evidence.
+    fields:
+      items: {type: json}
+
+artifacts:
+  local_seed_bundle:
+    kind: directory
+    uri: ./data/seed
+    digest: sha256:eb5675109ea4b2fc44f1a59419aa4e294aa605df95f9a0fc941d9f0d4af3a073
+    metadata:
+      description: Synthetic seed data representing CMDB, service catalog, operational system exports, and review material for governed proposals.
+
+# ─── Providers ────────────────────────────────────────────────────────
+
+providers:
+  parse_local_seed_bundle:
+    description: >
+      Parse the pinned local seed artifact into generic provenance-rich
+      tabular rows. Domain normalization happens in the next workflow step.
+    contract_in: cruxible.JsonObject
+    contract_out: cruxible.ParsedTabularBundle
+    ref: cruxible_core.providers.common.tabular.load_tabular_artifact_bundle
+    version: "1.0.0"
+    deterministic: true
+    artifact: local_seed_bundle
+
+  match_software_to_products:
+    description: >
+      Fuzzy match software inventory rows against reference-layer
+      products using CPE name similarity and vendor matching. Returns
+      transient match scores for signal mapping plus qualitative
+      governed relationship rationale.
+    contract_in: SoftwareMatchInput
+    contract_out: SoftwareMatchResults
+    ref: kit://providers/matching.py::match_software_to_products
+    version: "1.0.0"
+    deterministic: true
+
+  assess_asset_affected:
+    description: >
+      Assess whether joined asset-product and vulnerability-product rows
+      place the installed version within the reference-layer affected
+      range.
+    contract_in: AssetAffectedAssessmentInput
+    contract_out: AssetAffectedAssessmentResults
+    ref: kit://providers/assessment.py::assess_asset_affected
+    version: "1.0.0"
+    deterministic: true
+
+  assess_asset_exposure:
+    description: >
+      Assess whether an affected asset is materially exposed using
+      internet exposure, environment, criticality, and attached active
+      controls.
+    contract_in: AssetExposureAssessmentInput
+    contract_out: AssetExposureAssessmentResults
+    ref: kit://providers/assessment.py::assess_asset_exposure
+    version: "1.0.0"
+    deterministic: true
+
+  assess_exposure_reconciliation:
+    description: >
+      Compare accepted exposure edges against the current product-derived
+      affected candidate set and identify stale exposures to close.
+    contract_in: ExposureReconciliationInput
+    contract_out: ExposureReconciliationResults
+    ref: kit://providers/assessment.py::assess_exposure_reconciliation
+    version: "1.0.0"
+    deterministic: true
+
+# ─── Workflows ────────────────────────────────────────────────────────
+
+workflows:
+  build_local_state:
+    type: canonical
+    description: >
+      Load deterministic internal entities and relationships from the
+      seed data bundle. This is the local's equivalent of the reference
+      layer's build_public_kev_reference workflow.
+    steps:
+      - id: raw_tables
+        provider: parse_local_seed_bundle
+        input:
+          expected_tables:
+            - assets
+            - business_services
+            - owners
+            - compensating_controls
+            - vulnerability_classes
+            - exceptions
+            - patch_windows
+            - service_depends_on_asset
+            - asset_owned_by
+            - asset_has_control
+            - asset_has_exception
+            - asset_patch_window
+            - control_mitigates_class
+        as: raw_tables
+
+      - id: asset_rows
+        shape_items:
+          items: $steps.raw_tables.tables.assets.rows
+          include_input: true
+          casts:
+            internet_exposed: bool
+        as: asset_rows
+      - id: business_service_rows
+        shape_items:
+          items: $steps.raw_tables.tables.business_services.rows
+          include_input: true
+        as: business_service_rows
+      - id: owner_rows
+        shape_items:
+          items: $steps.raw_tables.tables.owners.rows
+          include_input: true
+        as: owner_rows
+      - id: control_rows
+        shape_items:
+          items: $steps.raw_tables.tables.compensating_controls.rows
+          include_input: true
+        as: control_rows
+      - id: vulnerability_class_rows
+        shape_items:
+          items: $steps.raw_tables.tables.vulnerability_classes.rows
+          include_input: true
+        as: vulnerability_class_rows
+      - id: exception_rows
+        shape_items:
+          items: $steps.raw_tables.tables.exceptions.rows
+          include_input: true
+        as: exception_rows
+      - id: patch_window_rows
+        shape_items:
+          items: $steps.raw_tables.tables.patch_windows.rows
+          include_input: true
+          casts:
+            emergency_patch_allowed: bool
+            outage_allowed: bool
+            testing_required: bool
+            rollback_required: bool
+        as: patch_window_rows
+      - id: service_asset_rows
+        shape_items:
+          items: $steps.raw_tables.tables.service_depends_on_asset.rows
+          include_input: true
+        as: service_asset_rows
+      - id: asset_owner_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_owned_by.rows
+          include_input: true
+        as: asset_owner_rows
+      - id: asset_control_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_has_control.rows
+          include_input: true
+        as: asset_control_rows
+      - id: asset_exception_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_has_exception.rows
+          include_input: true
+        as: asset_exception_rows
+      - id: asset_patch_window_rows
+        shape_items:
+          items: $steps.raw_tables.tables.asset_patch_window.rows
+          include_input: true
+        as: asset_patch_window_rows
+      - id: control_mitigation_rows
+        shape_items:
+          items: $steps.raw_tables.tables.control_mitigates_class.rows
+          include_input: true
+          casts:
+            evidence_refs: json
+        as: control_mitigation_rows
+
+      # --- Entities ---
+      - id: assets
+        make_entities:
+          entity_type: Asset
+          items: $steps.asset_rows.items
+          entity_id: $item.asset_id
+          properties:
+            asset_id: $item.asset_id
+            hostname: $item.hostname
+            asset_type: $item.asset_type
+            criticality: $item.criticality
+            environment: $item.environment
+            internet_exposed: $item.internet_exposed
+        as: assets
+      - id: services
+        make_entities:
+          entity_type: BusinessService
+          items: $steps.business_service_rows.items
+          entity_id: $item.service_id
+          properties:
+            service_id: $item.service_id
+            name: $item.name
+            criticality: $item.criticality
+        as: services
+      - id: owners
+        make_entities:
+          entity_type: Owner
+          items: $steps.owner_rows.items
+          entity_id: $item.owner_id
+          properties:
+            owner_id: $item.owner_id
+            name: $item.name
+            team: $item.team
+            email: $item.email
+        as: owners
+      - id: controls
+        make_entities:
+          entity_type: CompensatingControl
+          items: $steps.control_rows.items
+          entity_id: $item.control_id
+          properties:
+            control_id: $item.control_id
+            name: $item.name
+            control_type: $item.control_type
+            status: $item.status
+        as: controls
+      - id: vulnerability_classes
+        make_entities:
+          entity_type: VulnerabilityClass
+          items: $steps.vulnerability_class_rows.items
+          entity_id: $item.class_id
+          properties:
+            class_id: $item.class_id
+            name: $item.name
+            description: $item.description
+            attack_vector: $item.attack_vector
+        as: vulnerability_classes
+      - id: exceptions
+        make_entities:
+          entity_type: Exception
+          items: $steps.exception_rows.items
+          entity_id: $item.exception_id
+          properties:
+            exception_id: $item.exception_id
+            reason: $item.reason
+            review_due_at: $item.review_due_at
+            status: $item.status
+        as: exceptions
+      - id: patch_windows
+        make_entities:
+          entity_type: PatchWindow
+          items: $steps.patch_window_rows.items
+          entity_id: $item.patch_window_id
+          properties:
+            patch_window_id: $item.patch_window_id
+            cadence: $item.cadence
+            next_window_at: $item.next_window_at
+            freeze_status: $item.freeze_status
+            emergency_patch_allowed: $item.emergency_patch_allowed
+            outage_allowed: $item.outage_allowed
+            testing_required: $item.testing_required
+            rollback_required: $item.rollback_required
+            owner_id: $item.owner_id
+        as: patch_windows
+
+      # --- Relationships ---
+      - id: svc_asset_edges
+        make_relationships:
+          relationship_type: service_depends_on_asset
+          items: $steps.service_asset_rows.items
+          from_type: BusinessService
+          from_id: $item.service_id
+          to_type: Asset
+          to_id: $item.asset_id
+        as: svc_asset_edges
+      - id: owned_by_edges
+        make_relationships:
+          relationship_type: asset_owned_by
+          items: $steps.asset_owner_rows.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Owner
+          to_id: $item.owner_id
+        as: owned_by_edges
+      - id: control_edges
+        make_relationships:
+          relationship_type: asset_has_control
+          items: $steps.asset_control_rows.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: CompensatingControl
+          to_id: $item.control_id
+        as: control_edges
+      - id: exception_edges
+        make_relationships:
+          relationship_type: asset_has_exception
+          items: $steps.asset_exception_rows.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Exception
+          to_id: $item.exception_id
+        as: exception_edges
+      - id: patch_window_edges
+        make_relationships:
+          relationship_type: asset_patch_window
+          items: $steps.asset_patch_window_rows.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: PatchWindow
+          to_id: $item.patch_window_id
+        as: patch_window_edges
+      - id: control_mitigation_edges
+        make_relationships:
+          relationship_type: control_mitigates_class
+          items: $steps.control_mitigation_rows.items
+          from_type: CompensatingControl
+          from_id: $item.control_id
+          to_type: VulnerabilityClass
+          to_id: $item.class_id
+          properties:
+            effect: $item.effect
+            validation_basis: $item.validation_basis
+            verified_at: $item.verified_at
+            expires_at: $item.expires_at
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.validation_basis
+        as: control_mitigation_edges
+
+      # --- Apply ---
+      - id: apply_local_state
+        apply_all:
+          entities_from:
+            - assets
+            - services
+            - owners
+            - controls
+            - vulnerability_classes
+            - exceptions
+            - patch_windows
+          relationships_from:
+            - svc_asset_edges
+            - owned_by_edges
+            - control_edges
+            - exception_edges
+            - patch_window_edges
+            - control_mitigation_edges
+        as: apply_local_state
+    returns: apply_local_state
+
+  propose_asset_products:
+    type: proposal
+    description: >
+      Load software inventory, fuzzy match against reference-layer
+      products, and propose asset_runs_product edges through the
+      governed group resolution flow.
+    steps:
+      - id: inventory_tables
+        provider: parse_local_seed_bundle
+        input:
+          expected_tables:
+            - software_inventory
+        as: inventory_tables
+      - id: inventory
+        shape_items:
+          items: $steps.inventory_tables.tables.software_inventory.rows
+          include_input: true
+        as: inventory
+      - id: reference_products
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Product
+        as: reference_products
+      - id: require_complete_reference_products
+        assert_not_truncated:
+          step: reference_products
+      - id: require_reference_products
+        assert_count:
+          step: reference_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset-product proposal requires reference Product entities.
+      - id: matches
+        provider: match_software_to_products
+        input:
+          inventory_items: $steps.inventory.items
+          reference_products: $steps.reference_products.results
+        as: matches
+      - id: match_summary
+        aggregate_items:
+          items: $steps.matches.items
+          group_by:
+            verdict: $item.verdict
+          measures:
+            match_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            matched_products:
+              count_distinct:
+                value: $item.product_id
+        as: match_summary
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_runs_product
+          items: $steps.matches.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Product
+          to_id: $item.product_id
+          properties:
+            observed_software_name: $item.observed_software_name
+            observed_vendor: $item.observed_vendor
+            installed_version: $item.installed_version
+            inventory_source: $item.inventory_source
+            last_seen_at: $item.last_seen_at
+            match_basis: $item.match_basis
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.rationale
+        as: candidates
+      - id: signals
+        map_signals:
+          signal_source: software_product_match
+          items: $steps.matches.items
+          from_id: $item.asset_id
+          to_id: $item.product_id
+          evidence: $item.match_basis
+          evidence_refs: $item.evidence_refs
+          score:
+            path: match_score
+            support_gte: 0.8
+            unsure_gte: 0.5
+        as: signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_runs_product
+          candidates_from: candidates
+          signals_from: [signals]
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Fuzzy software-to-product matching from CMDB inventory
+          analysis_state:
+            match_summary: $steps.match_summary.items
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_asset_exposure:
+    type: proposal
+    description: >
+      Derive affected asset-vulnerability candidates from approved
+      asset-product mappings, then propose the asset exposure edges that
+      should drive action.
+    steps:
+      - id: asset_products
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_runs_product
+          relationship_state: accepted
+        as: asset_products
+      - id: require_complete_asset_products
+        assert_not_truncated:
+          step: asset_products
+      - id: require_asset_products
+        assert_count:
+          step: asset_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires accepted asset-product mappings.
+      - id: vulnerability_products
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_affects_product
+        as: vulnerability_products
+      - id: require_complete_vulnerability_products
+        assert_not_truncated:
+          step: vulnerability_products
+      - id: require_vulnerability_products
+        assert_count:
+          step: vulnerability_products
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires reference vulnerability-product edges.
+      - id: affected_product_join
+        join_items:
+          left_items: $steps.asset_products.results
+          right_items: $steps.vulnerability_products.results
+          left_key: $item.to_id
+          right_key: $item.to_id
+          fields:
+            product_id: $item.join_key
+            asset_product_edge: $item.left
+            vulnerability_product_edge: $item.right
+        as: affected_product_join
+      - id: affected_assessments
+        provider: assess_asset_affected
+        input:
+          joined_product_edges: $steps.affected_product_join.items
+        as: affected_assessments
+      - id: affected_candidates
+        dedupe_items:
+          items: $steps.affected_assessments.items
+          keys:
+            - $item.asset_id
+            - $item.cve_id
+          strategy: max
+          rank: $item.verdict_rank
+        as: affected_candidates
+      - id: assets
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Asset
+        as: assets
+      - id: require_complete_assets
+        assert_not_truncated:
+          step: assets
+      - id: require_assets
+        assert_count:
+          step: assets
+          count: returned_results
+          op: gt
+          value: 0
+          message: Asset exposure proposal requires local Asset entities.
+      - id: affected_asset_context
+        join_items:
+          left_items: $steps.affected_candidates.items
+          right_items: $steps.assets.results
+          left_key: $item.asset_id
+          right_key: $item.entity_id
+          fields:
+            affected_item: $item.left
+            asset_entity: $item.right
+        as: affected_asset_context
+      - id: asset_controls
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_has_control
+        as: asset_controls
+      - id: require_complete_asset_controls
+        assert_not_truncated:
+          step: asset_controls
+      - id: controls
+        query:
+          mode: collection
+          result_shape: entity
+          returns: CompensatingControl
+        as: controls
+      - id: require_complete_controls
+        assert_not_truncated:
+          step: controls
+      - id: asset_control_bindings
+        join_items:
+          left_items: $steps.asset_controls.results
+          right_items: $steps.controls.results
+          left_key: $item.to_id
+          right_key: $item.entity_id
+          fields:
+            asset_id: $item.left.from_id
+            control_id: $item.left.to_id
+            asset_control_edge: $item.left
+            control_entity: $item.right
+        as: asset_control_bindings
+      - id: active_control_bindings
+        filter_items:
+          items: $steps.asset_control_bindings.items
+          comparisons:
+            - left: $item.control_entity.properties.status
+              op: eq
+              right: active
+        as: active_control_bindings
+      - id: vulnerability_classifications
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_classified_as
+          relationship_state: accepted
+        as: vulnerability_classifications
+      - id: require_complete_vulnerability_classifications
+        assert_not_truncated:
+          step: vulnerability_classifications
+      - id: control_mitigations
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: control_mitigates_class
+        as: control_mitigations
+      - id: require_complete_control_mitigations
+        assert_not_truncated:
+          step: control_mitigations
+      - id: assessments
+        provider: assess_asset_exposure
+        input:
+          affected_asset_context: $steps.affected_asset_context.items
+          active_control_bindings: $steps.active_control_bindings.items
+          vulnerability_classification_edges: $steps.vulnerability_classifications.results
+          control_mitigation_edges: $steps.control_mitigations.results
+          assessment_policy:
+            exploitability:
+              direct_exposure_verdict: support
+              reviewable_environments: [production]
+              reviewable_environment_verdict: unsure
+              default_verdict: contradict
+            priority:
+              elevated_exploitability_verdict: support
+              elevated_control_verdict: support
+              elevated_priority_by_criticality:
+                critical: critical
+                default: high
+              high_priority_criticalities: [critical, high]
+              high_priority: high
+              default_priority: medium
+              mitigated_priority_by_current_priority:
+                critical: medium
+                high: medium
+                medium: low
+                low: low
+              reducing_control_effects: [reduces]
+              priority_order: [low, medium, high, critical]
+            control_effects:
+              rank: [blocks, compensates, reduces, detects]
+              mitigating: [blocks, compensates]
+        as: assessments
+      - id: exposure_summary
+        aggregate_items:
+          items: $steps.assessments.items
+          group_by:
+            priority: $item.priority
+          measures:
+            exposure_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+            direct_exploitability_support:
+              count_where:
+                left: $item.verdicts.exploitability
+                op: eq
+                right: support
+            control_signal_support:
+              count_where:
+                left: $item.verdicts.control
+                op: eq
+                right: support
+        as: exposure_summary
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_vulnerability_posture
+          items: $steps.assessments.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            status: $item.status
+            priority: $item.priority
+            product_id: $item.product_id
+            installed_version: $item.installed_version
+            affected_basis: $item.basis.affected
+            exposure_basis: $item.basis.exposure
+            control_basis: $item.basis.control
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.basis.exposure
+        as: candidates
+      - id: version_signals
+        map_signals:
+          signal_source: product_version_evidence
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.basis.affected
+          evidence_refs: $item.evidence_refs
+          enum:
+            path: verdicts.affected
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: version_signals
+      - id: exploitability_signals
+        map_signals:
+          signal_source: exploitability_signal
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.basis.exposure
+          evidence_refs: $item.evidence_refs
+          enum:
+            path: verdicts.exploitability
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: exploitability_signals
+      - id: control_signals
+        map_signals:
+          signal_source: control_effectiveness
+          items: $steps.assessments.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.basis.control
+          evidence_refs: $item.evidence_refs
+          enum:
+            path: verdicts.control
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: control_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_vulnerability_posture
+          candidates_from: candidates
+          signals_from: [version_signals, exploitability_signals, control_signals]
+          thesis_text: >
+            Installed versions fall within KEV reference ranges and
+            exposed asset posture requires action
+          analysis_state:
+            exposure_summary: $steps.exposure_summary.items
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_vulnerability_classification:
+    type: proposal
+    description: >
+      Propose local-layer vulnerability classifications selected by an
+      agent after reviewing the available VulnerabilityClass buckets and
+      prior classification examples.
+    contract_in: VulnerabilityClassificationProposalInput
+    steps:
+      - id: classification_summary
+        aggregate_items:
+          items: $input.items
+          group_by:
+            verdict: $item.verdict
+            class_id: $item.class_id
+          measures:
+            proposal_count:
+              count: true
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+        as: classification_summary
+      - id: candidates
+        make_candidates:
+          relationship_type: vulnerability_classified_as
+          items: $input.items
+          from_type: Vulnerability
+          from_id: $item.cve_id
+          to_type: VulnerabilityClass
+          to_id: $item.class_id
+          properties:
+            basis: $item.basis
+            source: $item.source
+        as: candidates
+      - id: classification_signals
+        map_signals:
+          signal_source: vulnerability_classification
+          items: $input.items
+          from_id: $item.cve_id
+          to_id: $item.class_id
+          evidence: $item.basis
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: classification_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: vulnerability_classified_as
+          candidates_from: candidates
+          signals_from: [classification_signals]
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Agent-selected operational vulnerability classification
+          analysis_state:
+            classification_summary: $steps.classification_summary.items
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+  propose_exposure_reconciliation:
+    type: proposal
+    description: >
+      After a KEV reference refresh or product-mapping refresh, derive the
+      current affected candidate set through Asset -> Product <- Vulnerability
+      and propose remediation/closure for accepted exposure edges that are no
+      longer supported.
+    steps:
+      - id: asset_products
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_runs_product
+          relationship_state: accepted
+        as: asset_products
+      - id: require_complete_reconciliation_asset_products
+        assert_not_truncated:
+          step: asset_products
+      - id: vulnerability_products
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: vulnerability_affects_product
+        as: vulnerability_products
+      - id: require_complete_reconciliation_vulnerability_products
+        assert_not_truncated:
+          step: vulnerability_products
+      - id: reconciliation_product_join
+        join_items:
+          left_items: $steps.asset_products.results
+          right_items: $steps.vulnerability_products.results
+          left_key: $item.to_id
+          right_key: $item.to_id
+          fields:
+            product_id: $item.join_key
+            asset_product_edge: $item.left
+            vulnerability_product_edge: $item.right
+        as: reconciliation_product_join
+      - id: affected_assessments
+        provider: assess_asset_affected
+        input:
+          joined_product_edges: $steps.reconciliation_product_join.items
+        as: affected_assessments
+      - id: affected_candidates
+        dedupe_items:
+          items: $steps.affected_assessments.items
+          keys:
+            - $item.asset_id
+            - $item.cve_id
+          strategy: max
+          rank: $item.verdict_rank
+        as: affected_candidates
+      - id: accepted_exposures
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_vulnerability_posture
+          relationship_state: accepted
+        as: accepted_exposures
+      - id: require_complete_accepted_exposures
+        assert_not_truncated:
+          step: accepted_exposures
+      - id: remediated_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: asset_remediated_vulnerability
+          relationship_state: accepted
+        as: remediated_edges
+      - id: require_complete_remediated_edges
+        assert_not_truncated:
+          step: remediated_edges
+      - id: reconciliation
+        provider: assess_exposure_reconciliation
+        input:
+          accepted_exposure_edges: $steps.accepted_exposures.results
+          affected_items: $steps.affected_candidates.items
+          asset_product_edges: $steps.asset_products.results
+          vulnerability_product_edges: $steps.vulnerability_products.results
+          remediated_edges: $steps.remediated_edges.results
+        as: reconciliation
+      - id: reconciliation_summary
+        aggregate_items:
+          items: $steps.reconciliation.items
+          group_by:
+            remediation_type: $item.remediation_type
+          measures:
+            closure_count:
+              count: true
+            affected_assets:
+              count_distinct:
+                value: $item.asset_id
+            vulnerabilities:
+              count_distinct:
+                value: $item.cve_id
+        as: reconciliation_summary
+      - id: candidates
+        make_candidates:
+          relationship_type: asset_remediated_vulnerability
+          items: $steps.reconciliation.items
+          from_type: Asset
+          from_id: $item.asset_id
+          to_type: Vulnerability
+          to_id: $item.cve_id
+          properties:
+            remediation_type: $item.remediation_type
+            verification_basis: $item.rationale
+          evidence:
+            refs: $item.evidence_refs
+            rationale: $item.rationale
+        as: candidates
+      - id: remediation_signals
+        map_signals:
+          signal_source: remediation_verification
+          items: $steps.reconciliation.items
+          from_id: $item.asset_id
+          to_id: $item.cve_id
+          evidence: $item.rationale
+          evidence_refs: $item.evidence_refs
+          enum:
+            path: verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: remediation_signals
+      - id: proposal
+        propose_relationship_group:
+          relationship_type: asset_remediated_vulnerability
+          candidates_from: candidates
+          signals_from: [remediation_signals]
+          on_empty: complete
+          pending_refresh_mode: retain_missing
+          thesis_text: >
+            Accepted exposure edges no longer supported by current
+            product-derived affected evidence should be closed
+          analysis_state:
+            reconciliation_summary: $steps.reconciliation_summary.items
+          proposed_by: agent
+        as: proposal
+    returns: proposal
+
+# ─── Feedback profiles (Loop 1) ──────────────────────────────────────
+
+feedback_profiles:
+  asset_runs_product:
+    version: 1
+    reason_codes:
+      wrong_product_match:
+        description: Fuzzy match linked asset to the wrong reference product.
+        remediation_hint: provider_fix
+        required_scope_keys: [product, hostname]
+      version_mismatch:
+        description: Matched correct product but installed version is wrong.
+        remediation_hint: quality_check
+        required_scope_keys: [product]
+      stale_inventory:
+        description: CMDB or software inventory data was outdated at match time.
+        remediation_hint: provider_fix
+        required_scope_keys: [inventory_source]
+    scope_keys:
+      product: TO.product_name
+      hostname: FROM.hostname
+      inventory_source: EDGE.inventory_source
+
+  asset_vulnerability_posture:
+    version: 1
+    reason_codes:
+      version_not_in_range:
+        description: Installed version is not within the NVD affected range.
+        remediation_hint: constraint
+        required_scope_keys: [cve, product]
+      control_mitigates:
+        description: A compensating control effectively blocks this exploit path.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, criticality]
+      not_internet_reachable:
+        description: Asset is not reachable from the attack vector.
+        remediation_hint: constraint
+        required_scope_keys: [environment]
+      epss_score_stale:
+        description: EPSS score has changed since the exposure judgment.
+        remediation_hint: provider_fix
+        required_scope_keys: [cve]
+    scope_keys:
+      cve: TO.cve_id
+      product: EDGE.product_id
+      criticality: FROM.criticality
+      environment: FROM.environment
+
+  asset_patch_exception_for:
+    version: 1
+    reason_codes:
+      exception_expired:
+        description: Exception review date has passed without renewal.
+        remediation_hint: constraint
+        required_scope_keys: [exception_id]
+      scope_mismatch:
+        description: Exception does not cover this specific vulnerability.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, exception_id]
+    scope_keys:
+      cve: TO.cve_id
+      exception_id: EDGE.exception_id
+
+  vulnerability_classified_as:
+    version: 1
+    reason_codes:
+      wrong_class:
+        description: Vulnerability was assigned to the wrong operational class.
+        remediation_hint: provider_fix
+        required_scope_keys: [cve, class]
+      classification_too_broad:
+        description: Classification is too broad for control or scenario analysis.
+        remediation_hint: decision_policy
+        required_scope_keys: [cve, class]
+    scope_keys:
+      cve: FROM.cve_id
+      class: TO.class_id
+
+  control_mitigates_class:
+    version: 1
+    reason_codes:
+      control_not_validated:
+        description: Curated local control coverage has not been tested against this vulnerability class; correct the local seed/config evidence.
+        remediation_hint: quality_check
+        required_scope_keys: [control_type]
+      wrong_vulnerability_class:
+        description: Curated local control coverage maps this control to the wrong vulnerability class; correct the local seed/config mapping.
+        remediation_hint: constraint
+        required_scope_keys: [control_type, class]
+    scope_keys:
+      control_type: FROM.control_type
+      class: TO.class_id
+
+  asset_remediated_vulnerability:
+    version: 1
+    reason_codes:
+      wrong_closure:
+        description: The asset-vulnerability pair was not actually remediated.
+        remediation_hint: provider_fix
+        required_scope_keys: [asset, cve]
+      insufficient_verification:
+        description: Evidence was too weak to claim verified remediation.
+        remediation_hint: quality_check
+        required_scope_keys: [asset, cve]
+      regression_after_fix:
+        description: The issue reappeared after remediation was recorded.
+        remediation_hint: provider_fix
+        required_scope_keys: [asset, cve]
+    scope_keys:
+      asset: FROM.asset_id
+      cve: TO.cve_id
+
+# ─── Outcome profiles (Loop 2) ───────────────────────────────────────
+
+outcome_profiles:
+  # Resolution-anchored: was this proposal resolution correct?
+
+  asset_runs_product_resolution:
+    anchor_type: resolution
+    relationship_type: asset_runs_product
+    version: 1
+    outcome_codes:
+      wrong_product_match:
+        description: The fuzzy match resolved to the wrong reference product.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      version_drift:
+        description: Match was correct at resolution time but the asset has since been patched.
+        remediation_hint: provider_fix
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  asset_vulnerability_posture_resolution:
+    anchor_type: resolution
+    relationship_type: asset_vulnerability_posture
+    version: 1
+    outcome_codes:
+      overestimated_exposure:
+        description: Control was effective but was not credited during resolution.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      underestimated_exposure:
+        description: An attack path was missed during exposure assessment.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  asset_remediated_resolution:
+    anchor_type: resolution
+    relationship_type: asset_remediated_vulnerability
+    version: 1
+    outcome_codes:
+      premature_closure:
+        description: The remediation was accepted before the asset was actually closed.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      verified_remediation:
+        description: The remediation decision was correct and the asset remained closed.
+        required_scope_keys: [relationship_type]
+      reopened_after_regression:
+        description: The asset later became exposed again after remediation.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  # Receipt-anchored: did this query surface give a good answer?
+
+  vulnerability_asset_context_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: vulnerability_asset_context
+    version: 1
+    outcome_codes:
+      missing_results:
+        description: A known-affected asset was not returned by the query.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_result:
+        description: Query returned an asset that is not actually affected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  owner_patch_queue_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: owner_patch_queue
+    version: 1
+    outcome_codes:
+      stale_priority:
+        description: Returned vulnerability that has already been patched or mitigated.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      missing_exposure:
+        description: An exposed vulnerability was not returned for this owner.
+        remediation_hint: workflow_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name

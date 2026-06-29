@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cruxible-client"
+version = "0.2.0"
+description = "Client package for talking to a governed Cruxible daemon."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Alchemyze LLC DBA Cruxible"},
+]
+dependencies = [
+    "httpx>=0.24",
+    "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cruxible-ai/cruxible-core"
+Documentation = "https://github.com/cruxible-ai/cruxible-core/tree/main/docs"
+Repository = "https://github.com/cruxible-ai/cruxible-core"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cruxible_client"]

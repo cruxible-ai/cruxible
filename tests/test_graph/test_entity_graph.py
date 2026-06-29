@@ -2,10 +2,13 @@
 
 import pytest
 
+from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
+from cruxible_core.graph.provenance import RelationshipProvenance
 from cruxible_core.graph.types import (
     EntityInstance,
     RelationshipInstance,
+    RelationshipMetadata,
     make_node_id,
     split_node_id,
 )
@@ -51,20 +54,20 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": True, "confidence": 0.95},
         )
     )
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-1234",
-            to_entity_type="Vehicle",
-            to_entity_id="V-ACCORD",
+            from_type="Part",
+            from_id="BP-1234",
+            to_type="Vehicle",
+            to_id="V-ACCORD",
             properties={"verified": True, "confidence": 0.9},
         )
     )
@@ -72,10 +75,10 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="fits",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Vehicle",
-            to_entity_id="V-CIVIC",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Vehicle",
+            to_id="V-CIVIC",
             properties={"verified": False, "confidence": 0.7},
         )
     )
@@ -83,10 +86,10 @@ def populated_graph(graph: EntityGraph) -> EntityGraph:
     graph.add_relationship(
         RelationshipInstance(
             relationship_type="replaces",
-            from_entity_type="Part",
-            from_entity_id="BP-5678",
-            to_entity_type="Part",
-            to_entity_id="BP-1234",
+            from_type="Part",
+            from_id="BP-5678",
+            to_type="Part",
+            to_id="BP-1234",
             properties={"direction": "upgrade"},
         )
     )
@@ -198,10 +201,10 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="NEW-PART",
-                to_entity_type="Vehicle",
-                to_entity_id="NEW-VEHICLE",
+                from_type="Part",
+                from_id="NEW-PART",
+                to_type="Vehicle",
+                to_id="NEW-VEHICLE",
             )
         )
         assert graph.has_entity("Part", "NEW-PART")
@@ -218,30 +221,30 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "A"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "B"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="replaces",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={},
             )
         )
@@ -251,15 +254,15 @@ class TestRelationshipOperations:
         assert graph.relationship_count_between("Part", "P-1", "Vehicle", "V-1", "unknown") == 0
         assert graph.relationship_count_between("Part", "P-1", "Vehicle", "V-2", "fits") == 0
 
-    def test_get_neighbors_with_edge_refs(self, populated_graph: EntityGraph):
-        refs = populated_graph.get_neighbors_with_edge_refs(
+    def test_get_neighbors_with_relationship_refs(self, populated_graph: EntityGraph):
+        refs = populated_graph.get_neighbors_with_relationship_refs(
             "Part",
             "BP-1234",
             relationship_type="fits",
             direction="outgoing",
         )
         assert len(refs) == 2
-        assert all(isinstance(edge_key, int) for _, _, edge_key in refs)
+        assert all(isinstance(edge_key, int) for _, _, _, edge_key in refs)
 
     def test_update_specific_edge_by_key(self, graph: EntityGraph):
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
@@ -267,106 +270,159 @@ class TestRelationshipOperations:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "A"},
             )
         )
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
                 properties={"source": "B"},
             )
         )
-        refs = graph.get_neighbors_with_edge_refs(
+        refs = graph.get_neighbors_with_relationship_refs(
             "Part",
             "P-1",
             relationship_type="fits",
             direction="outgoing",
         )
-        key_for_b = next(edge_key for _, props, edge_key in refs if props.get("source") == "B")
-        updated = graph.update_edge_properties(
+        key_for_b = next(
+            edge_key for _, props, _metadata, edge_key in refs if props.get("source") == "B"
+        )
+        updated = graph.update_relationship_state(
             "Part",
             "P-1",
             "Vehicle",
             "V-1",
             "fits",
-            {"review_status": "human_approved"},
+            property_updates={"reviewed": True},
             edge_key=key_for_b,
         )
         assert updated is True
-        refs_after = graph.get_neighbors_with_edge_refs(
+        refs_after = graph.get_neighbors_with_relationship_refs(
             "Part",
             "P-1",
             relationship_type="fits",
             direction="outgoing",
         )
-        statuses = {props.get("source"): props.get("review_status") for _, props, _ in refs_after}
-        assert statuses["A"] is None
-        assert statuses["B"] == "human_approved"
+        reviewed = {
+            props.get("source"): props.get("reviewed")
+            for _, props, _metadata, _edge_key in refs_after
+        }
+        assert reviewed["A"] is None
+        assert reviewed["B"] is True
 
 
-class TestReplaceEdgeProperties:
-    def test_replace_preserves_provenance(self, graph: EntityGraph):
-        """replace_edge_properties auto-preserves _provenance when not explicitly provided."""
+class TestRelationshipStateWrites:
+    def test_update_relationship_state_merges_properties_and_preserves_metadata(
+        self, graph: EntityGraph
+    ):
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
-        prov = {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
-                properties={"confidence": 0.9, "_provenance": prov},
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"confidence": 0.9},
+                metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
             )
         )
-        # Replace properties without _provenance — should be preserved
-        graph.replace_edge_properties(
+        updated = graph.update_relationship_state(
             "Part",
             "P-1",
             "Vehicle",
             "V-1",
             "fits",
-            {"confidence": 0.95},
+            property_updates={"reviewed": True},
         )
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
+        assert updated is True
+        assert rel.properties == {"confidence": 0.9, "reviewed": True}
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.source == "ingest"
+
+    def test_replace_relationship_state_replaces_properties_and_metadata(self, graph: EntityGraph):
+        graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
+        graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
+        graph.add_relationship(
+            RelationshipInstance(
+                relationship_type="fits",
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"confidence": 0.9},
+                metadata=RelationshipMetadata(
+                    assertion=RelationshipAssertion(
+                        review=RelationshipReviewState(
+                            status="approved",
+                            source="human",
+                        )
+                    )
+                ),
+            )
+        )
+
+        updated = graph.replace_relationship_state(
+            "Part",
+            "P-1",
+            "Vehicle",
+            "V-1",
+            "fits",
+            properties={"confidence": 0.95},
+            metadata=RelationshipMetadata(
+                assertion=RelationshipAssertion(
+                    review=RelationshipReviewState(
+                        status="rejected",
+                        source="agent",
+                    )
+                )
+            ),
+        )
+
+        rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
+        assert updated is True
         assert rel.properties["confidence"] == 0.95
-        assert rel.properties["_provenance"] == prov
+        assert rel.metadata.assertion.review.status == "rejected"
+        assert rel.metadata.assertion.review.source == "agent"
 
-    def test_replace_allows_explicit_provenance_override(self, graph: EntityGraph):
-        """When caller explicitly provides _provenance, it is used."""
+    def test_update_relationship_state_replaces_metadata(self, graph: EntityGraph):
         graph.add_entity(EntityInstance(entity_type="Part", entity_id="P-1", properties={}))
         graph.add_entity(EntityInstance(entity_type="Vehicle", entity_id="V-1", properties={}))
-        old_prov = {"source": "ingest", "created_at": "2026-01-01T00:00:00+00:00"}
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="P-1",
-                to_entity_type="Vehicle",
-                to_entity_id="V-1",
-                properties={"confidence": 0.9, "_provenance": old_prov},
+                from_type="Part",
+                from_id="P-1",
+                to_type="Vehicle",
+                to_id="V-1",
+                properties={"confidence": 0.9},
+                metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="ingest")),
             )
         )
-        new_prov = {"source": "mcp_add", "created_at": "2026-02-01T00:00:00+00:00"}
-        graph.replace_edge_properties(
+        updated = graph.update_relationship_state(
             "Part",
             "P-1",
             "Vehicle",
             "V-1",
             "fits",
-            {"confidence": 0.95, "_provenance": new_prov},
+            metadata=RelationshipMetadata(provenance=RelationshipProvenance(source="mcp_add")),
         )
         rel = graph.get_relationship("Part", "P-1", "Vehicle", "V-1", "fits")
-        assert rel.properties["_provenance"] == new_prov
+        assert updated is True
+        assert rel.properties == {"confidence": 0.9}
+        assert rel.metadata.provenance is not None
+        assert rel.metadata.provenance.source == "mcp_add"
 
 
 class TestGetDescendants:
@@ -487,10 +543,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         desc = graph.get_descendants("N", "1", "next")
@@ -503,10 +559,10 @@ class TestGetDescendants:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="self_ref",
-                from_entity_type="N",
-                from_entity_id="1",
-                to_entity_type="N",
-                to_entity_id="1",
+                from_type="N",
+                from_id="1",
+                to_type="N",
+                to_id="1",
             )
         )
         desc = graph.get_descendants("N", "1", "self_ref")
@@ -528,10 +584,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="link",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         desc = graph.get_descendants("N", "A", "link")
@@ -553,10 +609,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=str(i),
-                    to_entity_type="N",
-                    to_entity_id=str(i + 1),
+                    from_type="N",
+                    from_id=str(i),
+                    to_type="N",
+                    to_id=str(i + 1),
                 )
             )
         desc = graph.get_descendants("N", "0", "next")
@@ -571,10 +627,10 @@ class TestGetDescendants:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=str(i),
-                    to_entity_type="N",
-                    to_entity_id=str(i + 1),
+                    from_type="N",
+                    from_id=str(i),
+                    to_type="N",
+                    to_id=str(i + 1),
                 )
             )
         desc = graph.get_descendants("N", "0", "next", max_depth=2)
@@ -605,10 +661,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "C", "parent")
@@ -628,10 +684,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent", max_depth=1)
@@ -646,10 +702,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent", max_depth=2)
@@ -664,10 +720,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="next",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "A", "next")
@@ -680,10 +736,10 @@ class TestGetAncestors:
         graph.add_relationship(
             RelationshipInstance(
                 relationship_type="self_ref",
-                from_entity_type="N",
-                from_entity_id="1",
-                to_entity_type="N",
-                to_entity_id="1",
+                from_type="N",
+                from_id="1",
+                to_type="N",
+                to_id="1",
             )
         )
         anc = graph.get_ancestors("N", "1", "self_ref")
@@ -705,10 +761,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id="C",
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id="C",
                 )
             )
         anc = graph.get_ancestors("N", "C", "parent")
@@ -724,10 +780,10 @@ class TestGetAncestors:
             graph.add_relationship(
                 RelationshipInstance(
                     relationship_type="parent",
-                    from_entity_type="N",
-                    from_entity_id=src,
-                    to_entity_type="N",
-                    to_entity_id=dst,
+                    from_type="N",
+                    from_id=src,
+                    to_type="N",
+                    to_id=dst,
                 )
             )
         anc = graph.get_ancestors("N", "D", "parent")
@@ -754,7 +810,7 @@ class TestFindPath:
 
 class TestIterEdges:
     def test_iter_edges_yields_all_keys(self, populated_graph: EntityGraph):
-        """iter_edges() yields dicts with all 7 expected keys."""
+        """iter_edges() yields dicts with edge identity, properties, and metadata."""
         expected_keys = {
             "from_type",
             "from_id",
@@ -763,6 +819,7 @@ class TestIterEdges:
             "relationship_type",
             "edge_key",
             "properties",
+            "metadata",
         }
         for edge in populated_graph.iter_edges():
             assert set(edge.keys()) == expected_keys
@@ -787,38 +844,52 @@ class TestIterEdges:
             populated_graph.iter_edges(relationship_type="fits")
         )
 
-    def test_iter_edge_data_matches_iter_edges(self, populated_graph: EntityGraph):
-        """iter_edge_data() yields tuples matching iter_edges() data."""
-        for edge_dict, edge_tuple in zip(
+    def test_iter_relationships_matches_iter_edges(self, populated_graph: EntityGraph):
+        """iter_relationships() yields typed rows matching iter_edges() data."""
+        for edge_dict, relationship in zip(
             populated_graph.iter_edges(),
-            populated_graph.iter_edge_data(),
+            populated_graph.iter_relationships(),
             strict=True,
         ):
-            from_type, from_id, to_type, to_id, props = edge_tuple
-            assert from_type == edge_dict["from_type"]
-            assert from_id == edge_dict["from_id"]
-            assert to_type == edge_dict["to_type"]
-            assert to_id == edge_dict["to_id"]
-            assert props == edge_dict["properties"]
+            assert relationship.from_type == edge_dict["from_type"]
+            assert relationship.from_id == edge_dict["from_id"]
+            assert relationship.to_type == edge_dict["to_type"]
+            assert relationship.to_id == edge_dict["to_id"]
+            assert relationship.properties == edge_dict["properties"]
+            assert (
+                relationship.metadata.model_dump(mode="json", exclude_none=True)
+                == edge_dict["metadata"]
+            )
 
     def test_iter_edges_empty_graph(self, graph: EntityGraph):
         assert list(graph.iter_edges()) == []
 
+    def test_iter_edges_rejects_missing_relationship_type(self, populated_graph: EntityGraph):
+        data = populated_graph.to_dict()
+        del data["edges"][0]["relationship_type"]
+        restored = EntityGraph.from_dict(data)
+
+        with pytest.raises(ValueError, match="missing relationship_type"):
+            list(restored.iter_edges())
+
+        with pytest.raises(ValueError, match="missing relationship_type"):
+            list(restored.iter_edges(relationship_type="replaces"))
+
 
 class TestEdgeIteration:
-    def test_iter_edge_data(self, populated_graph: EntityGraph):
-        edges = list(populated_graph.iter_edge_data("fits"))
-        assert len(edges) == 3
-        for from_type, from_id, to_type, to_id, props in edges:
-            assert from_type == "Part"
-            assert to_type == "Vehicle"
+    def test_iter_relationships(self, populated_graph: EntityGraph):
+        relationships = list(populated_graph.iter_relationships("fits"))
+        assert len(relationships) == 3
+        for relationship in relationships:
+            assert relationship.from_type == "Part"
+            assert relationship.to_type == "Vehicle"
 
-    def test_iter_edge_data_all(self, populated_graph: EntityGraph):
-        all_edges = list(populated_graph.iter_edge_data())
-        assert len(all_edges) == 4
+    def test_iter_relationships_all(self, populated_graph: EntityGraph):
+        all_relationships = list(populated_graph.iter_relationships())
+        assert len(all_relationships) == 4
 
     def test_get_neighbors_outgoing(self, populated_graph: EntityGraph):
-        neighbors = populated_graph.get_neighbors_with_edge_refs(
+        neighbors = populated_graph.get_neighbors_with_relationship_refs(
             "Part", "BP-1234", "fits", direction="outgoing"
         )
         assert len(neighbors) == 2
@@ -826,7 +897,7 @@ class TestEdgeIteration:
         assert ids == {"V-CIVIC", "V-ACCORD"}
 
     def test_get_neighbors_incoming(self, populated_graph: EntityGraph):
-        neighbors = populated_graph.get_neighbors_with_edge_refs(
+        neighbors = populated_graph.get_neighbors_with_relationship_refs(
             "Vehicle", "V-CIVIC", "fits", direction="incoming"
         )
         assert len(neighbors) == 2
@@ -834,14 +905,14 @@ class TestEdgeIteration:
         assert ids == {"BP-1234", "BP-5678"}
 
     def test_get_neighbors_both(self, populated_graph: EntityGraph):
-        neighbors = populated_graph.get_neighbors_with_edge_refs(
+        neighbors = populated_graph.get_neighbors_with_relationship_refs(
             "Part", "BP-1234", direction="both"
         )
         # outgoing: 2 fits edges, incoming: 1 replaces edge
         assert len(neighbors) == 3
 
     def test_get_neighbors_missing(self, graph: EntityGraph):
-        assert graph.get_neighbors_with_edge_refs("Part", "MISSING") == []
+        assert graph.get_neighbors_with_relationship_refs("Part", "MISSING") == []
 
 
 class TestIntrospection:
@@ -965,10 +1036,10 @@ class TestToDictFromDict:
         restored.add_relationship(
             RelationshipInstance(
                 relationship_type="fits",
-                from_entity_type="Part",
-                from_entity_id="BP-1234",
-                to_entity_type="Vehicle",
-                to_entity_id="V-CIVIC",
+                from_type="Part",
+                from_id="BP-1234",
+                to_type="Vehicle",
+                to_id="V-CIVIC",
                 properties={"source": "new"},
             )
         )
@@ -979,6 +1050,70 @@ class TestToDictFromDict:
             == 2
         )
         assert restored.edge_count() == populated_graph.edge_count() + 1
+
+
+class TestExtractAndMerge:
+    def test_merge_does_not_let_empty_extracted_stub_overwrite_base_entity(
+        self,
+    ):
+        current = EntityGraph()
+        current.add_entity(
+            EntityInstance(
+                entity_type="ReferenceThing",
+                entity_id="R-1",
+                properties={"name": "old upstream value"},
+            )
+        )
+        current.add_entity(
+            EntityInstance(
+                entity_type="LocalThing",
+                entity_id="L-1",
+                properties={"name": "local value"},
+            )
+        )
+        current.add_relationship(
+            RelationshipInstance(
+                relationship_type="local_links_reference",
+                from_type="LocalThing",
+                from_id="L-1",
+                to_type="ReferenceThing",
+                to_id="R-1",
+                properties={"reason": "watch"},
+            )
+        )
+
+        overlay = current.extract_owned_subgraph(
+            entity_types=["LocalThing"],
+            relationship_types=["local_links_reference"],
+        )
+        stub = overlay.get_entity("ReferenceThing", "R-1")
+        assert stub is not None
+        assert stub.properties == {}
+
+        next_upstream = EntityGraph()
+        next_upstream.add_entity(
+            EntityInstance(
+                entity_type="ReferenceThing",
+                entity_id="R-1",
+                properties={"name": "new upstream value"},
+            )
+        )
+
+        merged = EntityGraph.merge_graphs(next_upstream, overlay)
+
+        reference = merged.get_entity("ReferenceThing", "R-1")
+        assert reference is not None
+        assert reference.properties == {"name": "new upstream value"}
+        local = merged.get_entity("LocalThing", "L-1")
+        assert local is not None
+        assert local.properties == {"name": "local value"}
+        assert merged.has_relationship(
+            "LocalThing",
+            "L-1",
+            "ReferenceThing",
+            "R-1",
+            "local_links_reference",
+        )
 
 
 class TestCountEdges:

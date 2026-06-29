@@ -1,0 +1,14 @@
+schema_version: cruxible.kit.v1
+kit_id: kev-triage
+version: 0.2.0
+role: overlay
+target_state: kev-reference
+entry_config: config.yaml
+provider_paths:
+  - providers
+copy_paths:
+  - data
+  - source_data
+  - skills
+  - README.md
+requires_extras: []

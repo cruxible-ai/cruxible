@@ -1,0 +1,7 @@
+control_id,name,control_type,status
+CTRL-1,Edge WAF,waf,active
+CTRL-2,Managed EDR,endpoint_detection,active
+CTRL-3,Reverse Proxy Allowlist,network_acl,active
+CTRL-4,Legacy WAF,waf,inactive
+CTRL-5,Admin VPN ACL,network_acl,active
+CTRL-6,Browser Isolation,endpoint_detection,active

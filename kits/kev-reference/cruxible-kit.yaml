@@ -1,0 +1,11 @@
+schema_version: cruxible.kit.v1
+kit_id: kev-reference
+version: 0.2.0
+role: standalone
+entry_config: config.yaml
+provider_paths:
+  - providers
+copy_paths:
+  - data
+  - README.md
+requires_extras: []
