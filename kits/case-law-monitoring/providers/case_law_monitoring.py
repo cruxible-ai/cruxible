@@ -70,7 +70,36 @@ def route_review_items(
     _raise_not_implemented("route_review_items")
 
 
+def load_corpus_seed(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("load_corpus_seed")
+
+
+def load_docket_feed(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("load_docket_feed")
+
+
+def load_case_outcome_feed(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("load_case_outcome_feed")
+
+
+def sweep_stale_review_state(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("sweep_stale_review_state")
+
+
 def _raise_not_implemented(provider_name: str) -> NoReturn:
     raise NotImplementedError(
-        f"Case-law monitoring kit provider '{provider_name}' is not implemented yet."
+        f"Case-law monitoring kit provider '{provider_name}' is a scaffold placeholder; "
+        "implement it or supply seed data before running this kit's workflows."
     )

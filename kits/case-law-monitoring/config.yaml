@@ -824,6 +824,61 @@ named_queries:
       - relationship: opinion_creates_review_item
         direction: outgoing
 
+  authorities_in_matter_jurisdiction:
+    mode: traversal
+    description: Starting from a matter, find opinions issued by courts in the matter's jurisdiction.
+    entry_point: Matter
+    returns: Opinion
+    traversal:
+      - relationship: matter_in_jurisdiction
+        direction: outgoing
+      - relationship: opinion_from_court
+        direction: incoming
+
+  opinions_by_judge:
+    mode: traversal
+    description: Starting from a judge, find opinions that judge authored or joined.
+    entry_point: Judge
+    returns: Opinion
+    traversal:
+      - relationship: opinion_decided_by_judge
+        direction: incoming
+
+  supporting_authority_now_bad_law:
+    mode: traversal
+    description: >
+      Starting from a matter, reach its supporting holdings and their opinions,
+      then surface opinions that negatively treat those supporting authorities
+      (overrules, abrogates, or limits) so a once-good authority that just went
+      bad is flagged.
+    entry_point: Matter
+    returns: Opinion
+    traversal:
+      - relationship: argument_in_matter
+        direction: incoming
+      - relationship: holding_supports_argument
+        direction: incoming
+      - relationship: opinion_has_holding
+        direction: incoming
+      - relationship: opinion_treats_opinion
+        direction: incoming
+
+  statute_interpretations_for_matter:
+    mode: traversal
+    description: >
+      Starting from a matter, follow its statutory scope to statutes, then find
+      the holdings that interpret those statutes and the opinions that contain
+      them.
+    entry_point: Matter
+    returns: Opinion
+    traversal:
+      - relationship: matter_turns_on_statute
+        direction: outgoing
+      - relationship: holding_interprets_statute
+        direction: incoming
+      - relationship: opinion_has_holding
+        direction: incoming
+
 # ─── Quality checks ──────────────────────────────────────────────────
 
 quality_checks:
@@ -903,6 +958,87 @@ quality_checks:
 contracts:
   EmptyInput:
     fields: {}
+
+  CorpusSeedOutput:
+    fields:
+      opinions:
+        type: json
+      courts:
+        type: json
+      judges:
+        type: json
+      statutes:
+        type: json
+      legal_issues:
+        type: json
+      clients:
+        type: json
+      matters:
+        type: json
+      attorneys:
+        type: json
+      arguments:
+        type: json
+      opinion_from_court_edges:
+        type: json
+      opinion_decided_by_judge_edges:
+        type: json
+      opinion_cites_opinion_edges:
+        type: json
+      matter_for_client_edges:
+        type: json
+      matter_assigned_to_attorney_edges:
+        type: json
+      matter_in_jurisdiction_edges:
+        type: json
+      argument_in_matter_edges:
+        type: json
+      argument_raises_issue_edges:
+        type: json
+      argument_cites_opinion_edges:
+        type: json
+      statute_governs_issue_edges:
+        type: json
+
+  DocketFeedOutput:
+    fields:
+      filings:
+        type: json
+      deadlines:
+        type: json
+      filing_in_matter_edges:
+        type: json
+      matter_has_deadline_edges:
+        type: json
+
+  CaseOutcomeFeedOutput:
+    fields:
+      case_outcomes:
+        type: json
+      outcome_of_matter_edges:
+        type: json
+      outcome_resolved_argument_edges:
+        type: json
+
+  StaleReviewSweepInput:
+    fields:
+      review_items:
+        type: json
+      deadlines:
+        type: json
+      matters:
+        type: json
+      review_item_matter_edges:
+        type: json
+      matter_deadline_edges:
+        type: json
+
+  StaleReviewSweepOutput:
+    fields:
+      review_items:
+        type: json
+      deadlines:
+        type: json
 
   OpinionAnalysisInput:
     fields:
@@ -997,6 +1133,10 @@ contracts:
       treatment_edges:
         type: json
       matter_statute_edges:
+        type: json
+      opinion_court_edges:
+        type: json
+      matter_jurisdiction_edges:
         type: json
 
   MatterImpactOutput:
@@ -1109,7 +1249,549 @@ providers:
     version: "0.1.0"
     deterministic: false
 
+  load_corpus_seed:
+    description: Load base-world opinions, courts, judges, statutes, issues, clients, matters, attorneys, arguments, and their deterministic canonical edges.
+    contract_in: EmptyInput
+    contract_out: CorpusSeedOutput
+    ref: kit://providers/case_law_monitoring.py::load_corpus_seed
+    version: "0.1.0"
+    deterministic: true
+
+  load_docket_feed:
+    description: Load filings and deadlines arriving from a docket feed with their matter edges.
+    contract_in: EmptyInput
+    contract_out: DocketFeedOutput
+    ref: kit://providers/case_law_monitoring.py::load_docket_feed
+    version: "0.1.0"
+    deterministic: true
+
+  load_case_outcome_feed:
+    description: Load resolved case outcomes and their matter and argument edges.
+    contract_in: EmptyInput
+    contract_out: CaseOutcomeFeedOutput
+    ref: kit://providers/case_law_monitoring.py::load_case_outcome_feed
+    version: "0.1.0"
+    deterministic: true
+
+  sweep_stale_review_state:
+    description: Identify open review items and pending deadlines that should be closed because their matter is closed or the obligation has lapsed.
+    contract_in: StaleReviewSweepInput
+    contract_out: StaleReviewSweepOutput
+    ref: kit://providers/case_law_monitoring.py::sweep_stale_review_state
+    version: "0.1.0"
+    deterministic: true
+
 workflows:
+  build_corpus:
+    type: canonical
+    description: >
+      Load the base-world legal corpus: opinions, courts, judges, statutes,
+      legal issues, clients, matters, attorneys, and arguments, plus the
+      deterministic canonical edges that anchor them (issuing court, deciding
+      judge, citation graph, matter client/attorney/jurisdiction, and argument
+      context). This is the canonical creation path for the anchors the governed
+      proposal workflows later read.
+    contract_in: EmptyInput
+    steps:
+      - id: seed
+        provider: load_corpus_seed
+        input: {}
+        as: seed
+      # --- Entities ---
+      - id: opinions
+        make_entities:
+          entity_type: Opinion
+          items: $steps.seed.opinions
+          entity_id: $item.opinion_id
+          properties:
+            opinion_id: $item.opinion_id
+            case_name: $item.case_name
+            citation: $item.citation
+            docket_number: $item.docket_number
+            date_filed: $item.date_filed
+            jurisdiction: $item.jurisdiction
+            precedential_status: $item.precedential_status
+            source_url: $item.source_url
+        as: opinions
+      - id: courts
+        make_entities:
+          entity_type: Court
+          items: $steps.seed.courts
+          entity_id: $item.court_id
+          properties:
+            court_id: $item.court_id
+            name: $item.name
+            jurisdiction: $item.jurisdiction
+            level: $item.level
+        as: courts
+      - id: judges
+        make_entities:
+          entity_type: Judge
+          items: $steps.seed.judges
+          entity_id: $item.judge_id
+          properties:
+            judge_id: $item.judge_id
+            name: $item.name
+            court_hint: $item.court_hint
+        as: judges
+      - id: statutes
+        make_entities:
+          entity_type: Statute
+          items: $steps.seed.statutes
+          entity_id: $item.statute_id
+          properties:
+            statute_id: $item.statute_id
+            title: $item.title
+            section: $item.section
+            jurisdiction: $item.jurisdiction
+            topic: $item.topic
+        as: statutes
+      - id: legal_issues
+        make_entities:
+          entity_type: LegalIssue
+          items: $steps.seed.legal_issues
+          entity_id: $item.issue_id
+          properties:
+            issue_id: $item.issue_id
+            name: $item.name
+            practice_area: $item.practice_area
+            description: $item.description
+        as: legal_issues
+      - id: clients
+        make_entities:
+          entity_type: Client
+          items: $steps.seed.clients
+          entity_id: $item.client_id
+          properties:
+            client_id: $item.client_id
+            name: $item.name
+            industry: $item.industry
+        as: clients
+      - id: matters
+        make_entities:
+          entity_type: Matter
+          items: $steps.seed.matters
+          entity_id: $item.matter_id
+          properties:
+            matter_id: $item.matter_id
+            name: $item.name
+            client_name: $item.client_name
+            matter_type: $item.matter_type
+            status: $item.status
+            jurisdiction: $item.jurisdiction
+        as: matters
+      - id: attorneys
+        make_entities:
+          entity_type: Attorney
+          items: $steps.seed.attorneys
+          entity_id: $item.attorney_id
+          properties:
+            attorney_id: $item.attorney_id
+            name: $item.name
+            team: $item.team
+            email: $item.email
+        as: attorneys
+      - id: arguments
+        make_entities:
+          entity_type: Argument
+          items: $steps.seed.arguments
+          entity_id: $item.argument_id
+          properties:
+            argument_id: $item.argument_id
+            title: $item.title
+            description: $item.description
+            argument_type: $item.argument_type
+            position: $item.position
+            status: $item.status
+        as: arguments
+      # --- Relationships ---
+      - id: opinion_court_edges
+        make_relationships:
+          relationship_type: opinion_from_court
+          items: $steps.seed.opinion_from_court_edges
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Court
+          to_id: $item.court_id
+        as: opinion_court_edges
+      - id: opinion_judge_edges
+        make_relationships:
+          relationship_type: opinion_decided_by_judge
+          items: $steps.seed.opinion_decided_by_judge_edges
+          from_type: Opinion
+          from_id: $item.opinion_id
+          to_type: Judge
+          to_id: $item.judge_id
+          properties:
+            role: $item.role
+        as: opinion_judge_edges
+      - id: opinion_citation_edges
+        make_relationships:
+          relationship_type: opinion_cites_opinion
+          items: $steps.seed.opinion_cites_opinion_edges
+          from_type: Opinion
+          from_id: $item.source_opinion_id
+          to_type: Opinion
+          to_id: $item.cited_opinion_id
+          properties:
+            citation_context: $item.citation_context
+        as: opinion_citation_edges
+      - id: matter_client_edges
+        make_relationships:
+          relationship_type: matter_for_client
+          items: $steps.seed.matter_for_client_edges
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Client
+          to_id: $item.client_id
+        as: matter_client_edges
+      - id: matter_attorney_edges
+        make_relationships:
+          relationship_type: matter_assigned_to_attorney
+          items: $steps.seed.matter_assigned_to_attorney_edges
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Attorney
+          to_id: $item.attorney_id
+          properties:
+            role: $item.role
+        as: matter_attorney_edges
+      - id: matter_jurisdiction_edges
+        make_relationships:
+          relationship_type: matter_in_jurisdiction
+          items: $steps.seed.matter_in_jurisdiction_edges
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Court
+          to_id: $item.court_id
+        as: matter_jurisdiction_edges
+      - id: argument_matter_edges
+        make_relationships:
+          relationship_type: argument_in_matter
+          items: $steps.seed.argument_in_matter_edges
+          from_type: Argument
+          from_id: $item.argument_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: argument_matter_edges
+      - id: argument_issue_edges
+        make_relationships:
+          relationship_type: argument_raises_issue
+          items: $steps.seed.argument_raises_issue_edges
+          from_type: Argument
+          from_id: $item.argument_id
+          to_type: LegalIssue
+          to_id: $item.issue_id
+        as: argument_issue_edges
+      - id: argument_opinion_edges
+        make_relationships:
+          relationship_type: argument_cites_opinion
+          items: $steps.seed.argument_cites_opinion_edges
+          from_type: Argument
+          from_id: $item.argument_id
+          to_type: Opinion
+          to_id: $item.opinion_id
+          properties:
+            citation_role: $item.citation_role
+        as: argument_opinion_edges
+      - id: statute_issue_edges
+        make_relationships:
+          relationship_type: statute_governs_issue
+          items: $steps.seed.statute_governs_issue_edges
+          from_type: Statute
+          from_id: $item.statute_id
+          to_type: LegalIssue
+          to_id: $item.issue_id
+        as: statute_issue_edges
+      # --- Apply ---
+      - id: apply_opinions
+        apply_entities:
+          entities_from: opinions
+        as: apply_opinions
+      - id: apply_courts
+        apply_entities:
+          entities_from: courts
+        as: apply_courts
+      - id: apply_judges
+        apply_entities:
+          entities_from: judges
+        as: apply_judges
+      - id: apply_statutes
+        apply_entities:
+          entities_from: statutes
+        as: apply_statutes
+      - id: apply_legal_issues
+        apply_entities:
+          entities_from: legal_issues
+        as: apply_legal_issues
+      - id: apply_clients
+        apply_entities:
+          entities_from: clients
+        as: apply_clients
+      - id: apply_matters
+        apply_entities:
+          entities_from: matters
+        as: apply_matters
+      - id: apply_attorneys
+        apply_entities:
+          entities_from: attorneys
+        as: apply_attorneys
+      - id: apply_arguments
+        apply_entities:
+          entities_from: arguments
+        as: apply_arguments
+      - id: apply_opinion_court
+        apply_relationships:
+          relationships_from: opinion_court_edges
+        as: apply_opinion_court
+      - id: apply_opinion_judge
+        apply_relationships:
+          relationships_from: opinion_judge_edges
+        as: apply_opinion_judge
+      - id: apply_opinion_citations
+        apply_relationships:
+          relationships_from: opinion_citation_edges
+        as: apply_opinion_citations
+      - id: apply_matter_client
+        apply_relationships:
+          relationships_from: matter_client_edges
+        as: apply_matter_client
+      - id: apply_matter_attorney
+        apply_relationships:
+          relationships_from: matter_attorney_edges
+        as: apply_matter_attorney
+      - id: apply_matter_jurisdiction
+        apply_relationships:
+          relationships_from: matter_jurisdiction_edges
+        as: apply_matter_jurisdiction
+      - id: apply_argument_matter
+        apply_relationships:
+          relationships_from: argument_matter_edges
+        as: apply_argument_matter
+      - id: apply_argument_issue
+        apply_relationships:
+          relationships_from: argument_issue_edges
+        as: apply_argument_issue
+      - id: apply_argument_opinion
+        apply_relationships:
+          relationships_from: argument_opinion_edges
+        as: apply_argument_opinion
+      - id: apply_statute_issue
+        apply_relationships:
+          relationships_from: statute_issue_edges
+        as: apply_statute_issue
+    returns: apply_statute_issue
+
+  ingest_docket:
+    type: canonical
+    description: >
+      Load filings and deadlines arriving from a docket feed and attach them to
+      their matters. Deadlines arrive here over time rather than in the base
+      corpus; this is their canonical creation path before filing-response and
+      review workflows run.
+    contract_in: EmptyInput
+    steps:
+      - id: feed
+        provider: load_docket_feed
+        input: {}
+        as: feed
+      - id: filings
+        make_entities:
+          entity_type: Filing
+          items: $steps.feed.filings
+          entity_id: $item.filing_id
+          properties:
+            filing_id: $item.filing_id
+            docket_number: $item.docket_number
+            title: $item.title
+            filing_type: $item.filing_type
+            filed_at: $item.filed_at
+        as: filings
+      - id: deadlines
+        make_entities:
+          entity_type: Deadline
+          items: $steps.feed.deadlines
+          entity_id: $item.deadline_id
+          properties:
+            deadline_id: $item.deadline_id
+            title: $item.title
+            due_date: $item.due_date
+            deadline_type: $item.deadline_type
+            status: $item.status
+        as: deadlines
+      - id: filing_matter_edges
+        make_relationships:
+          relationship_type: filing_in_matter
+          items: $steps.feed.filing_in_matter_edges
+          from_type: Filing
+          from_id: $item.filing_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: filing_matter_edges
+      - id: matter_deadline_edges
+        make_relationships:
+          relationship_type: matter_has_deadline
+          items: $steps.feed.matter_has_deadline_edges
+          from_type: Matter
+          from_id: $item.matter_id
+          to_type: Deadline
+          to_id: $item.deadline_id
+        as: matter_deadline_edges
+      - id: apply_filings
+        apply_entities:
+          entities_from: filings
+        as: apply_filings
+      - id: apply_deadlines
+        apply_entities:
+          entities_from: deadlines
+        as: apply_deadlines
+      - id: apply_filing_matter
+        apply_relationships:
+          relationships_from: filing_matter_edges
+        as: apply_filing_matter
+      - id: apply_matter_deadline
+        apply_relationships:
+          relationships_from: matter_deadline_edges
+        as: apply_matter_deadline
+    returns: apply_matter_deadline
+
+  ingest_case_outcomes:
+    type: canonical
+    description: >
+      Load resolved case outcomes and attach them to the matters they resolve
+      and the arguments they evaluated. Case outcomes are the firm-state result
+      record (distinct from Cruxible Loop 2 outcomes) and have no other creation
+      path; the argument track-record query reads them.
+    contract_in: EmptyInput
+    steps:
+      - id: feed
+        provider: load_case_outcome_feed
+        input: {}
+        as: feed
+      - id: case_outcomes
+        make_entities:
+          entity_type: CaseOutcome
+          items: $steps.feed.case_outcomes
+          entity_id: $item.outcome_id
+          properties:
+            outcome_id: $item.outcome_id
+            result: $item.result
+            resolved_at: $item.resolved_at
+            notes: $item.notes
+        as: case_outcomes
+      - id: outcome_matter_edges
+        make_relationships:
+          relationship_type: outcome_of_matter
+          items: $steps.feed.outcome_of_matter_edges
+          from_type: CaseOutcome
+          from_id: $item.outcome_id
+          to_type: Matter
+          to_id: $item.matter_id
+        as: outcome_matter_edges
+      - id: outcome_argument_edges
+        make_relationships:
+          relationship_type: outcome_resolved_argument
+          items: $steps.feed.outcome_resolved_argument_edges
+          from_type: CaseOutcome
+          from_id: $item.outcome_id
+          to_type: Argument
+          to_id: $item.argument_id
+          properties:
+            role: $item.role
+            prevailed: $item.prevailed
+            weight: $item.weight
+            notes: $item.notes
+        as: outcome_argument_edges
+      - id: apply_case_outcomes
+        apply_entities:
+          entities_from: case_outcomes
+        as: apply_case_outcomes
+      - id: apply_outcome_matter
+        apply_relationships:
+          relationships_from: outcome_matter_edges
+        as: apply_outcome_matter
+      - id: apply_outcome_argument
+        apply_relationships:
+          relationships_from: outcome_argument_edges
+        as: apply_outcome_argument
+    returns: apply_outcome_argument
+
+  refresh_stale_review_state:
+    type: canonical
+    description: >
+      Re-evaluate open review items and pending deadlines against current matter
+      state and close those that have gone stale (their matter closed or the
+      obligation lapsed). Makes the stale_review_item / stale_deadline outcome
+      codes and the ReviewItem/Deadline lifecycle status enums actionable.
+    contract_in: EmptyInput
+    steps:
+      - id: review_items
+        query:
+          mode: collection
+          result_shape: entity
+          returns: ReviewItem
+        as: review_items
+      - id: deadlines
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Deadline
+        as: deadlines
+      - id: matters
+        query:
+          mode: collection
+          result_shape: entity
+          returns: Matter
+        as: matters
+      - id: review_item_matter_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: review_item_for_matter
+        as: review_item_matter_edges
+      - id: matter_deadline_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: matter_has_deadline
+        as: matter_deadline_edges
+      - id: sweep
+        provider: sweep_stale_review_state
+        input:
+          review_items: $steps.review_items.results
+          deadlines: $steps.deadlines.results
+          matters: $steps.matters.results
+          review_item_matter_edges: $steps.review_item_matter_edges.results
+          matter_deadline_edges: $steps.matter_deadline_edges.results
+        as: sweep
+      - id: closed_review_items
+        make_entities:
+          entity_type: ReviewItem
+          items: $steps.sweep.review_items
+          entity_id: $item.review_item_id
+          properties:
+            review_item_id: $item.review_item_id
+            status: $item.status
+        as: closed_review_items
+      - id: closed_deadlines
+        make_entities:
+          entity_type: Deadline
+          items: $steps.sweep.deadlines
+          entity_id: $item.deadline_id
+          properties:
+            deadline_id: $item.deadline_id
+            status: $item.status
+        as: closed_deadlines
+      - id: apply_closed_review_items
+        apply_entities:
+          entities_from: closed_review_items
+        as: apply_closed_review_items
+      - id: apply_closed_deadlines
+        apply_entities:
+          entities_from: closed_deadlines
+        as: apply_closed_deadlines
+    returns: apply_closed_deadlines
+
   propose_holdings_from_opinion:
     type: proposal
     description: Extract candidate holdings from monitored opinions.
@@ -1606,6 +2288,18 @@ workflows:
           result_shape: relationship
           returns: matter_turns_on_statute
         as: matter_statute_edges
+      - id: opinion_court_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: opinion_from_court
+        as: opinion_court_edges
+      - id: matter_jurisdiction_edges
+        query:
+          mode: collection
+          result_shape: relationship
+          returns: matter_in_jurisdiction
+        as: matter_jurisdiction_edges
       - id: impacts
         provider: assess_matter_impact
         input:
@@ -1615,6 +2309,8 @@ workflows:
           undermine_edges: $steps.undermine_edges.results
           treatment_edges: $steps.treatment_edges.results
           matter_statute_edges: $steps.matter_statute_edges.results
+          opinion_court_edges: $steps.opinion_court_edges.results
+          matter_jurisdiction_edges: $steps.matter_jurisdiction_edges.results
         as: impacts
       - id: candidates
         make_candidates:
@@ -1643,11 +2339,25 @@ workflows:
               unsure: unsure
               contradict: contradict
         as: signals
+      - id: jurisdiction_signals
+        map_signals:
+          signal_source: jurisdiction_overlap
+          items: $steps.impacts.items
+          from_id: $item.opinion_id
+          to_id: $item.matter_id
+          evidence: $item.jurisdiction_rationale
+          enum:
+            path: jurisdiction_verdict
+            map:
+              support: support
+              unsure: unsure
+              contradict: contradict
+        as: jurisdiction_signals
       - id: proposal
         propose_relationship_group:
           relationship_type: opinion_affects_matter
           candidates_from: candidates
-          signals_from: [signals]
+          signals_from: [signals, jurisdiction_signals]
           thesis_text: These monitored opinions affect the proposed firm matters.
           proposed_by: agent
         as: proposal
@@ -2180,6 +2890,46 @@ outcome_profiles:
     scope_keys:
       relationship_type: RESOLUTION.relationship_type
 
+  argument_support_resolution:
+    anchor_type: resolution
+    relationship_type: holding_supports_argument
+    version: 1
+    outcome_codes:
+      support_held_up:
+        description: The holding-supports-argument link held up in briefing or argument and helped the matter.
+        remediation_hint: unknown
+        required_scope_keys: [relationship_type]
+      support_overstated:
+        description: Later review found the supporting holding did not materially help the argument.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_supporting_authority:
+        description: A holding that would have supported the argument was missed by the workflow.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
+  argument_risk_resolution:
+    anchor_type: resolution
+    relationship_type: holding_undermines_argument
+    version: 1
+    outcome_codes:
+      risk_materialized:
+        description: The adverse holding materialized as real risk and required a strategy change.
+        remediation_hint: unknown
+        required_scope_keys: [relationship_type]
+      risk_overstated:
+        description: Later review found the holding was distinguishable and did not undermine the argument.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [relationship_type]
+      missed_adverse_authority:
+        description: A holding that undermined the argument was missed by the workflow.
+        remediation_hint: require_review
+        required_scope_keys: [relationship_type]
+    scope_keys:
+      relationship_type: RESOLUTION.relationship_type
+
   adverse_authority_query:
     anchor_type: receipt
     surface_type: query
@@ -2214,23 +2964,6 @@ outcome_profiles:
     scope_keys:
       query: SURFACE.name
 
-  deadline_watch_query:
-    anchor_type: receipt
-    surface_type: query
-    surface_name: deadline_watch
-    version: 1
-    outcome_codes:
-      missed_deadline:
-        description: Query omitted a real pending matter deadline.
-        remediation_hint: graph_fix
-        required_scope_keys: [query]
-      stale_deadline:
-        description: Query returned a deadline that should have been closed or superseded.
-        remediation_hint: graph_fix
-        required_scope_keys: [query]
-    scope_keys:
-      query: SURFACE.name
-
   filing_response_query:
     anchor_type: receipt
     surface_type: query
@@ -2243,23 +2976,6 @@ outcome_profiles:
         required_scope_keys: [query]
       stale_response_obligation:
         description: Query returned a filing obligation that no longer applied.
-        remediation_hint: graph_fix
-        required_scope_keys: [query]
-    scope_keys:
-      query: SURFACE.name
-
-  argument_track_record_query:
-    anchor_type: receipt
-    surface_type: query
-    surface_name: argument_track_record
-    version: 1
-    outcome_codes:
-      missing_outcome_context:
-        description: Query omitted a relevant outcome for the argument pattern.
-        remediation_hint: graph_fix
-        required_scope_keys: [query]
-      misleading_track_record:
-        description: Query returned outcome context that overstated the argument's usefulness.
         remediation_hint: graph_fix
         required_scope_keys: [query]
     scope_keys:
