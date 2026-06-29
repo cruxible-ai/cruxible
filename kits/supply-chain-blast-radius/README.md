@@ -1,5 +1,11 @@
 # Supply Chain Blast Radius Demo
 
+> **Status: in_progress.** The ontology, governed
+> relationships, named queries, and feedback/outcome loops are complete and
+> validated. The data-ingest and assessment providers are placeholders that raise
+> `NotImplementedError` — implement them or wire your own data before running the
+> workflows.
+
 Deterministic supply-chain state model that turns a supplier-side disruption into
 a bounded, reviewable blast radius. The stable canonical backbone is suppliers,
 components, assemblies, products, and shipments. Incidents arrive as governed
@@ -86,18 +92,20 @@ flowchart LR
   classDef governedWorkflow fill:#e67e22,stroke:#a0521c,color:#fff
 
   workflow_pipeline_build_seed_state["1. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_sync_inventory_positions["2. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_sync_product_buffer_assessments["3. Seed canonical state<br/>Canonical"]
-  workflow_pipeline_propose_incident_impacts_supplier["4. Assess supplier impact<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_assembly["5. Cascade to assemblies<br/>Governed proposal"]
-  workflow_pipeline_propose_incident_impacts_component["6. Cascade to components<br/>Governed proposal"]
-  workflow_pipeline_build_seed_state --> workflow_pipeline_sync_inventory_positions
+  workflow_pipeline_ingest_incidents["2. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_sync_inventory_positions["3. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_sync_product_buffer_assessments["4. Seed canonical state<br/>Canonical"]
+  workflow_pipeline_propose_incident_impacts_assembly["5. Incident Impacts Assembly<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_component["6. Incident Impacts Component<br/>Governed proposal"]
+  workflow_pipeline_propose_incident_impacts_supplier["7. Incident Impacts Supplier<br/>Governed proposal"]
+  workflow_pipeline_build_seed_state --> workflow_pipeline_ingest_incidents
+  workflow_pipeline_ingest_incidents --> workflow_pipeline_sync_inventory_positions
   workflow_pipeline_sync_inventory_positions --> workflow_pipeline_sync_product_buffer_assessments
-  workflow_pipeline_sync_product_buffer_assessments --> workflow_pipeline_propose_incident_impacts_supplier
-  workflow_pipeline_propose_incident_impacts_supplier --> workflow_pipeline_propose_incident_impacts_assembly
+  workflow_pipeline_sync_product_buffer_assessments --> workflow_pipeline_propose_incident_impacts_assembly
   workflow_pipeline_propose_incident_impacts_assembly --> workflow_pipeline_propose_incident_impacts_component
-  class workflow_pipeline_build_seed_state,workflow_pipeline_sync_inventory_positions,workflow_pipeline_sync_product_buffer_assessments canonicalWorkflow
-  class workflow_pipeline_propose_incident_impacts_supplier,workflow_pipeline_propose_incident_impacts_assembly,workflow_pipeline_propose_incident_impacts_component governedWorkflow
+  workflow_pipeline_propose_incident_impacts_component --> workflow_pipeline_propose_incident_impacts_supplier
+  class workflow_pipeline_build_seed_state,workflow_pipeline_ingest_incidents,workflow_pipeline_sync_inventory_positions,workflow_pipeline_sync_product_buffer_assessments canonicalWorkflow
+  class workflow_pipeline_propose_incident_impacts_assembly,workflow_pipeline_propose_incident_impacts_component,workflow_pipeline_propose_incident_impacts_supplier governedWorkflow
 ```
 <!-- CRUXIBLE:END workflow-pipeline -->
 
@@ -116,7 +124,20 @@ flowchart LR
 **Provider source**
 - Load Supply Chain Seed Data (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_seed_data`; artifact: Supply Chain Seed Bundle
 
-### 2. Sync Inventory Positions
+### 2. Ingest Incidents
+
+**Role:** Canonical seed
+
+**Input context**
+- None (seeds canonical state)
+
+**Result**
+- Canonical entities: Incident
+
+**Provider source**
+- Load Incident Feed (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::load_incident_feed`
+
+### 3. Sync Inventory Positions
 
 **Role:** Canonical seed
 
@@ -130,7 +151,7 @@ flowchart LR
 **Provider source**
 - -
 
-### 3. Sync Product Buffer Assessments
+### 4. Sync Product Buffer Assessments
 
 **Role:** Canonical seed
 
@@ -144,26 +165,12 @@ flowchart LR
 **Provider source**
 - -
 
-### 4. Propose Incident Impacts Supplier
-
-**Role:** Governed proposal
-
-**Input context**
-- Entity context: Incident, Supplier
-
-**Result**
-- Proposed relationships: Incident Impacts Supplier
-
-**Provider source**
-- Assess Incident Supplier Scope (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope`
-
 ### 5. Propose Incident Impacts Assembly
 
 **Role:** Governed proposal
 
 **Input context**
-- Entity context: Assembly
-- Relationship context: Incident Impacts Supplier, Supplier Supplies Assembly
+- Query context: Assembly, Incident Impacts Supplier, Supplier Supplies Assembly
 
 **Result**
 - Proposed relationships: Incident Impacts Assembly
@@ -176,8 +183,7 @@ flowchart LR
 **Role:** Governed proposal
 
 **Input context**
-- Entity context: Component
-- Relationship context: Incident Impacts Supplier, Supplier Supplies Component
+- Query context: Component, Incident Impacts Supplier, Supplier Supplies Component
 
 **Result**
 - Proposed relationships: Incident Impacts Component
@@ -185,13 +191,25 @@ flowchart LR
 **Provider source**
 - Assess Incident Component Cascade (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_component_cascade`
 
-### 7. Assess Incident Product Exposure
+### 7. Propose Incident Impacts Supplier
+
+**Role:** Governed proposal
+
+**Input context**
+- Query context: Incident, Supplier
+
+**Result**
+- Proposed relationships: Incident Impacts Supplier
+
+**Provider source**
+- Assess Incident Supplier Scope (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_supplier_scope`
+
+### 8. Assess Incident Product Exposure
 
 **Role:** Utility
 
 **Input context**
-- Entity context: Assembly, Buffer Assessment, Product
-- Relationship context: Assembly Buffer Assessment, Assembly Part Of Assembly, Assembly Part Of Product, Component Buffer Assessment, Component Part Of Assembly, Incident Impacts Assembly, Incident Impacts Component, Product Buffer Assessment
+- Query context: Assembly, Buffer Assessment, Product, Assembly Buffer Assessment, Assembly Part Of Assembly, Assembly Part Of Product, Component Buffer Assessment, Component Part Of Assembly, Incident Impacts Assembly, Incident Impacts Component, Product Buffer Assessment
 
 **Result**
 - Provider output: Assess Incident Product Exposure
@@ -199,13 +217,12 @@ flowchart LR
 **Provider source**
 - Assess Incident Product Exposure (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_incident_product_exposure`
 
-### 8. Refresh Buffer Assessments
+### 9. Refresh Buffer Assessments
 
 **Role:** Utility
 
 **Input context**
-- Entity context: Assembly, Component, Inventory Position, Product
-- Relationship context: Assembly Inventory Position, Assembly Part Of Assembly, Assembly Part Of Product, Component Inventory Position, Component Part Of Assembly
+- Query context: Assembly, Component, Inventory Position, Product, Assembly Inventory Position, Assembly Part Of Assembly, Assembly Part Of Product, Component Inventory Position, Component Part Of Assembly
 
 **Result**
 - Provider output: Assess Buffer Coverage
@@ -213,7 +230,7 @@ flowchart LR
 **Provider source**
 - Assess Buffer Coverage (Python Function, v1.0.0); source: `kit://providers/supply_chain_blast_radius.py::assess_buffer_coverage`
 
-### 9. Refresh Inventory Positions
+### 10. Refresh Inventory Positions
 
 **Role:** Utility
 
@@ -283,6 +300,7 @@ flowchart LR
   query_entity_Incident --> query_entity_Assembly
   query_entity_Incident --> query_entity_Component
   query_entity_Incident --> query_entity_Product
+  query_entity_Incident --> query_entity_Shipment
   query_entity_Incident --> query_entity_Supplier
   query_entity_Product --> query_entity_Assembly
   query_entity_Product --> query_entity_BufferAssessment
@@ -304,58 +322,59 @@ harness, not by turning every useful traversal into a governed relationship.
 <!-- CRUXIBLE:BEGIN query-catalog -->
 ### Assembly
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Assembly Child Assemblies | Assembly | Assembly Part Of Assembly (Incoming) | Starting from an assembly, find direct child assemblies. |
-| Assembly Child Components | Component | Component Part Of Assembly (Incoming) | Starting from an assembly, find direct child components. |
-| Assembly Impacting Incidents | Incident | Incident Impacts Assembly (Incoming) | Starting from an assembly, find incidents judged to impact it directly. |
-| Assembly Inventory Positions | Inventory Position | Assembly Inventory Position (Outgoing) | Starting from an assembly, find inventory positions for that assembly. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Assembly Child Assemblies | traversal | Assembly | live | Assembly Part Of Assembly (Incoming) | Starting from an assembly, find direct child assemblies. |
+| Assembly Child Components | traversal | Component | live | Component Part Of Assembly (Incoming) | Starting from an assembly, find direct child components. |
+| Assembly Impacting Incidents | traversal | Incident | live | Incident Impacts Assembly (Incoming) | Starting from an assembly, find incidents judged to impact it directly. |
+| Assembly Inventory Positions | traversal | Inventory Position | live | Assembly Inventory Position (Outgoing) | Starting from an assembly, find inventory positions for that assembly. |
 
 ### Component
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Component Inventory Positions | Inventory Position | Component Inventory Position (Outgoing) | Starting from a component, find inventory positions for that component. |
-| Component Parent Assemblies | Assembly | Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from a component, find direct and higher-level parent assemblies in the BOM hierarchy. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Component Inventory Positions | traversal | Inventory Position | live | Component Inventory Position (Outgoing) | Starting from a component, find inventory positions for that component. |
+| Component Parent Assemblies | traversal | Assembly | live | Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from a component, find direct and higher-level parent assemblies in the BOM hierarchy. |
 
 ### Incident
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Incident Component Exposed Products | Product | Incident Impacts Component (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted component impacts and the component/assembly BOM hierarchy. This is context for an agentic product or shipment judgment, not governed graph state. |
-| Incident Direct Assembly Exposed Products | Product | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts where the assembly is a top-level product assembly. |
-| Incident Exposed Assembly Context | Assembly | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. |
-| Incident Impacted Assemblies | Assembly | Incident Impacts Assembly (Outgoing) | Starting from an incident, find assemblies judged impacted via direct supplier-to-assembly cascade. |
-| Incident Impacted Components | Component | Incident Impacts Component (Outgoing) | Starting from an incident, find components judged impacted via the supplier cascade. |
-| Incident Impacted Suppliers | Supplier | Incident Impacts Supplier (Outgoing) | Starting from an incident, find suppliers judged impacted. |
-| Incident Nested Assembly Exposed Products | Product | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts and higher-level parent assemblies. |
-| Single Source Assemblies For Incident | Assembly | Incident Impacts Assembly (Outgoing) | Starting from an incident, find impacted directly supplied assemblies that have only one viable supplier path. |
-| Single Source Components For Incident | Component | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one viable supplier path. Surfaces the "no viable alternate supplier" enrichment for the operator summary. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Incident Component Exposed Products | traversal | Product | live | Incident Impacts Component (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted component impacts and the component/assembly BOM hierarchy. This is context for an agentic product or shipment judgment, not governed graph state. |
+| Incident Direct Assembly Exposed Products | traversal | Product | live | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts where the assembly is a top-level product assembly. |
+| Incident Exposed Assembly Context | traversal | Assembly | live | Incident Impacts Supplier \| Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Supplier Supplies Assembly \| Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) | Starting from an incident, derive assembly context exposed by accepted supplier, component, or direct assembly impacts through supply and BOM structure. This is a query/view, not governed state. |
+| Incident Exposed Shipments | traversal | Shipment | live | Incident Impacts Component \| Incident Impacts Assembly (Outgoing) -> Component Part Of Assembly \| Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) -> Product In Shipment (Outgoing) | Starting from an incident, derive outbound shipments exposed through accepted component and direct assembly impacts, the component/assembly BOM hierarchy, exposed finished products, and the product_in_shipment fulfillment edge. This is the terminal (shipment) derived exposure surface — context for an agentic shipment judgment, not governed graph state. No direct incident-shipment edge is created. The BOM-up hop is required false so directly impacted top-level assemblies reach products and shipments without an intermediate BOM rollup. |
+| Incident Impacted Assemblies | traversal | Assembly | live | Incident Impacts Assembly (Outgoing) | Starting from an incident, find assemblies judged impacted via direct supplier-to-assembly cascade. |
+| Incident Impacted Components | traversal | Component | live | Incident Impacts Component (Outgoing) | Starting from an incident, find components judged impacted via the supplier cascade. |
+| Incident Impacted Suppliers | traversal | Supplier | live | Incident Impacts Supplier (Outgoing) | Starting from an incident, find suppliers judged impacted. |
+| Incident Nested Assembly Exposed Products | traversal | Product | live | Incident Impacts Assembly (Outgoing) -> Assembly Part Of Assembly (Outgoing, depth=8) -> Assembly Part Of Product (Outgoing) | Starting from an incident, derive finished products exposed through accepted direct assembly impacts and higher-level parent assemblies. |
+| Single Source Assemblies For Incident | traversal | Assembly | live | Incident Impacts Assembly (Outgoing) | Starting from an incident, find impacted directly supplied assemblies that have only one viable supplier path. |
+| Single Source Components For Incident | traversal | Component | live | Incident Impacts Component (Outgoing) | Starting from an incident, find impacted components that have only one viable supplier path. Surfaces the "no viable alternate supplier" enrichment for the operator summary. |
 
 ### Product
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Product Buffer Assessments | Buffer Assessment | Product Buffer Assessment (Outgoing) | Starting from a product, find current buffer assessments used for product exposure context. |
-| Product Component Impacting Incidents | Incident | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly \| Component Part Of Assembly (Incoming, depth=8) -> Incident Impacts Component (Incoming) | Starting from a product, find incidents that impact components in its BOM. |
-| Product Direct Assembly Impacting Incidents | Incident | Assembly Part Of Product (Incoming) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact top-level assemblies in its BOM. |
-| Product Nested Assembly Impacting Incidents | Incident | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly (Incoming, depth=8) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact nested assemblies in its BOM. |
-| Product Shipments | Shipment | Product In Shipment (Outgoing) | Starting from a product, find shipments containing it. |
-| Product Top Level Assemblies | Assembly | Assembly Part Of Product (Incoming) | Starting from a product, find top-level assemblies in its BOM. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Product Buffer Assessments | traversal | Buffer Assessment | live | Product Buffer Assessment (Outgoing) | Starting from a product, find current buffer assessments used for product exposure context. |
+| Product Component Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly \| Component Part Of Assembly (Incoming, depth=8) -> Incident Impacts Component (Incoming) | Starting from a product, find incidents that impact components in its BOM. |
+| Product Direct Assembly Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact top-level assemblies in its BOM. |
+| Product Nested Assembly Impacting Incidents | traversal | Incident | live | Assembly Part Of Product (Incoming) -> Assembly Part Of Assembly (Incoming, depth=8) -> Incident Impacts Assembly (Incoming) | Starting from a product, find incidents that directly impact nested assemblies in its BOM. |
+| Product Shipments | traversal | Shipment | live | Product In Shipment (Outgoing) | Starting from a product, find shipments containing it. |
+| Product Top Level Assemblies | traversal | Assembly | live | Assembly Part Of Product (Incoming) | Starting from a product, find top-level assemblies in its BOM. |
 
 ### Shipment
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Shipment Products | Product | Product In Shipment (Incoming) | Starting from a shipment, find products contained in it. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Shipment Products | traversal | Product | live | Product In Shipment (Incoming) | Starting from a shipment, find products contained in it. |
 
 ### Supplier
 
-| Query | Returns | Traversal | Purpose |
-| --- | --- | --- | --- |
-| Supplier Impacting Incidents | Incident | Incident Impacts Supplier (Incoming) | Starting from a supplier, find incidents judged to impact it. |
-| Supplier Supplied Assemblies | Assembly | Supplier Supplies Assembly (Outgoing) | Starting from a supplier, find directly supplied assemblies. |
-| Supplier Supplied Components | Component | Supplier Supplies Component (Outgoing) | Starting from a supplier, find directly supplied components. |
+| Query | Mode | Returns | State | Traversal | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| Supplier Impacting Incidents | traversal | Incident | live | Incident Impacts Supplier (Incoming) | Starting from a supplier, find incidents judged to impact it. |
+| Supplier Supplied Assemblies | traversal | Assembly | live | Supplier Supplies Assembly (Outgoing) | Starting from a supplier, find directly supplied assemblies. |
+| Supplier Supplied Components | traversal | Component | live | Supplier Supplies Component (Outgoing) | Starting from a supplier, find directly supplied components. |
 <!-- CRUXIBLE:END query-catalog -->
 
 ## Schema Reference
@@ -472,6 +491,17 @@ No configured constraints.
 
 #### Receipt-Anchored
 
+##### `buffer_assessment_refresh`
+- Version: `1`
+- Target: Workflow `refresh_buffer_assessments`
+- Outcome codes:
+  - `buffer_held` (`trust_adjustment`): Assessment called sufficient_buffer and inventory did in fact cover demand through the horizon.
+  - `buffer_ran_out` (`provider_fix`): Assessment looked sufficient or partial but the item ran out before the coverage horizon.
+  - `consumption_rate_wrong` (`provider_fix`): Actual consumption diverged materially from the estimated_consumption_rate, miscalling coverage_duration.
+  - `overstated_shortfall` (`require_review`): Assessment called no_buffer or partial_buffer but on-hand inventory comfortably covered demand.
+- Scope keys:
+  - `surface`: `SURFACE.name`
+
 ##### `component_exposed_products_query`
 - Version: `1`
 - Target: Query `incident_component_exposed_products`
@@ -487,6 +517,15 @@ No configured constraints.
 - Outcome codes:
   - `false_positive_product` (`graph_fix`): Direct-assembly exposure query returned a product later confirmed to be unaffected.
   - `missing_impacted_product` (`graph_fix`): Direct-assembly exposure query omitted a product later confirmed to be impacted.
+- Scope keys:
+  - `query`: `SURFACE.name`
+
+##### `exposed_shipments_query`
+- Version: `1`
+- Target: Query `incident_exposed_shipments`
+- Outcome codes:
+  - `false_positive_shipment` (`graph_fix`): Terminal shipment exposure query returned a shipment later confirmed to be unaffected.
+  - `missing_impacted_shipment` (`graph_fix`): Terminal shipment exposure query omitted a shipment later confirmed to be impacted.
 - Scope keys:
   - `query`: `SURFACE.name`
 
@@ -507,6 +546,18 @@ No configured constraints.
   - `missing_impacted_product` (`graph_fix`): Nested-assembly exposure query omitted a product later confirmed to be impacted.
 - Scope keys:
   - `query`: `SURFACE.name`
+
+##### `product_exposure_assessment`
+- Version: `1`
+- Target: Workflow `assess_incident_product_exposure`
+- Outcome codes:
+  - `bom_depth_miscount` (`provider_fix`): The bom_depth_bucket was wrong, mis-weighting the exposure path.
+  - `buffer_state_misread` (`provider_fix`): The buffer_state attributed to the product was wrong, flipping the exposure conclusion.
+  - `confirmed_product_exposure` (`trust_adjustment`): Product flagged exposed was in fact materially affected by the incident.
+  - `missed_product_exposure` (`workflow_fix`): A product later confirmed exposed was not surfaced by the exposure assessment.
+  - `product_unaffected` (`require_review`): Product flagged exposed turned out unaffected once buffer and BOM reality played out.
+- Scope keys:
+  - `surface`: `SURFACE.name`
 <!-- CRUXIBLE:END learning-loops -->
 
 ## Model Notes

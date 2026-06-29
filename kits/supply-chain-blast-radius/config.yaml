@@ -705,6 +705,31 @@ named_queries:
       - relationship: assembly_part_of_product
         direction: outgoing
 
+  incident_exposed_shipments:
+    mode: traversal
+    description: >
+      Starting from an incident, derive outbound shipments exposed through
+      accepted component and direct assembly impacts, the component/assembly
+      BOM hierarchy, exposed finished products, and the product_in_shipment
+      fulfillment edge. This is the terminal (shipment) derived exposure
+      surface — context for an agentic shipment judgment, not governed graph
+      state. No direct incident-shipment edge is created. The BOM-up hop is
+      required false so directly impacted top-level assemblies reach products
+      and shipments without an intermediate BOM rollup.
+    entry_point: Incident
+    returns: Shipment
+    traversal:
+      - relationship: [incident_impacts_component, incident_impacts_assembly]
+        direction: outgoing
+      - relationship: [component_part_of_assembly, assembly_part_of_assembly]
+        direction: outgoing
+        max_depth: 8
+        required: false
+      - relationship: assembly_part_of_product
+        direction: outgoing
+      - relationship: product_in_shipment
+        direction: outgoing
+
   single_source_components_for_incident:
     mode: traversal
     description: >
@@ -1098,6 +1123,27 @@ contracts:
               shipment_id: {type: string}
               product_id: {type: string}
               qty: {type: integer}
+
+  IncidentFeedData:
+    description: Incident records arriving from an external incident feed, loaded into the graph as Incident entities.
+    fields:
+      incidents:
+        type: json
+        json_schema:
+          type: array
+          items:
+            type: object
+            required: [incident_id, title, severity, scope_type, scope_id, status, reported_at]
+            properties:
+              incident_id: {type: string}
+              title: {type: string}
+              severity: {type: string, enum_ref: incident_severity}
+              scope_type: {type: string, enum_ref: incident_scope_type}
+              scope_id: {type: string}
+              status: {type: string, enum_ref: incident_status}
+              reported_at: {type: string}
+              closed_at: {type: string}
+              summary: {type: string}
 
   InventoryFetchInput:
     description: Optional filters for fetching inventory positions from an internal inventory API.
@@ -1789,6 +1835,14 @@ providers:
     deterministic: true
     artifact: supply_chain_seed_bundle
 
+  load_incident_feed:
+    description: Load incident records arriving from an external incident feed for ingestion as Incident entities.
+    contract_in: EmptyInput
+    contract_out: IncidentFeedData
+    ref: kit://providers/supply_chain_blast_radius.py::load_incident_feed
+    version: "1.0.0"
+    deterministic: true
+
   assess_incident_supplier_scope:
     description: Match each open incident's scope to suppliers via direct supplier or geography basis.
     contract_in: IncidentScopeAssessmentInput
@@ -2068,6 +2122,40 @@ workflows:
           relationships_from: shipment_edges
         as: apply_shipment_edges
     returns: apply_shipment_edges
+
+  ingest_incidents:
+    type: canonical
+    description: >
+      Load incident records arriving from an external incident feed and apply them
+      as Incident entities. Incidents arrive over time rather than in the base seed;
+      this is their canonical creation path before the governed incident cascade runs.
+    contract_in: EmptyInput
+    steps:
+      - id: feed
+        provider: load_incident_feed
+        input: {}
+        as: feed
+      - id: incidents
+        make_entities:
+          entity_type: Incident
+          items: $steps.feed.incidents
+          entity_id: $item.incident_id
+          properties:
+            incident_id: $item.incident_id
+            title: $item.title
+            severity: $item.severity
+            scope_type: $item.scope_type
+            scope_id: $item.scope_id
+            status: $item.status
+            reported_at: $item.reported_at
+            closed_at: $item.closed_at
+            summary: $item.summary
+        as: incidents
+      - id: apply_incidents
+        apply_entities:
+          entities_from: incidents
+        as: apply_incidents
+    returns: apply_incidents
 
   sync_inventory_positions:
     type: canonical
@@ -2365,6 +2453,9 @@ workflows:
           mode: collection
           result_shape: entity
           returns: Incident
+          where:
+            result.properties.status:
+              eq: open
         as: incidents
       - id: suppliers
         query:
@@ -2432,6 +2523,9 @@ workflows:
           mode: collection
           result_shape: relationship
           returns: incident_impacts_supplier
+          where:
+            source.properties.status:
+              eq: open
         as: impacted_supplier_edges
       - id: supplies_edges
         query:
@@ -2506,6 +2600,9 @@ workflows:
           mode: collection
           result_shape: relationship
           returns: incident_impacts_supplier
+          where:
+            source.properties.status:
+              eq: open
         as: impacted_supplier_edges
       - id: assembly_supply_edges
         query:
@@ -2868,3 +2965,83 @@ outcome_profiles:
         required_scope_keys: [query]
     scope_keys:
       query: SURFACE.name
+
+  exposed_shipments_query:
+    anchor_type: receipt
+    surface_type: query
+    surface_name: incident_exposed_shipments
+    version: 1
+    outcome_codes:
+      missing_impacted_shipment:
+        description: Terminal shipment exposure query omitted a shipment later confirmed to be impacted.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+      false_positive_shipment:
+        description: Terminal shipment exposure query returned a shipment later confirmed to be unaffected.
+        remediation_hint: graph_fix
+        required_scope_keys: [query]
+    scope_keys:
+      query: SURFACE.name
+
+  # Loop 2 for the reusable buffer judgment. BufferAssessment is produced by the
+  # refresh_buffer_assessments workflow (buffer_state + rationale are graded), not a
+  # governed edge — so it has no resolution to anchor on and no relationship-scoped
+  # feedback profile. Calibration is receipt-anchored on the workflow surface: did the
+  # buffer-state call hold once real consumption and recovery played out?
+  buffer_assessment_refresh:
+    anchor_type: receipt
+    surface_type: workflow
+    surface_name: refresh_buffer_assessments
+    version: 1
+    outcome_codes:
+      buffer_held:
+        description: Assessment called sufficient_buffer and inventory did in fact cover demand through the horizon.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [surface]
+      buffer_ran_out:
+        description: Assessment looked sufficient or partial but the item ran out before the coverage horizon.
+        remediation_hint: provider_fix
+        required_scope_keys: [surface]
+      consumption_rate_wrong:
+        description: Actual consumption diverged materially from the estimated_consumption_rate, miscalling coverage_duration.
+        remediation_hint: provider_fix
+        required_scope_keys: [surface]
+      overstated_shortfall:
+        description: Assessment called no_buffer or partial_buffer but on-hand inventory comfortably covered demand.
+        remediation_hint: require_review
+        required_scope_keys: [surface]
+    scope_keys:
+      surface: SURFACE.name
+
+  # Loop 2 for the rich derived product-exposure judgment. assess_incident_product_exposure
+  # emits verdict / bom_depth_bucket / buffer_state / exposure_basis as ephemeral context
+  # (not a governed edge), so calibration is receipt-anchored on the workflow surface: did
+  # the derived product-exposure call match what actually happened to the product?
+  product_exposure_assessment:
+    anchor_type: receipt
+    surface_type: workflow
+    surface_name: assess_incident_product_exposure
+    version: 1
+    outcome_codes:
+      confirmed_product_exposure:
+        description: Product flagged exposed was in fact materially affected by the incident.
+        remediation_hint: trust_adjustment
+        required_scope_keys: [surface]
+      product_unaffected:
+        description: Product flagged exposed turned out unaffected once buffer and BOM reality played out.
+        remediation_hint: require_review
+        required_scope_keys: [surface]
+      missed_product_exposure:
+        description: A product later confirmed exposed was not surfaced by the exposure assessment.
+        remediation_hint: workflow_fix
+        required_scope_keys: [surface]
+      buffer_state_misread:
+        description: The buffer_state attributed to the product was wrong, flipping the exposure conclusion.
+        remediation_hint: provider_fix
+        required_scope_keys: [surface]
+      bom_depth_miscount:
+        description: The bom_depth_bucket was wrong, mis-weighting the exposure path.
+        remediation_hint: provider_fix
+        required_scope_keys: [surface]
+    scope_keys:
+      surface: SURFACE.name

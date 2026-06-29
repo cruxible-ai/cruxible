@@ -14,6 +14,13 @@ def load_seed_data(
     _raise_not_implemented("load_seed_data")
 
 
+def load_incident_feed(
+    _input_payload: dict[str, Any],
+    _context: ProviderContext,
+) -> dict[str, Any]:
+    _raise_not_implemented("load_incident_feed")
+
+
 def assess_incident_supplier_scope(
     _input_payload: dict[str, Any],
     _context: ProviderContext,
@@ -58,5 +65,6 @@ def assess_incident_product_exposure(
 
 def _raise_not_implemented(provider_name: str) -> NoReturn:
     raise NotImplementedError(
-        f"Supply-chain blast-radius kit provider '{provider_name}' is not implemented yet."
+        f"Supply-chain blast-radius kit provider '{provider_name}' is a scaffold placeholder; "
+        "implement it or supply seed data before running this kit's workflows."
     )
