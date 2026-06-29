@@ -34,24 +34,22 @@ Cruxible is built for teams that want their AI systems to improve and their
 knowledge to compound with use, instead of getting wiped away by every context
 refresh, model swap, or handoff.
 
-A Cruxible-backed loop looks like this:
+You model a surface as an ontology, seed it, and let agents query and write it.
+Three loops then compound the state over time:
 
-1. You model the surface as an ontology — typed entities, relationships,
-   constraints, and named queries, using a YAML config language.
-2. State is seeded and grown through direct adds, imports, and governed group
-   proposals.
-3. Agents query that governed state instead of reconstructing context from
-   scratch.
-4. Workflows and tools produce traces, evidence, and proposed changes.
-5. Humans or policies review uncertain claims and important state transitions.
-6. Edge feedback records corrections, missing context, and policy gaps.
-7. Outcome profiles record whether decisions and workflow results were later
-   correct, incorrect, partial, or unknown.
-8. Approved state, rejected claims, corrections, outcomes, and receipts persist.
-9. Future agents use that durable state regardless of which model is running.
+1. **Feedback and outcome profiles.** Corrections, missing context, and policy
+   gaps are recorded as feedback; outcomes record whether a decision or workflow
+   result was later correct, incorrect, partial, or unknown — durable signal
+   instead of lessons lost in chat.
+2. **Governed proposals.** Uncertain relationships are proposed, reviewed, and
+   accepted or rejected with provenance, and trust accumulates on the proposal
+   paths that keep being approved.
+3. **Config iteration.** The ontology itself is refined as it's used — new entity
+   types, relationships, guards, and queries — so the model of the domain matures
+   alongside the data.
 
-The model can change. The accumulated state, evidence, review history,
-feedback, outcomes, and workflow knowledge stay with the team.
+The model can change. The accumulated state, evidence, review history, feedback,
+outcomes, and ontology stay with the team.
 
 ## Two Kinds Of State
 
