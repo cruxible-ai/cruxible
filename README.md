@@ -294,21 +294,24 @@ query parameters to traversed edges to returned results:
 
 ### Install And Start A Local Daemon
 
+For `0.2`, install from a clone so the bundled starter kits resolve from the
+checkout (versioned OCI kit images are coming; until then the checkout is the
+canonical path):
+
 ```bash
-pip install "cruxible-core[server,mcp]"
+git clone https://github.com/cruxible-ai/cruxible-core.git
+cd cruxible-core
+uv sync --extra server --extra mcp
+source .venv/bin/activate
+
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
 
-The daemon is local-only by default and binds to `127.0.0.1:8100`. For a simple
-local hardening layer, set `CRUXIBLE_SERVER_AUTH=true` and
-`CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=...`, then claim the bootstrap secret to
+The daemon is local-only by default and binds to `127.0.0.1:8100`. Run the
+commands below from the activated checkout environment (or prefix each with
+`uv run`). For a simple local hardening layer, set `CRUXIBLE_SERVER_AUTH=true`
+and `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=...`, then claim the bootstrap secret to
 create runtime credentials.
-
-If you prefer [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install "cruxible-core[server,mcp]"
-```
 
 ### Initialize A Kit
 

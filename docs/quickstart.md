@@ -10,14 +10,33 @@ through Cruxible surfaces.
 ## Prerequisites
 
 - Python 3.11 or later
+- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/)
 - An MCP-capable AI agent if you want agent orchestration
 
 ## Install And Start The Daemon
 
+For `0.2`, install from a clone of the repository and run from that checkout. The
+bundled starter kits resolve straight from the source tree, so `init --kit <name>`
+works with no extra setup. (Versioned OCI kit images are planned; until they are
+published, the checkout is the canonical path.)
+
 ```bash
-pip install "cruxible-core[server,mcp]"
+git clone https://github.com/cruxible-ai/cruxible-core.git
+cd cruxible-core
+uv sync --extra server --extra mcp
+source .venv/bin/activate
+```
+
+Every `cruxible` command below runs in that activated environment (or prefix each
+with `uv run`). Start the local daemon from the checkout so the bundled kits are
+discoverable:
+
+```bash
 CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
 ```
+
+The daemon runs in the foreground — run the commands below from another activated
+shell, or start it in the background.
 
 Use a durable state directory such as `~/.cruxible/server` or
 `/var/lib/cruxible`. Do not put long-lived daemon state under `/tmp`,
