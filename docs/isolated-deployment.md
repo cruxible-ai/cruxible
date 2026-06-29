@@ -84,7 +84,10 @@ Notes:
 
 - `CRUXIBLE_HOST=127.0.0.1` keeps the daemon local to the machine.
 - `CRUXIBLE_SERVER_AUTH=true` and `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET` enable
-  runtime credential bootstrapping.
+  runtime credential bootstrapping. The bootstrap secret is not the only way to
+  satisfy the startup auth requirement: an already-stored runtime credential also
+  satisfies it, so `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET` can be omitted once
+  credentials have been provisioned.
 - `CRUXIBLE_SERVER_STATE_DIR` ensures the server-owned state stays under the runtime user's directory.
 - Claim the bootstrap secret, create role-specific runtime credentials, and use
   those tokens from the agent environment. See

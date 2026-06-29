@@ -96,6 +96,7 @@ contracts:
 
 providers:
   keyword_extract_v1:
+    contract_in: cruxible.JsonItems
     contract_out: CatalogRows
     ref: kit://providers/classification.py::keyword_extract_v1
     version: 1.0.0
@@ -175,7 +176,7 @@ cruxible_validate(config_path="config.yaml")
 cruxible_init(root_dir=".", config_path="config.yaml")
 cruxible_lock_workflow(instance_id, workflow_name="refresh_catalog_state")
 cruxible_run_workflow(instance_id, workflow_name="refresh_catalog_state", input_payload={})
-cruxible_apply_workflow(instance_id, workflow_name="refresh_catalog_state", apply_digest="...")
+cruxible_apply_workflow(instance_id, workflow_name="refresh_catalog_state", expected_apply_digest="...")
 ```
 
 The workflow preview and apply path produces receipts, provider traces, and a canonical state transition.
@@ -347,6 +348,7 @@ thesis and sample members, then resolve:
 
 ```
 cruxible_resolve_group(instance_id, group_id, action="approve",
+    expected_pending_version=<pending_version from cruxible_get_group>,
     rationale="Quarter trim panel mapping verified against PIES taxonomy")
 ```
 
@@ -378,7 +380,7 @@ For each sampled member:
 ```
 cruxible_get_relationship(instance_id,
     from_type="CatalogPart", from_id="31112C",
-    relationship="classified_as",
+    relationship_type="classified_as",
     to_type="TaxonomyType", to_id="12730")
 
 cruxible_get_entity(instance_id, "CatalogPart", "31112C")
@@ -409,6 +411,7 @@ for chunk in remaining_chunks_for_signature:
 cruxible_list_groups(instance_id, status="auto_resolved")
 # For each:
 cruxible_resolve_group(instance_id, group_id, action="approve",
+    expected_pending_version=<pending_version from cruxible_get_group>,
     rationale="Auto-resolved: prior trusted pattern")
 ```
 
@@ -423,7 +426,7 @@ cruxible_feedback(
     source="agent",
     from_type="CatalogPart",
     from_id="31112C",
-    relationship="classified_as",
+    relationship_type="classified_as",
     to_type="TaxonomyType",
     to_id="10006",
     reason="Quarter panel, not door panel — description says QTR TRIM",
@@ -488,6 +491,8 @@ providers:
   keyword_extract_v1:
     # ... original rules (kept for audit trail)
   keyword_extract_v2:
+    contract_in: cruxible.JsonItems
+    contract_out: CatalogRows
     ref: kit://providers/classification.py::keyword_extract_v2
     version: 2.0.0
 ```

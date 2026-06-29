@@ -103,7 +103,8 @@ default behavior.
 
 Direct writes are available for explicit state updates where the domain permits
 them — a governed `proposal_only` entity or relationship type (or the
-instance-wide `refuse_direct_writes` kill-switch) refuses direct writes and
+instance-wide `refuse_direct_writes` kill-switch, set via the
+`CRUXIBLE_REFUSE_DIRECT_WRITES` environment variable) refuses direct writes and
 forces state in through the proposal/workflow path instead. When a direct
 relationship write is permitted and overlaps a member of a pending or applying
 group, Cruxible keeps the write permissive and annotates the affected group with

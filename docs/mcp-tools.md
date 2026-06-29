@@ -54,7 +54,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Arguments:** none.
 
-**Returns:** Top-level fields: `server_required`, `state_dir`, `version`, `instance_count`
+**Returns:** Top-level fields: `server_required`, `state_dir`, `version`, `instance_count`, `auth_enabled`, `auth_required`
 
 **Side Effects:** Read-only.
 
@@ -81,7 +81,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 
 **Returns:** Top-level fields: `instance_id`, `status`, `warnings`
 
-**Side Effects:** Read-only.
+**Side Effects:** Creates a new instance or reloads an existing one.
 
 **Common Errors:**
 - Unknown `instance_id` or missing daemon configuration.
@@ -384,6 +384,8 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | Name | Required | Type | Description |
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
+| `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -496,7 +498,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | Name | Required | Type | Description |
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
-| `receipt_id` | yes | string |  |
+| `receipt_id` | no | string |  |
 | `action` | yes | enum: approve, reject, correct, flag |  |
 | `source` | yes | enum: human, agent |  |
 | `from_type` | yes | string |  |
@@ -623,6 +625,7 @@ Tool descriptions are written for non-coding MCP clients. Each description start
 | `query_name` | no | string | null |  |
 | `receipt_id` | no | string | null |  |
 | `limit` | no | integer |  |
+| `offset` | no | integer |  |
 | `property_filter` | no | object | null |  |
 | `where` | no | object | null | Bounded entity/edge property predicates such as `{"status": {"eq": "active"}}`, `{"title": {"contains": "query"}}`, or `{"status": {"in": ["active", "planned"]}}`. |
 | `operation_type` | no | string | null |  |
@@ -1076,7 +1079,7 @@ error-level finding exists.
 | `relationships` | yes | array |  |
 | `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
 
-**Returns:** Top-level fields: `added`, `updated`, `receipt_id`
+**Returns:** Top-level fields: `added`, `updated`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1122,7 +1125,7 @@ error-level finding exists.
 | `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs/source evidence). |
 | `dry_run` | no | boolean | Validate the payload without mutating graph state. |
 
-**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `evidence_sources_used`, `receipt_id`
+**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `evidence_sources_used`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
 
 **Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
 
@@ -1298,6 +1301,7 @@ error-level finding exists.
 | `subject_id` | no | string | null |  |
 | `decision_class` | no | string | null |  |
 | `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -1324,6 +1328,7 @@ error-level finding exists.
 | `trace_id` | no | string | null |  |
 | `status` | no | string | null |  |
 | `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -1496,8 +1501,9 @@ error-level finding exists.
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
 | `relationship_type` | no | string | null |  |
-| `status` | no | enum: pending_review, auto_resolved, applying, resolved, suppressed | null |  |
+| `status` | no | enum: pending_review, auto_resolved, applying, resolved | null |  |
 | `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -1522,6 +1528,7 @@ error-level finding exists.
 | `relationship_type` | no | string | null |  |
 | `action` | no | enum: approve, reject | null |  |
 | `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 
@@ -1613,6 +1620,8 @@ error-level finding exists.
 | Name | Required | Type | Description |
 | --- | --- | --- | --- |
 | `instance_id` | yes | string |  |
+| `limit` | no | integer |  |
+| `offset` | no | integer |  |
 
 **Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
 

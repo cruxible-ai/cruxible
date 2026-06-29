@@ -27,13 +27,13 @@ external Docker mount, or if the non-root `cruxible` user cannot write to it.
 This prevents hosted runtime state from being stored only in the container's
 ephemeral filesystem layer.
 
-The control-plane Docker provisioning backend prepares each per-instance host
-state directory before starting the runtime container. By default it applies
-mode `0777`, matching the local smoke-test pattern above so the non-root
-container user can write through the bind mount on a normal Linux host. For
-tighter deployments that manage host ownership separately, set
-`CRUXIBLE_CONTROL_PLANE_RUNTIME_STATE_DIR_MODE` to an octal directory mode such
-as `0770` or `0700`.
+The external Cloud control plane (the separate `cruxible-cloud-api` package, not
+`cruxible-core`) is what prepares each per-instance host state directory before
+starting the runtime container. By default it applies mode `0777`, matching the
+local smoke-test pattern above so the non-root container user can write through
+the bind mount on a normal Linux host. Tighter host-ownership modes are
+configured on that control plane, not through any `cruxible-core` environment
+variable an operator of this image sets directly.
 
 Verify the server:
 
@@ -66,7 +66,8 @@ Unsupported or missing isolated backends fail with the public-safe error code
 ## Private Runtime Network
 
 Hosted runtimes should not publish port `8100` on the public host interface.
-Public traffic should enter through the edge proxy or `cruxible-cloud-api`, and
+Public traffic should enter through external/future Cloud components — the edge
+proxy or `cruxible-cloud-api`, neither of which ships in this repo — and
 Cloud/API should reach runtimes over a private Docker network.
 
 For local development, create a writable state directory and run the private

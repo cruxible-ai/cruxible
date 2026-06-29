@@ -3,7 +3,7 @@
 Cruxible Core configs are YAML files that define a decision domain: entity
 types, relationships, named queries, constraints, workflows, providers,
 artifacts, quality checks, feedback profiles, outcome profiles, and decision
-policies, plus mutation guards for direct state writes. AI agents generate
+policies, plus mutation guards for configured state writes. AI agents generate
 these configs; Core validates and executes against them.
 
 ## Top-Level Structure
@@ -106,6 +106,14 @@ is a **hard constraint, independent of permission tier** — even `admin` is
 refused. The refusal raises `DirectWriteRefusedError` (HTTP **403**,
 `error_code: direct_write_refused`).
 
+An entity type marked **`mint_only`** (entity types only — not relationships) is
+stricter still: it is writable **only** by the internal `token_mint` source and
+refuses *all* other sources, including the governed verbs `workflow_apply` /
+`group_resolve`. Because a workflow `make_entities` step would later apply through
+`workflow_apply` and bypass the chokepoint refusal, a config whose `make_entities`
+targets a `mint_only` entity type is **rejected at config load** (fail-closed).
+Use it for auth-managed identity types.
+
 **Scope.** `refuse_direct_writes` governs how state is *created* — it forces the
 direct-write verbs above through the proposal/workflow path. It does **not**
 govern the `feedback` review channel: promoting an already-staged (`pending`)
@@ -119,7 +127,7 @@ Three knobs control it:
 
 | Knob | Where | Values | Effect |
 |------|-------|--------|--------|
-| `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). |
+| `write_policy` (per type) | `entity_types.<T>` / `relationships[]` | `direct` \| `proposal_only` \| `mint_only` (entity types only) \| unset | Per-type policy. Unset inherits the instance default. An explicit `direct` opts out of the instance default (but **not** the env kill-switch). `mint_only` (entity types only) is stricter than `proposal_only`: the type is writable **only** by the internal `token_mint` source and refuses all other sources, including the governed verbs `workflow_apply` / `group_resolve`. A config whose workflow `make_entities` step targets a `mint_only` entity type is rejected at load (fail-closed). |
 | `default_write_policy` | `runtime` | `direct` (default) \| `proposal_only` | Instance-wide default for types whose own `write_policy` is unset. |
 | `CRUXIBLE_REFUSE_DIRECT_WRITES` | process env (daemon) | truthy (`1`/`true`/`yes`/`on`) | Daemon-wide **kill-switch** for the direct-write verbs: forces `proposal_only` for every type *at the write chokepoint*, overriding every per-type opt-out and the default. (Chokepoint only — the feedback review/promotion path is separate; see Scope above.) |
 
@@ -219,7 +227,7 @@ entity_types:
 | `description` | string | no | `null` | Human-readable description of this entity type |
 | `properties` | dict | **yes** | — | Property definitions (see below) |
 | `constraints` | list[string] | no | `[]` | Constraint names that apply to this entity type |
-| `write_policy` | string | no | `null` | `"direct"` or `"proposal_only"`. Governs direct entity adds for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `null` inherits `runtime.default_write_policy`. |
+| `write_policy` | string | no | `null` | `"direct"`, `"proposal_only"`, or `"mint_only"`. Governs direct entity adds for this type — see [Direct-Write Governance](#direct-write-governance-refuse_direct_writes). `"mint_only"` is stricter than `"proposal_only"`: writable only by the internal `token_mint` source, refusing all other sources including `workflow_apply` / `group_resolve` (a config wiring a `mint_only` type into a workflow `make_entities` step is rejected at load). `null` inherits `runtime.default_write_policy`. |
 
 ### PropertySchema
 
@@ -227,7 +235,7 @@ Each property within an entity type (or relationship) is defined with:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `type` | string | no for graph properties; yes for contract fields | `"string"` for graph properties | Data type: `string`, `int`, `float`, `number`, `bool`, `date`, `json` |
+| `type` | string | no for graph properties; yes for contract fields | `"string"` for graph properties | Data type: `string`, `int`, `integer`, `float`, `number`, `bool`, `date`, `datetime`, `json` |
 | `primary_key` | bool | no | `false` | Mark as the entity's unique identifier |
 | `indexed` | bool | no | `false` | Enable fast lookups on this property |
 | `optional` | bool | no | graph properties default to `true`; contract fields default to `false` | Allow null/missing values |
@@ -1050,7 +1058,7 @@ outcome_profiles:
 | `version` | int | `1` | Profile version |
 | `relationship_type` | string | `null` | Required for `anchor_type: resolution` |
 | `workflow_name` | string | `null` | Optional for resolution anchors |
-| `surface_type` | string | `null` | Required for `anchor_type: receipt` — `"query"`, `"workflow"`, or `"operation"` |
+| `surface_type` | string | `null` | Required for `anchor_type: receipt` — `"query"`, `"workflow"`, or `"operation"`. Only `"query"` and `"workflow"` are validated and bound to a surface; `"operation"` is accepted but inert (no binding). |
 | `surface_name` | string | `null` | Required for `anchor_type: receipt` |
 | `outcome_codes` | dict[str, OutcomeCodeSchema] | `{}` | Named outcome codes |
 | `scope_keys` | dict[str, OutcomePathRef] | `{}` | Named scope dimensions |
@@ -1090,8 +1098,13 @@ Scope key paths depend on anchor type. Valid fields per prefix:
 
 ## mutation_guards
 
-Mutation guards reject direct state writes when a configured state-side condition
-does not pass. They are enforced by direct entity writes and batch direct writes.
+Mutation guards reject configured state writes when a configured state-side
+condition does not pass. They are enforced on direct entity writes, batch direct
+writes, and canonical workflow apply: entity-property guards on entity writes;
+relationship-evidence guards (the evidence-requirement condition, scoped to a
+relationship type) on relationship writes. Release-backed `state pull`
+re-materialization is exempt, since it replays already-accepted upstream state
+rather than authoring new writes.
 They are appendable in overlay composition and are not allowed in `kind:
 ontology` configs.
 
@@ -1469,7 +1482,7 @@ providers:
 | `version` | string | **yes** | — | Semantic version for lock-file reproducibility |
 | `deterministic` | bool | no | `true` | Whether the provider produces identical output for identical input |
 | `artifact` | string | no | `null` | Name of artifact this provider depends on (must exist in `artifacts`) |
-| `runtime` | string | no | `"python"` | Execution runtime |
+| `runtime` | string | no | `"python"` | Execution runtime: `"python"`, `"http_json"`, or `"command"` |
 | `side_effects` | bool | no | `false` | Whether the provider has side effects |
 | `config` | dict | no | `{}` | Provider-specific configuration |
 

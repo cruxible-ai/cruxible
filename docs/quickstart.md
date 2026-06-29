@@ -45,7 +45,7 @@ import the runtime directly:
 pip install cruxible-client
 ```
 
-## Create A Reference World
+## Create A Reference State
 
 Initialize the standalone KEV reference kit. This materializes the kit bundle,
 loads its config, and gives you an instance ID.
@@ -83,12 +83,12 @@ cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> query ru
 
 Every query returns a receipt ID. In MCP, fetch the full proof with
 `cruxible_receipt(instance_id, "<receipt-id>")`. The CLI `explain` command
-renders receipts for direct local instances.
+renders receipts in both server and direct-local modes.
 
 ## Create A Local Overlay
 
 The KEV triage kit is an overlay kit. It tracks the published KEV reference
-world and adds local assets, services, controls, exceptions, remediation,
+state and adds local assets, services, controls, exceptions, remediation,
 incidents, findings, and governed proposal workflows.
 
 ```bash
@@ -98,7 +98,7 @@ cruxible --server-url http://127.0.0.1:8100 state create-overlay \
   --root-dir "$PWD/kev-triage-workspace"
 ```
 
-`--state-ref kev-reference` resolves through the published world catalog. In a
+`--state-ref kev-reference` resolves through the published state catalog. In a
 source checkout before published OCI reference states are available, publish the
 reference instance to a local `file://` transport and pass `--transport-ref`
 instead of `--state-ref`.

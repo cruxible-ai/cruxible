@@ -27,8 +27,8 @@ The three roles map one-to-one onto these moments.
 | Role | What it means | When it acts | How it's set up | Does it block? |
 | --- | --- | --- | --- | --- |
 | **Tag** | Helps you find, filter, and group things — changes what you *see* | Reading | named queries | No — purely informational |
-| **Gate** | A rule Cruxible enforces — changes what's *allowed* | Saving | mutation guards, constraints | **Yes** — refuses the save if the rule isn't met |
-| **Flag** | A health check that points out problems to fix later — changes what's *surfaced for cleanup* | Maintaining | quality checks (warning or error) | No — it reports, never blocks |
+| **Gate** | A rule Cruxible enforces — changes what's *allowed* | Saving | mutation guards | **Yes** — refuses the save if the rule isn't met |
+| **Flag** | A health check that points out problems to fix later — changes what's *surfaced for cleanup* | Maintaining | quality checks, constraints (warning or error) | No — it reports, never blocks |
 
 ### Tags — what you see
 

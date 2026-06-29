@@ -129,12 +129,12 @@ cruxible relationship update work_item_part_of_work_item WorkItem wi-child WorkI
 | `--description` | no | `` | text | Optional description. |
 
 **Output And Side Effects:**
-- Read-only. Returns group metadata, members, optional resolution, bucket lifecycle status, and member review state showing proposed tuples, current edge counts, current edge details when unambiguous, and property deltas.
+- Config mutation. Adds a constraint rule to the active config and reports the constraint name plus any validation warnings. Server-mode only.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for read operations.
-- Group ID not found.
+- Permission mode too low for mutations.
+- Local mutation disabled when not server-backed; run against a server-mode instance.
 
 ## cruxible config add-decision-policy
 
@@ -608,6 +608,7 @@ shared_evidence:
 | `--apply-digest` | no | `` | text | Preview apply digest from workflow run. |
 | `--head-snapshot` | no | `` | text | Expected head snapshot ID from workflow preview. |
 | `--preview-file` | no | `` | file | Read preview state from a file saved by run --save-preview. |
+| `--from-last-preview` | no | `False` | boolean | Apply the latest stored preview for the workflow. Mutually exclusive with `--preview-file`/`--apply-digest`. |
 | `--decision-record` | no | `` | text | Decision record ID for audit logging. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -1207,6 +1208,7 @@ findings.
 | `--relationship` | no | `` | text | Filter by relationship type. |
 | `--status` | no | `` | choice | Filter by status. |
 | `--limit` | no | `50` | integer | Max groups to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1233,7 +1235,7 @@ findings.
 | `--thesis` | no | `` | text | Human-readable thesis text. |
 | `--thesis-facts` | no | `` | text | Optional JSON object used as agent-supplied direct proposal scope. |
 | `--analysis-state` | no | `` | text | JSON object of opaque analysis state. |
-| `--signal-source` | no | `Sentinel.UNSET` | text | Signal source name used in this proposal. |
+| `--signal-source` | no | `()` | text | Deprecated and hidden; signal sources are derived from member signals. Optional, repeatable. |
 
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
@@ -1256,6 +1258,7 @@ findings.
 | `--relationship` | no | `` | text | Filter by relationship type. |
 | `--action` | no | `` | choice | Filter by action. |
 | `--limit` | no | `50` | integer | Max resolutions to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1281,6 +1284,7 @@ findings.
 | `--rationale` | no | `` | text | Rationale for this resolution. |
 | `--source` | no | `human` | choice | Who resolved (default: human). |
 | `--expected-pending-version` | yes | `Sentinel.UNSET` | integer | Pending version the reviewer saw when deciding. |
+| `--stamp-existing` | no | `False` | boolean | On approve, bless each surviving pre-existing edge with this group's review status and provenance instead of skipping it. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1579,7 +1583,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
-| `--format` | no | `markdown` | choice | Output format. |
+| `--format` | no | `markdown` | choice | Output format: `json`, `markdown`, `mermaid`, `mermaid-dependencies`, or `mermaid-steps`. |
 
 **Output And Side Effects:**
 - Read-only output unless the command records an explicit receipt, feedback, outcome, or decision event.
@@ -1649,6 +1653,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--relationship` | no | `` | text | Filter by relationship type. |
 | `--where` | no | `` | text | Property predicate. Repeatable. Use `field=value`, `field~value`, or `field:in=a,b`. |
 | `--limit` | no | `50` | integer | Max edges to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--state` | no | `` | choice | Read-visibility state: `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Omit to return every stored edge (the inspection default); `not-live` surfaces rejected/closed edges, `live` hides them. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
@@ -1717,6 +1722,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | --- | --- | --- | --- | --- |
 | `--receipt` | no | `` | text | Filter by receipt ID. |
 | `--limit` | no | `50` | integer | Max records to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1739,6 +1745,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | --- | --- | --- | --- | --- |
 | `--receipt` | no | `` | text | Filter by receipt ID. |
 | `--limit` | no | `50` | integer | Max records to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -1762,6 +1769,7 @@ Deprecated hidden alias for `cruxible relationship lineage`; use the noun-first 
 | `--query-name` | no | `` | text | Filter by query name. |
 | `--operation-type` | no | `` | text | Filter by operation type. |
 | `--limit` | no | `50` | integer | Max receipts to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
 | `--json` | no | `False` | boolean | Output as JSON. |
 
 **Output And Side Effects:**
@@ -2359,6 +2367,13 @@ cruxible query inline \
 
 **Purpose:** List snapshots for the current instance.
 
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--limit` | no | `` | integer | Max snapshots to show. |
+| `--offset` | no | `0` | integer | Rows to skip. |
+
 **Output And Side Effects:**
 - Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
 
@@ -2668,7 +2683,7 @@ cruxible source dereference \
 | Name | Required | Default | Type | Description |
 | --- | --- | --- | --- | --- |
 | `--transport-ref` | no | `Sentinel.UNSET` | text | Transport ref, e.g. file://... or oci://... |
-| `--state-ref` | no | `Sentinel.UNSET` | text | World alias, e.g. kev-reference or kev-reference@2026-03-27. |
+| `--state-ref` | no | `Sentinel.UNSET` | text | State alias, e.g. kev-reference or kev-reference@2026-03-27. |
 | `--kit` | no | `Sentinel.UNSET` | text | Apply a checked-in local overlay kit, e.g. kev-triage. |
 | `--no-kit` | no | `False` | boolean | Skip automatic kit application and create a bare overlay. |
 | `--root-dir` | no | `` | text | Workspace root for the new overlay (defaults to current directory in server mode). |

@@ -178,10 +178,11 @@ domain properties; feedback and group resolution update that metadata rather
 than writing domain fields.
 
 Provenance uses a two-part vocabulary: `source` names the channel that wrote
-the edge (`cli_add`, `http_api`, `mcp_add`, `group_resolve`, workflow apply
-sources), and `source_ref` names the operation in snake_case operation
-vocabulary (`add_relationship`, `batch_direct_write`) — never a surface
-spelling, so command or tool renames cannot leak into stored provenance.
+the edge (`cli_batch_direct_write`, `http_api`, `mcp_add`, `group_resolve`, workflow apply
+sources), and `source_ref` names the operation — a snake_case operation name
+(`add_relationship`, `batch_direct_write`) or a structured ref for governed and
+workflow writes (`group:<group_id>`, `workflow:<workflow>:<step>`) — never a
+surface spelling, so command or tool renames cannot leak into stored provenance.
 Provenance is historical record: values written by earlier versions are never
 rewritten.
 
@@ -265,6 +266,8 @@ become an explicit constraint or decision policy.
 
 ## Technology
 
-Cruxible uses Pydantic for typed models, NetworkX for graph storage, Polars for
-data operations, SQLite for receipts/traces/groups/decision logs, Click/Rich for
-CLI, FastAPI for the daemon, and FastMCP for agent tools.
+Cruxible uses Pydantic for typed models, Polars for data operations, Click/Rich
+for CLI, FastAPI for the daemon, and FastMCP for agent tools. Persistence is a
+single per-instance SQLite `state.db` that holds graph state plus
+receipts/traces/groups/feedback/outcomes/decisions/snapshots/source-artifacts; a
+NetworkX `MultiDiGraph` is the in-memory representation of that graph state.
