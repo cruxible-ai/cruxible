@@ -382,28 +382,50 @@ expose only the client, HTTP, or MCP surface. See
 
 ## Kits
 
-| Kit | Kind | What it models |
-|-----|------|----------------|
-| [agent-operation](kits/agent-operation/) | Agent operating state | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
-| [kev-reference](kits/kev-reference/) | Domain reference state | Public known-exploited vulnerability reference data. |
-| [kev-triage](kits/kev-triage/) | Domain overlay state | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
-| [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Domain state | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
-| [case-law-monitoring](kits/case-law-monitoring/) | Domain state | Matter-centered case-law monitoring and authority impact. |
+| Kit | Kind | Status | What it models |
+|-----|------|--------|----------------|
+| [agent-operation](kits/agent-operation/) | Agent operating state | ready | Work items, review requests, decisions, risks, open questions, state notes, actors, lifecycle, and dependency context. |
+| [kev-reference](kits/kev-reference/) | Domain reference state | ready | Public known-exploited vulnerability reference data. |
+| [kev-triage](kits/kev-triage/) | Domain overlay state | ready | Local asset exposure, service impact, controls, incidents, findings, remediation, and governed vulnerability triage. |
+| [supply-chain-blast-radius](kits/supply-chain-blast-radius/) | Domain state | in_progress | Suppliers, components, assemblies, products, shipments, and incident blast radius. |
+| [case-law-monitoring](kits/case-law-monitoring/) | Domain state | in_progress | Matter-centered case-law monitoring and authority impact. |
 
 Standalone kits can define a full state model. Overlay kits can extend an
 upstream state model with local state, governed proposals, and local workflows.
 
+**Status** — *ready* kits ship working providers (KEV also ships public reference
+data), so their workflows execute end to end. *in_progress* means the ontology,
+governance, named queries, and feedback/outcome loops are complete and validated,
+but the data-ingest and assessment providers are placeholders — implement them or
+wire your own data before running the workflows.
+
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) - install to first query
-- [Concepts](docs/concepts.md) - architecture and primitives
-- [Config Reference](docs/config-reference.md) - YAML schema
-- [CLI Reference](docs/cli-reference.md) - terminal commands
-- [MCP Tools Reference](docs/mcp-tools.md) - agent tool surface
-- [AI Agent Guide](docs/for-ai-agents.md) - orchestration patterns
-- [Kit Walkthroughs](docs/kit-walkthroughs.md) - standalone and overlay kits
-- [Local State And Backups](docs/local-state-and-backups.md) - SQLite, daemon state, and portability
-- [Common Providers And Dataflow Steps](docs/common-providers.md) - provider and workflow building blocks
+**Getting started**
+- [Quickstart](docs/quickstart.md) — install to first query
+- [Concepts](docs/concepts.md) — architecture and primitives
+
+**Modeling and authoring**
+- [Modeling State](docs/modeling-state.md) — designing an ontology (entities, relationships, gates vs flags)
+- [Config Reference](docs/config-reference.md) — the YAML config schema
+- [Kit Authoring](docs/kit-authoring.md) — kit manifest, structure, and packaging
+- [Kit Walkthroughs](docs/kit-walkthroughs.md) — building standalone and overlay kits
+- [Common Providers And Dataflow Steps](docs/common-providers.md) — provider and workflow building blocks
+
+**Reference**
+- [CLI Reference](docs/cli-reference.md) — terminal commands
+- [MCP Tools Reference](docs/mcp-tools.md) — agent tool surface
+- [AI Agent Guide](docs/for-ai-agents.md) — orchestration patterns
+
+**Operating and deploying**
+- [Local State And Backups](docs/local-state-and-backups.md) — SQLite, daemon state, and portability
+- [Runtime Auth And Agent Roles](docs/runtime-auth-and-agent-roles.md) — credentials, permission tiers, and bootstrap
+- [State Resolution And Maintenance](docs/state-resolution-and-maintenance.md) — proposal resolution, trust grading, and maintenance signals
+- [Isolated Deployment](docs/isolated-deployment.md) — running the daemon with only the client/MCP surface exposed
+- [Hosted Runtime Image](docs/hosted-runtime-image.md) — the runtime container image
+
+**Guides**
+- [Skill Classification At Scale](docs/skill-classification-at-scale.md) — a worked governed-classification agent playbook
 
 ## Technology
 
