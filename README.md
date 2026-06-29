@@ -10,38 +10,25 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Cruxible is a local-first governed state layer for AI agents: it helps teams
-turn domain knowledge, workflow traces, human review, and accumulated judgment
-into queryable state that survives model swaps.**
+**Cruxible is hard state for AI agents.**
 
-LLMs operate over context windows and retrieved text, not shared mutable state.
-When project or domain state lives only in prompts, markdown files, chat
-history, tickets, databases, or vector-memory summaries, each model invocation
-must reconstruct the relevant facts, relationships, and decisions from those
-sources.
+Governed, queryable, and durable — state that outlives any single model or session.
 
-Cruxible is not a replacement for those sources. It can point to them, cite
-specific records or chunks, and turn the durable slice into agent-ready
-relational state: typed entities, relationships, lifecycle, review status,
-evidence, constraints, workflows, and named queries. That state gives agents a
-structured context for reasoning, especially when multiple agents or human
-reviewers need to coordinate on the same work. Receipts, governance, and
-provenance make durable claims traceable back to their sources. Core executes
-deterministically: no LLM inside, no hidden API calls, and every important
-operation can produce a receipt.
+LLMs reason over context windows and retrieved text, not shared state. When
+what's true about a project or domain lives only in prompts, files, chat
+history, tickets, or vector-memory summaries, every model invocation has to
+reconstruct it.
 
-For developers, Cruxible gives you a stable backend for agent context:
+Cruxible turns the durable slice of that knowledge into typed, queryable,
+governed state — entities, relationships, lifecycle, and review status that
+agents and humans share instead of re-deriving. It doesn't replace your source
+systems; it points to them, cites specific records or chunks, and keeps only the
+claims worth coordinating around.
 
-- model the state once as a kit instead of rebuilding context in every prompt
-- keep external systems as sources of truth while storing pointers and durable
-  claims
-- expose the same named queries to agents, scripts, HTTP clients, dashboards,
-  and review tools
-- route uncertain claims through governed review instead of accepting every
-  agent write as trusted state
-- trace state back to source records, chunks, receipts, workflows, and reviewers
+The core is deterministic: no LLM inside, no hidden API calls, and every
+important operation can produce a receipt.
 
-## The Owned Learning Loop
+## The State Learning Loop
 
 Cruxible is built for teams that want their AI systems to improve and their
 knowledge to compound with use, instead of getting wiped away by every context
@@ -49,14 +36,19 @@ refresh, model swap, or handoff.
 
 A Cruxible-backed loop looks like this:
 
-1. Agents query governed state instead of reconstructing context from scratch.
-2. Workflows and tools produce traces, evidence, and proposed changes.
-3. Humans or policies review uncertain claims and important state transitions.
-4. Edge feedback records corrections, missing context, and policy gaps.
-5. Outcome profiles record whether decisions and workflow results were later
+1. You model the surface as an ontology — typed entities, relationships,
+   constraints, and named queries, using a YAML config language.
+2. State is seeded and grown through direct adds, imports, and governed group
+   proposals.
+3. Agents query that governed state instead of reconstructing context from
+   scratch.
+4. Workflows and tools produce traces, evidence, and proposed changes.
+5. Humans or policies review uncertain claims and important state transitions.
+6. Edge feedback records corrections, missing context, and policy gaps.
+7. Outcome profiles record whether decisions and workflow results were later
    correct, incorrect, partial, or unknown.
-6. Approved state, rejected claims, corrections, outcomes, and receipts persist.
-7. Future agents use that durable state regardless of which model is running.
+8. Approved state, rejected claims, corrections, outcomes, and receipts persist.
+9. Future agents use that durable state regardless of which model is running.
 
 The model can change. The accumulated state, evidence, review history,
 feedback, outcomes, and workflow knowledge stay with the team.
@@ -86,8 +78,8 @@ Examples:
 ### Agent Operating State
 
 Agent operating state is the durable coordination layer for work done by agents
-and humans: work items, review requests, design decisions, open questions,
-risks, milestones, release lines, evidence, dependencies, and lifecycle status.
+and humans: work items, review requests, decisions, open questions, risks, state
+notes, actors, dependencies, lineage, and lifecycle status.
 
 Operating state answers:
 
@@ -96,9 +88,9 @@ Operating state answers:
 Examples:
 
 - What open work items are active, blocked, deferred, or ready for review?
-- Which design decision constrains this implementation?
+- Which decision constrains this implementation?
 - Which review request approved closing a work item?
-- Which open question blocks a release or a downstream task?
+- Which open question blocks a decision or a downstream work item?
 
 These state types can be used separately. They are strongest together: a domain
 kit models the thing the agent is working on, while an operating-state kit tracks
@@ -115,131 +107,64 @@ flowchart LR
   end
 
   subgraph Ops["Agent operating layer"]
+    Owner["Actor: Agent A"]
+    Reviewer["Actor: human reviewer"]
     Work["WorkItem: patch ASSET-42"]
     Review["ReviewRequest: verify remediation"]
-    Decision["DesignDecision: emergency patch window"]
+    Decision["Decision: emergency patch window"]
+    Risk["Risk: exposed to active exploit"]
   end
-
-  AgentA["Agent A"]
-  AgentB["Agent B / human reviewer"]
-  Evidence["Evidence: scanner chunk, KEV record, receipt"]
 
   Asset -- "runs" --> Product
   CVE -- "affects" --> Product
-  Work -- "targets domain object" --> Asset
-  Work -- "mitigates exposure" --> CVE
+  Work -- "targets" --> Asset
+  Work -- "mitigates" --> Risk
+  Risk -- "attaches to" --> CVE
   Decision -- "constrains" --> Work
-  AgentA -- "owns" --> Work
-  AgentA -- "requests review" --> Review
+  Work -- "owned by" --> Owner
   Review -- "reviews" --> Work
-  AgentB -- "resolves" --> Review
-  Evidence -- "supports" --> Work
-  Evidence -- "supports" --> Review
+  Review -- "requested by" --> Owner
+  Review -- "assigned to" --> Reviewer
 ```
 
-In this shape, the KEV kit owns the domain facts: an asset runs a product, and a
-vulnerability affects that product. The agent-operation kit owns the operating
-facts: Agent A has a work item to patch the asset, a decision constrains how the
-work happens, and Agent B or a human reviewer resolves the review request.
-Evidence refs and receipts connect both layers back to scanner output, source
-records, markdown chunks, and prior Cruxible operations.
+The KEV kit owns the domain facts and the agent-operation kit owns the operating
+facts; typed operation-to-domain edges (or `SubjectRef`s across instances)
+compose them into one queryable graph.
 
-## Why Not Just Markdown Or Memory?
+## Why Not Markdown, RAG, Or Vector Memory?
 
-Markdown and memory are good for loose context. They are weak as shared state.
+Markdown, retrieval, and vector memory give a model text to read. Cruxible gives
+it typed, governed state. What changes:
 
-| Markdown, prompts, or memory alone | With Cruxible |
+| Markdown · RAG · vector memory | Cruxible |
 |---|---|
-| Facts are re-summarized on every handoff | Facts and relationships persist as typed state |
-| Procedure lives in prose and habits | Queries, constraints, guards, and workflows are executable |
-| Review is informal | Review and lifecycle state are part of the model |
-| Provenance is scattered across chats and tools | Receipts and evidence refs explain where claims came from |
-| Agents RAG over many files to recover context | Agents ask narrow named queries with bounded results |
-| Apps need custom glue over prose | Apps call the same query engine agents use |
-| Stale items linger as text | State has explicit status, ownership, dependencies, and closure rules |
+| No provenance — text doesn't record where a claim came from or whether it was reviewed | Durable claims are designed to carry source evidence, review state, and receipts |
+| Context is rebuilt from text every session, losing relationships and detail | Persisted as typed state — read, not reconstructed |
+| Anything can be edited; nothing enforces what may change | Writes pass guards, review, and lifecycle rules |
+| Retrieval returns similar chunks; it can't follow exact links | Multi-hop traversal over typed relationships |
+| Counts and rollups are approximate summaries | Exact, repeatable aggregation — counts and joins |
+| Each read is fresh and can disagree with the last | One accepted state — the same answer for every agent and app |
+| No feedback loop — corrections and whether a decision was right are lost | Feedback and outcomes are recorded against the state as durable signal |
+| Static text that doesn't improve from use | State and ontology iterate with use — claims mature from proposed to accepted |
+| A better model reads better, but can't certify its own output | Guarantees come from a deterministic layer outside the model |
 
-Use markdown for narrative, plans, and source evidence. Use Cruxible for state
-that agents and humans need to coordinate around.
-
-Cruxible also does not need to re-implement every source system. If markdown,
-an application database, Stripe, Cognito, a CRM, or another relational system is
-already the source of truth, Cruxible can keep pointers to whole records or to
-specific addressable parts, such as a chunk in a markdown file, and store only
-the durable claims, relationships, lifecycle state, evidence refs, or review
-decisions that agents need to coordinate around.
-
-## What Cruxible Provides
-
-- **Ontologies:** typed entity and relationship schemas for a domain or operating
-  state model.
-- **Constraints and mutation guards:** deterministic validation rules for graph
-  quality and state transitions.
-- **Named and inline queries:** bounded, deterministic read surfaces for agents,
-  apps, and workflows.
-- **Workflows:** reproducible procedures that query, call providers, generate
-  candidates, apply direct state, or propose governed changes.
-- **Governed proposals:** candidate relationship groups with signal evidence,
-  review state, trust policy, and resolution receipts.
-- **Evidence-backed direct writes:** agents can add live state with evidence refs
-  or source-artifact locators without marking it review-approved.
-- **Pointers to external truth:** state can reference source documents,
-  markdown chunks, external records, record fields, or existing databases
-  without copying everything into the graph.
-- **Receipts and traces:** durable proof for queries, workflows, mutations, and
-  provider execution.
-- **Feedback and outcomes:** Loop 1 feedback records corrections and policy
-  gaps; Loop 2 outcomes record whether decisions or workflow results were later
-  correct, incorrect, partial, or unknown.
-- **Kits and overlays:** reusable state models that can be composed, extended,
-  bundled, and run locally.
-
-## What Developers Build With It
-
-Cruxible is not just a place to store graph-shaped facts. The point is to make
-state usable by agents, humans, and software without each caller reinterpreting
-the underlying documents.
-
-- **Agent reasoning context:** an agent can run named queries, inspect receipts,
-  cite evidence, and reason from stable state instead of from a fresh scrape of
-  scattered markdown.
-- **Multi-agent coordination:** teams of agents and human reviewers can work
-  against the same lifecycle, dependency, review, and provenance state instead
-  of exchanging lossy summaries.
-- **Query-backed product features:** apps and services can call the same query
-  engine through HTTP or the client SDK to power status pages, review queues,
-  dependency views, exposure reports, dashboards, and agent-facing tools.
-- **Pointers plus claims:** Cruxible can point to whole external records or
-  specific addressable parts for live detail while storing the relationships,
-  decisions, and review state that need to be durable.
-- **Reviewable write pipelines:** uncertain claims become candidate groups with
-  signals, evidence, and review actions instead of silently mutating trusted
-  state.
-- **Workflow automation:** workflows consume query results, call deterministic
-  providers, apply direct state, generate governed proposals, and emit receipts.
-- **State maintenance:** evaluation, feedback, outcomes, and mutation guards turn
-  state into something agents can improve, not just retrieve.
+Cruxible does not replace your source systems. It points to records or specific
+chunks in markdown, a database, or a SaaS, and stores only the durable claims,
+relationships, lifecycle, and review decisions agents coordinate around.
 
 ## Governance And Workflows
 
-Cruxible separates writing state from accepting state.
+Cruxible separates writing state from accepting it. State enters one of two ways:
 
-Direct writes are useful when an agent or system is asserting hard state: import
-these entities, add these deterministic relationships, attach this source
-evidence. Direct relationship writes are live and queryable, but they remain
-unreviewed unless a governed process later approves them.
+| Write mode | Use it for | What happens |
+|---|---|---|
+| **Direct write** | Asserting hard state — imports, deterministic relationships, source evidence | Live and queryable at once, with evidence when supplied, but unreviewed until a governed process approves it |
+| **Governed proposal** | Judgment calls — uncertain or interpretive relationships | Candidates are grouped under one thesis with signal evidence and routed to a human or auto-resolution policy; approval writes accepted state with provenance, rejection records why |
 
-Governed proposals are the review boundary for judgment calls. A workflow can
-group many candidate relationships under one thesis, attach signal evidence,
-record why each member was proposed, and route the group to a human or trusted
-auto-resolution policy. Approval writes accepted relationship state with
-resolution provenance; rejection records why the proposal did not become state.
-
-Workflows are the executable procedure layer. They make repeated agent work
-auditable: run a query, call a provider, shape candidates, map signals, propose a
-group, apply direct state, or test the whole flow against expected behavior.
-Because workflow runs, proposal resolutions, feedback, outcomes, and queries all
-produce durable records, agents can explain not only what they concluded, but how
-the state changed and which evidence supported it.
+Workflows orchestrate both: a reproducible procedure can query state, call
+providers, shape candidates, then apply direct writes or propose a governed
+group. Providers are version- and content-locked in the kit lockfile, so runs
+replay deterministically; every run also leaves receipts and traces.
 
 ## How It Fits
 
@@ -261,53 +186,111 @@ state.db
   snapshots, source artifacts
 ```
 
-The core loop:
-
-1. Model a domain or operating-state surface as a kit.
-2. Add or refresh state through direct writes, workflows, or imports.
-3. Propose uncertain relationships for review instead of silently accepting
-   them.
-4. Query compact state surfaces instead of re-reading every source document.
-5. Record feedback, outcomes, and decisions so the state can improve over time.
-
 ## Small Example
+
+A minimal slice of a supply-chain ontology — the kind you author in a kit
+config:
 
 ```yaml
 entity_types:
-  WorkItem:
+  Supplier:
     properties:
-      work_item_id: { type: string, primary_key: true }
-      title: { type: string }
-      status: { type: string, enum_ref: lifecycle_status }
-      priority: { type: string, enum_ref: priority }
-  ReviewRequest:
+      supplier_id: { type: string, primary_key: true }
+      name: { type: string, indexed: true }
+      primary_geography: { type: string, optional: true }
+  Component:
     properties:
-      review_request_id: { type: string, primary_key: true }
-      status: { type: string, enum_ref: review_status }
+      component_id: { type: string, primary_key: true }
+      name: { type: string, indexed: true }
+      criticality: { type: string, optional: true, enum_ref: criticality }
+  Incident:
+    properties:
+      incident_id: { type: string, primary_key: true }
+      title: { type: string, indexed: true }
+      severity: { type: string, optional: true, enum_ref: incident_severity }
 
 relationships:
-  - name: review_request_for_work_item
-    from: ReviewRequest
-    to: WorkItem
-  - name: work_item_depends_on_work_item
-    from: WorkItem
-    to: WorkItem
+  - name: supplier_supplies_component
+    from: Supplier
+    to: Component
+  # Governed judgment: an incident materially impacts a supplier.
+  - name: incident_impacts_supplier
+    from: Incident
+    to: Supplier
 
 named_queries:
-  work_items_for_owner:
-    mode: collection
-    returns: WorkItem
-    result_shape: entity
-    where:
-      result.properties.owner:
-        eq: $input.owner
-      result.properties.status:
-        not_in: [closed, superseded]
+  # Blast radius: from an incident, traverse impacted suppliers to the
+  # components they supply.
+  components_exposed_by_incident:
+    mode: traversal
+    entry_point: Incident
+    returns: Component
+    traversal:
+      - relationship: incident_impacts_supplier
+        direction: outgoing
+      - relationship: supplier_supplies_component
+        direction: outgoing
 ```
 
-An agent can now ask the state layer for an owner's open queue, dependency
-context, review status, and blockers without scanning project notes or chat
-history.
+An agent (or app) can now ask for the blast radius of an incident — the
+components exposed through its impacted suppliers — without scanning
+spreadsheets or tracing the bill of materials by hand.
+
+```bash
+cruxible query run components_exposed_by_incident \
+  --param incident_id=INC-42 \
+  --json
+```
+
+The query response includes the result rows and a receipt pointer. When receipt
+content is included or fetched later, it explains the deterministic path from
+query parameters to traversed edges to returned results:
+
+```json
+{
+  "items": [
+    {
+      "entity_type": "Component",
+      "entity_id": "component-main-board"
+    }
+  ],
+  "receipt_id": "RCP-...",
+  "receipt": {
+    "operation_type": "query",
+    "query_name": "components_exposed_by_incident",
+    "parameters": {
+      "incident_id": "INC-42"
+    },
+    "nodes": [
+      {
+        "node_type": "query",
+        "detail": {
+          "entry_point": "Incident"
+        }
+      },
+      {
+        "node_type": "edge_traversal",
+        "relationship": "incident_impacts_supplier"
+      },
+      {
+        "node_type": "edge_traversal",
+        "relationship": "supplier_supplies_component"
+      },
+      {
+        "node_type": "result",
+        "entity_type": "Component",
+        "entity_id": "component-main-board"
+      }
+    ],
+    "results": [
+      {
+        "entity_type": "Component",
+        "entity_id": "component-main-board"
+      }
+    ]
+  }
+}
+```
 
 ## Get Started
 
@@ -347,7 +330,7 @@ cruxible --server-url http://127.0.0.1:8100 \
 
 cruxible --server-url http://127.0.0.1:8100 \
   --instance-id <instance_id> \
-  query run work_items_for_owner --param owner=codex-core --json
+  query run actor_work_queue --param actor_id=alice --json
 ```
 
 Or call the same query surface from Python:
@@ -358,21 +341,12 @@ from cruxible_client import CruxibleClient
 with CruxibleClient(base_url="http://127.0.0.1:8100") as client:
     result = client.query(
         "<instance_id>",
-        "work_items_for_owner",
-        {"owner": "codex-core"},
+        "actor_work_queue",
+        {"actor_id": "alice"},
     )
     for item in result.items:
         print(item)
 ```
-
-### Write State
-
-For direct hard-state writes, use `entity add`, `relationship add`, or
-`batch-direct-write`. Direct relationship writes are live and evidence-backed,
-but they are not group-reviewed accepted state.
-
-For uncertain or interpretive claims, use governed proposal workflows or group
-proposal commands, then resolve the group after review.
 
 ## Agent Setup
 
@@ -420,28 +394,6 @@ expose only the client, HTTP, or MCP surface. See
 
 Standalone kits can define a full state model. Overlay kits can extend an
 upstream state model with local state, governed proposals, and local workflows.
-
-## Demos
-
-| Demo | Domain | What it demonstrates |
-|------|--------|---------------------|
-| [sanctions-screening](demos/sanctions-screening/) | Fintech / RegTech | OFAC screening with beneficial ownership chain traversal. |
-| [drug-interactions](demos/drug-interactions/) | Healthcare | Multi-drug interaction checking with CYP450 enzyme data. |
-| [mitre-attack](demos/mitre-attack/) | Cybersecurity | Threat modeling with ATT&CK technique and group analysis. |
-
-## When To Use Cruxible
-
-Use Cruxible when state must be:
-
-- shared across humans, agents, workflows, or apps
-- queryable by stable names rather than rediscovered from prose
-- governed by constraints, guards, review, or lifecycle rules
-- backed by evidence and receipts
-- durable across sessions and agent handoffs
-
-Do not use Cruxible for every note. Temporary scratch work, narrative docs,
-meeting notes, and free-form reasoning still belong in markdown or ordinary
-tools unless they contain claims that should become durable state.
 
 ## Documentation
 
