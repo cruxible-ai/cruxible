@@ -341,6 +341,8 @@ def apply_entity_set(
             # ``update_entity_metadata`` on update (the flat ``{"actor_context":
             # ...}`` encode matches the pre-fix update path).
             entity.metadata = entity.metadata.model_copy(update={"actor_context": actor_context})
+        live_is_update = existing is not None
+        live_validated = ValidatedEntity(entity=entity, is_update=live_is_update)
         # Route the live write through the shared entity chokepoint so the
         # ``refuse_direct_writes`` policy is enforced on the REAL workflow write
         # path, independent of ``config.mutation_guards``. ``workflow_apply`` is a
@@ -349,8 +351,8 @@ def apply_entity_set(
         # (``DirectWriteRefusedError``) -- the intended new behavior. ``apply_entity``
         # performs the persistence (add on create, property+metadata update on
         # update), so no direct ``graph.add_entity`` / ``update_entity_*`` call here.
-        apply_entity(graph, validated, config=config, source="workflow_apply")
-        if validated.is_update:
+        apply_entity(graph, live_validated, config=config, source="workflow_apply")
+        if live_is_update:
             update_count += 1
         else:
             create_count += 1
@@ -358,7 +360,7 @@ def apply_entity_set(
             receipt_builder.record_entity_write(
                 entity_set.entity_type,
                 entity.entity_id,
-                is_update=validated.is_update,
+                is_update=live_is_update,
                 parent_id=parent_id,
             )
     return ApplyEntitiesPreview(
