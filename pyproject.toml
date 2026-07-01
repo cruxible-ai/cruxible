@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "cruxible-core"
 version = "0.2.0"
-description = "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof."
+description = "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     {name = "Alchemyze LLC DBA Cruxible"},
 ]
-keywords = ["decision-engine", "graph", "receipts", "mcp", "deterministic", "ai-tools"]
+keywords = ["ai-agents", "hard-state", "state-management", "ontology", "knowledge-graph", "governance", "provenance", "agent-memory", "mcp", "workflows", "deterministic", "receipts"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

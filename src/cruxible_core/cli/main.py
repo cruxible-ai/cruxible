@@ -110,7 +110,7 @@ def cli(
     server_socket: str | None,
     instance_id: str | None,
 ) -> None:
-    """Cruxible — deterministic decision engine with receipts."""
+    """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
     try:
         resolved_url, resolved_socket = _resolve_cli_transport(
             server_url=server_url,

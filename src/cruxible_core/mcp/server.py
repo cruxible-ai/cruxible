@@ -26,7 +26,7 @@ from cruxible_core.server.config import resolve_server_settings
 BASE_INSTRUCTIONS = """\
 # cruxible-core
 
-Deterministic graph-based decision engine. Zero LLM inside.
+Hard state for AI agents: typed, governed, durable graph state. No LLM inside.
 You (the AI agent) provide intelligence; cruxible provides deterministic
 execution with proof via receipts.
 
