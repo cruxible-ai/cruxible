@@ -7,7 +7,7 @@ name = "cruxible-client"
 version = "0.2.0"
 description = "Client package for talking to a governed Cruxible daemon."
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     {name = "Alchemyze LLC DBA Cruxible"},

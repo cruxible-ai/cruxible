@@ -7,7 +7,7 @@ name = "cruxible-core"
 version = "0.2.0"
 description = "Deterministic decision engine with DAG-based receipts. Build entity graphs, query with MCP, get auditable proof."
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     {name = "Alchemyze LLC DBA Cruxible"},
@@ -16,7 +16,7 @@ keywords = ["decision-engine", "graph", "receipts", "mcp", "deterministic", "ai-
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

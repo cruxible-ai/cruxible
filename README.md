@@ -8,7 +8,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/cruxible-core)](https://pypi.org/project/cruxible-core/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
 **Cruxible is hard state for AI agents.**
 
@@ -416,6 +416,6 @@ and [FastMCP](https://github.com/jlowin/fastmcp) for MCP tools.
 
 ## License
 
-MIT
+Apache 2.0
 
 <!-- mcp-name: io.github.cruxible-ai/cruxible-core -->
