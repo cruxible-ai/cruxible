@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
-    {name = "Alchemyze LLC DBA Cruxible"},
+    {name = "Cruxible LLC"},
 ]
 keywords = ["ai-agents", "hard-state", "state-management", "ontology", "knowledge-graph", "governance", "provenance", "agent-memory", "mcp", "workflows", "deterministic", "receipts"]
 classifiers = [
