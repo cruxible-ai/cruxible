@@ -16,7 +16,7 @@ from typing import Any
 from cruxible_core.config.ownership import check_upstream_type_ownership
 from cruxible_core.config.schema import CoreConfig, MakeEntitiesSpec, MakeRelationshipsSpec
 from cruxible_core.errors import DataValidationError, QueryExecutionError
-from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
+from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (
     EvidenceRef,
@@ -327,51 +327,40 @@ def apply_entity_set(
 
     for validated in validated_entities:
         entity = validated.entity
-        # On update we merge the actor context into the stored metadata dict; the
-        # flat ``{"actor_context": ...}`` shape matches the typed envelope's encode.
-        actor_metadata = (
-            {"actor_context": dump_actor_context(actor_context)}
-            if actor_context is not None
-            else {}
-        )
         existing = graph.get_entity(entity_set.entity_type, entity.entity_id)
-        if existing is None:
-            create_count += 1
-            if actor_context is not None:
-                entity.metadata = entity.metadata.model_copy(
-                    update={"actor_context": actor_context}
-                )
-            graph.add_entity(entity)
-            if persist_writes:
-                receipt_builder.record_entity_write(
-                    entity_set.entity_type,
-                    entity.entity_id,
-                    is_update=False,
-                    parent_id=parent_id,
-                )
+        if existing is not None and not _would_update_entity(
+            existing.properties, entity.properties
+        ):
+            # An upsert that changes nothing is a noop: no write, so nothing to
+            # route through the chokepoint (mirrors the pre-fix behavior).
+            noop_count += 1
             continue
-        if _would_update_entity(existing.properties, entity.properties):
+        if actor_context is not None:
+            # Stamp the writing actor onto the typed metadata envelope so
+            # ``apply_entity`` persists it -- via ``add_entity`` on create and via
+            # ``update_entity_metadata`` on update (the flat ``{"actor_context":
+            # ...}`` encode matches the pre-fix update path).
+            entity.metadata = entity.metadata.model_copy(update={"actor_context": actor_context})
+        # Route the live write through the shared entity chokepoint so the
+        # ``refuse_direct_writes`` policy is enforced on the REAL workflow write
+        # path, independent of ``config.mutation_guards``. ``workflow_apply`` is a
+        # governed source, so ``proposal_only`` / ``direct`` types are permitted
+        # exactly as before; only a ``mint_only`` type is refused
+        # (``DirectWriteRefusedError``) -- the intended new behavior. ``apply_entity``
+        # performs the persistence (add on create, property+metadata update on
+        # update), so no direct ``graph.add_entity`` / ``update_entity_*`` call here.
+        apply_entity(graph, validated, config=config, source="workflow_apply")
+        if validated.is_update:
             update_count += 1
-            graph.update_entity_properties(
+        else:
+            create_count += 1
+        if persist_writes:
+            receipt_builder.record_entity_write(
                 entity_set.entity_type,
                 entity.entity_id,
-                dict(entity.properties),
+                is_update=validated.is_update,
+                parent_id=parent_id,
             )
-            if actor_metadata:
-                graph.update_entity_metadata(
-                    entity_set.entity_type,
-                    entity.entity_id,
-                    actor_metadata,
-                )
-            if persist_writes:
-                receipt_builder.record_entity_write(
-                    entity_set.entity_type,
-                    entity.entity_id,
-                    is_update=True,
-                    parent_id=parent_id,
-                )
-            continue
-        noop_count += 1
     return ApplyEntitiesPreview(
         entity_type=entity_set.entity_type,
         create_count=create_count,
@@ -555,10 +544,13 @@ def _enforce_entity_mutation_guards(
 
     proposed_graph = EntityGraph.from_dict(deepcopy(graph.to_dict()))
     for validated in validated_entities:
-        # Guard-preview write on a throwaway proposed graph. MUST carry
-        # source="workflow_apply" (the governed verb) so proposal_only entity
-        # types are not refused during guard evaluation before any real write —
-        # the live entity write below at apply_entity_set bypasses apply_entity.
+        # Guard-preview write on a throwaway proposed graph, carrying the SAME
+        # source="workflow_apply" (the governed verb) as the live write in
+        # apply_entity_set. workflow_apply is governed, so proposal_only / direct
+        # types are permitted here (not refused during guard evaluation) while a
+        # mint_only type is refused -- identical to the live apply_entity write,
+        # so the guard preview and the real write agree on the
+        # refuse_direct_writes decision.
         apply_entity(proposed_graph, validated, config=config, source="workflow_apply")
 
     guard_errors = mutation_guard_errors(
