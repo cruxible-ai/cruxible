@@ -7,8 +7,10 @@ from typing import cast
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
 from cruxible_core.server.auth import get_current_auth_context
+from cruxible_core.server.auth_managed_entities import materialize_auth_managed_entities
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
     get_runtime_credential_store,
@@ -55,12 +57,15 @@ async def create_runtime_credential(
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
     auth_context = get_current_auth_context()
-    created = get_runtime_credential_store().create_credential(
+    store = get_runtime_credential_store()
+    prepared = store.prepare_credential(
         instance_id=resolved_instance_id,
         label=req.label,
         permission_mode=PermissionMode[req.permission_mode.upper()],
         created_by=auth_context.principal_id if auth_context else None,
     )
+    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), prepared.record)
+    created = store.commit_prepared_credential(prepared)
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),
         token=created.token,
@@ -109,10 +114,20 @@ async def rotate_runtime_credential(
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
     auth_context = get_current_auth_context()
-    created = get_runtime_credential_store().rotate_credential(
+    store = get_runtime_credential_store()
+    prepared = store.prepare_rotated_credential(
         instance_id=resolved_instance_id,
         credential_id=credential_id,
         rotated_by=auth_context.principal_id if auth_context else None,
+    )
+    # Materialize before revoking the old token. If the store commit fails after
+    # this update, the auth-managed entity may briefly reference an inactive
+    # credential_id; the next successful mint/rotation overwrites it by label.
+    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), prepared.record)
+    created = store.commit_prepared_rotation(
+        prepared,
+        instance_id=resolved_instance_id,
+        credential_id=credential_id,
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),

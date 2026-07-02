@@ -42,6 +42,32 @@ KEV_PUBLIC_DATA_FILES = (
     KEV_REFERENCE_KIT_DIR / "data" / "nvd_kev_cves.json",
 )
 
+AUTH_MANAGED_PRINCIPAL_YAML = """
+name: auth_managed_principal_test
+description: Auth-managed runtime principal fixture
+entity_types:
+  Principal:
+    auth_managed: true
+    write_policy: mint_only
+    properties:
+      actor_id:
+        type: string
+        primary_key: true
+      kind:
+        type: string
+      label:
+        type: string
+      credential_id:
+        type: string
+        optional: true
+      permission_mode:
+        type: string
+      custom_note:
+        type: string
+        optional: true
+relationships: []
+"""
+
 
 def _write_overlay_kit_manifest(
     kit_dir: Path,
@@ -999,6 +1025,39 @@ def test_runtime_credential_rejects_spoofed_actor_context_identity(
     assert fitment.json()["found"] is False
 
 
+def test_runtime_credential_entities_route_rejects_spoofed_actor_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    headers = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.GRAPH_WRITE,
+        label="codex-core",
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/entities",
+        json={
+            "entities": [_valid_vehicle_entity("V-SPOOFED-ENTITY")],
+            "actor_context": _actor_context(actor_id="robert", operation_id="op_spoof_entity"),
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error_type"] == "AuthenticationError"
+    lookup = client.get(
+        f"/api/v1/{instance_id}/entities/Vehicle/V-SPOOFED-ENTITY",
+        headers=headers,
+    )
+    assert lookup.status_code == 200
+    assert lookup.json()["found"] is False
+
+
 def test_runtime_credential_matching_actor_context_keeps_credential_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1556,6 +1615,36 @@ def test_runtime_bootstrap_claim_returns_admin_token_once(
     assert reused.json()["error_type"] == "AuthenticationError"
 
 
+def test_runtime_bootstrap_claim_materializes_auth_managed_entity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "auth-managed-bootstrap-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(AUTH_MANAGED_PRINCIPAL_YAML)
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, project)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+
+    response = client.post(
+        f"/api/v1/{instance_id}/runtime/bootstrap/claim",
+        json={"bootstrap_secret": "bootstrap-secret"},
+    )
+
+    assert response.status_code == 200
+    principal = get_manager().get(instance_id).load_graph().get_entity(
+        "Principal",
+        "bootstrap-admin",
+    )
+    assert principal is not None
+    assert principal.properties["kind"] == "service_account"
+    assert principal.properties["permission_mode"] == "admin"
+    assert principal.metadata.actor_context is not None
+    assert principal.metadata.actor_context.actor_id == "bootstrap-admin"
+
+
 def test_runtime_bootstrap_claim_invalid_secret_fails_without_credential(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1954,6 +2043,154 @@ def test_scoped_admin_runtime_credential_cannot_init_new_hosted_instance(
     assert get_registry().count_instances() == before_count
     assert get_registry().get(denied_instance_id) is None
     assert not (get_server_state_dir() / "instances" / denied_instance_id).exists()
+
+
+def test_runtime_credential_routes_materialize_auth_managed_entity_idempotently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "auth-managed-project"
+    project.mkdir()
+    (project / "config.yaml").write_text(AUTH_MANAGED_PRINCIPAL_YAML)
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+
+    created = client.post(
+        f"/api/v1/{instance_id}/runtime/credentials",
+        json={"label": "principal-agent", "permission_mode": "read_only"},
+        headers=headers,
+    )
+
+    assert created.status_code == 200
+    created_payload = created.json()
+    instance = get_manager().get(instance_id)
+    graph = instance.load_graph()
+    principal = graph.get_entity("Principal", "principal-agent")
+    assert principal is not None
+    assert principal.properties["kind"] == "service_account"
+    assert principal.properties["label"] == "principal-agent"
+    assert principal.properties["credential_id"] == created_payload["credential"]["credential_id"]
+    assert principal.properties["permission_mode"] == "read_only"
+    assert principal.metadata.actor_context is not None
+    assert principal.metadata.actor_context.actor_id == "principal-agent"
+
+    graph.update_entity_properties(
+        "Principal",
+        "principal-agent",
+        {"custom_note": "preserve-me"},
+    )
+    instance.save_graph(graph)
+
+    rotated = client.post(
+        f"/api/v1/{instance_id}/runtime/credentials/"
+        f"{created_payload['credential']['credential_id']}/rotate",
+        headers=headers,
+    )
+
+    assert rotated.status_code == 200
+    rotated_payload = rotated.json()
+    graph = instance.load_graph()
+    principals = graph.list_entities("Principal")
+    assert [entity.entity_id for entity in principals] == ["principal-agent"]
+    principal = graph.get_entity("Principal", "principal-agent")
+    assert principal is not None
+    assert principal.properties["credential_id"] == rotated_payload["credential"]["credential_id"]
+    assert principal.properties["custom_note"] == "preserve-me"
+
+
+def test_runtime_credential_create_materialization_failure_leaves_store_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+    before_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+
+    def fail_materialization(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("materialization failed")
+
+    monkeypatch.setattr(
+        "cruxible_core.server.routes.runtime_credentials.materialize_auth_managed_entities",
+        fail_materialization,
+    )
+
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        client.post(
+            f"/api/v1/{instance_id}/runtime/credentials",
+            json={"label": "principal-agent", "permission_mode": "read_only"},
+            headers=headers,
+        )
+
+    after_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+    assert after_ids == before_ids
+
+
+def test_runtime_credential_rotate_materialization_failure_keeps_old_token_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    target = store.create_credential(
+        instance_id=instance_id,
+        label="target-reader",
+        permission_mode=PermissionMode.READ_ONLY,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+    before_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+
+    def fail_materialization(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("materialization failed")
+
+    monkeypatch.setattr(
+        "cruxible_core.server.routes.runtime_credentials.materialize_auth_managed_entities",
+        fail_materialization,
+    )
+
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        client.post(
+            f"/api/v1/{instance_id}/runtime/credentials/{target.record.credential_id}/rotate",
+            headers=headers,
+        )
+
+    after_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+    assert after_ids == before_ids
+    assert store.authenticate(target.token) is not None
+    target_after = store.get(target.record.credential_id)
+    assert target_after is not None
+    assert target_after.revoked_at is None
 
 
 def test_admin_runtime_credential_can_create_and_list_runtime_credentials(

@@ -35,6 +35,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
@@ -205,6 +206,15 @@ class EntityTypeSchema(BaseModel):
     at the ``graph/operations.py`` chokepoint; ``mint_only`` config-declared
     write targets are additionally static-rejected at config load (see
     ``CoreConfig.validate_mint_only_entity_writes``).
+    """
+    auth_managed: bool = False
+    """Mark this entity type as materialized from runtime credentials.
+
+    Auth-managed is intentionally a general type-level marker, not an ``Actor``
+    special case. Runtime credential mint/claim/rotation materializes one entity
+    of every auth-managed type through the ``token_mint`` graph source. The
+    marker must be paired with ``write_policy: mint_only`` so no config-declared
+    write path can author credential identities.
     """
 
     @model_validator(mode="after")
@@ -2240,7 +2250,9 @@ class CoreConfig(BaseModel):
         ``make_entities`` alias, and there is no seed-data config field.
         """
         mint_only_types = {
-            name for name, schema in self.entity_types.items() if schema.write_policy == "mint_only"
+            name
+            for name, schema in self.entity_types.items()
+            if schema.write_policy == "mint_only" and not schema.auth_managed
         }
         if not mint_only_types:
             return self
@@ -2255,6 +2267,67 @@ class CoreConfig(BaseModel):
                     msg = (
                         f"Workflow '{wf}' step {i} make_entities targets mint_only "
                         f"type '{t}', which may only be written by the token_mint source"
+                    )
+                    raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_auth_managed_entity_writes(self) -> CoreConfig:
+        """Reject non-token config authorship for auth-managed entity types.
+
+        ``auth_managed`` means the runtime credential store is the identity source
+        of truth and the graph entity is materialized only by the ``token_mint``
+        source. This validator is stricter than the generic ``mint_only`` check:
+        auth-managed types must explicitly carry ``write_policy: mint_only`` and
+        workflow aliases that would later be applied are rejected at declaration
+        time. Provider output is not independently targetable in the current
+        schema; provider-produced rows become entity writes only through
+        ``make_entities``, which is tracked here.
+        """
+        auth_managed_types = {
+            name for name, schema in self.entity_types.items() if schema.auth_managed
+        }
+        if not auth_managed_types:
+            return self
+
+        if self.extends is None:
+            for entity_type in sorted(auth_managed_types):
+                schema = self.entity_types[entity_type]
+                if schema.write_policy != "mint_only":
+                    msg = (
+                        f"Auth-managed entity type '{entity_type}' must declare "
+                        "write_policy: mint_only"
+                    )
+                    raise ValueError(msg)
+                primary_key = schema.get_primary_key()
+                unmaterializable = sorted(
+                    prop_name
+                    for prop_name, prop in schema.properties.items()
+                    if prop_name != primary_key
+                    and prop_name not in AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
+                    and not prop.optional
+                    and prop.default is None
+                )
+                if unmaterializable:
+                    joined = ", ".join(unmaterializable)
+                    msg = (
+                        f"Auth-managed entity type '{entity_type}' has required "
+                        f"properties not materializable from runtime credentials: {joined}"
+                    )
+                    raise ValueError(msg)
+
+        for workflow_name, workflow in self.workflows.items():
+            for index, step in enumerate(workflow.steps):
+                if step.make_entities is None:
+                    continue
+                entity_type = step.make_entities.entity_type
+                if entity_type in auth_managed_types:
+                    if self.extends is not None:
+                        continue
+                    msg = (
+                        f"Workflow '{workflow_name}' step {index} make_entities "
+                        f"targets auth-managed type '{entity_type}', which may only "
+                        "be written by the token_mint source"
                     )
                     raise ValueError(msg)
         return self
