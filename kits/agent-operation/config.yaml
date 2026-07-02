@@ -207,10 +207,10 @@ named_queries:
     relationship_state: reviewable
     description: >-
       From a work item, inspect dependencies, blockers, reviews, composition,
-      lineage, decisions, owner, subjects. Base-layer adjacency only: all_adjacent
-      expands at this kit's load time, so on a composed instance this query does
-      NOT see overlay seam edges — prefer the overlay's domain-aware context
-      query there (e.g. project-domain's work_item_change_context).
+      lineage, decisions, owner, subjects. all_adjacent expands against the
+      final composed config, so on a composed instance this query also
+      traverses overlay seam edges (e.g. project-domain's roadmap, release,
+      milestone, and area relationships).
     include: all_adjacent
     bound:
       state_note_about_work_item:
