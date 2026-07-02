@@ -70,6 +70,7 @@ flowchart LR
   entity_RoadmapItem -- "Roadmap Item In Release" --> entity_ReleaseLine
   entity_RoadmapItem -- "Roadmap Item Targets Area" --> entity_ProductArea
   entity_RoadmapItem -- "Roadmap Item Targets Capability" --> entity_Capability
+  entity_StateNote -- "State Note About Actor" --> entity_Actor
   entity_StateNote -- "State Note About Decision" --> entity_Decision
   entity_StateNote -- "State Note About Open Question" --> entity_OpenQuestion
   entity_StateNote -- "State Note About Review Request" --> entity_ReviewRequest
@@ -109,8 +110,8 @@ flowchart LR
   entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
   entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
   entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -284,7 +285,7 @@ flowchart LR
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
+| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
 
 ### Subject Ref
 
