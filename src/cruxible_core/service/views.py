@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from cruxible_core.canonical_views import (
     GovernanceView,
@@ -30,11 +29,7 @@ from cruxible_core.service.types import (
     CanonicalViewResult,
     ExportEdgesResult,
     ReceiptExplanationResult,
-    RenderWikiPageResult,
-    RenderWikiResult,
 )
-from cruxible_core.wiki import WikiOptions, build_wiki_pages
-from cruxible_core.wiki.generator import WikiScope, parse_subject_ref
 
 CanonicalViewName = Literal["ontology", "workflows", "queries", "governance", "overview"]
 ReceiptExplanationFormat = Literal["json", "markdown", "mermaid"]
@@ -145,32 +140,6 @@ def _build_governance(instance: InstanceProtocol, *, limit: int) -> GovernanceVi
         resolutions=resolutions.items,
         resolution_total=resolutions.total,
     )
-
-
-def service_render_wiki(
-    instance: InstanceProtocol,
-    *,
-    focus: list[str] | None = None,
-    include_types: list[str] | None = None,
-    scope: str | None = None,
-    max_per_type: int = 50,
-    all_subjects: bool = False,
-) -> RenderWikiResult:
-    """Build wiki pages for a governed instance and return them as payloads."""
-    options = WikiOptions(
-        output_dir=Path("."),
-        focus=tuple(parse_subject_ref(raw) for raw in (focus or [])),
-        include_types=tuple(include_types or []),
-        scope=cast(WikiScope, scope or ("all" if all_subjects else "evidence")),
-        max_per_type=max_per_type,
-        all_subjects=all_subjects,
-    )
-    pages = build_wiki_pages(instance, options)
-    serialized_pages = [
-        RenderWikiPageResult(path=path.as_posix(), content=content)
-        for path, content in sorted(pages.items())
-    ]
-    return RenderWikiResult(pages=serialized_pages, page_count=len(serialized_pages))
 
 
 def service_explain_receipt(

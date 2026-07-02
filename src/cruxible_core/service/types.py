@@ -344,18 +344,6 @@ class CanonicalViewResult:
 
 
 @dataclass
-class RenderWikiPageResult:
-    path: str
-    content: str
-
-
-@dataclass
-class RenderWikiResult:
-    pages: list[RenderWikiPageResult] = field(default_factory=list)
-    page_count: int = 0
-
-
-@dataclass
 class ReceiptExplanationResult:
     receipt_id: str
     format: Literal["json", "markdown", "mermaid"]

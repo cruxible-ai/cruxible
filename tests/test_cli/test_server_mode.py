@@ -7,11 +7,9 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.server.request_models import RenderWikiRequest
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
@@ -1769,131 +1767,6 @@ def test_local_only_server_mode_error_uses_current_wording(monkeypatch, runner: 
     assert result.exit_code == 2
     assert "export edges is local-only and is not available in server mode" in result.output
     assert "wait for v2" not in result.output
-
-
-def test_render_wiki_delegates_to_client_and_writes_files(
-    monkeypatch,
-    runner: CliRunner,
-    tmp_path: Path,
-):
-    captured: dict[str, object] = {}
-
-    class StubClient:
-        def render_wiki(
-            self,
-            instance_id,
-            *,
-            focus=None,
-            include_types=None,
-            scope=None,
-            max_per_type=50,
-            all_subjects=False,
-        ):
-            captured["instance_id"] = instance_id
-            captured["focus"] = focus
-            captured["include_types"] = include_types
-            captured["scope"] = scope
-            captured["max_per_type"] = max_per_type
-            captured["all_subjects"] = all_subjects
-            return contracts.WikiRenderResult(
-                pages=[
-                    contracts.WikiPageResult(path="index.md", content="# Demo Wiki\n"),
-                    contracts.WikiPageResult(
-                        path="subjects/asset/a1.md",
-                        content="# Asset A1\n",
-                    ),
-                ],
-                page_count=2,
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    output_dir = tmp_path / "wiki"
-    result = runner.invoke(
-        cli,
-        [
-            "--server-url",
-            "http://server",
-            "--instance-id",
-            "inst_123",
-            "wiki",
-            "render",
-            "--output",
-            str(output_dir),
-            "--focus",
-            "Asset:A1",
-            "--include-type",
-            "Asset",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured == {
-        "instance_id": "inst_123",
-        "focus": ["Asset:A1"],
-        "include_types": ["Asset"],
-        "scope": "local",
-        "max_per_type": 50,
-        "all_subjects": False,
-    }
-    assert "Rendered" in result.output
-    assert (output_dir / "index.md").read_text() == "# Demo Wiki\n"
-    assert (output_dir / "subjects" / "asset" / "a1.md").read_text() == "# Asset A1\n"
-
-
-def test_render_wiki_all_subjects_alias_delegates_as_all_scope(
-    monkeypatch,
-    runner: CliRunner,
-    tmp_path: Path,
-):
-    captured: dict[str, object] = {}
-
-    class StubClient:
-        def render_wiki(
-            self,
-            instance_id,
-            *,
-            focus=None,
-            include_types=None,
-            scope=None,
-            max_per_type=50,
-            all_subjects=False,
-        ):
-            captured["instance_id"] = instance_id
-            captured["focus"] = focus
-            captured["include_types"] = include_types
-            captured["scope"] = scope
-            captured["max_per_type"] = max_per_type
-            captured["all_subjects"] = all_subjects
-            return contracts.WikiRenderResult(
-                pages=[contracts.WikiPageResult(path="index.md", content="# Demo Wiki\n")],
-                page_count=1,
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = runner.invoke(
-        cli,
-        [
-            "--server-url",
-            "http://server",
-            "--instance-id",
-            "inst_123",
-            "wiki",
-            "render",
-            "--output",
-            str(tmp_path / "wiki"),
-            "--all-subjects",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["scope"] == "all"
-    assert captured["all_subjects"] is True
-    assert "deprecated" in result.output
-
-
-def test_render_wiki_request_rejects_conflicting_scope_and_all_subjects() -> None:
-    with pytest.raises(ValidationError, match="all_subjects=true"):
-        RenderWikiRequest(scope="local", all_subjects=True)
 
 
 def test_workflow_commands_delegate_to_client_in_server_mode(
@@ -4507,24 +4380,6 @@ def test_reads_share_require_server_error_with_no_endpoint(
     assert "Server mode is required" in result.output, f"{label}: {result.output}"
     assert "InstanceNotFoundError" not in result.output, f"{label}: {result.output}"
     assert "Traceback" not in result.output, f"{label}: {result.output}"
-
-
-def test_render_wiki_shares_require_server_error_with_no_endpoint(
-    monkeypatch,
-    runner: CliRunner,
-    tmp_path: Path,
-):
-    # wiki render has a daemon path and a local fallback; the fallback must honor
-    # require-server too rather than silently reading a local instance.
-    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
-    monkeypatch.setenv("CRUXIBLE_REQUIRE_SERVER", "true")
-    monkeypatch.chdir(tmp_path)
-
-    result = runner.invoke(cli, ["wiki", "render", "--output", str(tmp_path / "wiki")])
-
-    assert result.exit_code == 2, result.output
-    assert "Server mode is required" in result.output
-    assert "InstanceNotFoundError" not in result.output
 
 
 def test_local_reads_unchanged_when_server_not_required(

@@ -332,12 +332,6 @@ cruxible config views --config kits/kev-triage/config.yaml --runtime \
   --update-readme kits/kev-triage/README.md
 ```
 
-For a full local wiki:
-
-```bash
-cruxible wiki render --output wiki --scope local
-```
-
 The generated docs are grounding material for the agent and reviewer. They are
 not a substitute for MCP/CLI review actions.
 

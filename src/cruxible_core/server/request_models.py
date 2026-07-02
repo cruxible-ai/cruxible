@@ -87,20 +87,6 @@ class InlineQueryRequest(BaseModel):
     decision_record_id: str | None = None
 
 
-class RenderWikiRequest(BaseModel):
-    focus: list[str] = Field(default_factory=list)
-    include_types: list[str] = Field(default_factory=list)
-    scope: Literal["local", "evidence", "all"] | None = None
-    max_per_type: int = Field(default=50, ge=1)
-    all_subjects: bool = False
-
-    @model_validator(mode="after")
-    def validate_scope_compatibility(self) -> RenderWikiRequest:
-        if self.all_subjects and self.scope not in (None, "all"):
-            raise ValueError("all_subjects=true can only be combined with scope=all")
-        return self
-
-
 class AddEntitiesRequest(BaseModel):
     entities: list[contracts.EntityInput]
     dry_run: bool = False

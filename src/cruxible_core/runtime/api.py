@@ -98,7 +98,6 @@ from cruxible_core.service import (
     service_register_source_artifact,
     service_reload_config,
     service_relocate_instance,
-    service_render_wiki,
     service_resolve_group,
     service_restore_instance,
     service_run,
@@ -1448,34 +1447,6 @@ def _query_tool_result(
             if result.param_hints is not None
             else None
         ),
-    )
-
-
-def render_wiki(
-    instance_id: str,
-    *,
-    focus: list[str] | None = None,
-    include_types: list[str] | None = None,
-    scope: str | None = None,
-    max_per_type: int = 50,
-    all_subjects: bool = False,
-) -> contracts.WikiRenderResult:
-    """Build wiki pages for a governed instance and return them as payloads."""
-    check_permission("cruxible_render_wiki", instance_id=instance_id)
-    instance = get_manager().get(instance_id)
-    result = service_render_wiki(
-        instance,
-        focus=focus,
-        include_types=include_types,
-        scope=scope,
-        max_per_type=max_per_type,
-        all_subjects=all_subjects,
-    )
-    return contracts.WikiRenderResult(
-        pages=[
-            contracts.WikiPageResult(path=page.path, content=page.content) for page in result.pages
-        ],
-        page_count=result.page_count,
     )
 
 

@@ -91,7 +91,6 @@ class TestCheckPermission:
         check_permission("cruxible_inspect_entity")
         check_permission("cruxible_inspect_entity_history")
         check_permission("cruxible_inspect_overview")
-        check_permission("cruxible_render_wiki")
         check_permission("cruxible_list_snapshots")
 
     def test_graph_write_tool_in_read_only(self, monkeypatch):

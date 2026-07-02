@@ -1123,36 +1123,6 @@ def handle_inspect_view(
     )
 
 
-def handle_render_wiki(
-    instance_id: str,
-    *,
-    focus: list[str] | None = None,
-    include_types: list[str] | None = None,
-    scope: str | None = None,
-    max_per_type: int = 50,
-    all_subjects: bool = False,
-) -> contracts.WikiRenderResult:
-    """Render wiki pages for a governed instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.render_wiki(
-            instance_id,
-            focus=focus,
-            include_types=include_types,
-            scope=scope,
-            max_per_type=max_per_type,
-            all_subjects=all_subjects,
-        ),
-        lambda: api.render_wiki(
-            instance_id,
-            focus=focus,
-            include_types=include_types,
-            scope=scope,
-            max_per_type=max_per_type,
-            all_subjects=all_subjects,
-        ),
-    )
-
-
 def handle_reload_config(
     instance_id: str,
     *,

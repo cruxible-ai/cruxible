@@ -656,25 +656,6 @@ def register_tools(server: FastMCP) -> list[str]:
         return handlers.handle_inspect_view(instance_id, "overview", limit=limit)
 
     @_tool
-    def cruxible_render_wiki(
-        instance_id: str,
-        focus: list[str] | None = None,
-        include_types: list[str] | None = None,
-        scope: str | None = None,
-        max_per_type: int = 50,
-        all_subjects: bool = False,
-    ) -> contracts.WikiRenderResult:
-        """Render local wiki pages and return path/content payloads."""
-        return handlers.handle_render_wiki(
-            instance_id,
-            focus=focus,
-            include_types=include_types,
-            scope=scope,
-            max_per_type=max_per_type,
-            all_subjects=all_subjects,
-        )
-
-    @_tool
     def cruxible_add_relationship(
         instance_id: str,
         relationships: list[contracts.RelationshipInput],
