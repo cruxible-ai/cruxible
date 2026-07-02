@@ -10,6 +10,7 @@ import click
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.errors import AuthenticationError as ClientAuthenticationError
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
@@ -172,6 +173,11 @@ def _print_preview_reference(reference: dict[str, Any]) -> None:
 )
 @click.option("--data-dir", default=None, help="Directory for data files.")
 @click.option(
+    "--bootstrap",
+    is_flag=True,
+    help="Use hosted kit init authorized by the runtime bootstrap bearer.",
+)
+@click.option(
     "--activate/--no-activate",
     default=True,
     help="Make a new server instance the active CLI context instance.",
@@ -182,6 +188,7 @@ def init(
     kit: str | None,
     root_dir: str | None,
     data_dir: str | None,
+    bootstrap: bool,
     activate: bool,
 ) -> None:
     """Initialize a new instance or governed server-backed workspace."""
@@ -189,6 +196,16 @@ def init(
     effective_root_dir = root_dir
     if client is not None and effective_root_dir is None:
         effective_root_dir = str(Path.cwd())
+
+    if bootstrap:
+        if client is None:
+            raise click.UsageError("--bootstrap requires server mode.")
+        if kit is None:
+            raise click.UsageError("--bootstrap requires --kit.")
+        if config_path is not None or data_dir is not None or root_dir is not None:
+            raise click.UsageError(
+                "--bootstrap uses hosted kit init and accepts only --kit and --activate."
+            )
 
     def _remote_init(client: CruxibleClient) -> contracts.InitResult:
         init_kwargs: dict[str, Any] = {
@@ -202,7 +219,44 @@ def init(
         }
         if kit is not None:
             init_kwargs["kit"] = kit
-        return client.init(**init_kwargs)
+        try:
+            return client.init(**init_kwargs)
+        except ClientAuthenticationError as exc:
+            if kit is not None:
+                raise click.UsageError(
+                    "Server auth rejected plain init. For first auth-enabled kit bootstrap, "
+                    "set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret and run "
+                    f"`cruxible init --kit {kit} --bootstrap`, then claim the admin token "
+                    "with `cruxible credential claim-bootstrap`."
+                ) from exc
+            raise
+
+    if bootstrap:
+        assert client is not None
+        assert kit is not None
+        try:
+            hosted_result = client.init_hosted_instance(source_type="kit", kit_ref=kit)
+        except ClientAuthenticationError as exc:
+            raise click.ClickException(
+                "Server auth rejected hosted bootstrap init. If the bootstrap secret "
+                "was already claimed, use the admin token printed by "
+                "`cruxible credential claim-bootstrap`: set "
+                "CRUXIBLE_SERVER_BEARER_TOKEN to that ADMIN token and use normal "
+                "commands, or mint more credentials with `cruxible credential mint`. "
+                "If the bearer is missing or wrong, set CRUXIBLE_SERVER_BEARER_TOKEN "
+                "to the BOOTSTRAP secret and retry "
+                f"`cruxible init --kit {kit} --bootstrap`."
+            ) from exc
+        click.echo(f"Instance {hosted_result.status}.")
+        click.echo(f"Instance ID: {hosted_result.instance_id}")
+        click.echo(f"Source: {hosted_result.source_type} {hosted_result.source_ref}")
+        if activate:
+            _print_active_instance_change(_activate_server_instance(hosted_result.instance_id))
+        else:
+            _print_active_instance_unchanged()
+        for warning in hosted_result.warnings:
+            click.secho(f"  Warning: {warning}", fg="yellow")
+        return
 
     result = _dispatch_cli(
         _remote_init,
