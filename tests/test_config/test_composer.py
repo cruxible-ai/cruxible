@@ -52,6 +52,97 @@ def _overlay(extra: dict) -> CoreConfig:
     return CoreConfig.model_validate(data)
 
 
+_COMPACT_ALL_ADJACENT_BASE = """\
+version: "1.0"
+name: compact_base
+entity_types:
+  AnyEntity:
+    properties:
+      entity_id:
+        type: string
+        primary_key: true
+  WorkItem:
+    properties:
+      work_item_id:
+        type: string
+        primary_key: true
+  Actor:
+    properties:
+      actor_id:
+        type: string
+        primary_key: true
+relationships:
+  - work_item_owned_by_actor: WorkItem -> Actor
+named_queries:
+  work_item_context:
+    mode: traversal
+    entry_point: WorkItem
+    returns: AnyEntity
+    relationship_state: reviewable
+    include: all_adjacent
+"""
+
+_COMPACT_ALL_ADJACENT_OVERLAY = """\
+version: "1.0"
+name: compact_overlay
+extends: base.yaml
+entity_types:
+  ReleaseLine:
+    properties:
+      release_line_id:
+        type: string
+        primary_key: true
+relationships:
+  - work_item_targets_release_line: WorkItem -> ReleaseLine
+named_queries:
+  release_work_item_context:
+    mode: traversal
+    entry_point: WorkItem
+    returns: AnyEntity
+    relationship_state: reviewable
+    include: all_adjacent
+"""
+
+
+class TestAllAdjacentComposition:
+    def test_standalone_all_adjacent_expansion_is_unchanged(self) -> None:
+        config = load_config_from_string(_COMPACT_ALL_ADJACENT_BASE)
+        query = config.named_queries["work_item_context"]
+
+        assert query.traversal[0].relationship == ["work_item_owned_by_actor"]
+        assert set(query.include) == {"work_item_owned_by_actor"}
+        assert query.include["work_item_owned_by_actor"].direction == "outgoing"
+
+    def test_base_all_adjacent_query_includes_overlay_relationship(self) -> None:
+        base = load_config_from_string(_COMPACT_ALL_ADJACENT_BASE)
+        overlay = load_config_from_string(_COMPACT_ALL_ADJACENT_OVERLAY)
+
+        composed = compose_configs(base, overlay)
+        query = composed.named_queries["work_item_context"]
+
+        assert query.traversal[0].relationship == [
+            "work_item_owned_by_actor",
+            "work_item_targets_release_line",
+        ]
+        assert "work_item_targets_release_line" in query.include
+        assert query.include["work_item_targets_release_line"].direction == "outgoing"
+
+    def test_compact_overlay_all_adjacent_expands_once_after_composition(self) -> None:
+        base = load_config_from_string(_COMPACT_ALL_ADJACENT_BASE)
+        overlay = load_config_from_string(_COMPACT_ALL_ADJACENT_OVERLAY)
+
+        composed = compose_configs(base, overlay)
+        query = composed.named_queries["release_work_item_context"]
+        relationships = query.traversal[0].relationship
+
+        assert relationships == [
+            "work_item_owned_by_actor",
+            "work_item_targets_release_line",
+        ]
+        assert len(relationships) == len(set(relationships))
+        assert set(query.include) == set(relationships)
+
+
 class TestSequenceComposition:
     def test_two_layer_sequence_matches_pairwise_compose(self) -> None:
         base = _base()

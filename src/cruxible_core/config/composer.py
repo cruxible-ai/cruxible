@@ -116,9 +116,11 @@ def compose_config_sequence(
 
     composed_data: dict[str, Any] | None = None
     removed_provider_names: set[str] = set()
+    all_adjacent_query_intents: dict[str, dict[str, Any]] = {}
     last_index = len(layers) - 1
 
     for index, layer in enumerate(layers):
+        all_adjacent_query_intents.update(layer.config._compact_all_adjacent_queries)
         layer_data = layer.config.model_dump(mode="python", by_alias=True, exclude_none=True)
         if runtime and index != last_index:
             layer_data, _removed_workflow_names, removed = _strip_canonical_runtime_config(
@@ -140,7 +142,15 @@ def compose_config_sequence(
             removed_provider_names=removed_provider_names,
         )
     composed_data.pop("extends", None)
+    if all_adjacent_query_intents:
+        from cruxible_core.config.compact import materialize_all_adjacent_queries
+
+        composed_data = materialize_all_adjacent_queries(
+            composed_data,
+            all_adjacent_query_intents,
+        )
     composed = CoreConfig.model_validate(composed_data)
+    composed._compact_all_adjacent_queries = all_adjacent_query_intents
     if validate:
         from cruxible_core.config.validator import validate_config
 
