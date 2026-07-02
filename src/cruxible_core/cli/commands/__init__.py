@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     config_views_cmd: Any
     connect_group: Any
     decision_records_cmd: Any
+    credential_group: Any
     evaluate: Any
     explain: Any
     export_group: Any
@@ -65,6 +66,7 @@ else:
     from cruxible_core.cli.commands.context import (
         connect_group,
     )
+    from cruxible_core.cli.commands.credentials import credential_group
     from cruxible_core.cli.commands.decision_records import decision_records_cmd
     from cruxible_core.cli.commands.feedback import (
         feedback_batch_cmd,
@@ -140,6 +142,7 @@ __all__ = [
     "config_views_cmd",
     "connect_group",
     "decision_records_cmd",
+    "credential_group",
     "evaluate",
     "explain",
     "export_group",

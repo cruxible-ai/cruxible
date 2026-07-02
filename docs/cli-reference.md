@@ -763,6 +763,120 @@ shared_evidence:
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
+## cruxible credential
+
+**Usage:** `cruxible credential [OPTIONS]`
+
+**Purpose:** Manage runtime bearer credentials for a governed server instance.
+
+**Subcommands:**
+
+- `cruxible credential claim-bootstrap` - Exchange the one-time bootstrap secret for the first ADMIN runtime token.
+- `cruxible credential mint` - Mint a new runtime bearer credential.
+- `cruxible credential list` - List runtime bearer credentials for the active instance.
+- `cruxible credential revoke` - Revoke a runtime bearer credential.
+- `cruxible credential rotate` - Rotate a runtime bearer credential and print the replacement token once.
+
+**Output And Side Effects:**
+- Server-mode only. Uses the remembered CLI context or `--instance-id` for the target instance.
+- Credential creation and rotation print plaintext tokens once. Save them immediately; later list calls show metadata only.
+
+**Common Errors:**
+- Missing server transport or missing/stale `--instance-id`.
+- Permission mode too low; runtime credential management requires ADMIN.
+- The bootstrap secret was already claimed or does not match the server secret.
+
+## cruxible credential claim-bootstrap
+
+**Usage:** `cruxible credential claim-bootstrap [OPTIONS]`
+
+**Purpose:** Exchange the one-time runtime bootstrap secret for the initial ADMIN runtime token.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--secret-file` | no | `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET` | file | File containing the runtime bootstrap secret. |
+
+**Output And Side Effects:**
+- Calls the existing runtime bootstrap claim route for the active instance.
+- Prints the ADMIN token once with a `CRUXIBLE_SERVER_BEARER_TOKEN=<token>` save hint.
+
+**Common Errors:**
+- Provide `--secret-file` or set `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET`.
+- The bootstrap secret is invalid or has already been claimed.
+
+## cruxible credential mint
+
+**Usage:** `cruxible credential mint [OPTIONS]`
+
+**Purpose:** Mint a new runtime bearer credential for the active server instance.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `--label` | yes | `Sentinel.UNSET` | text | Human-readable credential label. |
+| `--mode` | yes | `Sentinel.UNSET` | choice | Permission mode: `admin`, `graph_write`, `governed_write`, or `read_only`. |
+
+**Output And Side Effects:**
+- Creates an instance-scoped runtime credential and prints its plaintext token once.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low; credential minting requires ADMIN.
+
+## cruxible credential list
+
+**Usage:** `cruxible credential list [OPTIONS]`
+
+**Purpose:** List runtime bearer credential metadata for the active server instance.
+
+**Output And Side Effects:**
+- Read-only metadata output. Plaintext tokens are never returned by list.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Permission mode too low; credential listing requires ADMIN.
+
+## cruxible credential revoke
+
+**Usage:** `cruxible credential revoke [OPTIONS] CREDENTIAL_ID`
+
+**Purpose:** Revoke a runtime bearer credential.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `CREDENTIAL_ID` | yes | `Sentinel.UNSET` | argument | Runtime credential ID to revoke. |
+
+**Output And Side Effects:**
+- Revokes the credential for the active instance and prints updated metadata.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Credential ID not found for the active instance.
+
+## cruxible credential rotate
+
+**Usage:** `cruxible credential rotate [OPTIONS] CREDENTIAL_ID`
+
+**Purpose:** Rotate a runtime bearer credential and print the replacement token once.
+
+**Options And Arguments:**
+
+| Name | Required | Default | Type | Description |
+| --- | --- | --- | --- | --- |
+| `CREDENTIAL_ID` | yes | `Sentinel.UNSET` | argument | Runtime credential ID to rotate. |
+
+**Output And Side Effects:**
+- Revokes the old credential, creates a replacement with the same permission mode, and prints the new plaintext token once.
+
+**Common Errors:**
+- Missing or stale `--instance-id` for daemon-backed commands.
+- Credential ID not found for the active instance.
+
 ## cruxible decision-record
 
 **Usage:** `cruxible decision-record [OPTIONS]`
@@ -1353,14 +1467,17 @@ findings.
 | `--kit` | no | `` | text | Standalone kit alias or ref to materialize. |
 | `--root-dir` | no | `` | text | Workspace root for config/artifact provenance (defaults to current directory). |
 | `--data-dir` | no | `` | text | Directory for data files. |
+| `--bootstrap` | no | `False` | boolean | Use hosted kit init authorized by the runtime bootstrap bearer. Requires `--kit`. |
 | `--activate / --no-activate` | no | `True` | boolean | Make a new server instance the active CLI context instance. |
 
 **Output And Side Effects:**
-- Calls the service layer and may create receipts, traces, snapshots, config changes, groups, or graph mutations depending on the command.
+- Normal server init calls the governed instance lifecycle route. With `--bootstrap --kit`, calls the hosted runtime kit-init route so the one-time bootstrap bearer can create the first auth-enabled instance.
+- New server instances are remembered in CLI context unless `--no-activate` is used.
 
 **Common Errors:**
 - Missing or stale `--instance-id` for daemon-backed commands.
 - Permission mode too low for mutations or admin operations.
+- Auth rejecting plain `init --kit`; run `cruxible init --kit <ref> --bootstrap` with `CRUXIBLE_SERVER_BEARER_TOKEN` set to the bootstrap secret, then run `cruxible credential claim-bootstrap`.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
 ## cruxible inspect
@@ -2194,6 +2311,7 @@ cruxible query inline \
 | `--port` | no | `CRUXIBLE_PORT` or `8100` | integer | Bind port. Ignored when `--socket` is set. |
 | `--state-dir` | no | `CRUXIBLE_SERVER_STATE_DIR` or `~/.cruxible/server` | text | Server-owned state directory. |
 | `--socket` | no | `CRUXIBLE_SERVER_SOCKET` | text | Listen on this Unix socket path instead of host/port. |
+| `--bootstrap-secret-file` | no | `` | file | Write an auto-generated runtime bootstrap secret to this file with mode 0600. |
 
 **Output And Side Effects:**
 - This process becomes the long-running daemon (it is not a client of an
@@ -2204,6 +2322,9 @@ cruxible query inline \
   warns at startup when the state path resolves under a volatile temp location.
   Stop with Ctrl-C. `cruxible server start --help` prints help and exits without
   serving.
+- When `CRUXIBLE_SERVER_AUTH=true` and no `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET`
+  is set, generates a one-time bootstrap secret, prints it once with hosted-init
+  and claim hints, and optionally writes it to `--bootstrap-secret-file` as 0600.
 
 **Common Errors:**
 - Binding a non-loopback host without `CRUXIBLE_SERVER_AUTH=true` is refused.

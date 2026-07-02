@@ -15,7 +15,10 @@ This group holds both the daemon-launch verb and the client RPCs:
 
 from __future__ import annotations
 
+import os
+import secrets
 import time
+from pathlib import Path
 
 import click
 
@@ -27,6 +30,10 @@ from cruxible_core.cli.commands._common import (
     _root_ctx_obj,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.server.config import (
+    get_runtime_bootstrap_secret,
+    is_server_auth_enabled,
+)
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
@@ -72,6 +79,52 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
     )
 
 
+def _write_bootstrap_secret_file(path: Path, secret: str) -> Path:
+    resolved = path.expanduser()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{secret}\n")
+    resolved.chmod(0o600)
+    return resolved
+
+
+def _prepare_generated_bootstrap_secret(bootstrap_secret_file: str | None) -> None:
+    """Generate the one-time runtime bootstrap secret when auth needs one."""
+    if not is_server_auth_enabled() or get_runtime_bootstrap_secret() is not None:
+        return
+
+    secret = secrets.token_urlsafe(32)
+    os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"] = secret
+
+    written_path: Path | None = None
+    if bootstrap_secret_file is not None:
+        written_path = _write_bootstrap_secret_file(Path(bootstrap_secret_file), secret)
+
+    click.echo("Generated runtime bootstrap secret:", err=True)
+    click.echo(secret, err=True)
+    click.echo("Save it now; this value is printed only once.", err=True)
+    if written_path is not None:
+        click.echo(f"Wrote bootstrap secret file: {written_path} (0600)", err=True)
+        click.echo(
+            "Hosted init: set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret, "
+            "then run `cruxible init --kit <ref> --bootstrap`.",
+            err=True,
+        )
+        click.echo(
+            f"Claim admin token: cruxible credential claim-bootstrap --secret-file {written_path}",
+            err=True,
+        )
+        return
+
+    click.echo(
+        "Hosted init: set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret, "
+        "then run `cruxible init --kit <ref> --bootstrap`.",
+        err=True,
+    )
+    click.echo("Claim admin token: cruxible credential claim-bootstrap", err=True)
+
+
 @click.group("server")
 def server_group() -> None:
     """Launch and inspect the Cruxible daemon."""
@@ -100,12 +153,19 @@ def server_group() -> None:
     default=None,
     help="Listen on this Unix socket path instead of host/port (default: CRUXIBLE_SERVER_SOCKET).",
 )
+@click.option(
+    "--bootstrap-secret-file",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Write an auto-generated runtime bootstrap secret to this file with mode 0600.",
+)
 @handle_errors
 def server_start_cmd(
     host: str | None,
     port: int | None,
     state_dir: str | None,
     socket_path: str | None,
+    bootstrap_secret_file: str | None,
 ) -> None:
     """Launch the Cruxible daemon in the foreground.
 
@@ -116,6 +176,7 @@ def server_start_cmd(
     to the env value or the built-in default. Use a durable `--state-dir` (e.g.
     `~/.cruxible/server`), not a volatile temp path. Stop with Ctrl-C.
     """
+    _prepare_generated_bootstrap_secret(bootstrap_secret_file)
     # Imported lazily so `cruxible server start --help` (and the rest of the CLI)
     # never pays the uvicorn/server import cost, and so the optional `server`
     # extra is only required when actually launching.
