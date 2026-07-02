@@ -17,7 +17,6 @@ from cruxible_core.config.composer import compose_config_sequence, resolve_confi
 from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.runtime import api
-from cruxible_core.runtime.instance import CruxibleInstance  # noqa: F401
 from cruxible_core.runtime.instance_manager import (
     InstanceManager,
 )

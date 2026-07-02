@@ -205,7 +205,7 @@ def render_workflow_summary_markdown(view: WorkflowView) -> str:
 
 
 def render_workflow_table_markdown(view: WorkflowView) -> str:
-    """Backward-compatible alias for the old workflow-table view key."""
+    """Render the workflow-table view (same content as the workflow summary)."""
     return render_workflow_summary_markdown(view)
 
 

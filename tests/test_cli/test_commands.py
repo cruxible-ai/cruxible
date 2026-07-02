@@ -613,32 +613,6 @@ class TestStatsInspectReload:
         assert "Part:BP-1001" in result.output
         assert "fits" in result.output
 
-    def test_deprecated_inspect_entity_alias_still_runs(
-        self,
-        runner: CliRunner,
-        populated_instance: CruxibleInstance,
-    ) -> None:
-        # The pre-rename `inspect entity` path is kept as a hidden alias.
-        result = _chdir_run(
-            runner,
-            populated_instance.root,
-            ["inspect", "entity", "--type", "Vehicle", "--id", "V-2024-CIVIC-EX"],
-        )
-        assert result.exit_code == 0
-        assert "Neighbors: 2" in result.output
-
-    def test_inspect_aliases_are_hidden_from_group_help(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        result = runner.invoke(cli, ["inspect", "--help"])
-        assert result.exit_code == 0
-        # View renders stay in the inspect group.
-        assert "ontology" in result.output
-        # Renamed resource reads no longer advertise their old paths.
-        assert "entity-history" not in result.output
-        assert "relationship-lineage" not in result.output
-
     def test_inspect_entity_json_includes_metadata(
         self,
         runner: CliRunner,

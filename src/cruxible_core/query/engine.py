@@ -135,11 +135,6 @@ class _TraversalBudgetState:
     evaluated_path_candidate_count: int = 0
 
 
-def _matches_filter(entity_props: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
-    """Backward-compatible alias for the shared exact-match helper."""
-    return matches_exact_filter(entity_props, filter_spec)
-
-
 def _query_include_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]:
     """Return config-level include summaries for receipt root metadata."""
     return [

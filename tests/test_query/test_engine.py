@@ -29,12 +29,12 @@ from cruxible_core.graph.types import EntityInstance, RelationshipInstance, Rela
 from cruxible_core.query.engine import (
     QueryResult,
     _evaluate_constraint,
-    _matches_filter,
     _path_identity,
     _traversal_state_identity,
     execute_query,
 )
 from cruxible_core.query.evaluate import evaluate_graph
+from cruxible_core.query.filters import matches_exact_filter
 from cruxible_core.query.predicates import build_predicate_context
 from cruxible_core.query.types import (
     ProjectedQueryRow,
@@ -1713,46 +1713,46 @@ class TestQueryErrors:
 
 
 # ---------------------------------------------------------------------------
-# _matches_filter
+# matches_exact_filter (formerly aliased as _matches_filter)
 # ---------------------------------------------------------------------------
 
 
 class TestMatchesFilter:
     def test_scalar_match(self):
-        assert _matches_filter({"verified": True}, {"verified": True})
+        assert matches_exact_filter({"verified": True}, {"verified": True})
 
     def test_scalar_mismatch(self):
-        assert not _matches_filter({"verified": False}, {"verified": True})
+        assert not matches_exact_filter({"verified": False}, {"verified": True})
 
     def test_list_match(self):
-        assert _matches_filter(
+        assert matches_exact_filter(
             {"direction": "upgrade"},
             {"direction": ["upgrade", "equivalent"]},
         )
 
     def test_list_mismatch(self):
-        assert not _matches_filter(
+        assert not matches_exact_filter(
             {"direction": "downgrade"},
             {"direction": ["upgrade", "equivalent"]},
         )
 
     def test_missing_property(self):
-        assert not _matches_filter({}, {"verified": True})
+        assert not matches_exact_filter({}, {"verified": True})
 
     def test_multiple_filters_all_pass(self):
-        assert _matches_filter(
+        assert matches_exact_filter(
             {"verified": True, "confidence": 0.9},
             {"verified": True, "confidence": 0.9},
         )
 
     def test_multiple_filters_one_fails(self):
-        assert not _matches_filter(
+        assert not matches_exact_filter(
             {"verified": True, "confidence": 0.5},
             {"verified": True, "confidence": 0.9},
         )
 
     def test_empty_filter(self):
-        assert _matches_filter({"verified": True}, {})
+        assert matches_exact_filter({"verified": True}, {})
 
 
 # ---------------------------------------------------------------------------
