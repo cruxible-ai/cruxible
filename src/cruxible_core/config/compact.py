@@ -34,6 +34,7 @@ Public API
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,9 @@ class ExpandResult:
         metadata: Expander-owned manifest fields consumed from ``metadata:`` in the
             source (e.g. ``requires_cruxible``). Recorded here, stripped from
             ``config``.
+        all_adjacent_queries: Compact query bodies that used ``include: all_adjacent``.
+            These are retained out-of-band so composition can rematerialize them
+            against the final merged relationship set.
         warnings: Non-fatal expansion notes (e.g. a decision-bearing knob that the
             engine contract makes inapplicable for a given query shape).
     """
@@ -94,6 +98,7 @@ class ExpandResult:
     config: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    all_adjacent_queries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1410,6 +1415,26 @@ def _pluralize_snake(type_name: str) -> str:
     return snake + "s"
 
 
+def _all_adjacent_query_intents(name: str, body: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return concrete compact query bodies that need final all_adjacent expansion."""
+    if not isinstance(body, dict):
+        return {}
+    if "for" not in body:
+        if body.get("include") == "all_adjacent":
+            return {name: deepcopy(body)}
+        return {}
+
+    intents: dict[str, dict[str, Any]] = {}
+    types = body["for"]
+    base = {key: value for key, value in body.items() if key != "for"}
+    for type_name in types:
+        concrete_name = name.replace("$T", _pluralize_snake(type_name))
+        concrete_body = _substitute_template(base, type_name)
+        if concrete_body.get("include") == "all_adjacent":
+            intents[concrete_name] = deepcopy(concrete_body)
+    return intents
+
+
 # ---------------------------------------------------------------------------
 # Mutation guards
 # ---------------------------------------------------------------------------
@@ -1708,6 +1733,50 @@ def looks_compact(data: Any) -> bool:
     return False
 
 
+def materialize_all_adjacent_queries(
+    config: dict[str, Any],
+    all_adjacent_queries: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Re-expand compact all_adjacent queries against a final config mapping."""
+    if not all_adjacent_queries:
+        return config
+
+    named_queries = dict(config.get("named_queries", {}))
+    if not named_queries:
+        return config
+
+    rel_index = _expanded_relationship_index(config.get("relationships", []))
+    entity_types = config.get("entity_types", {})
+    changed = False
+    for query_name, query_body in all_adjacent_queries.items():
+        if query_name not in named_queries:
+            continue
+        named_queries[query_name] = _expand_named_query(
+            query_name,
+            deepcopy(query_body),
+            rel_index=rel_index,
+            entity_types=entity_types,
+        )
+        changed = True
+
+    if not changed:
+        return config
+
+    materialized = dict(config)
+    materialized["named_queries"] = named_queries
+    return materialized
+
+
+def _expanded_relationship_index(relationships: list[Any]) -> dict[str, RelInfo]:
+    index: dict[str, RelInfo] = {}
+    for rel in relationships:
+        if not isinstance(rel, dict):
+            continue
+        name = str(rel["name"])
+        index[name] = RelInfo(name=name, from_entity=str(rel["from"]), to_entity=str(rel["to"]))
+    return index
+
+
 def expand_compact(source_text: str) -> dict[str, Any]:
     """Expand compact YAML text to a CoreConfig-shaped dict.
 
@@ -1727,6 +1796,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
 
     comments = _scan_relationship_comments(source_text)
     warnings: list[str] = []
+    all_adjacent_queries: dict[str, dict[str, Any]] = {}
 
     # presets / metadata are expander-owned: consume, record, strip.
     presets = raw.get("presets", {}) or {}
@@ -1754,6 +1824,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
     # Named queries (plus templates).
     named_queries: dict[str, Any] = {}
     for q_name, q_body in raw.get("named_queries", {}).items():
+        all_adjacent_queries.update(_all_adjacent_query_intents(q_name, q_body))
         if isinstance(q_body, dict) and "for" in q_body:
             named_queries.update(
                 _expand_query_template(
@@ -1790,7 +1861,12 @@ def expand_compact_full(source_text: str) -> ExpandResult:
         if key in raw:
             config[key] = raw[key]
 
-    return ExpandResult(config=config, metadata=metadata, warnings=warnings)
+    return ExpandResult(
+        config=config,
+        metadata=metadata,
+        warnings=warnings,
+        all_adjacent_queries=all_adjacent_queries,
+    )
 
 
 def expand_compact_file(path: str | Path) -> dict[str, Any]:

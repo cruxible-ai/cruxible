@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,12 @@ from pydantic import ValidationError
 from cruxible_core import __version__
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError
+
+
+@dataclass
+class _ParsedConfig:
+    data: dict[str, Any]
+    all_adjacent_queries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def load_config(source: str | Path) -> CoreConfig:
@@ -49,7 +56,7 @@ def load_config_from_string(yaml_str: str) -> CoreConfig:
     return _validate_config(_parse_config_yaml(yaml_str))
 
 
-def _parse_config_yaml(raw_yaml: str) -> dict[str, Any]:
+def _parse_config_yaml(raw_yaml: str) -> _ParsedConfig:
     """Parse config YAML, expanding the compact authoring grammar if present.
 
     The compact form (kits authored as ``config.yaml``) expands deterministically to
@@ -60,11 +67,23 @@ def _parse_config_yaml(raw_yaml: str) -> dict[str, Any]:
     """
     data = _parse_yaml(raw_yaml)
     # Imported lazily: compact.py imports the schema, and this keeps loader import-light.
-    from cruxible_core.config.compact import expand_compact, looks_compact
+    from cruxible_core.config.compact import (
+        expand_compact_full,
+        looks_compact,
+        materialize_all_adjacent_queries,
+    )
 
     if looks_compact(data):
-        return expand_compact(raw_yaml)
-    return data
+        expanded = expand_compact_full(raw_yaml)
+        materialized = materialize_all_adjacent_queries(
+            expanded.config,
+            expanded.all_adjacent_queries,
+        )
+        return _ParsedConfig(
+            data=materialized,
+            all_adjacent_queries=expanded.all_adjacent_queries,
+        )
+    return _ParsedConfig(data=data)
 
 
 def _read_source(source: str | Path) -> str:
@@ -126,10 +145,12 @@ def save_config(config: CoreConfig, path: str | Path) -> None:
         raise ConfigError(f"Failed to write config file: {e}") from e
 
 
-def _validate_config(data: dict[str, Any]) -> CoreConfig:
+def _validate_config(parsed: _ParsedConfig) -> CoreConfig:
     """Validate parsed YAML data against CoreConfig schema."""
     try:
-        return CoreConfig.model_validate(data)
+        config = CoreConfig.model_validate(parsed.data)
+        config._compact_all_adjacent_queries = parsed.all_adjacent_queries
+        return config
     except ValidationError as e:
         errors = [
             f"{' → '.join(str(p) for p in err['loc'])}: {err['msg']}"

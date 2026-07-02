@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.predicates import StructuredPredicateSpec
@@ -2117,6 +2117,8 @@ class CoreConfig(BaseModel):
     workflows: dict[str, WorkflowSchema] = Field(default_factory=dict)
     runtime: RuntimeConfigSchema = Field(default_factory=RuntimeConfigSchema)
     tests: list[WorkflowTestSchema] = Field(default_factory=list)
+
+    _compact_all_adjacent_queries: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     model_config = {"extra": "forbid"}
 
