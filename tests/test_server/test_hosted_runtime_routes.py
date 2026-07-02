@@ -18,6 +18,7 @@ from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.kits.state_refs import StateCatalogEntry
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
+from cruxible_core.runtime import api
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
@@ -216,6 +217,28 @@ def _init_instance(
     payload = response.json()
     assert payload["instance_id"] != str(root)
     return payload["instance_id"]
+
+
+def _init_auth_managed_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    *,
+    config_yaml: str | None = None,
+) -> str:
+    """Create an auth-managed instance on an auth-ENABLED daemon.
+
+    Auth-managed configs are refused at init on an auth-off daemon, because their
+    entity types materialize only from runtime-credential mints that require
+    ``CRUXIBLE_SERVER_AUTH``. The bearer-gated HTTP init route has no credential to
+    present on a fresh daemon (bootstrap only authorizes hosted-init/server-ops), so
+    the instance is created directly as a daemon operator would, with auth enabled.
+    """
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    resolved_config_yaml = (
+        config_yaml if config_yaml is not None else (root / "config.yaml").read_text()
+    )
+    return api.init_governed(str(root), config_yaml=resolved_config_yaml).instance_id
 
 
 def _seed_car_parts_state(client: TestClient, instance_id: str) -> None:
@@ -1123,7 +1146,7 @@ def test_runtime_credential_review_approval_is_gated_and_close_gate_remains(
     project_root.mkdir()
     (project_root / "config.yaml").write_text(AGENT_OPERATION_CONFIG.read_text())
     client = _make_app_client(tmp_path, monkeypatch)
-    instance_id = _init_instance(client, project_root)
+    instance_id = _init_auth_managed_instance(monkeypatch, project_root)
     writer_headers = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
@@ -1276,7 +1299,7 @@ def test_runtime_credential_cannot_spoof_actor_to_pass_approval_guard(
     project_root.mkdir()
     (project_root / "config.yaml").write_text(AGENT_OPERATION_CONFIG.read_text())
     client = _make_app_client(tmp_path, monkeypatch)
-    instance_id = _init_instance(client, project_root)
+    instance_id = _init_auth_managed_instance(monkeypatch, project_root)
     codex_headers = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
@@ -1623,7 +1646,7 @@ def test_runtime_bootstrap_claim_materializes_auth_managed_entity(
     project.mkdir()
     (project / "config.yaml").write_text(AUTH_MANAGED_PRINCIPAL_YAML)
     client = _make_app_client(tmp_path, monkeypatch)
-    instance_id = _init_instance(client, project)
+    instance_id = _init_auth_managed_instance(monkeypatch, project)
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
@@ -2053,7 +2076,7 @@ def test_runtime_credential_routes_materialize_auth_managed_entity_idempotently(
     project.mkdir()
     (project / "config.yaml").write_text(AUTH_MANAGED_PRINCIPAL_YAML)
     client = _make_app_client(tmp_path, monkeypatch)
-    instance_id = _init_instance(client, project)
+    instance_id = _init_auth_managed_instance(monkeypatch, project)
     store = get_runtime_credential_store()
     admin = store.create_credential(
         instance_id=instance_id,

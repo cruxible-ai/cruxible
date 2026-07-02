@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 import yaml
 
 from cruxible_core.config.composer import (
     compose_config_sequence,
+    compose_runtime_config_files,
     resolve_config_layers,
-    write_runtime_composed_config,
 )
 from cruxible_core.config.loader import load_config, load_config_from_string, save_config
 from cruxible_core.config.schema import CoreConfig
@@ -21,9 +22,11 @@ from cruxible_core.kits import (
     config_yaml_has_kit_provider_refs,
     copy_kit_runtime_files,
     materialize_kit,
+    resolve_kit_ref,
     write_materialized_kit_metadata,
 )
 from cruxible_core.runtime.instance import CruxibleInstance
+from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.service.types import (
     InitResult,
     ReloadConfigResult,
@@ -40,6 +43,44 @@ from cruxible_core.workflow.compiler import (
 )
 
 _MANAGED_CONFIG_RELATIVE_PATH = Path(CruxibleInstance.INSTANCE_DIR) / "configs" / "active.yaml"
+
+
+def refuse_auth_managed_without_server_auth(
+    config: CoreConfig,
+    *,
+    instance_config_path: str | Path,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Refuse a config declaring auth-managed entity types when server auth is OFF.
+
+    Auth-managed entity types materialize ONLY from runtime-credential mints, which
+    require ``CRUXIBLE_SERVER_AUTH=true``. On an auth-off daemon no mint can ever
+    happen, so such a type is permanently empty and unwritable -- the failure today
+    is silence (empty queries, confusing refusals). Config validation alone cannot
+    know the runtime auth state, so the daemon refusing a config it cannot honor is
+    the correct seam: this is called at every server-side init and reload path where
+    both the loaded config and the live auth state are in hand.
+    """
+    if is_server_auth_enabled(environ):
+        return
+    auth_managed_types = sorted(
+        name for name, schema in config.entity_types.items() if schema.auth_managed
+    )
+    if not auth_managed_types:
+        return
+    resolved_config_path = Path(instance_config_path).expanduser().resolve()
+    names = ", ".join(auth_managed_types)
+    raise ConfigError(
+        f"Refusing to load a config that declares auth-managed entity type(s) "
+        f"[{names}] while server auth is OFF. Auth-managed types materialize only "
+        f"from runtime-credential mints, which require CRUXIBLE_SERVER_AUTH, so on "
+        f"this auth-off daemon they are permanently empty and unwritable.\n"
+        f"  Option A: restart the daemon with CRUXIBLE_SERVER_AUTH=true and "
+        f"CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET set (see docs/quickstart.md).\n"
+        f"  Option B: remove `auth_managed: true` and `write_policy: mint_only` "
+        f"from entity type(s) [{names}] in this instance's config copy at "
+        f"{resolved_config_path}."
+    )
 
 
 def service_validate(
@@ -99,6 +140,16 @@ def service_init(
         raise ConfigError("Provide exactly one of config_path, config_yaml, or kit")
 
     if normalized_kit is not None:
+        # Check the kit's entry config from the resolved bundle BEFORE
+        # materialization copies any kit file into the instance root, so an
+        # auth-off refusal leaves the root untouched.
+        bundle = resolve_kit_ref(normalized_kit)
+        bundle_entry_config = bundle.root / bundle.manifest.entry_config
+        if bundle_entry_config.is_file():
+            refuse_auth_managed_without_server_auth(
+                load_config(bundle_entry_config),
+                instance_config_path=bundle_entry_config,
+            )
         materialized_config = materialize_kit(
             kit=normalized_kit,
             root=root,
@@ -112,6 +163,11 @@ def service_init(
         config = load_config_from_string(config_yaml)
         config = compose_config_sequence(
             resolve_config_layers(config, config_dir=root),
+        )
+        # Refuse before the managed config copy is written to disk.
+        refuse_auth_managed_without_server_auth(
+            config,
+            instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
         )
         config_path = _save_managed_config(root, config)
         wrote_managed_config = True
@@ -128,6 +184,11 @@ def service_init(
             composed = compose_config_sequence(
                 resolve_config_layers(config, config_path=resolved),
             )
+            # Refuse before the flattened managed config is written to disk.
+            refuse_auth_managed_without_server_auth(
+                composed,
+                instance_config_path=root / _MANAGED_CONFIG_RELATIVE_PATH,
+            )
             config_path = _save_managed_config(root, composed)
             wrote_managed_config = True
         except Exception:
@@ -135,7 +196,17 @@ def service_init(
                 _cleanup_managed_config(root)
             raise
 
+    effective_config_path = Path(config_path)
+    if not effective_config_path.is_absolute():
+        effective_config_path = root / effective_config_path
+
     try:
+        # Refuse before materializing the instance so an auth-off daemon does not
+        # leave behind a half-created instance pointing at a config it cannot honor.
+        refuse_auth_managed_without_server_auth(
+            load_config(effective_config_path),
+            instance_config_path=effective_config_path,
+        )
         instance = CruxibleInstance.init(
             root,
             config_path,
@@ -182,6 +253,13 @@ def service_init_governed_upload(
                 "does not contain cruxible-kit.yaml. Use `cruxible init --kit` for "
                 "standalone kits, or `cruxible state create-overlay --kit` for overlay kits."
             )
+        # Refuse before any kit runtime file is copied into the governed root so
+        # an auth-off refusal leaves nothing behind (service_init re-checks the
+        # composed config, but by then the copy would already have happened).
+        refuse_auth_managed_without_server_auth(
+            load_config_from_string(config_yaml),
+            instance_config_path=governed_root / _MANAGED_CONFIG_RELATIVE_PATH,
+        )
         if (caller_workspace / KIT_MANIFEST_FILE).exists():
             copy_kit_runtime_files(
                 caller_workspace,
@@ -311,16 +389,27 @@ def service_reload_config(
                 resolve_config_layers(overlay, config_path=overlay_path),
                 runtime=True,
             )
+            # Refuse BEFORE the overlay and composed active config are written so
+            # a refused reload leaves the instance on its previous config.
+            refuse_auth_managed_without_server_auth(
+                composed, instance_config_path=active_path
+            )
             overlay_path.parent.mkdir(parents=True, exist_ok=True)
             overlay_path.write_text(config_yaml)
             active_path.parent.mkdir(parents=True, exist_ok=True)
             save_config(composed, active_path)
         else:
-            composed = write_runtime_composed_config(
+            # Compose in memory and refuse BEFORE the composed active config is
+            # written so a refused reload leaves the instance on its previous config.
+            composed = compose_runtime_config_files(
                 base_path=base_path,
                 overlay_path=overlay_path,
-                output_path=active_path,
             )
+            refuse_auth_managed_without_server_auth(
+                composed, instance_config_path=active_path
+            )
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            save_config(composed, active_path)
         warnings = validate_config(composed)
         if config_path is not None:
             # A new overlay path changes which local file is tracked, but the
@@ -342,6 +431,9 @@ def service_reload_config(
         # This is the daemon/server sync path for anonymous uploaded configs.
         validation = service_validate(config_yaml=config_yaml)
         target_path = instance.get_config_path()
+        refuse_auth_managed_without_server_auth(
+            validation.config, instance_config_path=target_path
+        )
         target_path.parent.mkdir(parents=True, exist_ok=True)
         save_config(validation.config, target_path)
         return ReloadConfigResult(
@@ -363,6 +455,7 @@ def service_reload_config(
                 resolve_config_layers(config, config_path=resolved.resolve()),
             )
         warnings = validate_config(config)
+        refuse_auth_managed_without_server_auth(config, instance_config_path=resolved)
         instance.set_config_path(str(resolved))
         return ReloadConfigResult(
             config_path=str(instance.get_config_path()),
@@ -384,6 +477,9 @@ def service_reload_config(
             resolve_config_layers(config, config_path=config_file.resolve()),
         )
     warnings = validate_config(config)
+    refuse_auth_managed_without_server_auth(
+        config, instance_config_path=instance.get_config_path()
+    )
     return ReloadConfigResult(
         config_path=str(instance.get_config_path()),
         updated=False,

@@ -15,10 +15,12 @@ from zipfile import ZipInfo
 from pydantic import ValidationError
 
 from cruxible_core import __version__
+from cruxible_core.config.loader import load_config_from_string
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.runtime.instance import CruxibleInstance
+from cruxible_core.service.lifecycle import refuse_auth_managed_without_server_auth
 from cruxible_core.service.types import (
     CloneSnapshotResult,
     InstanceBackupResult,
@@ -86,6 +88,17 @@ def service_clone_snapshot(
     """Create a new local instance from a selected snapshot."""
     if not isinstance(instance, CruxibleInstance):
         raise ConfigError("Snapshot clone currently supports only local filesystem instances")
+
+    # Clone activates the snapshot's config in a new instance: refuse an
+    # auth-managed config on an auth-off daemon BEFORE clone_from_snapshot writes
+    # anything into the target root. Missing snapshots/artifacts fall through to
+    # clone_from_snapshot's own errors.
+    snapshot_config_bytes = instance._read_snapshot_artifacts(snapshot_id).get("config.yaml")
+    if snapshot_config_bytes is not None:
+        refuse_auth_managed_without_server_auth(
+            load_config_from_string(snapshot_config_bytes.decode("utf-8")),
+            instance_config_path=Path(root_dir) / "config.yaml",
+        )
 
     cloned, snapshot = CruxibleInstance.clone_from_snapshot(
         instance,
@@ -184,6 +197,14 @@ def service_restore_instance(
         raise ConfigError(f"Instance already exists at {root}")
     if (root / _INSTANCE_BACKUP_CONFIG).exists():
         raise ConfigError(f"Refusing to overwrite existing config.yaml at {root}")
+
+    # Restore activates the backed-up config on this daemon: refuse an
+    # auth-managed config on an auth-off daemon BEFORE any file is staged or the
+    # instance root is created.
+    refuse_auth_managed_without_server_auth(
+        load_config_from_string(contents[_INSTANCE_BACKUP_CONFIG].decode("utf-8")),
+        instance_config_path=root / _INSTANCE_BACKUP_CONFIG,
+    )
 
     root.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
