@@ -135,6 +135,40 @@ class RuntimeCredentialStore:
                 """
             )
 
+    def prepare_credential(
+        self,
+        *,
+        instance_id: str,
+        label: str,
+        permission_mode: PermissionMode = PermissionMode.ADMIN,
+        created_by: str | None = None,
+    ) -> CreatedRuntimeCredential:
+        """Prepare an instance-scoped credential without committing it."""
+        _validate_governed_instance_id(instance_id)
+        return self._new_created_credential(
+            instance_id=instance_id,
+            label=label,
+            permission_mode=permission_mode,
+            created_by=created_by,
+        )
+
+    def commit_prepared_credential(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        reason: str = "runtime_credential_created",
+    ) -> CreatedRuntimeCredential:
+        """Commit a prepared credential after caller-side materialization succeeds."""
+        _validate_governed_instance_id(created.record.instance_id)
+        with self._connect() as conn:
+            self._mark_auth_required_conn(
+                conn,
+                updated_at=created.record.created_at,
+                reason=reason,
+            )
+            self._insert_credential_conn(conn, created.record)
+        return created
+
     def create_credential(
         self,
         *,
@@ -144,63 +178,22 @@ class RuntimeCredentialStore:
         created_by: str | None = None,
     ) -> CreatedRuntimeCredential:
         """Create an instance-scoped credential and return its token once."""
-        _validate_governed_instance_id(instance_id)
-
-        credential_id = _new_credential_id()
-        token = _new_token(credential_id)
-        token_hash = _hash_token(token)
-        created_at = format_datetime(utc_now())
-        assert created_at is not None
-        with self._connect() as conn:
-            self._mark_auth_required_conn(
-                conn,
-                updated_at=created_at,
-                reason="runtime_credential_created",
-            )
-            conn.execute(
-                """
-                INSERT INTO runtime_credentials(
-                    credential_id,
-                    instance_id,
-                    label,
-                    permission_mode,
-                    token_hash,
-                    created_at,
-                    created_by,
-                    revoked_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    credential_id,
-                    instance_id,
-                    label,
-                    _serialize_permission_mode(permission_mode),
-                    token_hash,
-                    created_at,
-                    created_by,
-                ),
-            )
-
-        created_record = RuntimeCredentialRecord(
-            credential_id=credential_id,
+        created = self.prepare_credential(
             instance_id=instance_id,
             label=label,
             permission_mode=permission_mode,
-            token_hash=token_hash,
-            created_at=created_at,
             created_by=created_by,
         )
-        return CreatedRuntimeCredential(record=created_record, token=token)
+        return self.commit_prepared_credential(created)
 
-    def claim_bootstrap_credential(
+    def prepare_bootstrap_credential(
         self,
         *,
         instance_id: str,
         bootstrap_secret: str,
         expected_bootstrap_secret: str | None,
     ) -> CreatedRuntimeCredential:
-        """Exchange a one-time bootstrap secret for the first ADMIN credential."""
+        """Prepare the initial ADMIN credential without committing it."""
         _validate_governed_instance_id(instance_id)
         if expected_bootstrap_secret is None or not hmac.compare_digest(
             bootstrap_secret,
@@ -209,68 +202,38 @@ class RuntimeCredentialStore:
             raise AuthenticationError("Invalid bootstrap secret")
 
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
-        credential_id = _new_credential_id()
-        token = _new_token(credential_id)
-        token_hash = _hash_token(token)
-        created_at = format_datetime(utc_now())
-        assert created_at is not None
-        permission_mode = PermissionMode.ADMIN
+        with self._connect() as conn:
+            self._validate_bootstrap_claim_conn(conn, instance_id, bootstrap_secret_hash)
 
+        return self._new_created_credential(
+            instance_id=instance_id,
+            label="bootstrap-admin",
+            permission_mode=PermissionMode.ADMIN,
+            created_by="runtime_bootstrap",
+        )
+
+    def claim_prepared_bootstrap_credential(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        bootstrap_secret: str,
+    ) -> CreatedRuntimeCredential:
+        """Commit a prepared bootstrap credential after materialization succeeds."""
+        _validate_governed_instance_id(created.record.instance_id)
+        bootstrap_secret_hash = _hash_token(bootstrap_secret)
         try:
             with self._connect() as conn:
-                prior_claim = conn.execute(
-                    """
-                    SELECT 1
-                    FROM runtime_bootstrap_claims
-                    WHERE bootstrap_secret_hash = ?
-                    LIMIT 1
-                    """,
-                    (bootstrap_secret_hash,),
-                ).fetchone()
-                if prior_claim is not None:
-                    raise AuthenticationError("Invalid bootstrap secret")
-
-                prior_admin = conn.execute(
-                    """
-                    SELECT 1
-                    FROM runtime_credentials
-                    WHERE instance_id = ? AND permission_mode = ?
-                    LIMIT 1
-                    """,
-                    (instance_id, _serialize_permission_mode(PermissionMode.ADMIN)),
-                ).fetchone()
-                if prior_admin is not None:
-                    raise AuthenticationError("Invalid bootstrap secret")
-
+                self._validate_bootstrap_claim_conn(
+                    conn,
+                    created.record.instance_id,
+                    bootstrap_secret_hash,
+                )
                 self._mark_auth_required_conn(
                     conn,
-                    updated_at=created_at,
+                    updated_at=created.record.created_at,
                     reason="runtime_bootstrap_claimed",
                 )
-                conn.execute(
-                    """
-                    INSERT INTO runtime_credentials(
-                        credential_id,
-                        instance_id,
-                        label,
-                        permission_mode,
-                        token_hash,
-                        created_at,
-                        created_by,
-                        revoked_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-                    """,
-                    (
-                        credential_id,
-                        instance_id,
-                        "bootstrap-admin",
-                        _serialize_permission_mode(permission_mode),
-                        token_hash,
-                        created_at,
-                        "runtime_bootstrap",
-                    ),
-                )
+                self._insert_credential_conn(conn, created.record)
                 conn.execute(
                     """
                     INSERT INTO runtime_bootstrap_claims(
@@ -281,21 +244,34 @@ class RuntimeCredentialStore:
                     )
                     VALUES (?, ?, ?, ?)
                     """,
-                    (bootstrap_secret_hash, instance_id, credential_id, created_at),
+                    (
+                        bootstrap_secret_hash,
+                        created.record.instance_id,
+                        created.record.credential_id,
+                        created.record.created_at,
+                    ),
                 )
         except sqlite3.IntegrityError as exc:
             raise AuthenticationError("Invalid bootstrap secret") from exc
+        return created
 
-        created_record = RuntimeCredentialRecord(
-            credential_id=credential_id,
+    def claim_bootstrap_credential(
+        self,
+        *,
+        instance_id: str,
+        bootstrap_secret: str,
+        expected_bootstrap_secret: str | None,
+    ) -> CreatedRuntimeCredential:
+        """Exchange a one-time bootstrap secret for the first ADMIN credential."""
+        created = self.prepare_bootstrap_credential(
             instance_id=instance_id,
-            label="bootstrap-admin",
-            permission_mode=permission_mode,
-            token_hash=token_hash,
-            created_at=created_at,
-            created_by="runtime_bootstrap",
+            bootstrap_secret=bootstrap_secret,
+            expected_bootstrap_secret=expected_bootstrap_secret,
         )
-        return CreatedRuntimeCredential(record=created_record, token=token)
+        return self.claim_prepared_bootstrap_credential(
+            created,
+            bootstrap_secret=bootstrap_secret,
+        )
 
     def bootstrap_secret_claimed(self, bootstrap_secret: str) -> bool:
         """Return whether a bootstrap secret has already been exchanged."""
@@ -411,21 +387,38 @@ class RuntimeCredentialStore:
         assert row is not None
         return self._row_to_record(row)
 
-    def rotate_credential(
+    def prepare_rotated_credential(
         self,
         *,
         instance_id: str,
         credential_id: str,
         rotated_by: str | None = None,
     ) -> CreatedRuntimeCredential:
-        """Revoke an active credential and create a replacement with one new token."""
+        """Prepare a replacement credential without revoking the active token."""
         _validate_governed_instance_id(instance_id)
-        created_at = format_datetime(utc_now())
-        assert created_at is not None
-        new_credential_id = _new_credential_id()
-        new_token = _new_token(new_credential_id)
-        new_token_hash = _hash_token(new_token)
+        with self._connect() as conn:
+            existing = self._fetch_record_row(conn, instance_id, credential_id)
+            if existing is None or existing["revoked_at"] is not None:
+                raise RuntimeCredentialNotFoundError(credential_id)
+            label = str(existing["label"])
+            permission_mode = _parse_permission_mode(str(existing["permission_mode"]))
 
+        return self._new_created_credential(
+            instance_id=instance_id,
+            label=label,
+            permission_mode=permission_mode,
+            created_by=rotated_by,
+        )
+
+    def commit_prepared_rotation(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        instance_id: str,
+        credential_id: str,
+    ) -> CreatedRuntimeCredential:
+        """Revoke an active credential and commit a prepared replacement."""
+        _validate_governed_instance_id(instance_id)
         with self._connect() as conn:
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None or existing["revoked_at"] is not None:
@@ -433,7 +426,7 @@ class RuntimeCredentialStore:
 
             self._mark_auth_required_conn(
                 conn,
-                updated_at=created_at,
+                updated_at=created.record.created_at,
                 reason="runtime_credential_rotated",
             )
             conn.execute(
@@ -442,36 +435,39 @@ class RuntimeCredentialStore:
                 SET revoked_at = ?
                 WHERE credential_id = ? AND instance_id = ?
                 """,
-                (created_at, credential_id, instance_id),
+                (created.record.created_at, credential_id, instance_id),
             )
-            conn.execute(
-                """
-                INSERT INTO runtime_credentials(
-                    credential_id,
-                    instance_id,
-                    label,
-                    permission_mode,
-                    token_hash,
-                    created_at,
-                    created_by,
-                    revoked_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    new_credential_id,
-                    instance_id,
-                    existing["label"],
-                    existing["permission_mode"],
-                    new_token_hash,
-                    created_at,
-                    rotated_by,
-                ),
+            self._insert_credential_conn(conn, created.record)
+            created_row = self._fetch_record_row(
+                conn,
+                created.record.instance_id,
+                created.record.credential_id,
             )
-            created = self._fetch_record_row(conn, instance_id, new_credential_id)
 
-        assert created is not None
-        return CreatedRuntimeCredential(record=self._row_to_record(created), token=new_token)
+        assert created_row is not None
+        return CreatedRuntimeCredential(
+            record=self._row_to_record(created_row),
+            token=created.token,
+        )
+
+    def rotate_credential(
+        self,
+        *,
+        instance_id: str,
+        credential_id: str,
+        rotated_by: str | None = None,
+    ) -> CreatedRuntimeCredential:
+        """Revoke an active credential and create a replacement with one new token."""
+        created = self.prepare_rotated_credential(
+            instance_id=instance_id,
+            credential_id=credential_id,
+            rotated_by=rotated_by,
+        )
+        return self.commit_prepared_rotation(
+            created,
+            instance_id=instance_id,
+            credential_id=credential_id,
+        )
 
     def has_active_credentials(self) -> bool:
         """Return whether at least one active runtime credential exists."""
@@ -514,6 +510,93 @@ class RuntimeCredentialStore:
                 """
             ).fetchone()
         return active is not None
+
+    @staticmethod
+    def _new_created_credential(
+        *,
+        instance_id: str,
+        label: str,
+        permission_mode: PermissionMode,
+        created_by: str | None,
+    ) -> CreatedRuntimeCredential:
+        credential_id = _new_credential_id()
+        token = _new_token(credential_id)
+        token_hash = _hash_token(token)
+        created_at = format_datetime(utc_now())
+        assert created_at is not None
+        return CreatedRuntimeCredential(
+            record=RuntimeCredentialRecord(
+                credential_id=credential_id,
+                instance_id=instance_id,
+                label=label,
+                permission_mode=permission_mode,
+                token_hash=token_hash,
+                created_at=created_at,
+                created_by=created_by,
+            ),
+            token=token,
+        )
+
+    @staticmethod
+    def _insert_credential_conn(
+        conn: sqlite3.Connection,
+        record: RuntimeCredentialRecord,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO runtime_credentials(
+                credential_id,
+                instance_id,
+                label,
+                permission_mode,
+                token_hash,
+                created_at,
+                created_by,
+                revoked_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.credential_id,
+                record.instance_id,
+                record.label,
+                _serialize_permission_mode(record.permission_mode),
+                record.token_hash,
+                record.created_at,
+                record.created_by,
+                record.revoked_at,
+            ),
+        )
+
+    @staticmethod
+    def _validate_bootstrap_claim_conn(
+        conn: sqlite3.Connection,
+        instance_id: str,
+        bootstrap_secret_hash: str,
+    ) -> None:
+        prior_claim = conn.execute(
+            """
+            SELECT 1
+            FROM runtime_bootstrap_claims
+            WHERE bootstrap_secret_hash = ?
+            LIMIT 1
+            """,
+            (bootstrap_secret_hash,),
+        ).fetchone()
+        if prior_claim is not None:
+            raise AuthenticationError("Invalid bootstrap secret")
+
+        prior_admin = conn.execute(
+            """
+            SELECT 1
+            FROM runtime_credentials
+            WHERE instance_id = ? AND permission_mode = ?
+            LIMIT 1
+            """,
+            (instance_id, _serialize_permission_mode(PermissionMode.ADMIN)),
+        ).fetchone()
+        if prior_admin is not None:
+            raise AuthenticationError("Invalid bootstrap secret")
 
     @staticmethod
     def _mark_auth_required_conn(

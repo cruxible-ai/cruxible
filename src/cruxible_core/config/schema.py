@@ -35,6 +35,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.predicate import PredicateValueType
 from cruxible_core.primitives import canonical_json
@@ -2296,6 +2297,22 @@ class CoreConfig(BaseModel):
                     msg = (
                         f"Auth-managed entity type '{entity_type}' must declare "
                         "write_policy: mint_only"
+                    )
+                    raise ValueError(msg)
+                primary_key = schema.get_primary_key()
+                unmaterializable = sorted(
+                    prop_name
+                    for prop_name, prop in schema.properties.items()
+                    if prop_name != primary_key
+                    and prop_name not in AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
+                    and not prop.optional
+                    and prop.default is None
+                )
+                if unmaterializable:
+                    joined = ", ".join(unmaterializable)
+                    msg = (
+                        f"Auth-managed entity type '{entity_type}' has required "
+                        f"properties not materializable from runtime credentials: {joined}"
                     )
                     raise ValueError(msg)
 

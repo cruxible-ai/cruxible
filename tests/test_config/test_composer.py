@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.config.composer import (
     ResolvedConfigLayer,
@@ -164,6 +165,28 @@ named_queries:
         )
 
         with pytest.raises(ConfigError, match="Named query 'bad_query'"):
+            compose_configs(base, overlay)
+
+    def test_composed_auth_managed_type_requires_mint_only_policy(self) -> None:
+        base = _base()
+        overlay = _overlay(
+            {
+                "entity_types": {
+                    "Principal": {
+                        "auth_managed": True,
+                        "properties": {
+                            "actor_id": {"type": "string", "primary_key": True},
+                            "kind": {"type": "string"},
+                        },
+                    }
+                }
+            }
+        )
+
+        with pytest.raises(
+            ValidationError,
+            match="Auth-managed entity type 'Principal' must declare write_policy: mint_only",
+        ):
             compose_configs(base, overlay)
 
     def test_compose_validate_false_allows_raw_merge_inspection(self) -> None:

@@ -63,12 +63,17 @@ async def claim_runtime_bootstrap(
 ) -> contracts.RuntimeCredentialBootstrapResult:
     """Exchange a one-time bootstrap secret for the initial ADMIN runtime token."""
     resolved_instance_id = resolve_server_instance_id(instance_id)
-    created = get_runtime_credential_store().claim_bootstrap_credential(
+    store = get_runtime_credential_store()
+    prepared = store.prepare_bootstrap_credential(
         instance_id=resolved_instance_id,
         bootstrap_secret=req.bootstrap_secret,
         expected_bootstrap_secret=get_runtime_bootstrap_secret(),
     )
-    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), created.record)
+    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), prepared.record)
+    created = store.claim_prepared_bootstrap_credential(
+        prepared,
+        bootstrap_secret=req.bootstrap_secret,
+    )
     return contracts.RuntimeCredentialBootstrapResult(
         credential_id=created.record.credential_id,
         instance_id=created.record.instance_id,

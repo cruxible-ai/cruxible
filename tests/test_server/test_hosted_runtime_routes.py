@@ -2108,6 +2108,91 @@ def test_runtime_credential_routes_materialize_auth_managed_entity_idempotently(
     assert principal.properties["custom_note"] == "preserve-me"
 
 
+def test_runtime_credential_create_materialization_failure_leaves_store_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+    before_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+
+    def fail_materialization(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("materialization failed")
+
+    monkeypatch.setattr(
+        "cruxible_core.server.routes.runtime_credentials.materialize_auth_managed_entities",
+        fail_materialization,
+    )
+
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        client.post(
+            f"/api/v1/{instance_id}/runtime/credentials",
+            json={"label": "principal-agent", "permission_mode": "read_only"},
+            headers=headers,
+        )
+
+    after_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+    assert after_ids == before_ids
+
+
+def test_runtime_credential_rotate_materialization_failure_keeps_old_token_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_project: Path,
+) -> None:
+    client = _make_app_client(tmp_path, monkeypatch)
+    instance_id = _init_instance(client, server_project)
+    store = get_runtime_credential_store()
+    admin = store.create_credential(
+        instance_id=instance_id,
+        label="instance-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="test",
+    )
+    target = store.create_credential(
+        instance_id=instance_id,
+        label="target-reader",
+        permission_mode=PermissionMode.READ_ONLY,
+        created_by="test",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    headers = {"Authorization": f"Bearer {admin.token}"}
+    before_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+
+    def fail_materialization(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("materialization failed")
+
+    monkeypatch.setattr(
+        "cruxible_core.server.routes.runtime_credentials.materialize_auth_managed_entities",
+        fail_materialization,
+    )
+
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        client.post(
+            f"/api/v1/{instance_id}/runtime/credentials/{target.record.credential_id}/rotate",
+            headers=headers,
+        )
+
+    after_ids = [record.credential_id for record in store.list_for_instance(instance_id)]
+    assert after_ids == before_ids
+    assert store.authenticate(target.token) is not None
+    target_after = store.get(target.record.credential_id)
+    assert target_after is not None
+    assert target_after.revoked_at is None
+
+
 def test_admin_runtime_credential_can_create_and_list_runtime_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

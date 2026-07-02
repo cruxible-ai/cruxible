@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.schema import EntityTypeSchema
 from cruxible_core.governance.actors import ActorType, GovernedActorContext
 from cruxible_core.graph.operations import apply_entity, validate_entity
-from cruxible_core.graph.types import EntityMetadata
+from cruxible_core.graph.types import EntityInstance, EntityMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.primitives import new_id
 from cruxible_core.server.credentials import RuntimeCredentialRecord
@@ -41,6 +42,7 @@ def materialize_auth_managed_entities(
     graph = instance.load_graph()
     actor_context = _credential_actor_context(credential)
     materialized: list[str] = []
+    written_entities: list[EntityInstance] = []
     for entity_type, schema in auth_managed_types:
         entity_id = actor_context.actor_id
         properties = _credential_properties(schema, credential, actor_context)
@@ -58,9 +60,12 @@ def materialize_auth_managed_entities(
             config=config,
             source=TOKEN_MINT_SOURCE,
         )
+        written = graph.get_entity(entity_type, entity_id)
+        assert written is not None
+        written_entities.append(written)
         materialized.append(entity_type)
 
-    instance.save_graph(graph)
+    instance.save_graph_delta(graph, entities=written_entities)
     return materialized
 
 
@@ -85,17 +90,18 @@ def _credential_properties(
         "credential_id": credential.credential_id,
         "credential_type": _AUTH_MANAGED_CREDENTIAL_TYPE,
         "created_at": credential.created_at,
-        "created_by": credential.created_by,
         "instance_id": credential.instance_id,
         "kind": actor_context.actor_type,
         "label": credential.label,
         "org_id": actor_context.org_id,
         "permission_mode": credential.permission_mode.name.lower(),
-        "revoked_at": credential.revoked_at,
     }
     primary_key = schema.get_primary_key()
     return {
         name: value
         for name, value in values.items()
-        if name in schema.properties and name != primary_key and value is not None
+        if name in AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
+        and name in schema.properties
+        and name != primary_key
+        and value is not None
     }

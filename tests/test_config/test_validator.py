@@ -912,6 +912,25 @@ class TestAuthManagedEntityWrites:
                 },
             )
 
+    def test_auth_managed_required_property_must_be_materializable(self):
+        entity_types = self._entity_types()
+        entity_types["Principal"] = EntityTypeSchema(
+            properties={
+                "actor_id": PropertySchema(type="string", primary_key=True),
+                "kind": PropertySchema(type="string"),
+                "unmanaged_required": PropertySchema(type="string", optional=False),
+            },
+            auth_managed=True,
+            write_policy="mint_only",
+        )
+
+        with pytest.raises(
+            ValidationError,
+            match="required properties not materializable from runtime credentials: "
+            "unmanaged_required",
+        ):
+            _minimal_config(entity_types=entity_types, relationships=[])
+
     def test_auth_managed_marker_on_non_target_type_passes(self):
         config = _minimal_config(
             entity_types=self._entity_types(),
