@@ -257,6 +257,17 @@ class TestEntityTypeSchema:
         entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
         assert entity.write_policy is None
 
+    def test_auth_managed_defaults_to_false(self):
+        entity = EntityTypeSchema(properties={"name": PropertySchema(type="string")})
+        assert entity.auth_managed is False
+
+    def test_auth_managed_accepts_true(self):
+        entity = EntityTypeSchema(
+            properties={"name": PropertySchema(type="string")},
+            auth_managed=True,
+        )
+        assert entity.auth_managed is True
+
     @pytest.mark.parametrize("policy", ["direct", "proposal_only", "mint_only"])
     def test_write_policy_accepts_enum_values(self, policy):
         entity = EntityTypeSchema(

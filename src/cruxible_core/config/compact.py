@@ -279,6 +279,8 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
         entity["properties"] = props
         if "write_policy" in body:
             entity["write_policy"] = body["write_policy"]
+        if "auth_managed" in body:
+            entity["auth_managed"] = body["auth_managed"]
         if "constraints" in body:
             entity["constraints"] = list(body["constraints"])
         out[type_name] = entity

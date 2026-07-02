@@ -6,6 +6,8 @@ from fastapi import APIRouter
 
 from cruxible_client import contracts
 from cruxible_core.runtime import api
+from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.server.auth_managed_entities import materialize_auth_managed_entities
 from cruxible_core.server.config import get_runtime_bootstrap_secret
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.request_models import (
@@ -66,6 +68,7 @@ async def claim_runtime_bootstrap(
         bootstrap_secret=req.bootstrap_secret,
         expected_bootstrap_secret=get_runtime_bootstrap_secret(),
     )
+    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), created.record)
     return contracts.RuntimeCredentialBootstrapResult(
         credential_id=created.record.credential_id,
         instance_id=created.record.instance_id,

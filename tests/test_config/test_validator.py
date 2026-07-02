@@ -853,6 +853,80 @@ class TestMintOnlyEntityWrites:
         assert config.extends == "base"
 
 
+class TestAuthManagedEntityWrites:
+    def _entity_types(
+        self,
+        *,
+        write_policy: str | None = "mint_only",
+    ) -> dict[str, EntityTypeSchema]:
+        return {
+            "Principal": EntityTypeSchema(
+                properties={
+                    "actor_id": PropertySchema(type="string", primary_key=True),
+                    "kind": PropertySchema(type="string"),
+                    "label": PropertySchema(type="string"),
+                },
+                auth_managed=True,
+                write_policy=write_policy,
+            ),
+            "Plain": EntityTypeSchema(
+                properties={"id": PropertySchema(type="string", primary_key=True)},
+            ),
+        }
+
+    def _make_entities_step(self, entity_type: str) -> WorkflowStepSchema:
+        return WorkflowStepSchema(
+            id="build",
+            make_entities={
+                "entity_type": entity_type,
+                "items": [{"id": "actor-a"}],
+                "entity_id": "$item.id",
+                "properties": {"kind": "service_account", "label": "$item.id"},
+            },
+            **{"as": "built"},
+        )
+
+    def test_auth_managed_requires_mint_only_policy(self):
+        with pytest.raises(
+            ValidationError,
+            match="Auth-managed entity type 'Principal' must declare write_policy: mint_only",
+        ):
+            _minimal_config(
+                entity_types=self._entity_types(write_policy="direct"),
+                relationships=[],
+            )
+
+    def test_auth_managed_make_entities_rejected(self):
+        with pytest.raises(
+            ValidationError,
+            match="make_entities targets auth-managed type 'Principal'",
+        ):
+            _minimal_config(
+                entity_types=self._entity_types(),
+                relationships=[],
+                workflows={
+                    "wf": WorkflowSchema(
+                        steps=[self._make_entities_step("Principal")],
+                        returns="built",
+                    )
+                },
+            )
+
+    def test_auth_managed_marker_on_non_target_type_passes(self):
+        config = _minimal_config(
+            entity_types=self._entity_types(),
+            relationships=[],
+            workflows={
+                "wf": WorkflowSchema(
+                    steps=[self._make_entities_step("Plain")],
+                    returns="built",
+                )
+            },
+        )
+
+        assert config.entity_types["Principal"].auth_managed is True
+
+
 class TestValidateWorkflowExecution:
     def _workflow_config(self, **overrides) -> CoreConfig:
         defaults = dict(
