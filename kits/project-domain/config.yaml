@@ -25,9 +25,8 @@ description: >
   - owner is not a config concern in the base. The base WorkItem (and the
     other operation entities) have no owner property; ownership is the Actor
     entity plus the *_owned_by_actor relationships the base provides. Domain
-    entities below therefore carry no owner property. Domain work-queue queries
-    keep their owner select key for output-shape parity, but it resolves to
-    null until ownership is projected through Actor at port time.
+    work-queue queries therefore select no owner key; project ownership
+    through Actor edges (see the base actor_work_queue) when you need it.
 
 enums: {}
 
@@ -420,7 +419,6 @@ named_queries:
       title: $result.properties.title
       status: $result.properties.status
       priority: $result.properties.priority
-      owner: $result.properties.owner
       type: $result.properties.type
 
   area_change_context:
@@ -578,7 +576,6 @@ named_queries:
       title: $result.properties.title
       status: $result.properties.status
       priority: $result.properties.priority
-      owner: $result.properties.owner
       type: $result.properties.type
 
   milestone_work_items:
@@ -603,7 +600,6 @@ named_queries:
       title: $result.properties.title
       status: $result.properties.status
       priority: $result.properties.priority
-      owner: $result.properties.owner
       type: $result.properties.type
 
   roadmap_item_work_items:
@@ -624,7 +620,6 @@ named_queries:
       title: $result.properties.title
       status: $result.properties.status
       priority: $result.properties.priority
-      owner: $result.properties.owner
       type: $result.properties.type
 
   deferred_release_gating_work_items:
@@ -879,16 +874,6 @@ named_queries:
       summary: $result.properties.summary
     limit: 100
 
-  changes_requested_reviews:
-    mode: collection
-    description: Review requests sent back with changes requested.
-    result_shape: entity
-    returns: ReviewRequest
-    where:
-      result.properties.status:
-        eq: changes_requested
-    limit: 100
-
 mutation_guards: []
 
 quality_checks:
@@ -928,11 +913,13 @@ quality_checks:
     property: impact_type
     rule: required
 
-  - name: deferred_release_work_not_gating_0_2
-    kind: named_query_result_count
-    description: Deferred work should not remain attached to active, planned, or blocked 0.2 gating milestones.
-    severity: error
-    query_name: deferred_release_gating_work_items
-    params:
-      release_line_id: release-0.2
-    max_count: 0
+  # No release-pinned checks ship in the kit: named_query_result_count checks
+  # against an entry-point query require a concrete entry id, so a "deferred
+  # work must not gate release X" check is instance configuration. At instance
+  # setup, add one per gating release line, e.g.:
+  #   - name: deferred_release_work_not_gating_<release>
+  #     kind: named_query_result_count
+  #     severity: error
+  #     query_name: deferred_release_gating_work_items
+  #     params: {release_line_id: <release-line-id>}
+  #     max_count: 0

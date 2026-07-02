@@ -68,12 +68,11 @@ entity_types:
       title: string indexed
       status: enum review_status
       summary: string?
-      review_notes: string?
       change_repo: string?
       change_base: string?
       change_head: string?
-      requested_at: date?
-      resolved_at: date?
+      requested_at: datetime?
+      resolved_at: datetime?
 
   Decision:
     description: Durable operating decision with lifecycle, rationale, impact, and supersession context.
@@ -115,7 +114,6 @@ entity_types:
       summary: string
       body: string
       created_at: datetime
-      author: string?
 
 relationships:
   # --- Ownership / accountability ---
@@ -199,7 +197,12 @@ named_queries:
     entry_point: WorkItem
     returns: AnyEntity
     relationship_state: reviewable
-    description: From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects.
+    description: >-
+      From a work item, inspect dependencies, blockers, reviews, composition,
+      lineage, decisions, owner, subjects. Base-layer adjacency only: all_adjacent
+      expands at this kit's load time, so on a composed instance this query does
+      NOT see overlay seam edges — prefer the overlay's domain-aware context
+      query there (e.g. project-domain's work_item_change_context).
     include: all_adjacent
     bound:
       state_note_about_work_item:
@@ -224,7 +227,7 @@ named_queries:
       latest_review:
         relationship: review_request_for_work_item
         limit: 1
-        order: [requested_at desc date, resolved_at desc date]
+        order: [requested_at desc datetime, resolved_at desc datetime]
     select:
       properties: [work_item_id, title, status, priority, type]
       counts:
@@ -241,8 +244,8 @@ named_queries:
     mode: collection
     returns: ReviewRequest
     relationship_state: reviewable
-    description: Review requests awaiting review or changes.
-    where: {status: {in: [requested, in_review, changes_requested]}}
+    description: Review requests awaiting a reviewer -- requested or in review. Reviews sent back for rework live in changes_requested_reviews.
+    where: {status: {in: [requested, in_review]}}
     select:
       properties: [review_request_id, title, status, requested_at]
       counts:
@@ -253,7 +256,25 @@ named_queries:
         work_items: review_request_for_work_item
         reviewers: review_request_assigned_to_actor
         requesters: review_request_requested_by_actor
-    order: requested_at asc date
+    order: requested_at asc datetime
+
+  changes_requested_reviews:
+    mode: collection
+    returns: ReviewRequest
+    relationship_state: reviewable
+    description: Review requests sent back with changes requested -- the implementer's rework queue, distinct from the reviewer-facing review_queue.
+    where: {status: {eq: changes_requested}}
+    select:
+      properties: [review_request_id, title, status, requested_at]
+      counts:
+        work_item: review_request_for_work_item
+        reviewer: review_request_assigned_to_actor
+        requester: review_request_requested_by_actor
+      items:
+        work_items: review_request_for_work_item
+        reviewers: review_request_assigned_to_actor
+        requesters: review_request_requested_by_actor
+    order: requested_at asc datetime
 
   recent_state_notes:
     mode: collection
@@ -292,6 +313,20 @@ named_queries:
     description: State notes attached to a work item, newest first.
     traverse:
       - relationship: state_note_about_work_item
+        as: state_note
+    order: created_at desc datetime
+
+  state_notes_for_review_request:
+    mode: traversal
+    entry_point: ReviewRequest
+    returns: StateNote
+    relationship_state: reviewable
+    max_paths: 200
+    description: >-
+      The review thread: verdict and finding notes attached to a review request,
+      newest first. This is the read that replaces scrolling a notes blob.
+    traverse:
+      - relationship: state_note_about_review_request
         as: state_note
     order: created_at desc datetime
 
