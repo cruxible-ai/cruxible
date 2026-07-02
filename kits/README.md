@@ -35,9 +35,3 @@ the composed runtime config.
 Standalone kits can be initialized with `cruxible init --kit <kit>`. Overlay
 kits are created with `cruxible state create-overlay --kit <kit>`.
 
-When rendering a runtime wiki for a layered kit, use local scope so only the
-local state plus directly used upstream context is emitted:
-
-```bash
-uv run cruxible wiki render --output wiki --scope local
-```

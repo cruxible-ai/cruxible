@@ -27,13 +27,21 @@ enums:
 
 entity_types:
   Actor:
-    description: Human, agent, service account, or system actor referenced by operation state.
+    description: >
+      Human, agent, service account, or system actor referenced by operation
+      state. Auth-managed: instances materialize from runtime-credential mints
+      (identity source of truth = the credential store) and are writable by no
+      other path, so every property is a credential-derived fact. label is the
+      credential label; kind derives from the authenticated actor type.
     id: actor_id
+    auth_managed: true
+    write_policy: mint_only
     properties:
-      name: string indexed
+      label: string indexed
       kind: enum actor_kind
+      # Only token lifecycle can ever move status off its default (mint_only
+      # refuses all other writers); kept for credential-revocation materialization.
       status: enum actor_status = active
-      summary: string?
 
   SubjectRef:
     description: >

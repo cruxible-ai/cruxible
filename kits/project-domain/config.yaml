@@ -43,9 +43,6 @@ entity_types:
       description:
         type: string
         optional: true
-      owner:
-        type: string
-        optional: true
 
   Capability:
     description: Durable technical or product ability the project supports.
@@ -67,9 +64,6 @@ entity_types:
         # rejects redeclaring the base enum. Inline values mirror the base
         # lifecycle_status enum exactly.
         enum: [planned, active, blocked, watching, deferred, closed]
-      owner:
-        type: string
-        optional: true
 
   RoadmapItem:
     description: Planned investment, initiative, or roadmap-level change.
@@ -91,9 +85,6 @@ entity_types:
         # Inline values mirror the base priority enum (ordered low_to_high in
         # the base; ordering is not needed here -- no overlay order_by uses it).
         enum: [low, medium, high, critical]
-      owner:
-        type: string
-        optional: true
       target_date:
         type: date
         optional: true

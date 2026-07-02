@@ -8,7 +8,7 @@ description: Adapt the KEV triage kit to your own asset, inventory, and service-
 Use this skill when a developer is adapting the KEV kit to their own data.
 The goal is to build a working KEV-shaped state on their inventory: reference
 layer loaded, local layer built from their assets/owners/software/services,
-proposal chain run, and governed outputs visible in queries and the wiki.
+proposal chain run, and governed outputs visible in queries.
 
 ## Goal
 
@@ -37,7 +37,8 @@ Produce a working KEV local in one pass:
   removed or modified before onboarding completes
 - Every kept named query executes successfully, with at least one
   representative non-empty invocation for the queries tied to loaded data
-- One subject page in the wiki renders with the user's linked context
+- A subject-context query returns the user's linked context for at least
+  one onboarded subject
 
 ## Preconditions
 
@@ -465,14 +466,12 @@ moving on:
 If a kept query is expected to be empty for this dataset, note that explicitly
 in the hand-off instead of treating it as a failure.
 
-Render the wiki and inspect at least one subject page (a user asset or
-service) to confirm the linked context renders correctly:
+Run a subject-context query against at least one onboarded subject (a user
+asset or service) and confirm the linked context comes back correctly, e.g.:
 
 ```
-cruxible wiki render --output wiki --scope local
+cruxible query run asset_context --param asset_id <one of the user's assets>
 ```
-
-Then open at least one rendered page under `wiki/subjects/`.
 
 ### 9. Hand off
 
@@ -531,6 +530,6 @@ not issue further approvals outside that flow.
 
 ## Next
 
-Once the local data is producing sane proposals, queries, and wiki pages,
-run `kev-triage` on the same instance to exercise the ongoing daily loop and
+Once the local data is producing sane proposals and query results, run
+`kev-triage` on the same instance to exercise the ongoing daily loop and
 the richer evidence/outcome story.

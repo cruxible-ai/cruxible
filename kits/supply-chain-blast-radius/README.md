@@ -388,12 +388,6 @@ Markdown schema catalog, run:
 uv run cruxible config views --config kits/supply-chain-blast-radius/config.yaml --runtime --view schema-catalog
 ```
 
-When the kit is loaded into a local instance, generate navigable reference
-pages under `wiki/reference/` with:
-
-```bash
-uv run cruxible wiki render --output wiki --scope local
-```
 
 
 ## Rules And Learning Loops
