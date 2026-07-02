@@ -7,6 +7,7 @@ invariants. (The docs/dev draft is a local commented reference of the same gramm
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from textwrap import dedent
 
@@ -1088,6 +1089,306 @@ named_queries:
     returns: WorkItem
 """
 )
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed rejection
+# ---------------------------------------------------------------------------
+
+_FAIL_CLOSED_REJECTION_CASES = [
+    pytest.param(
+        _join(
+            """
+            name: k
+            entity_types: {}
+            unsupported_top: true
+            """
+        ),
+        "compact config",
+        "unsupported_top",
+        id="top-level-config-key",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            enums:
+              priority:
+                values: [low]
+                unsupported_enum: true
+            entity_types: {}
+            """
+        ),
+        "enum 'priority'",
+        "unsupported_enum",
+        id="enum-block",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            entity_types:
+              E:
+                id: e_id
+                unsupported_entity: true
+            """
+        ),
+        "entity 'E'",
+        "unsupported_entity",
+        id="entity-body",
+    ),
+    pytest.param(
+        _join(
+            _REL_HEADER,
+            """
+            relationships:
+              - work_item_owned_by_actor: WorkItem -> Actor
+                unsupported_relationship: true
+            """,
+        ),
+        "relationship 'work_item_owned_by_actor'",
+        "unsupported_relationship",
+        id="relationship-item",
+    ),
+    pytest.param(
+        _join(
+            _REL_HEADER,
+            """
+            relationships:
+              - work_item_owned_by_actor: WorkItem -> Actor
+                proposal_policy:
+                  signals: {}
+                  unsupported_policy: true
+            """,
+        ),
+        "proposal policy",
+        "unsupported_policy",
+        id="proposal-policy",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                unsupported_query: true
+            """,
+        ),
+        "query 'q'",
+        "unsupported_query",
+        id="named-query-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              by_$T:
+                for: [WorkItem]
+                mode: collection
+                returns: $T
+                unsupported_template: true
+            """,
+        ),
+        "query template 'by_$T'",
+        "unsupported_template",
+        id="query-template-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: work_item_owned_by_actor
+                    unsupported_traverse: true
+            """,
+        ),
+        "query 'q' traverse step",
+        "unsupported_traverse",
+        id="traverse-step",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                include:
+                  owner:
+                    relationship: work_item_owned_by_actor
+                    unsupported_include: true
+            """,
+        ),
+        "query 'q' include 'owner'",
+        "unsupported_include",
+        id="named-include-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                bound:
+                  work_item_owned_by_actor:
+                    unsupported_bound: true
+            """,
+        ),
+        "query 'q' bound 'work_item_owned_by_actor'",
+        "unsupported_bound",
+        id="bound-cap",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {allowed_actors: [reviewer]}
+                  unsupported_guard: true
+            """
+        ),
+        "mutation guard 'g'",
+        "unsupported_guard",
+        id="mutation-guard-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    co_write: Actor via work_item_owned_by_actor
+                    unsupported_cowrite: true
+            """
+        ),
+        "mutation guard 'g' require co_write",
+        "unsupported_cowrite",
+        id="guard-require-co-write",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    allowed_actors: [reviewer]
+                    unsupported_allowed_actors: true
+            """
+        ),
+        "mutation guard 'g' require allowed_actors",
+        "unsupported_allowed_actors",
+        id="guard-require-allowed-actors",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    query: approved_reviews_for_work_item
+                    unsupported_query_guard: true
+            """
+        ),
+        "mutation guard 'g' require query",
+        "unsupported_query_guard",
+        id="guard-require-query",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  cardinality:
+                    entity: WorkItem
+                    relationship: work_item_owned_by_actor
+                    direction: out
+                  unsupported_quality_cardinality: true
+            """
+        ),
+        "quality check 'c'",
+        "unsupported_quality_cardinality",
+        id="quality-check-cardinality-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  property: work_item_depends_on_work_item.dependency_basis
+                  rule: non_empty
+                  unsupported_quality_property: true
+            """
+        ),
+        "quality check 'c'",
+        "unsupported_quality_property",
+        id="quality-check-property-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  cardinality:
+                    entity: WorkItem
+                    relationship: work_item_owned_by_actor
+                    direction: out
+                    unsupported_cardinality: true
+            """
+        ),
+        "quality check 'c' cardinality",
+        "unsupported_cardinality",
+        id="cardinality-sub-mapping",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                order: title asc string unsupported_order_token
+            """,
+        ),
+        "order clause 'title asc string unsupported_order_token'",
+        "unsupported_order_token",
+        id="order-clause-extra-token",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("source", "construct_label", "offending_key"),
+    _FAIL_CLOSED_REJECTION_CASES,
+)
+def test_compact_expander_rejects_unknown_keys_fail_closed(
+    source: str, construct_label: str, offending_key: str
+) -> None:
+    match = rf"{re.escape(construct_label)}.*{re.escape(offending_key)}"
+    with pytest.raises(CompactExpansionError, match=match):
+        expand_compact(source)
 
 
 def test_guard_trigger_single_value() -> None:
