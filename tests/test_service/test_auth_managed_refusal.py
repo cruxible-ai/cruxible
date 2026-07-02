@@ -16,6 +16,8 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError
+from cruxible_core.runtime.api import init_governed
+from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service import (
     service_backup_instance,
     service_clone_snapshot,
@@ -135,6 +137,32 @@ class TestAuthManagedRefusalAtInit:
         _auth_off(monkeypatch)
         result = service_init(tmp_path / "inst", config_yaml=PLAIN_YAML)
         assert "Widget" in result.instance.load_config().entity_types
+
+
+class TestAuthManagedRefusalAtGovernedUpload:
+    def test_auth_off_refuses_auth_managed_config_without_registry_row_or_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _auth_off(monkeypatch)
+        server_state_dir = tmp_path / "server-state"
+        monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(server_state_dir))
+        reset_registry()
+        workspace_root = tmp_path / "workspace"
+        workspace_root.mkdir()
+
+        try:
+            registry = get_registry()
+            before_count = registry.count_instances()
+            with pytest.raises(ConfigError) as exc:
+                init_governed(str(workspace_root), config_yaml=AUTH_MANAGED_YAML)
+            message = str(exc.value)
+            assert "Actor" in message
+            assert "CRUXIBLE_SERVER_AUTH=true" in message
+            assert registry.count_instances() == before_count
+            assert registry.get_governed_instance_by_workspace_root(workspace_root) is None
+            assert list((server_state_dir / "instances").glob("inst_*")) == []
+        finally:
+            reset_registry()
 
 
 class TestAuthManagedRefusalAtReload:
