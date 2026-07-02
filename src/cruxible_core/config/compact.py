@@ -63,6 +63,21 @@ class CompactExpansionError(ValueError):
     """
 
 
+def _reject_unknown_keys(
+    construct: str,
+    data: dict[str, Any],
+    allowed: set[str],
+) -> None:
+    """Fail closed when an authored compact mapping contains unsupported keys."""
+    unknown = sorted(set(data) - allowed)
+    if not unknown:
+        return
+    if len(unknown) == 1:
+        raise CompactExpansionError(f"{construct}: unsupported key '{unknown[0]}'")
+    joined = "', '".join(unknown)
+    raise CompactExpansionError(f"{construct}: unsupported keys '{joined}'")
+
+
 @dataclass
 class ExpandResult:
     """Outcome of expanding a compact source.
@@ -139,6 +154,7 @@ def _expand_enums(raw_enums: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, list):
             out[name] = {"values": list(value)}
         elif isinstance(value, dict):
+            _reject_unknown_keys(f"enum '{name}'", value, {"values", "ordered", "description"})
             entry: dict[str, Any] = {"values": list(value["values"])}
             if "ordered" in value:
                 entry["ordered"] = value["ordered"]
@@ -249,6 +265,14 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for type_name, body in raw_entities.items():
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"entity '{type_name}': body must be a mapping")
+        _reject_unknown_keys(
+            f"entity '{type_name}'",
+            body,
+            {"description", "id", "properties", "write_policy", "auth_managed", "constraints"},
+        )
+
         entity: dict[str, Any] = {}
         if "description" in body:
             entity["description"] = body["description"]
@@ -327,6 +351,12 @@ def _expand_relationships(
 
         # The signature is the single key whose value is a `From -> To` string.
         name, sig = _find_signature(item)
+        _reject_unknown_keys(
+            f"relationship '{name}'",
+            item,
+            {name, "proposal_policy", "basis", "description", "properties"},
+        )
+
         match = _SIG_RE.match(sig)
         if match is None:
             raise CompactExpansionError(
@@ -419,6 +449,12 @@ def _expand_proposal_policy(policy: dict[str, Any]) -> dict[str, Any]:
     pass through as explicit mappings; the engine fills the remaining inert policy
     defaults.
     """
+    _reject_unknown_keys(
+        "proposal policy",
+        policy,
+        {"signals", "auto_resolve_when", "auto_resolve_requires_prior_trust", "max_group_size"},
+    )
+
     out: dict[str, Any] = {}
     signals = policy.get("signals", {})
     expanded_signals: dict[str, Any] = {}
@@ -454,6 +490,10 @@ def _resolve_direction(
 
     ``rel_ref`` may carry a trailing ``>``/``<`` marker (self-ref disambiguation).
     """
+    if not isinstance(rel_ref, str):
+        raise CompactExpansionError(
+            f"{context}: relationship reference must be a string, got {type(rel_ref).__name__}"
+        )
     marker: str | None = None
     name = rel_ref
     if name.endswith(">"):
@@ -512,6 +552,10 @@ def _expand_where(raw_where: dict[str, Any], *, scope: str) -> dict[str, Any]:
     collection level, ``candidate.properties.<field>`` inside a traverse step (the
     ``as:`` node being filtered).
     """
+    if not isinstance(raw_where, dict):
+        raise CompactExpansionError(
+            f"where must be a mapping of property predicates, got {type(raw_where).__name__}"
+        )
     out: dict[str, Any] = {}
     for field_name, predicate in raw_where.items():
         out[f"{scope}.properties.{field_name}"] = predicate
@@ -534,6 +578,10 @@ def _expand_order_clause(clause: str, *, ref_base: str = "$result") -> dict[str,
     if len(tokens) < 2:
         raise CompactExpansionError(
             f"order clause '{clause}' must be '<field> <asc|desc> [<type>|^<enum>]'"
+        )
+    if len(tokens) > 3:
+        raise CompactExpansionError(
+            f"order clause '{clause}' has unsupported extra token '{tokens[3]}'"
         )
     field_name, direction = tokens[0], tokens[1]
     if direction not in {"asc", "desc"}:
@@ -775,6 +823,23 @@ _DECISION_KNOBS = ("mode", "returns", "relationship_state")
 # Pass-through knobs the author may set; defaulted when omitted.
 _PASSTHROUGH_KNOBS = ("result_shape", "max_paths", "max_paths_per_result", "limit")
 
+_COMPACT_QUERY_KEYS = {
+    *_DECISION_KNOBS,
+    *_PASSTHROUGH_KNOBS,
+    "description",
+    "entry_point",
+    "where",
+    "include",
+    "bound",
+    "select",
+    "traverse",
+    "traverse_all",
+    "direction",
+    "as",
+    "max_depth",
+    "order",
+}
+
 
 def _entity_primary_key(entity_types: dict[str, Any], entity_name: str) -> str | None:
     """Return the primary-key property name for an entity type, if any."""
@@ -796,6 +861,10 @@ def _expand_named_query(
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     """Expand one compact named query to the explicit ``NamedQuerySchema`` shape."""
+    if not isinstance(body, dict):
+        raise CompactExpansionError(f"query '{name}': body must be a mapping")
+    _reject_unknown_keys(f"query '{name}'", body, _COMPACT_QUERY_KEYS)
+
     mode = body.get("mode")
     if mode is None:
         raise CompactExpansionError(f"query '{name}': 'mode' is required and must be explicit")
@@ -977,6 +1046,16 @@ def _expand_named_include(
     query_name: str,
 ) -> dict[str, Any]:
     """Expand a NEW named bounded include set (`include: {name: {relationship:..., ...}}`)."""
+    if not isinstance(set_body, dict):
+        raise CompactExpansionError(
+            f"query '{query_name}' include '{set_name}': body must be a mapping"
+        )
+    _reject_unknown_keys(
+        f"query '{query_name}' include '{set_name}'",
+        set_body,
+        {"relationship", "limit", "order", "where"},
+    )
+
     rel_ref = set_body.get("relationship")
     if rel_ref is None:
         raise CompactExpansionError(
@@ -1061,6 +1140,13 @@ def _apply_bound(
     query_name: str,
 ) -> dict[str, Any]:
     """Apply a `bound:` cap (limit/order/where) to an include set."""
+    if not isinstance(cap, dict):
+        raise CompactExpansionError(
+            f"query '{query_name}' bound '{rel_ref}': cap must be a mapping"
+        )
+    _reject_unknown_keys(
+        f"query '{query_name}' bound '{rel_ref}'", cap, {"limit", "order", "where"}
+    )
     if existing is not None:
         entry = dict(existing)
     else:
@@ -1089,10 +1175,21 @@ def _expand_traverse_step(
     query_name: str,
 ) -> dict[str, Any]:
     """Expand a single explicit ``traverse:`` step."""
+    if not isinstance(step, dict):
+        raise CompactExpansionError(f"query '{query_name}' traverse step must be a mapping")
+    _reject_unknown_keys(
+        f"query '{query_name}' traverse step",
+        step,
+        {"relationship", "as", "where", "max_depth"},
+    )
     rel_ref = step.get("relationship")
     if rel_ref is None:
         raise CompactExpansionError(
             f"query '{query_name}' traverse step must define 'relationship'"
+        )
+    if isinstance(rel_ref, list):
+        raise CompactExpansionError(
+            f"query '{query_name}' traverse step: relationship lists are not supported"
         )
     rel_name, direction = _resolve_direction(
         rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
@@ -1115,6 +1212,10 @@ def _expand_traverse_all_step(
 ) -> dict[str, Any]:
     """Expand a ``traverse_all: [rels]`` + ``direction:`` scoped fan-out step."""
     rels = body["traverse_all"]
+    if not isinstance(rels, list):
+        raise CompactExpansionError(
+            f"query '{query_name}' traverse_all must be a list of relationships"
+        )
     direction = body.get("direction", "both")
     # Validate each relationship exists; direction is given explicitly.
     for rel_ref in rels:
@@ -1155,6 +1256,10 @@ def _expand_query_template(
 
     ``$T`` is substituted in the query name, ``returns``, and ``description``.
     """
+    if not isinstance(body, dict):
+        raise CompactExpansionError(f"query template '{template_name}': body must be a mapping")
+    _reject_unknown_keys(f"query template '{template_name}'", body, _COMPACT_QUERY_KEYS | {"for"})
+
     types = body["for"]
     out: dict[str, dict[str, Any]] = {}
     base = {key: value for key, value in body.items() if key != "for"}
@@ -1221,6 +1326,13 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
                 f"mutation guard must be a single-key mapping, got {item!r}"
             )
         name, body = next(iter(item.items()))
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"mutation guard '{name}': body must be a mapping")
+        _reject_unknown_keys(
+            f"mutation guard '{name}'",
+            body,
+            {"when", "require", "message", "where", "where_related", "where_not_related"},
+        )
         guard: dict[str, Any] = {"name": name}
 
         when = body.get("when")
@@ -1265,7 +1377,12 @@ def _parse_guard_value(value: str) -> Any:
 
 def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any]:
     """Expand a guard ``require:`` block into one explicit condition union member."""
+    if not isinstance(require, dict):
+        raise CompactExpansionError(f"mutation guard '{name}': require must be a mapping")
     if "co_write" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require co_write", require, {"co_write", "kind"}
+        )
         match = _COWRITE_RE.match(require["co_write"])
         if match is None:
             raise CompactExpansionError(
@@ -1281,6 +1398,9 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
         return {"type": "co_write", "requires": requires}
 
     if "allowed_actors" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require allowed_actors", require, {"allowed_actors"}
+        )
         # LITERAL passthrough -- no identity resolution, no invented actors.
         return {
             "type": "actor",
@@ -1288,6 +1408,11 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
         }
 
     if "query" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require query",
+            require,
+            {"query", "params", "min_count", "max_count"},
+        )
         condition: dict[str, Any] = {
             "type": "query",
             "query_name": require["query"],
@@ -1328,9 +1453,15 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
             raise CompactExpansionError(f"quality check must be a single-key mapping, got {item!r}")
         name, body = next(iter(item.items()))
 
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"quality check '{name}': body must be a mapping")
         if "cardinality" in body:
+            _reject_unknown_keys(f"quality check '{name}'", body, {"cardinality", "description"})
             out.append(_expand_cardinality_check(name, body))
         elif "property" in body:
+            _reject_unknown_keys(
+                f"quality check '{name}'", body, {"property", "rule", "description"}
+            )
             out.append(_expand_property_check(name, body))
         else:
             raise CompactExpansionError(
@@ -1343,6 +1474,11 @@ def _expand_cardinality_check(name: str, body: dict[str, Any]) -> dict[str, Any]
     card = body["cardinality"]
     if not isinstance(card, dict):
         raise CompactExpansionError(f"quality check '{name}': 'cardinality' must be a mapping")
+    _reject_unknown_keys(
+        f"quality check '{name}' cardinality",
+        card,
+        {"entity", "relationship", "direction", "min", "max"},
+    )
     direction = card.get("direction")
     if direction not in ("out", "in"):
         raise CompactExpansionError(
@@ -1393,6 +1529,35 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
 # Authoring-only top-level keys that are consumed/stripped, never emitted.
 _AUTHORING_ONLY_KEYS = {"presets", "metadata"}
 
+_PASSTHROUGH_TOP_LEVEL_KEYS = {
+    "feedback_profiles",
+    "outcome_profiles",
+    "decision_policies",
+    "contracts",
+    "artifacts",
+    "providers",
+    "workflows",
+    "runtime",
+    "tests",
+}
+
+_COMPACT_TOP_LEVEL_KEYS = {
+    *_AUTHORING_ONLY_KEYS,
+    *_PASSTHROUGH_TOP_LEVEL_KEYS,
+    "version",
+    "name",
+    "description",
+    "cruxible_version",
+    "extends",
+    "enums",
+    "entity_types",
+    "relationships",
+    "named_queries",
+    "mutation_guards",
+    "quality_checks",
+    "constraints",
+}
+
 
 def looks_compact(data: Any) -> bool:
     """Heuristic: does this parsed config use the compact authoring grammar?
@@ -1438,6 +1603,8 @@ def expand_compact_full(source_text: str) -> ExpandResult:
     if not isinstance(raw, dict):
         raise CompactExpansionError("compact source must be a top-level mapping")
 
+    _reject_unknown_keys("compact config", raw, _COMPACT_TOP_LEVEL_KEYS)
+
     comments = _scan_relationship_comments(source_text)
     warnings: list[str] = []
 
@@ -1449,7 +1616,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
     config: dict[str, Any] = {}
 
     # Top-level scalar fields pass through.
-    for key in ("version", "name", "description", "extends"):
+    for key in ("version", "name", "description", "cruxible_version", "extends"):
         if key in raw:
             config[key] = raw[key]
 
@@ -1499,18 +1666,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
 
     # Any other recognized top-level keys that aren't authoring-only pass through
     # verbatim (forward-compatible; e.g. runtime, contracts).
-    _passthrough_keys = {
-        "feedback_profiles",
-        "outcome_profiles",
-        "decision_policies",
-        "contracts",
-        "artifacts",
-        "providers",
-        "workflows",
-        "runtime",
-        "tests",
-    }
-    for key in _passthrough_keys:
+    for key in _PASSTHROUGH_TOP_LEVEL_KEYS:
         if key in raw:
             config[key] = raw[key]
 

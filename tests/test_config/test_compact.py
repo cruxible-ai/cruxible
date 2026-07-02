@@ -628,6 +628,118 @@ def test_traverse_where_targets_candidate() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fail closed for unsupported compact query/check keys
+# ---------------------------------------------------------------------------
+
+
+def test_traverse_required_rejected_until_supported() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match="query 'q' traverse step: unsupported key 'required'",
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: work_item_owned_by_actor
+                    as: work_item
+                    required: false
+            """,
+        )
+
+
+def test_named_include_required_rejected_until_supported() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match="query 'q' include 'latest': unsupported key 'required'",
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: work_item_owned_by_actor
+                    as: work_item
+                include:
+                  latest:
+                    relationship: work_item_depends_on_work_item>
+                    required: true
+            """,
+        )
+
+
+def test_named_include_from_rejected_until_supported() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match="query 'q' include 'latest': unsupported key 'from'",
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: work_item_owned_by_actor
+                    as: work_item
+                include:
+                  latest:
+                    from: $entry
+                    relationship: work_item_owned_by_actor
+            """,
+        )
+
+
+def test_traverse_relationship_list_with_where_rejected_cleanly() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match="query 'q' traverse step: relationship lists are not supported",
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: [work_item_owned_by_actor]
+                    as: work_item
+                    where: {status: {not_in: [closed]}}
+            """,
+        )
+
+
+def test_quality_check_severity_rejected_until_supported() -> None:
+    with pytest.raises(
+        CompactExpansionError,
+        match="quality check 'c': unsupported key 'severity'",
+    ):
+        _expand(
+            _QUERY_HEADER,
+            """
+            quality_checks:
+              - c:
+                  property: work_item_depends_on_work_item.dependency_basis
+                  rule: non_empty
+                  severity: error
+            """,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Select projection
 # ---------------------------------------------------------------------------
 
