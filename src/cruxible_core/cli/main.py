@@ -183,7 +183,6 @@ from cruxible_core.cli.commands import (  # noqa: E402
     update_entity_cmd,
     update_relationship_cmd,
     validate,
-    wiki_group,
 )  # re-exported from cli.commands submodules
 
 cli.add_command(init)
@@ -228,8 +227,6 @@ cli.add_command(feedback_group, "feedback")
 # outcome group: record/profile (defined in feedback.py) plus analyze.
 outcome_group.add_command(analyze_outcomes_cmd, "analyze")
 cli.add_command(outcome_group, "outcome")
-
-cli.add_command(wiki_group, "wiki")
 
 entity_group = click.Group("entity", help="Entity reads and writes.")
 entity_group.add_command(add_entity_cmd, "add")

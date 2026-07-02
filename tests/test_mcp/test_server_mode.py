@@ -303,27 +303,6 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
             assert limit == 7
             return contracts.CanonicalViewResult(view=view, payload={"pending_total": 0})
 
-        def render_wiki(
-            self,
-            instance_id,
-            *,
-            focus=None,
-            include_types=None,
-            scope=None,
-            max_per_type=50,
-            all_subjects=False,
-        ):
-            assert instance_id == "inst_123"
-            assert focus == ["Asset:A1"]
-            assert include_types == ["Asset"]
-            assert scope == "local"
-            assert max_per_type == 25
-            assert all_subjects is False
-            return contracts.WikiRenderResult(
-                pages=[contracts.WikiPageResult(path="index.md", content="# Demo")],
-                page_count=1,
-            )
-
         def list_snapshots(self, instance_id, *, limit=None, offset=0):
             assert instance_id == "inst_123"
             return contracts.SnapshotListResult(items=[snapshot], total=1)
@@ -357,16 +336,6 @@ def test_new_read_handlers_delegate_to_client(monkeypatch: pytest.MonkeyPatch):
         == "A1"
     )
     assert handlers.handle_inspect_view("inst_123", "governance", limit=7).view == "governance"
-    assert (
-        handlers.handle_render_wiki(
-            "inst_123",
-            focus=["Asset:A1"],
-            include_types=["Asset"],
-            scope="local",
-            max_per_type=25,
-        ).page_count
-        == 1
-    )
     assert handlers.handle_list_snapshots("inst_123").items[0].snapshot_id == "snap_1"
 
 

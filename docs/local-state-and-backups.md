@@ -56,7 +56,6 @@ A Cruxible instance can include:
 - candidate groups and group resolutions
 - decision records and decision events
 - feedback and outcomes
-- generated local artifacts such as wiki output when requested
 
 Exact file names may change across releases. Back up the instance directory as
 a unit instead of cherry-picking one SQLite database.
@@ -139,7 +138,7 @@ portability story is:
 
 - keep source artifacts and kits versioned
 - keep daemon state backed up as a unit
-- use Cruxible export/query/wiki surfaces for inspection
+- use Cruxible export/query surfaces for inspection
 - avoid customer code that depends on raw SQLite schemas
 
 ## Agent Isolation Notes

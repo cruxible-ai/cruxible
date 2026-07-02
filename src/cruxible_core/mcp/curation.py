@@ -53,7 +53,6 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_inspect_queries",
             "cruxible_inspect_governance",
             "cruxible_inspect_overview",
-            "cruxible_render_wiki",
             "cruxible_plan_workflow",
             "cruxible_run_workflow",
             "cruxible_test_workflow",

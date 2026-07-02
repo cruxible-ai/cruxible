@@ -2082,48 +2082,6 @@ cruxible query inline \
 - Permission mode too low for mutations or admin operations.
 - Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
 
-## cruxible wiki
-
-**Usage:** `cruxible wiki [OPTIONS]`
-
-**Purpose:** Render deterministic Markdown wikis from instance state.
-
-**Subcommands:**
-
-- `cruxible wiki render` - Render a deterministic Markdown wiki from the current state.
-
-**Output And Side Effects:**
-- Produces documentation or file output; graph state is not changed.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for read operations.
-
-## cruxible wiki render
-
-**Usage:** `cruxible wiki render [OPTIONS]`
-
-**Purpose:** Render a deterministic Markdown wiki from the current state.
-
-**Options And Arguments:**
-
-| Name | Required | Default | Type | Description |
-| --- | --- | --- | --- | --- |
-| `--output` | yes | `Sentinel.UNSET` | directory | Directory to write the rendered wiki into. |
-| `--focus` | no | `Sentinel.UNSET` | text | Render a focused wiki around EntityType:EntityId. |
-| `--include-type` | no | `Sentinel.UNSET` | text | Limit rendered subject pages to specific entity types. |
-| `--scope` | no | `` | choice | Wiki projection scope. Defaults to local for CLI renders. |
-| `--max-per-type` | no | `50` | integer range | Maximum subject links or high-fanout neighbors to render per type. |
-| `--all-subjects` | no | `False` | boolean | Deprecated alias for --scope all. |
-
-**Output And Side Effects:**
-- Produces documentation or file output; graph state is not changed.
-
-**Common Errors:**
-- Missing or stale `--instance-id` for daemon-backed commands.
-- Permission mode too low for mutations or admin operations.
-- Unknown config/workflow/query/entity names, or stale workflow locks where applicable.
-
 ## cruxible run
 
 **Usage:** `cruxible run [OPTIONS]`

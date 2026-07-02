@@ -106,7 +106,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_inspect_queries": PermissionMode.READ_ONLY,
     "cruxible_inspect_governance": PermissionMode.READ_ONLY,
     "cruxible_inspect_overview": PermissionMode.READ_ONLY,
-    "cruxible_render_wiki": PermissionMode.READ_ONLY,
     "cruxible_get_group": PermissionMode.READ_ONLY,
     "cruxible_group_status": PermissionMode.READ_ONLY,
     "cruxible_list_groups": PermissionMode.READ_ONLY,

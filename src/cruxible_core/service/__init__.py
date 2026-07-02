@@ -178,8 +178,6 @@ from cruxible_core.service.types import (
     RelationshipTargetInput,
     RelationshipWriteInput,
     ReloadConfigResult,
-    RenderWikiPageResult,
-    RenderWikiResult,
     ResolveGroupResult,
     RunServiceResult,
     ServerInfoServiceResult,
@@ -206,7 +204,6 @@ from cruxible_core.service.views import (
     service_explain_receipt,
     service_export_edges,
     service_inspect_view,
-    service_render_wiki,
 )
 
 __all__ = [
@@ -282,8 +279,6 @@ __all__ = [
     "RelationshipTargetInput",
     "RelationshipWriteInput",
     "ReloadConfigResult",
-    "RenderWikiPageResult",
-    "RenderWikiResult",
     "ResolveGroupResult",
     "RunServiceResult",
     "ServerInfoServiceResult",
@@ -326,7 +321,6 @@ __all__ = [
     "service_explain_receipt",
     "service_export_edges",
     "service_inspect_view",
-    "service_render_wiki",
     # Analysis
     "service_evaluate",
     "service_state_health",

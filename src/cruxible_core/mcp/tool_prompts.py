@@ -160,9 +160,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to review feedback, outcome, group, and policy settings."
     ),
     "cruxible_inspect_overview": ("Use when you need a single high-level summary of the instance."),
-    "cruxible_render_wiki": (
-        "Use when you need Markdown documentation generated from the current graph and config."
-    ),
     "cruxible_add_relationship": (
         "Use when you need to add or update a small number of explicit relationships "
         "and the endpoint entities already exist. Set pending=true when the edge "

@@ -6,7 +6,7 @@ This is the full searchable reference for Cruxible MCP tools. MCP is a curated a
 
 | Mode | Env value | Meaning |
 | --- | --- | --- |
-| READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, wiki rendering, snapshots listing. |
+| READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
 | GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow runs/tests, proposal workflows, feedback, outcomes, decision records, proposal groups, snapshot creation, and source artifact registration. |
 | GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, and group resolution/trust updates. |
 | ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
@@ -1031,32 +1031,6 @@ error-level finding exists.
 | `limit` | no | integer |  |
 
 **Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_render_wiki
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need Markdown documentation generated from the current graph and config.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `focus` | no | array | null |  |
-| `include_types` | no | array | null |  |
-| `scope` | no | string | null |  |
-| `max_per_type` | no | integer |  |
-| `all_subjects` | no | boolean |  |
-
-**Returns:** Top-level fields: `pages`, `page_count`
 
 **Side Effects:** Read-only.
 

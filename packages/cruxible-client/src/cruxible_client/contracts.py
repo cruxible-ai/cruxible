@@ -1036,16 +1036,6 @@ class QueryListResult(ListEnvelopeFields):
     items: list[NamedQueryInfoResult] = Field(default_factory=list)
 
 
-class WikiPageResult(BaseModel):
-    path: str
-    content: str
-
-
-class WikiRenderResult(BaseModel):
-    pages: list[WikiPageResult] = Field(default_factory=list)
-    page_count: int = 0
-
-
 class InspectNeighborResult(BaseModel):
     direction: Literal["incoming", "outgoing"]
     relationship_type: str

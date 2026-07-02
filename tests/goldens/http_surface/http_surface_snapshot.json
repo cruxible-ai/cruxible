@@ -212,9 +212,6 @@
   "/api/v1/{instance_id}/views/{query_name}": {
     "GET": "QueryToolResult"
   },
-  "/api/v1/{instance_id}/wiki/render": {
-    "POST": "WikiRenderResult"
-  },
   "/api/v1/{instance_id}/workflows/apply": {
     "POST": "WorkflowApplyResult"
   },

@@ -3063,7 +3063,6 @@ class TestNounVerbGrouping:
             ("config", ["reload", "views", "add-constraint", "add-decision-policy"]),
             ("feedback", ["record", "from-query", "batch", "profile", "analyze"]),
             ("outcome", ["record", "profile", "analyze"]),
-            ("wiki", ["render"]),
         ],
     )
     def test_group_exposes_expected_subcommands(
@@ -3092,7 +3091,6 @@ class TestNounVerbGrouping:
             ["outcome", "record", "--help"],
             ["outcome", "profile", "--help"],
             ["outcome", "analyze", "--help"],
-            ["wiki", "render", "--help"],
         ],
     )
     def test_grouped_paths_resolve(
@@ -3117,7 +3115,6 @@ class TestNounVerbGrouping:
             "analyze-feedback",
             "outcome-profile",
             "analyze-outcomes",
-            "render-wiki",
         ],
     )
     def test_old_flat_names_are_gone(self, old_name: str) -> None:

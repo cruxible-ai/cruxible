@@ -925,34 +925,6 @@ def test_decision_record_id_is_sent_on_query_and_workflow_requests():
     ]
 
 
-def test_render_wiki_sends_scope_and_max_per_type():
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = str(request.url)
-        captured["payload"] = json.loads(request.content.decode())
-        return httpx.Response(200, json={"pages": [], "page_count": 0})
-
-    client = _build_client(handler)
-    result = client.render_wiki(
-        "inst_123",
-        focus=["Asset:A1"],
-        include_types=["Asset"],
-        scope="local",
-        max_per_type=25,
-    )
-
-    assert result.page_count == 0
-    assert captured["path"].endswith("/api/v1/inst_123/wiki/render")
-    assert captured["payload"] == {
-        "focus": ["Asset:A1"],
-        "include_types": ["Asset"],
-        "scope": "local",
-        "max_per_type": 25,
-        "all_subjects": False,
-    }
-
-
 def test_inspect_view_uses_expected_route():
     captured: dict[str, Any] = {}
 

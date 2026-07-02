@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     query: Any
     reload_config_cmd: Any
     run_cmd: Any
-    wiki_group: Any
     sample: Any
     schema: Any
     server_group: Any
@@ -115,7 +114,6 @@ else:
     from cruxible_core.cli.commands.server import server_group
     from cruxible_core.cli.commands.source_artifacts import source_group
     from cruxible_core.cli.commands.state import state_group
-    from cruxible_core.cli.commands.wiki import wiki_group
     from cruxible_core.cli.commands.workflows import (
         apply_cmd,
         clone_cmd,
@@ -171,7 +169,6 @@ __all__ = [
     "query",
     "reload_config_cmd",
     "run_cmd",
-    "wiki_group",
     "sample",
     "schema",
     "server_group",

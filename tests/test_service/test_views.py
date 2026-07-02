@@ -21,7 +21,6 @@ from cruxible_core.service import (
     service_inspect_view,
     service_list_queries,
     service_query,
-    service_render_wiki,
 )
 
 ENUM_CONFIG_YAML = """\
@@ -232,21 +231,6 @@ def test_entryless_named_query_metadata_surfaces(
     assert listed.example_ids == []
     assert inspected_query["mode"] == "collection"
     assert inspected_query["entry_point"] is None
-
-
-def test_service_render_wiki_returns_page_payloads(
-    populated_instance: CruxibleInstance,
-) -> None:
-    result = service_render_wiki(
-        populated_instance,
-        focus=["Part:BP-1001"],
-        include_types=["Part"],
-        scope="local",
-    )
-
-    assert result.page_count == len(result.pages)
-    assert any(page.path == "index.md" for page in result.pages)
-    assert any("BP-1001" in page.content for page in result.pages)
 
 
 def test_service_explain_receipt_renders_markdown(

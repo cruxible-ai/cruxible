@@ -53,7 +53,6 @@ _READ_ONLY_POST_PATHS: frozenset[str] = frozenset(
         "/api/v1/validate",
         "/api/v1/{instance_id}/queries/run",
         "/api/v1/{instance_id}/queries/run-inline",
-        "/api/v1/{instance_id}/wiki/render",
         "/api/v1/{instance_id}/evaluate",
         "/api/v1/{instance_id}/lint",
         "/api/v1/{instance_id}/source-evidence/dereference",

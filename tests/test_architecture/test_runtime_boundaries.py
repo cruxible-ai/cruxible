@@ -229,7 +229,6 @@ def test_governance_internals_do_not_import_surface_or_presentation_layers() -> 
         "cruxible_core.client",
         "cruxible_core.mcp",
         "cruxible_core.server",
-        "cruxible_core.wiki",
         "cruxible_core.presentation",
         "cruxible_core.presentations",
     )

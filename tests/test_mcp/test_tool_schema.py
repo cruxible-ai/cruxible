@@ -355,7 +355,6 @@ class TestOutputSchema:
             ("cruxible_inspect_queries", {"view", "payload"}),
             ("cruxible_inspect_governance", {"view", "payload"}),
             ("cruxible_inspect_overview", {"view", "payload"}),
-            ("cruxible_render_wiki", {"pages", "page_count"}),
             (
                 "cruxible_add_relationship",
                 {
