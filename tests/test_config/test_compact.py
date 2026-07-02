@@ -628,115 +628,254 @@ def test_traverse_where_targets_candidate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fail closed for unsupported compact query/check keys
+# Parity grammar extensions
 # ---------------------------------------------------------------------------
 
 
-def test_traverse_required_rejected_until_supported() -> None:
-    with pytest.raises(
-        CompactExpansionError,
-        match="query 'q' traverse step: unsupported key 'required'",
-    ):
-        _expand(
-            _QUERY_HEADER,
-            """
-            named_queries:
-              q:
-                mode: traversal
-                entry_point: Actor
-                returns: WorkItem
-                traverse:
-                  - relationship: work_item_owned_by_actor
-                    as: work_item
-                    required: false
-            """,
-        )
+def test_traverse_relationship_list_with_where_expands_to_explicit_step() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: [work_item_owned_by_actor, work_item_depends_on_work_item]
+                direction: outgoing
+                as: context
+                max_depth: 2
+                where: {status: {not_in: [closed]}}
+        """,
+    )
+    assert config["named_queries"]["q"]["traversal"][0] == {
+        "relationship": ["work_item_owned_by_actor", "work_item_depends_on_work_item"],
+        "direction": "outgoing",
+        "as": "context",
+        "where": {"candidate.properties.status": {"not_in": ["closed"]}},
+        "max_depth": 2,
+    }
 
 
-def test_named_include_required_rejected_until_supported() -> None:
-    with pytest.raises(
-        CompactExpansionError,
-        match="query 'q' include 'latest': unsupported key 'required'",
-    ):
-        _expand(
-            _QUERY_HEADER,
-            """
-            named_queries:
-              q:
-                mode: traversal
-                entry_point: Actor
-                returns: WorkItem
-                traverse:
-                  - relationship: work_item_owned_by_actor
-                    as: work_item
-                include:
-                  latest:
-                    relationship: work_item_depends_on_work_item>
-                    required: true
-            """,
-        )
+def test_traversal_entity_result_shape_does_not_add_path_guards() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            result_shape: entity
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query == {
+        "mode": "traversal",
+        "entry_point": "Actor",
+        "returns": "WorkItem",
+        "result_shape": "entity",
+        "traversal": [
+            {"relationship": "work_item_owned_by_actor", "direction": "incoming", "as": "work_item"}
+        ],
+    }
 
 
-def test_named_include_from_rejected_until_supported() -> None:
-    with pytest.raises(
-        CompactExpansionError,
-        match="query 'q' include 'latest': unsupported key 'from'",
-    ):
-        _expand(
-            _QUERY_HEADER,
-            """
-            named_queries:
-              q:
-                mode: traversal
-                entry_point: Actor
-                returns: WorkItem
-                traverse:
-                  - relationship: work_item_owned_by_actor
-                    as: work_item
-                include:
-                  latest:
-                    from: $entry
-                    relationship: work_item_owned_by_actor
-            """,
-        )
+def test_named_include_from_entry_and_result_expand_to_explicit_includes() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+            include:
+              entry_work:
+                from: $entry
+                relationship: work_item_owned_by_actor
+              result_deps:
+                from: $result
+                relationship: work_item_depends_on_work_item>
+        """,
+    )
+    includes = config["named_queries"]["q"]["include"]
+    assert includes["entry_work"] == {
+        "from": "$entry",
+        "relationship": "work_item_owned_by_actor",
+        "direction": "incoming",
+        "many": True,
+    }
+    assert includes["result_deps"] == {
+        "from": "$result",
+        "relationship": "work_item_depends_on_work_item",
+        "direction": "outgoing",
+        "many": True,
+    }
 
 
-def test_traverse_relationship_list_with_where_rejected_cleanly() -> None:
-    with pytest.raises(
-        CompactExpansionError,
-        match="query 'q' traverse step: relationship lists are not supported",
-    ):
-        _expand(
-            _QUERY_HEADER,
-            """
-            named_queries:
-              q:
-                mode: traversal
-                entry_point: Actor
-                returns: WorkItem
-                traverse:
-                  - relationship: [work_item_owned_by_actor]
-                    as: work_item
-                    where: {status: {not_in: [closed]}}
-            """,
-        )
+def test_named_include_direction_override_expands_without_anchor_inference() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: work_item_owned_by_actor
+                direction: outgoing
+                as: owner
+            include:
+              owner:
+                from: $result
+                relationship: work_item_owned_by_actor
+                direction: outgoing
+        """,
+    )
+    assert config["named_queries"]["q"]["include"]["owner"] == {
+        "from": "$result",
+        "relationship": "work_item_owned_by_actor",
+        "direction": "outgoing",
+        "many": True,
+    }
 
 
-def test_quality_check_severity_rejected_until_supported() -> None:
-    with pytest.raises(
-        CompactExpansionError,
-        match="quality check 'c': unsupported key 'severity'",
-    ):
-        _expand(
-            _QUERY_HEADER,
-            """
-            quality_checks:
-              - c:
-                  property: work_item_depends_on_work_item.dependency_basis
-                  rule: non_empty
-                  severity: error
-            """,
-        )
+def test_direction_override_allows_base_relationship_refs_in_overlays() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: base_supplied_relationship
+                direction: outgoing
+                as: base_path
+            include:
+              base_context:
+                from: $result
+                relationship: base_supplied_relationship
+                direction: incoming
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query["traversal"][0]["relationship"] == "base_supplied_relationship"
+    assert query["include"]["base_context"] == {
+        "from": "$result",
+        "relationship": "base_supplied_relationship",
+        "direction": "incoming",
+        "many": True,
+    }
+
+
+def test_named_include_scoped_where_path_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+            include:
+              latest:
+                relationship: work_item_depends_on_work_item>
+                where:
+                  target.properties.status: {eq: active}
+        """,
+    )
+    assert config["named_queries"]["q"]["include"]["latest"]["where"] == {
+        "target.properties.status": {"eq": "active"}
+    }
+
+
+def test_required_on_traverse_and_named_include_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+                required: false
+            include:
+              latest:
+                relationship: work_item_depends_on_work_item>
+                required: true
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query["traversal"][0] == {
+        "relationship": "work_item_owned_by_actor",
+        "direction": "incoming",
+        "as": "work_item",
+        "required": False,
+    }
+    assert query["include"]["latest"] == {
+        "from": "$result",
+        "relationship": "work_item_depends_on_work_item",
+        "direction": "outgoing",
+        "many": True,
+        "required": True,
+    }
+
+
+def test_quality_check_severity_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        quality_checks:
+          - relationship_basis_required:
+              property: work_item_depends_on_work_item.dependency_basis
+              rule: non_empty
+              severity: error
+          - work_items_have_owner:
+              cardinality:
+                entity: WorkItem
+                relationship: work_item_owned_by_actor
+                direction: out
+                min: 1
+              severity: warning
+        """,
+    )
+    assert config["quality_checks"] == [
+        {
+            "name": "relationship_basis_required",
+            "kind": "property",
+            "target": "relationship",
+            "relationship_type": "work_item_depends_on_work_item",
+            "property": "dependency_basis",
+            "rule": "non_empty",
+            "severity": "error",
+        },
+        {
+            "name": "work_items_have_owner",
+            "kind": "cardinality",
+            "entity_type": "WorkItem",
+            "relationship_type": "work_item_owned_by_actor",
+            "direction": "outgoing",
+            "severity": "warning",
+            "min_count": 1,
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------

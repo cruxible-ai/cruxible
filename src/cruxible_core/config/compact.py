@@ -545,12 +545,16 @@ def _resolve_direction(
 # ---------------------------------------------------------------------------
 
 
+_WHERE_SCOPES = {"candidate", "edge", "input", "result", "source", "target"}
+
+
 def _expand_where(raw_where: dict[str, Any], *, scope: str) -> dict[str, Any]:
-    """Expand a compact ``where: {field: {op: value}}`` to scoped predicate paths.
+    """Expand compact ``where: {field: {op: value}}`` to scoped predicate paths.
 
     The field targets the entity in scope: ``result.properties.<field>`` at
     collection level, ``candidate.properties.<field>`` inside a traverse step (the
-    ``as:`` node being filtered).
+    ``as:`` node being filtered). Already-scoped predicate paths pass through for
+    explicit-schema parity.
     """
     if not isinstance(raw_where, dict):
         raise CompactExpansionError(
@@ -558,7 +562,12 @@ def _expand_where(raw_where: dict[str, Any], *, scope: str) -> dict[str, Any]:
         )
     out: dict[str, Any] = {}
     for field_name, predicate in raw_where.items():
-        out[f"{scope}.properties.{field_name}"] = predicate
+        field_text = str(field_name)
+        predicate_scope, sep, _path = field_text.partition(".")
+        if sep and predicate_scope in _WHERE_SCOPES:
+            out[field_text] = predicate
+        else:
+            out[f"{scope}.properties.{field_text}"] = predicate
     return out
 
 
@@ -620,6 +629,7 @@ def _include_entry(
     limit: int | None = None,
     order: Any | None = None,
     where: dict[str, Any] | None = None,
+    required: bool | None = None,
 ) -> dict[str, Any]:
     """Build one explicit include entry in a stable field order."""
     entry: dict[str, Any] = {
@@ -634,6 +644,8 @@ def _include_entry(
         entry["limit"] = limit
     if order is not None:
         entry["order_by"] = _expand_order_list(order, ref_base="$source")
+    if required is not None:
+        entry["required"] = required
     return entry
 
 
@@ -934,7 +946,14 @@ def _expand_named_query(
         # `include: {<name>: {rel: <rel>, ...}}` defines NEW named bounded sets.
         for set_name, set_body in include_directive.items():
             includes[set_name] = _expand_named_include(
-                set_name, set_body, include_anchor, rel_index, include_from_ref, name
+                set_name,
+                set_body,
+                include_anchor,
+                rel_index,
+                include_from_ref,
+                name,
+                entry_anchor=anchor if is_traversal else None,
+                result_anchor=returns,
             )
     elif include_directive is not None:
         raise CompactExpansionError(
@@ -1024,13 +1043,14 @@ def _expand_named_query(
     # Inert resource guards: default when omitted; only collection mode disallows
     # path budgets, so guard those.
     if is_traversal:
-        out["allow_relationship_state_override"] = out.get(
-            "allow_relationship_state_override", _DEFAULT_ALLOW_REL_STATE_OVERRIDE
-        )
-        out["max_paths"] = body.get("max_paths", _DEFAULT_MAX_PATHS)
-        out["max_paths_per_result"] = body.get(
-            "max_paths_per_result", _DEFAULT_MAX_PATHS_PER_RESULT
-        )
+        if result_shape != "entity":
+            out["allow_relationship_state_override"] = out.get(
+                "allow_relationship_state_override", _DEFAULT_ALLOW_REL_STATE_OVERRIDE
+            )
+            out["max_paths"] = body.get("max_paths", _DEFAULT_MAX_PATHS)
+            out["max_paths_per_result"] = body.get(
+                "max_paths_per_result", _DEFAULT_MAX_PATHS_PER_RESULT
+            )
     else:
         out["limit"] = body.get("limit", _DEFAULT_LIMIT)
 
@@ -1044,6 +1064,9 @@ def _expand_named_include(
     rel_index: dict[str, RelInfo],
     from_ref: str,
     query_name: str,
+    *,
+    entry_anchor: str | None = None,
+    result_anchor: str | None = None,
 ) -> dict[str, Any]:
     """Expand a NEW named bounded include set (`include: {name: {relationship:..., ...}}`)."""
     if not isinstance(set_body, dict):
@@ -1053,7 +1076,7 @@ def _expand_named_include(
     _reject_unknown_keys(
         f"query '{query_name}' include '{set_name}'",
         set_body,
-        {"relationship", "limit", "order", "where"},
+        {"relationship", "from", "direction", "limit", "order", "where", "required"},
     )
 
     rel_ref = set_body.get("relationship")
@@ -1061,16 +1084,53 @@ def _expand_named_include(
         raise CompactExpansionError(
             f"query '{query_name}' include '{set_name}': must define 'relationship'"
         )
-    rel_name, direction = _resolve_direction(
-        rel_ref, anchor or "", rel_index, context=f"query '{query_name}' include '{set_name}'"
-    )
+    effective_from_ref = from_ref
+    effective_anchor = anchor
+    if "from" in set_body:
+        authored_from = set_body["from"]
+        if authored_from not in {"$entry", "$result"}:
+            raise CompactExpansionError(
+                f"query '{query_name}' include '{set_name}': from must be $entry or $result"
+            )
+        effective_from_ref = authored_from
+        if authored_from == "$entry":
+            if entry_anchor is None:
+                raise CompactExpansionError(
+                    f"query '{query_name}' include '{set_name}': from $entry requires "
+                    "a traversal query"
+                )
+            effective_anchor = entry_anchor
+        else:
+            effective_anchor = result_anchor or anchor
+
+    direction_override = set_body.get("direction")
+    if direction_override is not None:
+        if direction_override not in {"incoming", "outgoing"}:
+            raise CompactExpansionError(
+                f"query '{query_name}' include '{set_name}': direction must be incoming or outgoing"
+            )
+        rel_name = _canonical_relationship_name(
+            rel_ref,
+            rel_index,
+            context=f"query '{query_name}' include '{set_name}'",
+            allow_external=True,
+        )
+        direction = direction_override
+    else:
+        rel_name, direction = _resolve_direction(
+            rel_ref,
+            effective_anchor or "",
+            rel_index,
+            context=f"query '{query_name}' include '{set_name}'",
+        )
     return _include_entry(
-        from_ref=from_ref,
+        from_ref=effective_from_ref,
         relationship=rel_name,
         direction=direction,
         limit=set_body.get("limit"),
         order=set_body.get("order"),
         where=set_body.get("where"),
+        required=set_body.get("required"),
     )
 
 
@@ -1168,6 +1228,26 @@ def _apply_bound(
     return entry
 
 
+def _canonical_relationship_name(
+    rel_ref: str,
+    rel_index: dict[str, RelInfo],
+    *,
+    context: str,
+    allow_external: bool = False,
+) -> str:
+    """Validate a relationship reference and strip any compact direction marker."""
+    if not isinstance(rel_ref, str):
+        raise CompactExpansionError(
+            f"{context}: relationship reference must be a string, got {type(rel_ref).__name__}"
+        )
+    name = rel_ref.rstrip("><")
+    if name not in rel_index and not allow_external:
+        raise CompactExpansionError(
+            f"{context}: relationship '{name}' is not defined in this config"
+        )
+    return name
+
+
 def _expand_traverse_step(
     step: dict[str, Any],
     anchor: str | None,
@@ -1180,20 +1260,52 @@ def _expand_traverse_step(
     _reject_unknown_keys(
         f"query '{query_name}' traverse step",
         step,
-        {"relationship", "as", "where", "max_depth"},
+        {"relationship", "direction", "as", "where", "max_depth", "required"},
     )
     rel_ref = step.get("relationship")
     if rel_ref is None:
         raise CompactExpansionError(
             f"query '{query_name}' traverse step must define 'relationship'"
         )
-    if isinstance(rel_ref, list):
+
+    direction_override = step.get("direction")
+    if direction_override is not None and direction_override not in {
+        "outgoing",
+        "incoming",
+        "both",
+    }:
         raise CompactExpansionError(
-            f"query '{query_name}' traverse step: relationship lists are not supported"
+            f"query '{query_name}' traverse step: direction must be outgoing, incoming, or both"
         )
-    rel_name, direction = _resolve_direction(
-        rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
-    )
+
+    if isinstance(rel_ref, list):
+        if direction_override is None:
+            raise CompactExpansionError(
+                f"query '{query_name}' traverse step: relationship lists require 'direction'"
+            )
+        rel_name: str | list[str] = [
+            _canonical_relationship_name(
+                item,
+                rel_index,
+                context=f"query '{query_name}' traverse",
+                allow_external=True,
+            )
+            for item in rel_ref
+        ]
+        direction = direction_override
+    elif direction_override is not None:
+        rel_name = _canonical_relationship_name(
+            rel_ref,
+            rel_index,
+            context=f"query '{query_name}' traverse",
+            allow_external=True,
+        )
+        direction = direction_override
+    else:
+        rel_name, direction = _resolve_direction(
+            rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
+        )
+
     out: dict[str, Any] = {"relationship": rel_name, "direction": direction}
     if "as" in step:
         out["as"] = step["as"]
@@ -1201,6 +1313,8 @@ def _expand_traverse_step(
         out["where"] = _expand_where(step["where"], scope="candidate")
     if "max_depth" in step:
         out["max_depth"] = step["max_depth"]
+    if "required" in step:
+        out["required"] = step["required"]
     return out
 
 
@@ -1456,11 +1570,13 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
         if not isinstance(body, dict):
             raise CompactExpansionError(f"quality check '{name}': body must be a mapping")
         if "cardinality" in body:
-            _reject_unknown_keys(f"quality check '{name}'", body, {"cardinality", "description"})
+            _reject_unknown_keys(
+                f"quality check '{name}'", body, {"cardinality", "description", "severity"}
+            )
             out.append(_expand_cardinality_check(name, body))
         elif "property" in body:
             _reject_unknown_keys(
-                f"quality check '{name}'", body, {"property", "rule", "description"}
+                f"quality check '{name}'", body, {"property", "rule", "description", "severity"}
             )
             out.append(_expand_property_check(name, body))
         else:
@@ -1494,6 +1610,8 @@ def _expand_cardinality_check(name: str, body: dict[str, Any]) -> dict[str, Any]
     }
     if "description" in body:
         check["description"] = body["description"]
+    if "severity" in body:
+        check["severity"] = body["severity"]
     if "min" in card:
         check["min_count"] = card["min"]
     if "max" in card:
@@ -1519,6 +1637,8 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
     }
     if "description" in body:
         check["description"] = body["description"]
+    if "severity" in body:
+        check["severity"] = body["severity"]
     return check
 
 
