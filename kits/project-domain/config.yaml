@@ -44,29 +44,17 @@ enums: {}
 entity_types:
   ProductArea:
     description: Stable product, project, subsystem, package, or responsibility area.
+    id: area_id
     properties:
-      area_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      description:
-        type: string
-        optional: true
+      name: string indexed
+      description: string?
 
   Capability:
     description: Durable technical or product ability the project supports.
+    id: capability_id
     properties:
-      capability_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
-      description:
-        type: string
-        optional: true
+      name: string indexed
+      description: string?
       status:
         type: string
         # Inline enum (not enum_ref): an overlay property cannot enum_ref a
@@ -78,16 +66,10 @@ entity_types:
 
   RoadmapItem:
     description: Planned investment, initiative, or roadmap-level change.
+    id: roadmap_item_id
     properties:
-      roadmap_item_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      summary:
-        type: string
-        optional: true
+      title: string indexed
+      summary: string?
       status:
         type: string
         enum: [planned, active, blocked, watching, deferred, closed]
@@ -96,47 +78,29 @@ entity_types:
         # Inline values mirror the base priority enum (ordered low_to_high in
         # the base; ordering is not needed here -- no overlay order_by uses it).
         enum: [low, medium, high, critical]
-      target_date:
-        type: date
-        optional: true
+      target_date: date?
 
   ReleaseLine:
     description: Release train, version line, launch window, or delivery stream.
+    id: release_line_id
     properties:
-      release_line_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-        indexed: true
+      name: string indexed
       status:
         type: string
         enum: [planned, active, blocked, watching, deferred, closed]
-      starts_at:
-        type: date
-        optional: true
-      target_date:
-        type: date
-        optional: true
+      starts_at: date?
+      target_date: date?
 
   Milestone:
     description: Delivery milestone, gate, checkpoint, or intermediate target.
+    id: milestone_id
     properties:
-      milestone_id:
-        type: string
-        primary_key: true
-      title:
-        type: string
-        indexed: true
-      summary:
-        type: string
-        optional: true
+      title: string indexed
+      summary: string?
       status:
         type: string
         enum: [planned, active, blocked, watching, deferred, closed]
-      target_date:
-        type: date
-        optional: true
+      target_date: date?
 
 relationships:
   # --- Deterministic or source-backed project structure (seam + domain-internal) ---
