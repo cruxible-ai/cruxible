@@ -141,6 +141,7 @@ relationships:
   - state_note_about_risk: StateNote -> Risk
   - state_note_about_open_question: StateNote -> OpenQuestion
   - state_note_about_subject: StateNote -> SubjectRef
+  - state_note_about_actor: StateNote -> Actor              # Editorial facts about a mint-only actor live here, never on the entity.
   - state_note_supersedes_state_note: StateNote -> StateNote   # Supersedes/corrects an earlier note.
     basis: supersession_basis
   - state_note_resolves_state_note: StateNote -> StateNote

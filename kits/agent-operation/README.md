@@ -58,6 +58,7 @@ flowchart LR
   entity_ReviewRequest -- "Review Request For Work Item" --> entity_WorkItem
   entity_ReviewRequest -- "Review Request Requested By Actor" --> entity_Actor
   entity_Risk -- "Risk Owned By Actor" --> entity_Actor
+  entity_StateNote -- "State Note About Actor" --> entity_Actor
   entity_StateNote -- "State Note About Decision" --> entity_Decision
   entity_StateNote -- "State Note About Open Question" --> entity_OpenQuestion
   entity_StateNote -- "State Note About Review Request" --> entity_ReviewRequest
@@ -86,8 +87,8 @@ flowchart LR
   entity_WorkItem -. "Work Item Depends On Work Item" .-> entity_WorkItem
   entity_WorkItem -. "Work Item Mitigates Risk" .-> entity_Risk
   entity_WorkItem -. "Work Item Supersedes Work Item" .-> entity_WorkItem
-  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18 stroke:#2c5f8a,stroke-width:2px
-  linkStyle 19,20,21,22,23,24,25,26,27,28,29,30,31 stroke:#e74c3c,stroke-width:2px
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19 stroke:#2c5f8a,stroke-width:2px
+  linkStyle 20,21,22,23,24,25,26,27,28,29,30,31,32 stroke:#e74c3c,stroke-width:2px
 ```
 <!-- CRUXIBLE:END ontology -->
 
@@ -210,7 +211,7 @@ flowchart LR
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
+| State Note Context | traversal | Any Entity | reviewable | State Note Authored By Actor \| State Note About Work Item \| State Note About Review Request \| State Note About Decision \| State Note About Risk \| State Note About Open Question \| State Note About Subject \| State Note About Actor \| State Note Supersedes State Note \| State Note Resolves State Note (Both) | Full context for a state note (targets, author, supersession). |
 
 ### Subject Ref
 
