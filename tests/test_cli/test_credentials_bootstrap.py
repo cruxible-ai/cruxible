@@ -65,7 +65,41 @@ def test_credential_claim_bootstrap_reads_secret_file_and_prints_token_once(
     }
     assert "Bootstrap claimed." in result.output
     assert result.output.count("crt_rcred_bootstrap_secret") == 1
-    assert "CRUXIBLE_SERVER_BEARER_TOKEN=<token>" in result.output
+    assert "export CRUXIBLE_SERVER_BEARER_TOKEN=<token>" in result.output
+
+
+def test_credential_claim_bootstrap_requires_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
+
+    class StubClient:
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+            raise AssertionError("claim should not be attempted without a secret")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "credential",
+            "claim-bootstrap",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Provide --secret-file or set CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET." in result.output
+
+
+def test_credential_command_requires_server_mode(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["credential", "list"])
+
+    assert result.exit_code == 2
+    assert "Local mutation disabled for credential list; use server mode." in result.output
 
 
 def test_credential_claim_bootstrap_second_claim_renders_refusal(
@@ -109,6 +143,36 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
     assert second.exit_code == 1
     assert "Error: AuthenticationError: Invalid bootstrap secret" in second.output
     assert "Traceback" not in second.output
+
+
+def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    from cruxible_client.errors import AuthenticationError
+
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "wrong-secret")
+
+    class StubClient:
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+            raise AuthenticationError("Invalid bootstrap secret")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "credential",
+            "claim-bootstrap",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: AuthenticationError: Invalid bootstrap secret" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_credential_mint_list_and_revoke_round_trip(
@@ -226,6 +290,77 @@ def test_server_mode_init_bootstrap_uses_hosted_kit_route(
     assert "Active instance: inst_hosted" in result.output
 
 
+def test_init_bootstrap_requires_server_mode(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["init", "--kit", "kev-reference", "--bootstrap"])
+
+    assert result.exit_code == 2
+    assert "--bootstrap requires server mode." in result.output
+
+
+def test_init_bootstrap_requires_kit(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--server-url", "http://server", "init", "--bootstrap"])
+
+    assert result.exit_code == 2
+    assert "--bootstrap requires --kit." in result.output
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--config", "cruxible.yaml"],
+        ["--data-dir", "data"],
+        ["--root-dir", "."],
+    ],
+)
+def test_init_bootstrap_rejects_local_init_options(
+    runner: CliRunner,
+    extra_args: list[str],
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "init",
+            "--kit",
+            "kev-reference",
+            "--bootstrap",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert (
+        "--bootstrap uses hosted kit init and accepts only --kit and --activate." in result.output
+    )
+
+
+def test_server_mode_init_bootstrap_auth_error_guides_next_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    from cruxible_client.errors import AuthenticationError
+
+    class StubClient:
+        def init_hosted_instance(self, **_kwargs: object):
+            raise AuthenticationError("Unauthorized")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "init", "--kit", "kev-reference", "--bootstrap"],
+    )
+
+    assert result.exit_code == 1
+    assert "Server auth rejected hosted bootstrap init." in result.output
+    assert "bootstrap secret was already claimed" in result.output
+    assert "cruxible credential claim-bootstrap" in result.output
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN to that ADMIN token" in result.output
+    assert "cruxible credential mint" in result.output
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN to the BOOTSTRAP secret" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_server_mode_plain_kit_init_auth_error_points_to_bootstrap_path(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
@@ -270,9 +405,10 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     assert result.exit_code == 0, result.output
     generated = os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"]
     assert generated
-    assert result.output.count(generated) == 1
+    assert generated not in result.output
     assert secret_file.read_text().strip() == generated
     assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
+    assert f"Wrote bootstrap secret file: {secret_file} (0600)" in result.output
     assert "cruxible init --kit <ref> --bootstrap" in result.output
     assert "credential claim-bootstrap --secret-file" in result.output
     assert captured == {"host": None, "port": None, "state_dir": None, "socket_path": None}

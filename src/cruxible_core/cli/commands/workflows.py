@@ -234,7 +234,19 @@ def init(
     if bootstrap:
         assert client is not None
         assert kit is not None
-        hosted_result = client.init_hosted_instance(source_type="kit", kit_ref=kit)
+        try:
+            hosted_result = client.init_hosted_instance(source_type="kit", kit_ref=kit)
+        except ClientAuthenticationError as exc:
+            raise click.ClickException(
+                "Server auth rejected hosted bootstrap init. If the bootstrap secret "
+                "was already claimed, use the admin token printed by "
+                "`cruxible credential claim-bootstrap`: set "
+                "CRUXIBLE_SERVER_BEARER_TOKEN to that ADMIN token and use normal "
+                "commands, or mint more credentials with `cruxible credential mint`. "
+                "If the bearer is missing or wrong, set CRUXIBLE_SERVER_BEARER_TOKEN "
+                "to the BOOTSTRAP secret and retry "
+                f"`cruxible init --kit {kit} --bootstrap`."
+            ) from exc
         click.echo(f"Instance {hosted_result.status}.")
         click.echo(f"Instance ID: {hosted_result.instance_id}")
         click.echo(f"Source: {hosted_result.source_type} {hosted_result.source_ref}")

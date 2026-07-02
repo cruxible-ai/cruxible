@@ -800,7 +800,8 @@ shared_evidence:
 
 **Output And Side Effects:**
 - Calls the existing runtime bootstrap claim route for the active instance.
-- Prints the ADMIN token once with a `CRUXIBLE_SERVER_BEARER_TOKEN=<token>` save hint.
+- Prints the ADMIN token once with the save hint
+  `Save it now, for example: export CRUXIBLE_SERVER_BEARER_TOKEN=<token>`.
 
 **Common Errors:**
 - Provide `--secret-file` or set `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET`.
@@ -2323,8 +2324,10 @@ cruxible query inline \
   Stop with Ctrl-C. `cruxible server start --help` prints help and exits without
   serving.
 - When `CRUXIBLE_SERVER_AUTH=true` and no `CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET`
-  is set, generates a one-time bootstrap secret, prints it once with hosted-init
-  and claim hints, and optionally writes it to `--bootstrap-secret-file` as 0600.
+  is set, generates a one-time bootstrap secret. Without
+  `--bootstrap-secret-file`, prints it once with hosted-init and claim hints.
+  With `--bootstrap-secret-file`, writes it to that path as 0600 and prints only
+  the path plus hosted-init and claim hints.
 
 **Common Errors:**
 - Binding a non-loopback host without `CRUXIBLE_SERVER_AUTH=true` is refused.

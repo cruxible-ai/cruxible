@@ -101,13 +101,11 @@ def _prepare_generated_bootstrap_secret(bootstrap_secret_file: str | None) -> No
     if bootstrap_secret_file is not None:
         written_path = _write_bootstrap_secret_file(Path(bootstrap_secret_file), secret)
 
-    click.echo("Generated runtime bootstrap secret:", err=True)
-    click.echo(secret, err=True)
-    click.echo("Save it now; this value is printed only once.", err=True)
     if written_path is not None:
         click.echo(f"Wrote bootstrap secret file: {written_path} (0600)", err=True)
         click.echo(
-            "Hosted init: set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret, "
+            "Hosted init: set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret file "
+            "contents, "
             "then run `cruxible init --kit <ref> --bootstrap`.",
             err=True,
         )
@@ -117,6 +115,9 @@ def _prepare_generated_bootstrap_secret(bootstrap_secret_file: str | None) -> No
         )
         return
 
+    click.echo("Generated runtime bootstrap secret:", err=True)
+    click.echo(secret, err=True)
+    click.echo("Save it now; this value is printed only once.", err=True)
     click.echo(
         "Hosted init: set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret, "
         "then run `cruxible init --kit <ref> --bootstrap`.",
