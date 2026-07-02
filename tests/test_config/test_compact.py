@@ -7,6 +7,7 @@ invariants. (The docs/dev draft is a local commented reference of the same gramm
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from textwrap import dedent
 
@@ -628,6 +629,257 @@ def test_traverse_where_targets_candidate() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Parity grammar extensions
+# ---------------------------------------------------------------------------
+
+
+def test_traverse_relationship_list_with_where_expands_to_explicit_step() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: [work_item_owned_by_actor, work_item_depends_on_work_item]
+                direction: outgoing
+                as: context
+                max_depth: 2
+                where: {status: {not_in: [closed]}}
+        """,
+    )
+    assert config["named_queries"]["q"]["traversal"][0] == {
+        "relationship": ["work_item_owned_by_actor", "work_item_depends_on_work_item"],
+        "direction": "outgoing",
+        "as": "context",
+        "where": {"candidate.properties.status": {"not_in": ["closed"]}},
+        "max_depth": 2,
+    }
+
+
+def test_traversal_entity_result_shape_does_not_add_path_guards() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            result_shape: entity
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query == {
+        "mode": "traversal",
+        "entry_point": "Actor",
+        "returns": "WorkItem",
+        "result_shape": "entity",
+        "traversal": [
+            {"relationship": "work_item_owned_by_actor", "direction": "incoming", "as": "work_item"}
+        ],
+    }
+
+
+def test_named_include_from_entry_and_result_expand_to_explicit_includes() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+            include:
+              entry_work:
+                from: $entry
+                relationship: work_item_owned_by_actor
+              result_deps:
+                from: $result
+                relationship: work_item_depends_on_work_item>
+        """,
+    )
+    includes = config["named_queries"]["q"]["include"]
+    assert includes["entry_work"] == {
+        "from": "$entry",
+        "relationship": "work_item_owned_by_actor",
+        "direction": "incoming",
+        "many": True,
+    }
+    assert includes["result_deps"] == {
+        "from": "$result",
+        "relationship": "work_item_depends_on_work_item",
+        "direction": "outgoing",
+        "many": True,
+    }
+
+
+def test_named_include_direction_override_expands_without_anchor_inference() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: work_item_owned_by_actor
+                direction: outgoing
+                as: owner
+            include:
+              owner:
+                from: $result
+                relationship: work_item_owned_by_actor
+                direction: outgoing
+        """,
+    )
+    assert config["named_queries"]["q"]["include"]["owner"] == {
+        "from": "$result",
+        "relationship": "work_item_owned_by_actor",
+        "direction": "outgoing",
+        "many": True,
+    }
+
+
+def test_direction_override_allows_base_relationship_refs_in_overlays() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: WorkItem
+            returns: AnyEntity
+            traverse:
+              - relationship: base_supplied_relationship
+                direction: outgoing
+                as: base_path
+            include:
+              base_context:
+                from: $result
+                relationship: base_supplied_relationship
+                direction: incoming
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query["traversal"][0]["relationship"] == "base_supplied_relationship"
+    assert query["include"]["base_context"] == {
+        "from": "$result",
+        "relationship": "base_supplied_relationship",
+        "direction": "incoming",
+        "many": True,
+    }
+
+
+def test_named_include_scoped_where_path_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+            include:
+              latest:
+                relationship: work_item_depends_on_work_item>
+                where:
+                  target.properties.status: {eq: active}
+        """,
+    )
+    assert config["named_queries"]["q"]["include"]["latest"]["where"] == {
+        "target.properties.status": {"eq": "active"}
+    }
+
+
+def test_required_on_traverse_and_named_include_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        named_queries:
+          q:
+            mode: traversal
+            entry_point: Actor
+            returns: WorkItem
+            traverse:
+              - relationship: work_item_owned_by_actor
+                as: work_item
+                required: false
+            include:
+              latest:
+                relationship: work_item_depends_on_work_item>
+                required: true
+        """,
+    )
+    query = config["named_queries"]["q"]
+    assert query["traversal"][0] == {
+        "relationship": "work_item_owned_by_actor",
+        "direction": "incoming",
+        "as": "work_item",
+        "required": False,
+    }
+    assert query["include"]["latest"] == {
+        "from": "$result",
+        "relationship": "work_item_depends_on_work_item",
+        "direction": "outgoing",
+        "many": True,
+        "required": True,
+    }
+
+
+def test_quality_check_severity_passes_through() -> None:
+    config = _expand(
+        _QUERY_HEADER,
+        """
+        quality_checks:
+          - relationship_basis_required:
+              property: work_item_depends_on_work_item.dependency_basis
+              rule: non_empty
+              severity: error
+          - work_items_have_owner:
+              cardinality:
+                entity: WorkItem
+                relationship: work_item_owned_by_actor
+                direction: out
+                min: 1
+              severity: warning
+        """,
+    )
+    assert config["quality_checks"] == [
+        {
+            "name": "relationship_basis_required",
+            "kind": "property",
+            "target": "relationship",
+            "relationship_type": "work_item_depends_on_work_item",
+            "property": "dependency_basis",
+            "rule": "non_empty",
+            "severity": "error",
+        },
+        {
+            "name": "work_items_have_owner",
+            "kind": "cardinality",
+            "entity_type": "WorkItem",
+            "relationship_type": "work_item_owned_by_actor",
+            "direction": "outgoing",
+            "severity": "warning",
+            "min_count": 1,
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Select projection
 # ---------------------------------------------------------------------------
 
@@ -837,6 +1089,306 @@ named_queries:
     returns: WorkItem
 """
 )
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed rejection
+# ---------------------------------------------------------------------------
+
+_FAIL_CLOSED_REJECTION_CASES = [
+    pytest.param(
+        _join(
+            """
+            name: k
+            entity_types: {}
+            unsupported_top: true
+            """
+        ),
+        "compact config",
+        "unsupported_top",
+        id="top-level-config-key",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            enums:
+              priority:
+                values: [low]
+                unsupported_enum: true
+            entity_types: {}
+            """
+        ),
+        "enum 'priority'",
+        "unsupported_enum",
+        id="enum-block",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            entity_types:
+              E:
+                id: e_id
+                unsupported_entity: true
+            """
+        ),
+        "entity 'E'",
+        "unsupported_entity",
+        id="entity-body",
+    ),
+    pytest.param(
+        _join(
+            _REL_HEADER,
+            """
+            relationships:
+              - work_item_owned_by_actor: WorkItem -> Actor
+                unsupported_relationship: true
+            """,
+        ),
+        "relationship 'work_item_owned_by_actor'",
+        "unsupported_relationship",
+        id="relationship-item",
+    ),
+    pytest.param(
+        _join(
+            _REL_HEADER,
+            """
+            relationships:
+              - work_item_owned_by_actor: WorkItem -> Actor
+                proposal_policy:
+                  signals: {}
+                  unsupported_policy: true
+            """,
+        ),
+        "proposal policy",
+        "unsupported_policy",
+        id="proposal-policy",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                unsupported_query: true
+            """,
+        ),
+        "query 'q'",
+        "unsupported_query",
+        id="named-query-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              by_$T:
+                for: [WorkItem]
+                mode: collection
+                returns: $T
+                unsupported_template: true
+            """,
+        ),
+        "query template 'by_$T'",
+        "unsupported_template",
+        id="query-template-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: traversal
+                entry_point: Actor
+                returns: WorkItem
+                traverse:
+                  - relationship: work_item_owned_by_actor
+                    unsupported_traverse: true
+            """,
+        ),
+        "query 'q' traverse step",
+        "unsupported_traverse",
+        id="traverse-step",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                include:
+                  owner:
+                    relationship: work_item_owned_by_actor
+                    unsupported_include: true
+            """,
+        ),
+        "query 'q' include 'owner'",
+        "unsupported_include",
+        id="named-include-body",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                bound:
+                  work_item_owned_by_actor:
+                    unsupported_bound: true
+            """,
+        ),
+        "query 'q' bound 'work_item_owned_by_actor'",
+        "unsupported_bound",
+        id="bound-cap",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require: {allowed_actors: [reviewer]}
+                  unsupported_guard: true
+            """
+        ),
+        "mutation guard 'g'",
+        "unsupported_guard",
+        id="mutation-guard-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    co_write: Actor via work_item_owned_by_actor
+                    unsupported_cowrite: true
+            """
+        ),
+        "mutation guard 'g' require co_write",
+        "unsupported_cowrite",
+        id="guard-require-co-write",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    allowed_actors: [reviewer]
+                    unsupported_allowed_actors: true
+            """
+        ),
+        "mutation guard 'g' require allowed_actors",
+        "unsupported_allowed_actors",
+        id="guard-require-allowed-actors",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            mutation_guards:
+              - g:
+                  when: WorkItem.status -> closed
+                  require:
+                    query: approved_reviews_for_work_item
+                    unsupported_query_guard: true
+            """
+        ),
+        "mutation guard 'g' require query",
+        "unsupported_query_guard",
+        id="guard-require-query",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  cardinality:
+                    entity: WorkItem
+                    relationship: work_item_owned_by_actor
+                    direction: out
+                  unsupported_quality_cardinality: true
+            """
+        ),
+        "quality check 'c'",
+        "unsupported_quality_cardinality",
+        id="quality-check-cardinality-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  property: work_item_depends_on_work_item.dependency_basis
+                  rule: non_empty
+                  unsupported_quality_property: true
+            """
+        ),
+        "quality check 'c'",
+        "unsupported_quality_property",
+        id="quality-check-property-body",
+    ),
+    pytest.param(
+        _join(
+            """
+            name: k
+            quality_checks:
+              - c:
+                  cardinality:
+                    entity: WorkItem
+                    relationship: work_item_owned_by_actor
+                    direction: out
+                    unsupported_cardinality: true
+            """
+        ),
+        "quality check 'c' cardinality",
+        "unsupported_cardinality",
+        id="cardinality-sub-mapping",
+    ),
+    pytest.param(
+        _join(
+            _QUERY_HEADER,
+            """
+            named_queries:
+              q:
+                mode: collection
+                returns: WorkItem
+                order: title asc string unsupported_order_token
+            """,
+        ),
+        "order clause 'title asc string unsupported_order_token'",
+        "unsupported_order_token",
+        id="order-clause-extra-token",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("source", "construct_label", "offending_key"),
+    _FAIL_CLOSED_REJECTION_CASES,
+)
+def test_compact_expander_rejects_unknown_keys_fail_closed(
+    source: str, construct_label: str, offending_key: str
+) -> None:
+    match = rf"{re.escape(construct_label)}.*{re.escape(offending_key)}"
+    with pytest.raises(CompactExpansionError, match=match):
+        expand_compact(source)
 
 
 def test_guard_trigger_single_value() -> None:

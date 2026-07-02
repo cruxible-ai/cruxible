@@ -63,6 +63,21 @@ class CompactExpansionError(ValueError):
     """
 
 
+def _reject_unknown_keys(
+    construct: str,
+    data: dict[str, Any],
+    allowed: set[str],
+) -> None:
+    """Fail closed when an authored compact mapping contains unsupported keys."""
+    unknown = sorted(set(data) - allowed)
+    if not unknown:
+        return
+    if len(unknown) == 1:
+        raise CompactExpansionError(f"{construct}: unsupported key '{unknown[0]}'")
+    joined = "', '".join(unknown)
+    raise CompactExpansionError(f"{construct}: unsupported keys '{joined}'")
+
+
 @dataclass
 class ExpandResult:
     """Outcome of expanding a compact source.
@@ -139,6 +154,7 @@ def _expand_enums(raw_enums: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, list):
             out[name] = {"values": list(value)}
         elif isinstance(value, dict):
+            _reject_unknown_keys(f"enum '{name}'", value, {"values", "ordered", "description"})
             entry: dict[str, Any] = {"values": list(value["values"])}
             if "ordered" in value:
                 entry["ordered"] = value["ordered"]
@@ -249,6 +265,14 @@ def _expand_entity_types(raw_entities: dict[str, Any]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for type_name, body in raw_entities.items():
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"entity '{type_name}': body must be a mapping")
+        _reject_unknown_keys(
+            f"entity '{type_name}'",
+            body,
+            {"description", "id", "properties", "write_policy", "auth_managed", "constraints"},
+        )
+
         entity: dict[str, Any] = {}
         if "description" in body:
             entity["description"] = body["description"]
@@ -327,6 +351,12 @@ def _expand_relationships(
 
         # The signature is the single key whose value is a `From -> To` string.
         name, sig = _find_signature(item)
+        _reject_unknown_keys(
+            f"relationship '{name}'",
+            item,
+            {name, "proposal_policy", "basis", "description", "properties"},
+        )
+
         match = _SIG_RE.match(sig)
         if match is None:
             raise CompactExpansionError(
@@ -419,6 +449,12 @@ def _expand_proposal_policy(policy: dict[str, Any]) -> dict[str, Any]:
     pass through as explicit mappings; the engine fills the remaining inert policy
     defaults.
     """
+    _reject_unknown_keys(
+        "proposal policy",
+        policy,
+        {"signals", "auto_resolve_when", "auto_resolve_requires_prior_trust", "max_group_size"},
+    )
+
     out: dict[str, Any] = {}
     signals = policy.get("signals", {})
     expanded_signals: dict[str, Any] = {}
@@ -454,6 +490,10 @@ def _resolve_direction(
 
     ``rel_ref`` may carry a trailing ``>``/``<`` marker (self-ref disambiguation).
     """
+    if not isinstance(rel_ref, str):
+        raise CompactExpansionError(
+            f"{context}: relationship reference must be a string, got {type(rel_ref).__name__}"
+        )
     marker: str | None = None
     name = rel_ref
     if name.endswith(">"):
@@ -505,16 +545,29 @@ def _resolve_direction(
 # ---------------------------------------------------------------------------
 
 
+_WHERE_SCOPES = {"candidate", "edge", "input", "result", "source", "target"}
+
+
 def _expand_where(raw_where: dict[str, Any], *, scope: str) -> dict[str, Any]:
-    """Expand a compact ``where: {field: {op: value}}`` to scoped predicate paths.
+    """Expand compact ``where: {field: {op: value}}`` to scoped predicate paths.
 
     The field targets the entity in scope: ``result.properties.<field>`` at
     collection level, ``candidate.properties.<field>`` inside a traverse step (the
-    ``as:`` node being filtered).
+    ``as:`` node being filtered). Already-scoped predicate paths pass through for
+    explicit-schema parity.
     """
+    if not isinstance(raw_where, dict):
+        raise CompactExpansionError(
+            f"where must be a mapping of property predicates, got {type(raw_where).__name__}"
+        )
     out: dict[str, Any] = {}
     for field_name, predicate in raw_where.items():
-        out[f"{scope}.properties.{field_name}"] = predicate
+        field_text = str(field_name)
+        predicate_scope, sep, _path = field_text.partition(".")
+        if sep and predicate_scope in _WHERE_SCOPES:
+            out[field_text] = predicate
+        else:
+            out[f"{scope}.properties.{field_text}"] = predicate
     return out
 
 
@@ -534,6 +587,10 @@ def _expand_order_clause(clause: str, *, ref_base: str = "$result") -> dict[str,
     if len(tokens) < 2:
         raise CompactExpansionError(
             f"order clause '{clause}' must be '<field> <asc|desc> [<type>|^<enum>]'"
+        )
+    if len(tokens) > 3:
+        raise CompactExpansionError(
+            f"order clause '{clause}' has unsupported extra token '{tokens[3]}'"
         )
     field_name, direction = tokens[0], tokens[1]
     if direction not in {"asc", "desc"}:
@@ -572,6 +629,7 @@ def _include_entry(
     limit: int | None = None,
     order: Any | None = None,
     where: dict[str, Any] | None = None,
+    required: bool | None = None,
 ) -> dict[str, Any]:
     """Build one explicit include entry in a stable field order."""
     entry: dict[str, Any] = {
@@ -586,6 +644,8 @@ def _include_entry(
         entry["limit"] = limit
     if order is not None:
         entry["order_by"] = _expand_order_list(order, ref_base="$source")
+    if required is not None:
+        entry["required"] = required
     return entry
 
 
@@ -775,6 +835,23 @@ _DECISION_KNOBS = ("mode", "returns", "relationship_state")
 # Pass-through knobs the author may set; defaulted when omitted.
 _PASSTHROUGH_KNOBS = ("result_shape", "max_paths", "max_paths_per_result", "limit")
 
+_COMPACT_QUERY_KEYS = {
+    *_DECISION_KNOBS,
+    *_PASSTHROUGH_KNOBS,
+    "description",
+    "entry_point",
+    "where",
+    "include",
+    "bound",
+    "select",
+    "traverse",
+    "traverse_all",
+    "direction",
+    "as",
+    "max_depth",
+    "order",
+}
+
 
 def _entity_primary_key(entity_types: dict[str, Any], entity_name: str) -> str | None:
     """Return the primary-key property name for an entity type, if any."""
@@ -796,6 +873,10 @@ def _expand_named_query(
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     """Expand one compact named query to the explicit ``NamedQuerySchema`` shape."""
+    if not isinstance(body, dict):
+        raise CompactExpansionError(f"query '{name}': body must be a mapping")
+    _reject_unknown_keys(f"query '{name}'", body, _COMPACT_QUERY_KEYS)
+
     mode = body.get("mode")
     if mode is None:
         raise CompactExpansionError(f"query '{name}': 'mode' is required and must be explicit")
@@ -865,7 +946,14 @@ def _expand_named_query(
         # `include: {<name>: {rel: <rel>, ...}}` defines NEW named bounded sets.
         for set_name, set_body in include_directive.items():
             includes[set_name] = _expand_named_include(
-                set_name, set_body, include_anchor, rel_index, include_from_ref, name
+                set_name,
+                set_body,
+                include_anchor,
+                rel_index,
+                include_from_ref,
+                name,
+                entry_anchor=anchor if is_traversal else None,
+                result_anchor=returns,
             )
     elif include_directive is not None:
         raise CompactExpansionError(
@@ -955,13 +1043,14 @@ def _expand_named_query(
     # Inert resource guards: default when omitted; only collection mode disallows
     # path budgets, so guard those.
     if is_traversal:
-        out["allow_relationship_state_override"] = out.get(
-            "allow_relationship_state_override", _DEFAULT_ALLOW_REL_STATE_OVERRIDE
-        )
-        out["max_paths"] = body.get("max_paths", _DEFAULT_MAX_PATHS)
-        out["max_paths_per_result"] = body.get(
-            "max_paths_per_result", _DEFAULT_MAX_PATHS_PER_RESULT
-        )
+        if result_shape != "entity":
+            out["allow_relationship_state_override"] = out.get(
+                "allow_relationship_state_override", _DEFAULT_ALLOW_REL_STATE_OVERRIDE
+            )
+            out["max_paths"] = body.get("max_paths", _DEFAULT_MAX_PATHS)
+            out["max_paths_per_result"] = body.get(
+                "max_paths_per_result", _DEFAULT_MAX_PATHS_PER_RESULT
+            )
     else:
         out["limit"] = body.get("limit", _DEFAULT_LIMIT)
 
@@ -975,23 +1064,73 @@ def _expand_named_include(
     rel_index: dict[str, RelInfo],
     from_ref: str,
     query_name: str,
+    *,
+    entry_anchor: str | None = None,
+    result_anchor: str | None = None,
 ) -> dict[str, Any]:
     """Expand a NEW named bounded include set (`include: {name: {relationship:..., ...}}`)."""
+    if not isinstance(set_body, dict):
+        raise CompactExpansionError(
+            f"query '{query_name}' include '{set_name}': body must be a mapping"
+        )
+    _reject_unknown_keys(
+        f"query '{query_name}' include '{set_name}'",
+        set_body,
+        {"relationship", "from", "direction", "limit", "order", "where", "required"},
+    )
+
     rel_ref = set_body.get("relationship")
     if rel_ref is None:
         raise CompactExpansionError(
             f"query '{query_name}' include '{set_name}': must define 'relationship'"
         )
-    rel_name, direction = _resolve_direction(
-        rel_ref, anchor or "", rel_index, context=f"query '{query_name}' include '{set_name}'"
-    )
+    effective_from_ref = from_ref
+    effective_anchor = anchor
+    if "from" in set_body:
+        authored_from = set_body["from"]
+        if authored_from not in {"$entry", "$result"}:
+            raise CompactExpansionError(
+                f"query '{query_name}' include '{set_name}': from must be $entry or $result"
+            )
+        effective_from_ref = authored_from
+        if authored_from == "$entry":
+            if entry_anchor is None:
+                raise CompactExpansionError(
+                    f"query '{query_name}' include '{set_name}': from $entry requires "
+                    "a traversal query"
+                )
+            effective_anchor = entry_anchor
+        else:
+            effective_anchor = result_anchor or anchor
+
+    direction_override = set_body.get("direction")
+    if direction_override is not None:
+        if direction_override not in {"incoming", "outgoing"}:
+            raise CompactExpansionError(
+                f"query '{query_name}' include '{set_name}': direction must be incoming or outgoing"
+            )
+        rel_name = _canonical_relationship_name(
+            rel_ref,
+            rel_index,
+            context=f"query '{query_name}' include '{set_name}'",
+            allow_external=True,
+        )
+        direction = direction_override
+    else:
+        rel_name, direction = _resolve_direction(
+            rel_ref,
+            effective_anchor or "",
+            rel_index,
+            context=f"query '{query_name}' include '{set_name}'",
+        )
     return _include_entry(
-        from_ref=from_ref,
+        from_ref=effective_from_ref,
         relationship=rel_name,
         direction=direction,
         limit=set_body.get("limit"),
         order=set_body.get("order"),
         where=set_body.get("where"),
+        required=set_body.get("required"),
     )
 
 
@@ -1061,6 +1200,13 @@ def _apply_bound(
     query_name: str,
 ) -> dict[str, Any]:
     """Apply a `bound:` cap (limit/order/where) to an include set."""
+    if not isinstance(cap, dict):
+        raise CompactExpansionError(
+            f"query '{query_name}' bound '{rel_ref}': cap must be a mapping"
+        )
+    _reject_unknown_keys(
+        f"query '{query_name}' bound '{rel_ref}'", cap, {"limit", "order", "where"}
+    )
     if existing is not None:
         entry = dict(existing)
     else:
@@ -1082,6 +1228,26 @@ def _apply_bound(
     return entry
 
 
+def _canonical_relationship_name(
+    rel_ref: str,
+    rel_index: dict[str, RelInfo],
+    *,
+    context: str,
+    allow_external: bool = False,
+) -> str:
+    """Validate a relationship reference and strip any compact direction marker."""
+    if not isinstance(rel_ref, str):
+        raise CompactExpansionError(
+            f"{context}: relationship reference must be a string, got {type(rel_ref).__name__}"
+        )
+    name = rel_ref.rstrip("><")
+    if name not in rel_index and not allow_external:
+        raise CompactExpansionError(
+            f"{context}: relationship '{name}' is not defined in this config"
+        )
+    return name
+
+
 def _expand_traverse_step(
     step: dict[str, Any],
     anchor: str | None,
@@ -1089,14 +1255,57 @@ def _expand_traverse_step(
     query_name: str,
 ) -> dict[str, Any]:
     """Expand a single explicit ``traverse:`` step."""
+    if not isinstance(step, dict):
+        raise CompactExpansionError(f"query '{query_name}' traverse step must be a mapping")
+    _reject_unknown_keys(
+        f"query '{query_name}' traverse step",
+        step,
+        {"relationship", "direction", "as", "where", "max_depth", "required"},
+    )
     rel_ref = step.get("relationship")
     if rel_ref is None:
         raise CompactExpansionError(
             f"query '{query_name}' traverse step must define 'relationship'"
         )
-    rel_name, direction = _resolve_direction(
-        rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
-    )
+
+    direction_override = step.get("direction")
+    if direction_override is not None and direction_override not in {
+        "outgoing",
+        "incoming",
+        "both",
+    }:
+        raise CompactExpansionError(
+            f"query '{query_name}' traverse step: direction must be outgoing, incoming, or both"
+        )
+
+    if isinstance(rel_ref, list):
+        if direction_override is None:
+            raise CompactExpansionError(
+                f"query '{query_name}' traverse step: relationship lists require 'direction'"
+            )
+        rel_name: str | list[str] = [
+            _canonical_relationship_name(
+                item,
+                rel_index,
+                context=f"query '{query_name}' traverse",
+                allow_external=True,
+            )
+            for item in rel_ref
+        ]
+        direction = direction_override
+    elif direction_override is not None:
+        rel_name = _canonical_relationship_name(
+            rel_ref,
+            rel_index,
+            context=f"query '{query_name}' traverse",
+            allow_external=True,
+        )
+        direction = direction_override
+    else:
+        rel_name, direction = _resolve_direction(
+            rel_ref, anchor or "", rel_index, context=f"query '{query_name}' traverse"
+        )
+
     out: dict[str, Any] = {"relationship": rel_name, "direction": direction}
     if "as" in step:
         out["as"] = step["as"]
@@ -1104,6 +1313,8 @@ def _expand_traverse_step(
         out["where"] = _expand_where(step["where"], scope="candidate")
     if "max_depth" in step:
         out["max_depth"] = step["max_depth"]
+    if "required" in step:
+        out["required"] = step["required"]
     return out
 
 
@@ -1115,6 +1326,10 @@ def _expand_traverse_all_step(
 ) -> dict[str, Any]:
     """Expand a ``traverse_all: [rels]`` + ``direction:`` scoped fan-out step."""
     rels = body["traverse_all"]
+    if not isinstance(rels, list):
+        raise CompactExpansionError(
+            f"query '{query_name}' traverse_all must be a list of relationships"
+        )
     direction = body.get("direction", "both")
     # Validate each relationship exists; direction is given explicitly.
     for rel_ref in rels:
@@ -1155,6 +1370,10 @@ def _expand_query_template(
 
     ``$T`` is substituted in the query name, ``returns``, and ``description``.
     """
+    if not isinstance(body, dict):
+        raise CompactExpansionError(f"query template '{template_name}': body must be a mapping")
+    _reject_unknown_keys(f"query template '{template_name}'", body, _COMPACT_QUERY_KEYS | {"for"})
+
     types = body["for"]
     out: dict[str, dict[str, Any]] = {}
     base = {key: value for key, value in body.items() if key != "for"}
@@ -1221,6 +1440,13 @@ def _expand_mutation_guards(raw_guards: list[Any]) -> list[dict[str, Any]]:
                 f"mutation guard must be a single-key mapping, got {item!r}"
             )
         name, body = next(iter(item.items()))
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"mutation guard '{name}': body must be a mapping")
+        _reject_unknown_keys(
+            f"mutation guard '{name}'",
+            body,
+            {"when", "require", "message", "where", "where_related", "where_not_related"},
+        )
         guard: dict[str, Any] = {"name": name}
 
         when = body.get("when")
@@ -1265,7 +1491,12 @@ def _parse_guard_value(value: str) -> Any:
 
 def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any]:
     """Expand a guard ``require:`` block into one explicit condition union member."""
+    if not isinstance(require, dict):
+        raise CompactExpansionError(f"mutation guard '{name}': require must be a mapping")
     if "co_write" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require co_write", require, {"co_write", "kind"}
+        )
         match = _COWRITE_RE.match(require["co_write"])
         if match is None:
             raise CompactExpansionError(
@@ -1281,6 +1512,9 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
         return {"type": "co_write", "requires": requires}
 
     if "allowed_actors" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require allowed_actors", require, {"allowed_actors"}
+        )
         # LITERAL passthrough -- no identity resolution, no invented actors.
         return {
             "type": "actor",
@@ -1288,6 +1522,11 @@ def _expand_guard_condition(name: str, require: dict[str, Any]) -> dict[str, Any
         }
 
     if "query" in require:
+        _reject_unknown_keys(
+            f"mutation guard '{name}' require query",
+            require,
+            {"query", "params", "min_count", "max_count"},
+        )
         condition: dict[str, Any] = {
             "type": "query",
             "query_name": require["query"],
@@ -1328,9 +1567,17 @@ def _expand_quality_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
             raise CompactExpansionError(f"quality check must be a single-key mapping, got {item!r}")
         name, body = next(iter(item.items()))
 
+        if not isinstance(body, dict):
+            raise CompactExpansionError(f"quality check '{name}': body must be a mapping")
         if "cardinality" in body:
+            _reject_unknown_keys(
+                f"quality check '{name}'", body, {"cardinality", "description", "severity"}
+            )
             out.append(_expand_cardinality_check(name, body))
         elif "property" in body:
+            _reject_unknown_keys(
+                f"quality check '{name}'", body, {"property", "rule", "description", "severity"}
+            )
             out.append(_expand_property_check(name, body))
         else:
             raise CompactExpansionError(
@@ -1343,6 +1590,11 @@ def _expand_cardinality_check(name: str, body: dict[str, Any]) -> dict[str, Any]
     card = body["cardinality"]
     if not isinstance(card, dict):
         raise CompactExpansionError(f"quality check '{name}': 'cardinality' must be a mapping")
+    _reject_unknown_keys(
+        f"quality check '{name}' cardinality",
+        card,
+        {"entity", "relationship", "direction", "min", "max"},
+    )
     direction = card.get("direction")
     if direction not in ("out", "in"):
         raise CompactExpansionError(
@@ -1358,6 +1610,8 @@ def _expand_cardinality_check(name: str, body: dict[str, Any]) -> dict[str, Any]
     }
     if "description" in body:
         check["description"] = body["description"]
+    if "severity" in body:
+        check["severity"] = body["severity"]
     if "min" in card:
         check["min_count"] = card["min"]
     if "max" in card:
@@ -1383,6 +1637,8 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
     }
     if "description" in body:
         check["description"] = body["description"]
+    if "severity" in body:
+        check["severity"] = body["severity"]
     return check
 
 
@@ -1392,6 +1648,35 @@ def _expand_property_check(name: str, body: dict[str, Any]) -> dict[str, Any]:
 
 # Authoring-only top-level keys that are consumed/stripped, never emitted.
 _AUTHORING_ONLY_KEYS = {"presets", "metadata"}
+
+_PASSTHROUGH_TOP_LEVEL_KEYS = {
+    "feedback_profiles",
+    "outcome_profiles",
+    "decision_policies",
+    "contracts",
+    "artifacts",
+    "providers",
+    "workflows",
+    "runtime",
+    "tests",
+}
+
+_COMPACT_TOP_LEVEL_KEYS = {
+    *_AUTHORING_ONLY_KEYS,
+    *_PASSTHROUGH_TOP_LEVEL_KEYS,
+    "version",
+    "name",
+    "description",
+    "cruxible_version",
+    "extends",
+    "enums",
+    "entity_types",
+    "relationships",
+    "named_queries",
+    "mutation_guards",
+    "quality_checks",
+    "constraints",
+}
 
 
 def looks_compact(data: Any) -> bool:
@@ -1438,6 +1723,8 @@ def expand_compact_full(source_text: str) -> ExpandResult:
     if not isinstance(raw, dict):
         raise CompactExpansionError("compact source must be a top-level mapping")
 
+    _reject_unknown_keys("compact config", raw, _COMPACT_TOP_LEVEL_KEYS)
+
     comments = _scan_relationship_comments(source_text)
     warnings: list[str] = []
 
@@ -1449,7 +1736,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
     config: dict[str, Any] = {}
 
     # Top-level scalar fields pass through.
-    for key in ("version", "name", "description", "extends"):
+    for key in ("version", "name", "description", "cruxible_version", "extends"):
         if key in raw:
             config[key] = raw[key]
 
@@ -1499,18 +1786,7 @@ def expand_compact_full(source_text: str) -> ExpandResult:
 
     # Any other recognized top-level keys that aren't authoring-only pass through
     # verbatim (forward-compatible; e.g. runtime, contracts).
-    _passthrough_keys = {
-        "feedback_profiles",
-        "outcome_profiles",
-        "decision_policies",
-        "contracts",
-        "artifacts",
-        "providers",
-        "workflows",
-        "runtime",
-        "tests",
-    }
-    for key in _passthrough_keys:
+    for key in _PASSTHROUGH_TOP_LEVEL_KEYS:
         if key in raw:
             config[key] = raw[key]
 
