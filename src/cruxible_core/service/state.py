@@ -12,6 +12,7 @@ from cruxible_core.config.composer import (
     compose_runtime_config_files,
     write_runtime_composed_config,
 )
+from cruxible_core.config.loader import load_config
 from cruxible_core.errors import ConfigError
 from cruxible_core.governance.actors import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
@@ -20,6 +21,7 @@ from cruxible_core.kits import materialize_kit
 from cruxible_core.kits.state_refs import resolve_state_source
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.execution import service_lock
+from cruxible_core.service.lifecycle import refuse_auth_managed_without_server_auth
 from cruxible_core.service.snapshots import service_create_snapshot
 from cruxible_core.service.types import (
     StateOverlayResult,
@@ -105,6 +107,14 @@ def service_create_state_overlay(
         base_path=upstream_dir / "config.yaml",
         overlay_path=overlay_path,
         output_path=composed_path,
+    )
+
+    # Refuse an overlay whose composed config declares auth-managed entity types
+    # on an auth-off daemon before the instance is materialized (hosted-init callers
+    # clean up the partial root on any exception).
+    refuse_auth_managed_without_server_auth(
+        load_config(composed_path),
+        instance_config_path=composed_path,
     )
 
     instance = CruxibleInstance.init(
