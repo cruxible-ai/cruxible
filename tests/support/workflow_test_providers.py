@@ -108,3 +108,38 @@ def reference_bundle_loader(
     bundle_root = Path(context.artifact.local_path)
     rows_path = bundle_root / "rows.json"
     return {"items": json.loads(rows_path.read_text())}
+
+
+def emit_entity_set(input_payload: dict[str, Any], _context: ProviderContext) -> dict[str, Any]:
+    """Emit a workflow ``EntitySet`` directly, without a ``make_entities`` step.
+
+    Mirrors a provider whose ``contract_out`` is an entity-upsert artifact that an
+    ``apply_entities`` step then commits. This is the write-policy bypass surface:
+    a provider-emitted ``EntitySet`` never passes through the config-time
+    ``make_entities`` mint_only validator, so only the runtime chokepoint can
+    refuse it. Entity type / id / property payload are taken from the workflow
+    input so one provider can drive the mint_only, direct, and proposal_only
+    cases through a single canonical workflow. Tests may also pass a raw
+    ``entities`` list to exercise provider-emitted duplicate ids.
+    """
+    entity_type = input_payload["entity_type"]
+    entities_payload = input_payload.get("entities")
+    if isinstance(entities_payload, list) and entities_payload:
+        return {"entity_type": entity_type, "entities": entities_payload}
+
+    entity_id = input_payload["entity_id"]
+    properties = dict(input_payload.get("properties") or {})
+    if properties:
+        properties.setdefault("id", entity_id)
+    else:
+        properties = {"id": entity_id, "label": input_payload.get("label", "x")}
+    return {
+        "entity_type": entity_type,
+        "entities": [
+            {
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "properties": properties,
+            }
+        ],
+    }
