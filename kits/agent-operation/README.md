@@ -222,7 +222,7 @@ flowchart LR
 
 | Query | Mode | Returns | State | Traversal | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Approved Reviews For Work Item | traversal | Review Request | reviewable | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
+| Approved Reviews For Work Item | traversal | Review Request | live | Review Request For Work Item (Incoming) | Approved review requests for a work item. Used by the closed-transition guard. |
 | State Notes For Work Item | traversal | State Note | reviewable | State Note About Work Item (Incoming) | State notes attached to a work item, newest first. |
 | Work Item Context | traversal | Any Entity | reviewable | Work Item Owned By Actor \| Review Request For Work Item \| State Note About Work Item \| Work Item Depends On Work Item \| Work Item Part Of Work Item \| Work Item Spawned From Work Item \| Work Item Supersedes Work Item \| Risk Blocks Work Item \| Open Question Blocks Work Item \| Work Item Mitigates Risk \| Work Item Answers Open Question \| Decision Constrains Work Item \| Work Item Targets Subject (Both) | From a work item, inspect dependencies, blockers, reviews, composition, lineage, decisions, owner, subjects. Base-layer adjacency only: all_adjacent expands at this kit's load time, so on a composed instance this query does NOT see overlay seam edges — prefer the overlay's domain-aware context query there (e.g. project-domain's work_item_change_context). |
 | Work Item Lineage Context | traversal | Work Item | reviewable | Work Item Spawned From Work Item \| Work Item Supersedes Work Item (Both, depth=5) | Work item lineage/replacement context, excluding sequencing deps. |

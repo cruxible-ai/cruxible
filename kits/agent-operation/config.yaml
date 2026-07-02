@@ -334,7 +334,7 @@ named_queries:
     mode: traversal
     entry_point: WorkItem
     returns: ReviewRequest
-    relationship_state: reviewable
+    relationship_state: live
     max_paths: 100
     max_paths_per_result: 25
     description: Approved review requests for a work item. Used by the closed-transition guard.
